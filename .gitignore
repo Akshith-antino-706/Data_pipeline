@@ -4,3 +4,11 @@ dashboard/node_modules/
 *.log
 .DS_Store
 dist/
+.env
+.env.*
+service-account.json
+*.pem
+backend/cert.pem
+backend/key.pem
+backend/src/rayna-data-pipeline-*.json
+.claude/

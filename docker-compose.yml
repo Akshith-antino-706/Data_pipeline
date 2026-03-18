@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PORT: "3001"
+      NODE_ENV: development
+      DB_HOST: host.docker.internal
+      DB_PORT: "5432"
+      DB_NAME: rayna_data_pipe
+      DB_USER: akshithkumaryv
+      DB_PASS: "7884"
+      EMAIL_PROVIDER: smtp
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "587"
+      SMTP_USER: akshith@raynatours.com
+      SMTP_PASS: vcovsfpyqjtudkfc
+      SMTP_SECURE: "false"
+      EMAIL_FROM: akshith@raynatours.com
+      EMAIL_FROM_NAME: Rayna Tours Marketing
+      # BigQuery Sync
+      GOOGLE_APPLICATION_CREDENTIALS: /app/service-account.json
+      BQ_PROJECT_ID: your-gcp-project-id
+      BQ_DATASET: your_dataset_name
+      BQ_SYNC_CRON: "0 */4 * * *"
+      BQ_SYNC_ENABLED: "false"
+      BQ_SYNC_BATCH_SIZE: "500"
+    volumes:
+      - ./backend/service-account.json:/app/service-account.json:ro
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5176:5176"
+    depends_on:
+      - backend

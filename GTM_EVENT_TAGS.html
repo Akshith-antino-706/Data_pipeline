@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rayna Tours — GTM Event Tags (Self-Contained)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e17; color: #e0e0e0; padding: 40px; line-height: 1.6; max-width: 960px; margin: 0 auto; }
+    h1 { color: #00d4ff; font-size: 26px; margin-bottom: 6px; }
+    h2 { color: #ff6b35; font-size: 18px; margin: 36px 0 10px; border-bottom: 1px solid #1e2a3a; padding-bottom: 6px; }
+    .subtitle { color: #888; font-size: 14px; margin-bottom: 28px; }
+    .tag-card { background: #111827; border: 1px solid #1e2a3a; border-radius: 8px; padding: 18px; margin: 14px 0; }
+    .tag-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .tag-name { color: #00d4ff; font-size: 15px; font-weight: bold; }
+    .trigger-name { color: #ff6b35; font-size: 12px; background: #1a1f2e; padding: 3px 10px; border-radius: 4px; }
+    pre { background: #1a1f2e; border: 1px solid #2a3040; border-radius: 6px; padding: 14px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin: 8px 0 0; white-space: pre-wrap; }
+    code { color: #c8d0dc; font-family: 'SF Mono', 'Fira Code', monospace; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-left: 8px; }
+    .badge-conversion { background: #ff6b35; color: #fff; }
+    .badge-ecommerce { background: #2d1b4e; color: #b388ff; }
+    .badge-engagement { background: #1a4a6e; color: #00d4ff; }
+    .important { background: #1a2332; border-left: 4px solid #ff6b35; padding: 12px 16px; margin: 14px 0; border-radius: 0 6px 6px 0; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th { background: #1a1f2e; color: #00d4ff; text-align: left; padding: 8px 10px; font-size: 12px; }
+    td { padding: 8px 10px; border-bottom: 1px solid #1e2a3a; font-size: 12px; }
+    .setup-step { background: #0d2137; border: 1px solid #1a4a6e; border-radius: 6px; padding: 12px 16px; margin: 8px 0; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<h1>Rayna Tours — GTM Event Tags</h1>
+<p class="subtitle">15 self-contained Custom HTML tags. Each fires on its own trigger. No shared dependencies.</p>
+
+<div class="important">
+  <strong>API Endpoint:</strong> <code>https://localhost:3443/api/v3/gtm/events</code><br>
+  Replace with production URL when deployed.
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- 1. view_item -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — view_item</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: view_item</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'view_item') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'view_item',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'ecommerce',
+        eventAction: 'view',
+        eventLabel: fi.item_name || null,
+        eventValue: ecom.value || fi.price || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || fi.price || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 2. click_call -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — click_call</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: click_call</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'click_call') {
+      var e = dl[i];
+      var payload = {
+        eventName: 'click_call',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'engagement',
+        eventAction: 'click',
+        eventLabel: e.click_location || e.product_name || null,
+        eventValue: null,
+        ecommerceData: null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || null,
+        itemCategory: e.item_category || null,
+        itemId: e.item_id || null,
+        itemName: e.item_name || null,
+        selectedDate: e.selected_date || null,
+        imageUrl: e.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 3. click_whatsapp -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — click_whatsapp</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: click_whatsapp</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'click_whatsapp') {
+      var e = dl[i];
+      var payload = {
+        eventName: 'click_whatsapp',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'engagement',
+        eventAction: 'click',
+        eventLabel: e.click_location || e.product_name || e.product_context || null,
+        eventValue: null,
+        ecommerceData: null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || null,
+        itemCategory: e.item_category || null,
+        itemId: e.item_id || null,
+        itemName: e.item_name || null,
+        selectedDate: e.selected_date || null,
+        imageUrl: e.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 4. click_email -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — click_email</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: click_email</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'click_email') {
+      var e = dl[i];
+      var payload = {
+        eventName: 'click_email',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'engagement',
+        eventAction: 'click',
+        eventLabel: e.click_location || e.product_name || null,
+        eventValue: null,
+        ecommerceData: null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || null,
+        itemCategory: e.item_category || null,
+        itemId: e.item_id || null,
+        itemName: e.item_name || null,
+        selectedDate: e.selected_date || null,
+        imageUrl: e.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 5. share -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — share</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: share</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'share') {
+      var e = dl[i];
+      var payload = {
+        eventName: 'share',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'engagement',
+        eventAction: 'share',
+        eventLabel: e.method || e.content_type || e.product_name || null,
+        eventValue: null,
+        ecommerceData: null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || null,
+        itemCategory: e.item_category || null,
+        itemId: e.item_id || null,
+        itemName: e.item_name || null,
+        selectedDate: e.selected_date || null,
+        imageUrl: e.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 6. add_to_wishlist -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — add_to_wishlist</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: add to wishlist</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'add_to_wishlist') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'add_to_wishlist',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'engagement',
+        eventAction: 'add',
+        eventLabel: fi.item_name || e.product_name || null,
+        eventValue: ecom.value || fi.price || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || fi.price || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 7. check_availability_click -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — check_availability_click</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: check_availability_click</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'check_availability_click') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'check_availability_click',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'ecommerce',
+        eventAction: 'click',
+        eventLabel: fi.item_name || e.product_name || null,
+        eventValue: ecom.value || fi.price || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || fi.price || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 8. event_date -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — event_date</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: event_date</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'event_date') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'event_date',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'ecommerce',
+        eventAction: 'select',
+        eventLabel: fi.item_name || e.selected_date || e.product_name || null,
+        eventValue: ecom.value || fi.price || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || fi.price || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 9. add_to_cart -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — add_to_cart</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: add to cart</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'add_to_cart') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'add_to_cart',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'ecommerce',
+        eventAction: 'add',
+        eventLabel: fi.item_name || e.product_name || null,
+        eventValue: ecom.value || fi.price || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 10. begin_checkout -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — begin_checkout</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: begin_checkout</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'begin_checkout') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'begin_checkout',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'conversion',
+        eventAction: 'checkout',
+        eventLabel: fi.item_name || e.product_name || null,
+        eventValue: ecom.value || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || null, coupon: ecom.coupon || fi.coupon || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 11. generate_lead -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — generate_lead</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: generate_lead</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'generate_lead') {
+      var e = dl[i];
+      var payload = {
+        eventName: 'generate_lead',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'conversion',
+        eventAction: 'submit',
+        eventLabel: e.lead_type || e.product_interest || e.product_name || null,
+        eventValue: e.value || null,
+        ecommerceData: null,
+        utmSource: e.utm_source || gp('utm_source'), utmMedium: e.utm_medium || gp('utm_medium'), utmCampaign: e.utm_campaign || gp('utm_campaign'), utmContent: e.utm_content || gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || null,
+        itemCategory: e.item_category || null,
+        itemId: e.item_id || null,
+        itemName: e.item_name || null,
+        selectedDate: e.selected_date || null,
+        imageUrl: e.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 12. add_payment_info -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — add_payment_info</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: add_payment_info</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'add_payment_info') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'add_payment_info',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'conversion',
+        eventAction: 'payment',
+        eventLabel: e.payment_type || fi.item_name || null,
+        eventValue: ecom.value || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || null, payment_type: e.payment_type || null, coupon: ecom.coupon || fi.coupon || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 13. purchase -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — purchase</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: purchase</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'purchase' && dl[i].ecommerce) {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'purchase',
+        customerId: e.email_id || e.email || e.user_id || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'conversion',
+        eventAction: 'purchase',
+        eventLabel: fi.item_name || null,
+        eventValue: ecom.value || null,
+        ecommerceData: {
+          currency: ecom.currency || e.currency || 'AED',
+          value: ecom.value || null,
+          transaction_id: ecom.transaction_id || e.transaction_id || null,
+          payment_type: e.payment_type || null,
+          coupon: ecom.coupon || fi.coupon || null,
+          tax: ecom.tax || null,
+          shipping: ecom.shipping || 0,
+          customer_name: e.name || null,
+          contact_number: e.contact_number || null,
+          isLoggedIn: e.isLoggedIn || null,
+          items: items.map(mapItem)
+        },
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,coupon:it.coupon||null,discount:it.discount||null,value:it.value||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 14. payment_failed -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — payment_failed</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: payment_failed</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'payment_failed') {
+      var e = dl[i], ecom = e.ecommerce || {}, items = ecom.items || [], fi = items[0] || {};
+      var payload = {
+        eventName: 'payment_failed',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'conversion',
+        eventAction: 'error',
+        eventLabel: e.error_message || e.payment_type || fi.item_name || null,
+        eventValue: ecom.value || null,
+        ecommerceData: items.length ? { currency: ecom.currency || 'AED', value: ecom.value || null, payment_type: e.payment_type || null, items: items.map(mapItem) } : null,
+        utmSource: gp('utm_source'), utmMedium: gp('utm_medium'), utmCampaign: gp('utm_campaign'), utmContent: gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: fi.city || null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || ecom.currency || fi.currency || null,
+        itemCategory: e.item_category || fi.item_category || null,
+        itemId: e.item_id || fi.item_id || null,
+        itemName: e.item_name || fi.item_name || null,
+        selectedDate: e.selected_date || fi.selected_date || null,
+        imageUrl: e.image_url || fi.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- 15. lead -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">Rayna — lead</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: lead</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function() {
+  var API = 'https://localhost:3443/api/v3/gtm/events';
+  var dl = window.dataLayer || [];
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i].event === 'lead') {
+      var e = dl[i];
+      var payload = {
+        eventName: 'lead',
+        customerId: e.user_id || e.email_id || e.email || null,
+        sessionId: getSid(),
+        pageUrl: location.href,
+        pageTitle: document.title,
+        eventCategory: 'conversion',
+        eventAction: 'submit',
+        eventLabel: e.lead_type || e.product_interest || e.source || null,
+        eventValue: e.value || null,
+        ecommerceData: null,
+        utmSource: e.utm_source || gp('utm_source'), utmMedium: e.utm_medium || gp('utm_medium'), utmCampaign: e.utm_campaign || gp('utm_campaign'), utmContent: e.utm_content || gp('utm_content'),
+        deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+        browser: gb(), country: e.country || null, city: null,
+        name: e.name || null,
+        emailId: e.email_id || null,
+        contactNumber: e.contact_number || null,
+        loggedInStatus: e.logged_in_status || null,
+        environment: e.environment || null,
+        currency: e.currency || null,
+        itemCategory: e.item_category || null,
+        itemId: e.item_id || null,
+        itemName: e.item_name || null,
+        selectedDate: e.selected_date || null,
+        imageUrl: e.image_url || null
+      };
+      fire(API, payload); break;
+    }
+  }
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return 'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&&u.indexOf('Edg')===-1)return 'Chrome';if(u.indexOf('Safari')>-1&&u.indexOf('Chrome')===-1)return 'Safari';if(u.indexOf('Firefox')>-1)return 'Firefox';if(u.indexOf('Edg')>-1)return 'Edge';return 'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>Setup Checklist</h2>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>GTM Tag Name</th><th>Type</th><th>Trigger</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Rayna — view_item</td><td>Custom HTML</td><td>view_item</td></tr>
+    <tr><td>2</td><td>Rayna — click_call</td><td>Custom HTML</td><td>click_call</td></tr>
+    <tr><td>3</td><td>Rayna — click_whatsapp</td><td>Custom HTML</td><td>click_whatsapp</td></tr>
+    <tr><td>4</td><td>Rayna — click_email</td><td>Custom HTML</td><td>click_email</td></tr>
+    <tr><td>5</td><td>Rayna — share</td><td>Custom HTML</td><td>share</td></tr>
+    <tr><td>6</td><td>Rayna — add_to_wishlist</td><td>Custom HTML</td><td>add to wishlist</td></tr>
+    <tr><td>7</td><td>Rayna — check_availability_click</td><td>Custom HTML</td><td>check_availability_click</td></tr>
+    <tr><td>8</td><td>Rayna — event_date</td><td>Custom HTML</td><td>event_date</td></tr>
+    <tr><td>9</td><td>Rayna — add_to_cart</td><td>Custom HTML</td><td>add to cart</td></tr>
+    <tr><td>10</td><td>Rayna — begin_checkout</td><td>Custom HTML</td><td>begin_checkout</td></tr>
+    <tr><td>11</td><td>Rayna — generate_lead</td><td>Custom HTML</td><td>generate_lead</td></tr>
+    <tr><td>12</td><td>Rayna — add_payment_info</td><td>Custom HTML</td><td>add_payment_info</td></tr>
+    <tr><td>13</td><td>Rayna — purchase</td><td>Custom HTML</td><td>purchase</td></tr>
+    <tr><td>14</td><td>Rayna — payment_failed</td><td>Custom HTML</td><td>payment_failed</td></tr>
+    <tr><td>15</td><td>Rayna — lead</td><td>Custom HTML</td><td>lead</td></tr>
+  </tbody>
+</table>
+
+<div class="important">
+  <strong>Each tag is fully self-contained.</strong> No shared dependencies, no "All Pages" tag needed. Each one fires independently on its own trigger.
+</div>
+
+<h2>How to Test</h2>
+<div class="setup-step">
+  1. In GTM, click <strong>Preview</strong> to enter debug mode<br>
+  2. Browse raynatours.com — trigger events (view a product, click WhatsApp, etc.)<br>
+  3. In GTM debugger, confirm the Rayna tag fires alongside the existing GA4 tag<br>
+  4. Check our API: <code>curl https://localhost:3443/api/v3/gtm/analytics</code><br>
+  5. If you see event counts → <strong>Publish</strong>
+</div>
+
+<p style="margin-top: 40px; color: #666; font-size: 12px;">Rayna Tours Data Pipeline — 15 self-contained tags — March 2026</p>
+
+</body>
+</html>

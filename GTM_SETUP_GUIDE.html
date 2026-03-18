@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rayna Tours — GTM Webhook Setup Guide</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e17; color: #e0e0e0; padding: 40px; line-height: 1.6; max-width: 900px; margin: 0 auto; }
+    h1 { color: #00d4ff; font-size: 28px; margin-bottom: 8px; }
+    h2 { color: #ff6b35; font-size: 20px; margin: 36px 0 12px; border-bottom: 1px solid #1e2a3a; padding-bottom: 8px; }
+    h3 { color: #00d4ff; font-size: 16px; margin: 20px 0 8px; }
+    .subtitle { color: #888; font-size: 14px; margin-bottom: 32px; }
+    .step { background: #111827; border: 1px solid #1e2a3a; border-radius: 8px; padding: 20px; margin: 16px 0; }
+    .step-number { display: inline-block; background: #ff6b35; color: #fff; width: 28px; height: 28px; border-radius: 50%; text-align: center; line-height: 28px; font-weight: bold; font-size: 14px; margin-right: 8px; }
+    pre { background: #1a1f2e; border: 1px solid #2a3040; border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 12px 0; white-space: pre-wrap; }
+    code { color: #00d4ff; font-family: 'SF Mono', 'Fira Code', monospace; }
+    .comment { color: #666; }
+    .string { color: #98c379; }
+    .key { color: #e5c07b; }
+    .important { background: #1a2332; border-left: 4px solid #ff6b35; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+    .success { background: #0d2919; border-left: 4px solid #4ade80; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+    .endpoint { background: #0d2137; border: 1px solid #1a4a6e; border-radius: 6px; padding: 12px 16px; margin: 8px 0; font-family: monospace; font-size: 15px; }
+    .method { color: #98c379; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th { background: #1a1f2e; color: #00d4ff; text-align: left; padding: 10px 12px; font-size: 13px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #1e2a3a; font-size: 13px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+    .badge-conversion { background: #ff6b35; color: #fff; }
+    .badge-ecommerce { background: #2d1b4e; color: #b388ff; }
+    .badge-engagement { background: #1a4a6e; color: #00d4ff; }
+    .tag-card { background: #111827; border: 1px solid #1e2a3a; border-radius: 8px; padding: 18px; margin: 14px 0; }
+    .tag-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .tag-name { color: #00d4ff; font-size: 15px; font-weight: bold; }
+    .trigger-name { color: #ff6b35; font-size: 12px; background: #1a1f2e; padding: 3px 10px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<h1>Rayna Tours — GTM Webhook Setup</h1>
+<p class="subtitle">15 individual Custom HTML tags for GTM — one per event, each with its own trigger. Forwards dataLayer events to our segmentation pipeline in real-time.</p>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>1. What This Does</h2>
+<p>Your GTM already fires these 15 events. This webhook tag <strong>intercepts them automatically</strong> and sends a copy to our database for customer segmentation. No changes needed to your existing tags or triggers.</p>
+
+<table>
+  <thead>
+    <tr><th>Event Name</th><th>When It Fires</th><th>Type</th><th>What We Track</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>view_item</code></td><td>Product/tour page viewed</td><td><span class="badge badge-ecommerce">ECOMMERCE</span></td><td>item_id, item_name, item_category, price</td></tr>
+    <tr><td><code>add_to_cart</code></td><td>Added to cart</td><td><span class="badge badge-ecommerce">ECOMMERCE</span></td><td>items[], value, name, email_id, city, selected_date, image_url</td></tr>
+    <tr><td><code>check_availability_click</code></td><td>Availability check clicked</td><td><span class="badge badge-ecommerce">ECOMMERCE</span></td><td>item context, page URL</td></tr>
+    <tr><td><code>event_date</code></td><td>Date selected for a tour</td><td><span class="badge badge-ecommerce">ECOMMERCE</span></td><td>selected_date, item context</td></tr>
+    <tr><td><code>begin_checkout</code></td><td>Checkout started</td><td><span class="badge badge-conversion">CONVERSION</span></td><td>items[], value, coupon</td></tr>
+    <tr><td><code>add_payment_info</code></td><td>Payment details entered</td><td><span class="badge badge-conversion">CONVERSION</span></td><td>payment_type, value</td></tr>
+    <tr><td><code>purchase</code></td><td>Booking confirmed</td><td><span class="badge badge-conversion">CONVERSION</span></td><td>transaction_id, value, items[], name, email_id, contact_number, city</td></tr>
+    <tr><td><code>payment_failed</code></td><td>Payment error</td><td><span class="badge badge-conversion">CONVERSION</span></td><td>error context, cart value</td></tr>
+    <tr><td><code>generate_lead</code></td><td>Lead form submitted</td><td><span class="badge badge-conversion">CONVERSION</span></td><td>lead type, product interest</td></tr>
+    <tr><td><code>lead</code></td><td>Enquiry submitted</td><td><span class="badge badge-conversion">CONVERSION</span></td><td>lead type, source</td></tr>
+    <tr><td><code>click_whatsapp</code></td><td>WhatsApp CTA clicked</td><td><span class="badge badge-engagement">ENGAGEMENT</span></td><td>click location, product context</td></tr>
+    <tr><td><code>click_call</code></td><td>Phone CTA clicked</td><td><span class="badge badge-engagement">ENGAGEMENT</span></td><td>click location, page URL</td></tr>
+    <tr><td><code>click_email</code></td><td>Email CTA clicked</td><td><span class="badge badge-engagement">ENGAGEMENT</span></td><td>click location, page URL</td></tr>
+    <tr><td><code>share</code></td><td>Share button clicked</td><td><span class="badge badge-engagement">ENGAGEMENT</span></td><td>share method, product context</td></tr>
+    <tr><td><code>add_to_wishlist</code></td><td>Wishlist action</td><td><span class="badge badge-engagement">ENGAGEMENT</span></td><td>item_id, item_name</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>2. Webhook Endpoint</h2>
+
+<div class="endpoint">
+  <span class="method">POST</span> https://localhost:3443/api/v3/gtm/events
+</div>
+
+<div class="important">
+  <strong>Note:</strong> Replace <code>https://localhost:3443</code> with the production API URL once deployed.
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>3. Tags — Copy & Paste into GTM</h2>
+
+<div class="step">
+  <p>For <strong>each</strong> event below:</p>
+  <p><span class="step-number">1</span> Go to <strong>GTM → Tags → New → Custom HTML</strong></p>
+  <p><span class="step-number">2</span> Paste the script for that event</p>
+  <p><span class="step-number">3</span> Set Trigger: <strong>Custom Event</strong> → event name as shown</p>
+  <p><span class="step-number">4</span> Save & Publish</p>
+</div>
+
+<div class="important">
+  <strong>Each tag is fully self-contained.</strong> No shared dependencies. Each fires independently on its own trigger.
+</div>
+
+<!-- ── TAG 1: view_item ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">1. Rayna — view_item</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: view_item</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='view_item'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'view_item',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'ecommerce',eventAction:'view',eventLabel:fi.item_name||null,eventValue:ecom.value||fi.price||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||fi.price||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 2: add_to_cart ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">2. Rayna — add_to_cart</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: add_to_cart</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='add_to_cart'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'add_to_cart',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'ecommerce',eventAction:'add',eventLabel:fi.item_name||e.item_name||e.product_name||null,eventValue:ecom.value||e.value||fi.price||null,
+    ecommerceData:items.length?{currency:ecom.currency||e.currency||'AED',value:ecom.value||e.value||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 3: check_availability_click ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">3. Rayna — check_availability_click</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: check_availability_click</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='check_availability_click'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'check_availability_click',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'ecommerce',eventAction:'click',eventLabel:fi.item_name||e.item_name||null,eventValue:ecom.value||fi.price||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||fi.price||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 4: event_date ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">4. Rayna — event_date</span><span class="badge badge-ecommerce">ECOMMERCE</span>
+    <span class="trigger-name">Trigger: event_date</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='event_date'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'event_date',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'ecommerce',eventAction:'select',eventLabel:fi.item_name||e.selected_date||null,eventValue:ecom.value||fi.price||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||fi.price||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 5: begin_checkout ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">5. Rayna — begin_checkout</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: begin_checkout</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='begin_checkout'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'begin_checkout',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'conversion',eventAction:'checkout',eventLabel:fi.item_name||null,eventValue:ecom.value||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||null,coupon:ecom.coupon||fi.coupon||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 6: add_payment_info ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">6. Rayna — add_payment_info</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: add_payment_info</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='add_payment_info'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'add_payment_info',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'conversion',eventAction:'payment',eventLabel:e.payment_type||fi.item_name||null,eventValue:ecom.value||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||null,payment_type:e.payment_type||null,coupon:ecom.coupon||fi.coupon||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 7: purchase ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">7. Rayna — purchase</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: purchase</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='purchase'&amp;&amp;dl[i].ecommerce){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'purchase',customerId:e.email_id||e.email||e.user_id||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'conversion',eventAction:'purchase',eventLabel:fi.item_name||null,eventValue:ecom.value||null,
+    ecommerceData:{currency:ecom.currency||e.currency||'AED',value:ecom.value||null,transaction_id:ecom.transaction_id||e.transaction_id||null,
+      payment_type:e.payment_type||null,coupon:ecom.coupon||fi.coupon||null,tax:ecom.tax||null,shipping:ecom.shipping||0,items:items.map(mapItem)},
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,coupon:it.coupon||null,value:it.value||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 8: payment_failed ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">8. Rayna — payment_failed</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: payment_failed</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='payment_failed'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'payment_failed',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'conversion',eventAction:'error',eventLabel:e.error_message||e.payment_type||fi.item_name||null,eventValue:ecom.value||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||null,payment_type:e.payment_type||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 9: generate_lead ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">9. Rayna — generate_lead</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: generate_lead</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='generate_lead'){var e=dl[i];
+  var p={eventName:'generate_lead',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'conversion',eventAction:'submit',eventLabel:e.lead_type||e.product_interest||null,eventValue:e.value||null,ecommerceData:null,
+    utmSource:e.utm_source||gp('utm_source'),utmMedium:e.utm_medium||gp('utm_medium'),utmCampaign:e.utm_campaign||gp('utm_campaign'),utmContent:e.utm_content||gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||null,itemCategory:e.item_category||null,
+    itemId:e.item_id||null,itemName:e.item_name||null,selectedDate:e.selected_date||null,imageUrl:e.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 10: lead ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">10. Rayna — lead</span><span class="badge badge-conversion">CONVERSION</span>
+    <span class="trigger-name">Trigger: lead</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='lead'){var e=dl[i];
+  var p={eventName:'lead',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'conversion',eventAction:'submit',eventLabel:e.lead_type||e.product_interest||e.source||null,eventValue:e.value||null,ecommerceData:null,
+    utmSource:e.utm_source||gp('utm_source'),utmMedium:e.utm_medium||gp('utm_medium'),utmCampaign:e.utm_campaign||gp('utm_campaign'),utmContent:e.utm_content||gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||null,itemCategory:e.item_category||null,
+    itemId:e.item_id||null,itemName:e.item_name||null,selectedDate:e.selected_date||null,imageUrl:e.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 11: click_whatsapp ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">11. Rayna — click_whatsapp</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: click_whatsapp</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='click_whatsapp'){var e=dl[i];
+  var p={eventName:'click_whatsapp',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'engagement',eventAction:'click',eventLabel:e.click_location||e.product_context||e.product_name||null,eventValue:null,ecommerceData:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||null,itemCategory:e.item_category||null,
+    itemId:e.item_id||null,itemName:e.item_name||null,selectedDate:e.selected_date||null,imageUrl:e.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 12: click_call ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">12. Rayna — click_call</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: click_call</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='click_call'){var e=dl[i];
+  var p={eventName:'click_call',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'engagement',eventAction:'click',eventLabel:e.click_location||e.product_name||null,eventValue:null,ecommerceData:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||null,itemCategory:e.item_category||null,
+    itemId:e.item_id||null,itemName:e.item_name||null,selectedDate:e.selected_date||null,imageUrl:e.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 13: click_email ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">13. Rayna — click_email</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: click_email</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='click_email'){var e=dl[i];
+  var p={eventName:'click_email',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'engagement',eventAction:'click',eventLabel:e.click_location||e.product_name||null,eventValue:null,ecommerceData:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||null,itemCategory:e.item_category||null,
+    itemId:e.item_id||null,itemName:e.item_name||null,selectedDate:e.selected_date||null,imageUrl:e.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 14: share ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">14. Rayna — share</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: share</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='share'){var e=dl[i];
+  var p={eventName:'share',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'engagement',eventAction:'share',eventLabel:e.method||e.content_type||e.product_name||null,eventValue:null,ecommerceData:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||null,itemCategory:e.item_category||null,
+    itemId:e.item_id||null,itemName:e.item_name||null,selectedDate:e.selected_date||null,imageUrl:e.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ── TAG 15: add_to_wishlist ── -->
+<div class="tag-card">
+  <div class="tag-header">
+    <span class="tag-name">15. Rayna — add_to_wishlist</span><span class="badge badge-engagement">ENGAGEMENT</span>
+    <span class="trigger-name">Trigger: add_to_wishlist</span>
+  </div>
+<pre><code>&lt;script&gt;
+(function(){
+  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='add_to_wishlist'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
+  var p={eventName:'add_to_wishlist',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
+    eventCategory:'engagement',eventAction:'add',eventLabel:fi.item_name||e.item_name||null,eventValue:ecom.value||fi.price||null,
+    ecommerceData:items.length?{currency:ecom.currency||'AED',value:ecom.value||fi.price||null,items:items.map(mapItem)}:null,
+    utmSource:gp('utm_source'),utmMedium:gp('utm_medium'),utmCampaign:gp('utm_campaign'),utmContent:gp('utm_content'),
+    deviceType:/Mobi|Android/i.test(navigator.userAgent)?'mobile':'desktop',browser:gb(),country:e.country||null,city:fi.city||e.city||null,
+    name:e.name||null,emailId:e.email_id||null,contactNumber:e.contact_number||null,loggedInStatus:e.logged_in_status||null,
+    environment:e.environment||null,currency:e.currency||ecom.currency||fi.currency||null,itemCategory:e.item_category||fi.item_category||null,
+    itemId:e.item_id||fi.item_id||null,itemName:e.item_name||fi.item_name||null,selectedDate:e.selected_date||fi.selected_date||null,imageUrl:e.image_url||fi.image_url||null};
+  fire(API,p);break;}}
+  function fire(u,p){if(navigator.sendBeacon){navigator.sendBeacon(u,new Blob([JSON.stringify(p)],{type:'application/json'}))}else{var x=new XMLHttpRequest();x.open('POST',u,true);x.setRequestHeader('Content-Type','application/json');x.send(JSON.stringify(p))}}
+  function mapItem(it){return{item_id:it.item_id||null,item_name:it.item_name||null,item_category:it.item_category||null,price:it.price||null,quantity:it.quantity||1,currency:it.currency||'AED',selected_date:it.selected_date||null,booking_date:it.booking_date||null,city:it.city||null,adult_count:it.adult_count||null,children_count:it.children_count||null,discount:it.discount||null,item_variant:it.item_variant||null,image_url:it.image_url||null}}
+  function getSid(){try{var s=sessionStorage.getItem('rayna_sid');if(!s){s='sess_'+Math.random().toString(36).substr(2,12)+'_'+Date.now();sessionStorage.setItem('rayna_sid',s)}return s}catch(e){return'sess_'+Math.random().toString(36).substr(2,12)}}
+  function gp(n){try{var m=location.search.match(new RegExp('[?&amp;]'+n+'=([^&amp;]*)'));return m?decodeURIComponent(m[1]):null}catch(e){return null}}
+  function gb(){var u=navigator.userAgent;if(u.indexOf('Chrome')>-1&amp;&amp;u.indexOf('Edg')===-1)return'Chrome';if(u.indexOf('Safari')>-1&amp;&amp;u.indexOf('Chrome')===-1)return'Safari';if(u.indexOf('Firefox')>-1)return'Firefox';if(u.indexOf('Edg')>-1)return'Edge';return'Other'}
+})();
+&lt;/script&gt;</code></pre>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>4. How to Test</h2>
+
+<div class="step">
+  <p><span class="step-number">1</span> In GTM, click <strong>Preview</strong> to enter debug mode</p>
+  <p><span class="step-number">2</span> Browse the Rayna Tours website — trigger a few events (view a product, click WhatsApp, etc.)</p>
+  <p><span class="step-number">3</span> Check our API to see if events arrived:</p>
+  <pre><code>curl https://localhost:3443/api/v3/gtm/analytics</code></pre>
+  <p><span class="step-number">4</span> You should see event counts for each event type</p>
+</div>
+
+<div class="success">
+  <strong>Expected result:</strong> Each event you trigger on the website should appear in the API response within 1-2 seconds. If you see <code>"event_count": 1</code> for the events you triggered, the pipeline is working.
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>5. Architecture</h2>
+<pre><code>
+  User browses raynatours.com
+         │
+         ▼
+    GTM dataLayer.push()  ← your existing tags (no changes needed)
+         │
+         ├──► GA4 → BigQuery (30min delay, fallback only)
+         │
+         └──► This Webhook Tag
+                   │
+                   ▼ (real-time, &lt;1 sec)
+              POST /api/v3/gtm/events
+                   │
+                   ▼
+              PostgreSQL (gtm_events table)
+                   │
+                   ▼
+              Segmentation Engine (28 customer segments)
+                   │
+                   ▼
+              Personalized campaigns (Email / WhatsApp / SMS)
+</code></pre>
+
+<!-- ═══════════════════════════════════════════════ -->
+<h2>6. FAQ</h2>
+
+<h3>Will this slow down the website?</h3>
+<p>No. It uses <code>navigator.sendBeacon()</code> which is non-blocking and works even during page navigation. Zero impact on page load speed.</p>
+
+<h3>Do I need to change my existing GTM tags?</h3>
+<p>No. This tag listens to the dataLayer passively. Your existing GA4 tags, MoEngage tags, and all other tags continue working exactly as before.</p>
+
+<h3>What if the API is down?</h3>
+<p>Events silently fail with no console errors or user impact. BigQuery serves as a fallback — we can backfill any missed events from there.</p>
+
+<h3>What about user privacy / CORS?</h3>
+<p><code>sendBeacon</code> doesn't require CORS preflight. The server has CORS enabled for all origins. No cookies are set by this tag.</p>
+
+<p style="margin-top: 40px; color: #666; font-size: 12px;">Rayna Tours Data Pipeline — March 2026</p>
+
+</body>
+</html>

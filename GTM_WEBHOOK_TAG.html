@@ -1,0 +1,243 @@
+<!--
+  ═══════════════════════════════════════════════════════════
+  Rayna Tours — GTM Webhook Tag
+  ═══════════════════════════════════════════════════════════
+
+  INSTRUCTIONS FOR GTM PERSON:
+  1. Go to GTM → Tags → New → Custom HTML
+  2. Paste this ENTIRE script
+  3. Trigger: All Pages (fires once per page)
+  4. Replace API_URL below with the actual deployed backend URL
+  5. Publish the GTM container
+
+  This tag intercepts all dataLayer events and forwards them
+  to the Rayna data pipeline in real-time. No data is lost —
+  BigQuery serves as a fallback if this webhook misses anything.
+
+  TRACKED EVENTS (matching your current GTM setup):
+  - view_item          (product page viewed)
+  - click_call         (phone CTA clicked)
+  - click_whatsapp     (WhatsApp CTA clicked)
+  - click_email        (email CTA clicked)
+  - share              (share button clicked)
+  - add_to_wishlist    (wishlist action)
+  - check_availability_click  (availability check)
+  - event_date         (date selected)
+  - add_to_cart        (added to cart)
+  - begin_checkout     (checkout started)
+  - generate_lead      (lead form submitted)
+  - add_payment_info   (payment details entered)
+  - purchase           (booking confirmed)
+  - payment_failed     (payment error)
+  - lead               (enquiry submitted)
+  ═══════════════════════════════════════════════════════════
+-->
+
+<script>
+(function() {
+
+  // ╔═══════════════════════════════════════════════╗
+  // ║  CHANGE THIS to your deployed backend URL     ║
+  // ╚═══════════════════════════════════════════════╝
+  var API_URL = 'http://localhost:3001/api/v3/gtm/events';
+
+  // ── Events to track (matching your GTM setup) ──
+  var TRACKED_EVENTS = [
+    'view_item',
+    'click_call',
+    'click_whatsapp',
+    'click_email',
+    'share',
+    'add_to_wishlist',
+    'check_availability_click',
+    'event_date',
+    'add_to_cart',
+    'begin_checkout',
+    'generate_lead',
+    'add_payment_info',
+    'purchase',
+    'payment_failed',
+    'lead'
+  ];
+
+  // ── Category mapping for analytics ──
+  var CATEGORY_MAP = {
+    'view_item':                'ecommerce',
+    'click_call':               'engagement',
+    'click_whatsapp':           'engagement',
+    'click_email':              'engagement',
+    'share':                    'engagement',
+    'add_to_wishlist':          'engagement',
+    'check_availability_click': 'ecommerce',
+    'event_date':               'ecommerce',
+    'add_to_cart':              'ecommerce',
+    'begin_checkout':           'conversion',
+    'generate_lead':            'conversion',
+    'add_payment_info':         'conversion',
+    'purchase':                 'conversion',
+    'payment_failed':           'conversion',
+    'lead':                     'conversion'
+  };
+
+  // ── Action mapping ──
+  var ACTION_MAP = {
+    'view_item':                'view',
+    'click_call':               'click',
+    'click_whatsapp':           'click',
+    'click_email':              'click',
+    'share':                    'share',
+    'add_to_wishlist':          'add',
+    'check_availability_click': 'click',
+    'event_date':               'select',
+    'add_to_cart':              'add',
+    'begin_checkout':           'checkout',
+    'generate_lead':            'submit',
+    'add_payment_info':         'payment',
+    'purchase':                 'purchase',
+    'payment_failed':           'error',
+    'lead':                     'submit'
+  };
+
+  window.dataLayer = window.dataLayer || [];
+
+  // ── Intercept all future dataLayer pushes ──
+  var originalPush = window.dataLayer.push.bind(window.dataLayer);
+  window.dataLayer.push = function() {
+    var result = originalPush.apply(this, arguments);
+    var entry = arguments[0];
+    if (entry && entry.event && TRACKED_EVENTS.indexOf(entry.event) !== -1) {
+      sendToRayna(entry);
+    }
+    return result;
+  };
+
+  // ── Also scan existing dataLayer for events already fired ──
+  for (var i = 0; i < window.dataLayer.length; i++) {
+    var entry = window.dataLayer[i];
+    if (entry && entry.event && TRACKED_EVENTS.indexOf(entry.event) !== -1) {
+      sendToRayna(entry);
+    }
+  }
+
+  // ── Main send function ──
+  function sendToRayna(entry) {
+    var ecom = entry.ecommerce || {};
+    var items = ecom.items || [];
+    var firstItem = items[0] || {};
+
+    // Extract user identity (from purchase event or dataLayer)
+    var userId = entry.email_id
+              || entry.email
+              || entry.user_id
+              || entry.customer_id
+              || null;
+
+    // Extract event value
+    var eventValue = ecom.value           // ecommerce value
+                  || entry.value
+                  || firstItem.price
+                  || null;
+
+    // Extract product label
+    var eventLabel = firstItem.item_name
+                  || entry.product_name
+                  || entry.product_interest
+                  || entry.click_location
+                  || null;
+
+    // Build the full ecommerce payload (includes Rayna-specific fields)
+    var ecommerceData = null;
+    if (items.length > 0) {
+      ecommerceData = {
+        currency: ecom.currency || entry.currency || 'AED',
+        value: eventValue,
+        transaction_id: ecom.transaction_id || entry.transaction_id || null,
+        payment_type: entry.payment_type || null,
+        coupon: ecom.coupon || firstItem.coupon || null,
+        items: items.map(function(item) {
+          return {
+            item_id:        item.item_id || null,
+            item_name:      item.item_name || null,
+            item_category:  item.item_category || null,
+            price:          item.price || null,
+            quantity:       item.quantity || 1,
+            currency:       item.currency || ecom.currency || 'AED',
+            selected_date:  item.selected_date || null,
+            booking_date:   item.booking_date || null,
+            city:           item.city || null,
+            adult_count:    item.adult_count || null,
+            children_count: item.children_count || null,
+            discount:       item.discount || null
+          };
+        })
+      };
+    }
+
+    var payload = {
+      eventName:     entry.event,
+      customerId:    userId,
+      sessionId:     getSessionId(),
+      pageUrl:       window.location.href,
+      pageTitle:     document.title,
+      eventCategory: CATEGORY_MAP[entry.event] || 'other',
+      eventAction:   ACTION_MAP[entry.event] || 'other',
+      eventLabel:    eventLabel,
+      eventValue:    eventValue,
+      ecommerceData: ecommerceData,
+      utmSource:     getParam('utm_source'),
+      utmMedium:     getParam('utm_medium'),
+      utmCampaign:   getParam('utm_campaign'),
+      utmContent:    getParam('utm_content'),
+      deviceType:    /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+      browser:       getBrowser(),
+      country:       entry.country || null,
+      city:          (firstItem && firstItem.city) || null
+    };
+
+    // Send using sendBeacon (non-blocking, survives page unload)
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(API_URL, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+    } else {
+      // Fallback for older browsers
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', API_URL, true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.send(JSON.stringify(payload));
+    }
+  }
+
+  // ── Helpers ──
+
+  function getSessionId() {
+    try {
+      var sid = sessionStorage.getItem('rayna_sid');
+      if (!sid) {
+        sid = 'sess_' + Math.random().toString(36).substr(2, 12) + '_' + Date.now();
+        sessionStorage.setItem('rayna_sid', sid);
+      }
+      return sid;
+    } catch(e) {
+      return 'sess_' + Math.random().toString(36).substr(2, 12);
+    }
+  }
+
+  function getParam(name) {
+    try {
+      var match = window.location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+      return match ? decodeURIComponent(match[1]) : null;
+    } catch(e) {
+      return null;
+    }
+  }
+
+  function getBrowser() {
+    var ua = navigator.userAgent;
+    if (ua.indexOf('Chrome') > -1 && ua.indexOf('Edg') === -1) return 'Chrome';
+    if (ua.indexOf('Safari') > -1 && ua.indexOf('Chrome') === -1) return 'Safari';
+    if (ua.indexOf('Firefox') > -1) return 'Firefox';
+    if (ua.indexOf('Edg') > -1) return 'Edge';
+    return 'Other';
+  }
+
+})();
+</script>
