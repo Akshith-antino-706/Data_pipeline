@@ -76,4 +76,28 @@ router.get('/:id/analytics', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Get campaign analytics inside journey (sent, delivered, read, click, bounce per node)
+router.get('/:id/campaign-analytics', async (req, res, next) => {
+  try {
+    const data = await JourneyService.getJourneyCampaignAnalytics(parseInt(req.params.id));
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Check conversions (BigQuery purchase + offline booking) and stop converted enrollments
+router.post('/:id/check-conversions', async (req, res, next) => {
+  try {
+    const data = await JourneyService.checkConversions(parseInt(req.params.id));
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Get enrollment status for a journey
+router.get('/:id/enrollments', async (req, res, next) => {
+  try {
+    const data = await JourneyService.getEnrollments(parseInt(req.params.id));
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 export default router;

@@ -22,6 +22,9 @@ class SegmentEngine {
             'priority', sd.priority,
             'sql_criteria', sd.sql_criteria,
             'key_points', sd.key_points,
+            'segment_logic', sd.segment_logic,
+            'data_sources', sd.data_sources,
+            'department_filter', sd.department_filter,
             'customer_count', COALESCE(sc.cnt, 0)
           ) ORDER BY sd.segment_number
         ) FILTER (WHERE sd.segment_id IS NOT NULL), '[]') AS segments
@@ -55,6 +58,9 @@ class SegmentEngine {
             'priority', sd.priority,
             'sql_criteria', sd.sql_criteria,
             'key_points', sd.key_points,
+            'segment_logic', sd.segment_logic,
+            'data_sources', sd.data_sources,
+            'department_filter', sd.department_filter,
             'customer_count', COALESCE(sc.cnt, 0),
             'strategy', strat.strategy_data
           ) ORDER BY sd.segment_number

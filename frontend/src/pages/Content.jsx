@@ -63,7 +63,16 @@ export default function Content() {
 
   useEffect(() => {
     Promise.all([getTemplates(), getSegments(), getBaseTemplates(), getSegmentEmailTemplates()])
-      .then(([t, s, bt, st]) => { setTemplates(t.data); setTotal(t.total); setSegments(s.data || s); setBaseTemplates(bt.data || []); setSegmentTemplates(st.data || []); })
+      .then(([t, s, bt, st]) => {
+        setTemplates(t.data); setTotal(t.total); setSegments(s.data || s); setBaseTemplates(bt.data || []); setSegmentTemplates(st.data || []);
+        // Auto-open template if ?templateId= is in URL
+        const params = new URLSearchParams(window.location.search);
+        const tid = params.get('templateId');
+        if (tid) {
+          const tpl = (t.data || []).find(tp => String(tp.id) === tid);
+          if (tpl) setShowPreview(tpl);
+        }
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);

@@ -183,7 +183,36 @@ export default function SegmentsV2() {
           </div>
         </div>
 
-        <p style={{ color: 'var(--text-dim)', fontSize: 14, marginBottom: 24, lineHeight: 1.7 }}>{detail.segment_description}</p>
+        <p style={{ color: 'var(--text-dim)', fontSize: 14, marginBottom: 16, lineHeight: 1.7 }}>{detail.segment_description}</p>
+
+        {/* Segment Logic — WHY this segment exists */}
+        {detail.segment_logic && (
+          <div className="card" style={{ marginBottom: 20, borderLeft: '4px solid #dc2626', background: 'var(--card)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <Database size={18} color="#dc2626" style={{ marginTop: 2, flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#dc2626', marginBottom: 6, letterSpacing: '0.5px' }}>Segment Logic</div>
+                <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.6, fontWeight: 500 }}>{detail.segment_logic}</div>
+                {detail.data_sources && detail.data_sources.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-dim)', alignSelf: 'center' }}>Data Sources:</span>
+                    {detail.data_sources.map((ds, i) => (
+                      <span key={i} className="badge" style={{ fontSize: 10, background: '#4caf5020', color: '#4caf50', padding: '2px 8px' }}>{ds.replace(/_/g, ' ')}</span>
+                    ))}
+                  </div>
+                )}
+                {detail.department_filter && (
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>
+                    <span style={{ fontWeight: 600 }}>Department:</span> {detail.department_filter}
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 8, fontFamily: 'monospace', background: 'var(--bg)', padding: '6px 10px', borderRadius: 6, overflowX: 'auto' }}>
+                  SQL: {detail.sql_criteria}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="card-grid card-grid-4" style={{ marginBottom: 20 }}>
@@ -793,7 +822,7 @@ export default function SegmentsV2() {
                             </span>
                           </div>
                           <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {seg.segment_description}
+                            {seg.segment_logic || seg.segment_description}
                           </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 16 }}>

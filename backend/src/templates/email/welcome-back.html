@@ -184,22 +184,12 @@
 
                                     {{#if coupon_code}}
                                     <div style="background-color: #FFFAF7; padding: 15px; border-radius: 15px; border: 1px solid #EAE9E9; margin-top: 15px; margin-bottom: 15px;">
-                                        <table cellpadding="0" cellspacing="0" border="0" style="width:100%;">
-                                            <tbody>
-                                                <tr>
-                                                    <td colspan="2" style="padding-bottom: 4px; font-size: 18px; font-weight: 700; padding-bottom: 10px; border-bottom: 1px solid #EAE9E9;">{{coupon_discount}}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style="padding-top:10px;width:50%" class="coupon-td">
-                                                        <div>Here is your coupon code - but hurry before the code expires</div>
-                                                        <div style="color: #DC232F">Expire in {{coupon_expiry}}</div>
-                                                    </td>
-                                                    <td style="text-align: center; color: #2F2F2F; font-weight: 500; padding-top: 10px;font-size:18px" class="coupon-td">
-                                                        <div style="padding: 16px; border-radius: 8px; color: #F36911; border: 1px dashed #F36911;background-color:#fff;">{{coupon_code}}</div>
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
+                                        <div style="padding-bottom: 10px; font-size: 18px; font-weight: 700; border-bottom: 1px solid #EAE9E9;">{{coupon_discount}}</div>
+                                        <div style="padding-top: 12px; font-size: 14px; color: #5F5F5F;">Use this code before it expires</div>
+                                        <div style="padding-top: 4px; font-size: 13px; color: #DC232F; padding-bottom: 12px;">Expires in {{coupon_expiry}}</div>
+                                        <div style="text-align: center;">
+                                            <div style="display: inline-block; padding: 14px 32px; border-radius: 8px; color: #F36911; border: 2px dashed #F36911; background-color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 2px;">{{coupon_code}}</div>
+                                        </div>
                                     </div>
                                     {{/if}}
 
@@ -218,7 +208,7 @@
                                         <tbody>
                                             <tr>
                                                 <td class="td-img" style="width: 212px;">
-                                                    <img class="product-img" src="{{product_image}}" style="height: 188px;width: 188px;border-radius: 16px;">
+                                                    <img class="product-img" src="{{product_image}}" alt="{{product_name}}" width="188" height="188" style="height: 188px;width: 188px;border-radius: 16px;display:block;">
                                                 </td>
                                                 <td>
                                                     <div style="font-weight: 400;margin-bottom: 4px;text-transform: uppercase;">{{product_category}}</div>

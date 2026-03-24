@@ -64,4 +64,14 @@ router.post('/:id/reject', async (req, res) => {
   }
 });
 
+// POST /api/v3/approvals/ai-analyze — AI analyzes all strategies and creates approval items
+router.post('/ai-analyze', async (req, res) => {
+  try {
+    const results = await ApprovalService.aiAnalyzeStrategies();
+    res.json({ success: true, data: results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

@@ -354,6 +354,159 @@ class JourneyService {
 
     return { nodeStats, funnelData };
   }
+
+  // ── Campaign Analytics per Journey ─────────────────────────
+
+  static async getJourneyCampaignAnalytics(journeyId) {
+    // Get all campaigns linked to this journey's segment
+    const { rows: journey } = await db.query(
+      `SELECT jf.*, sd.segment_name FROM journey_flows jf
+       LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
+       WHERE jf.journey_id = $1`, [journeyId]
+    );
+    if (!journey[0]) return null;
+
+    const segmentLabel = journey[0].segment_name || journey[0].segment_label;
+
+    // Get segment customer count for target
+    const { rows: [segCount] } = await db.query(
+      `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
+      [journey[0].segment_id]
+    );
+    const targetCount = parseInt(segCount?.cnt) || 0;
+
+    // Get campaign metrics for this segment
+    const { rows: campaigns } = await db.query(`
+      SELECT c.id, c.name, c.channel::text, c.status, c.template_id,
+        c.sent_count, c.delivered_count, c.read_count, c.click_count,
+        c.bounce_count, c.fail_count, c.conversion_count, c.revenue_total,
+        c.journey_node_id,
+        ct.body AS template_body, ct.name AS template_name,
+        CASE WHEN c.sent_count > 0 THEN ROUND(c.delivered_count::numeric / c.sent_count * 100, 1) ELSE 0 END AS delivery_rate,
+        CASE WHEN c.delivered_count > 0 THEN ROUND(c.read_count::numeric / c.delivered_count * 100, 1) ELSE 0 END AS open_rate,
+        CASE WHEN c.delivered_count > 0 THEN ROUND(c.click_count::numeric / c.delivered_count * 100, 1) ELSE 0 END AS click_rate
+      FROM campaigns c
+      LEFT JOIN content_templates ct ON ct.id = c.template_id
+      WHERE c.segment_label = $1
+      ORDER BY c.created_at ASC
+    `, [segmentLabel]);
+
+    // Aggregate totals
+    const totals = {
+      total_sent: campaigns.reduce((s, c) => s + (parseInt(c.sent_count) || 0), 0),
+      total_delivered: campaigns.reduce((s, c) => s + (parseInt(c.delivered_count) || 0), 0),
+      total_read: campaigns.reduce((s, c) => s + (parseInt(c.read_count) || 0), 0),
+      total_clicked: campaigns.reduce((s, c) => s + (parseInt(c.click_count) || 0), 0),
+      total_bounced: campaigns.reduce((s, c) => s + (parseInt(c.bounce_count) || 0), 0),
+      total_failed: campaigns.reduce((s, c) => s + (parseInt(c.fail_count) || 0), 0),
+      total_conversions: campaigns.reduce((s, c) => s + (parseInt(c.conversion_count) || 0), 0),
+      total_revenue: campaigns.reduce((s, c) => s + (parseFloat(c.revenue_total) || 0), 0),
+    };
+
+    return { journey: journey[0], campaigns, totals, target_count: targetCount };
+  }
+
+  // ── Conversion Detection (BigQuery + Offline Booking) ──────
+
+  static async checkConversions(journeyId) {
+    const { rows: journey } = await db.query(
+      `SELECT * FROM journey_flows WHERE journey_id = $1`, [journeyId]
+    );
+    if (!journey[0]) return null;
+
+    let converted = 0;
+
+    // 1. Check BigQuery purchases: GA4 purchase events for enrolled customers
+    const { rows: bqConverted } = await db.query(`
+      UPDATE journey_enrollments je SET
+        status = 'converted',
+        conversion_event = 'ga4_purchase',
+        conversion_at = g.purchase_ts,
+        updated_at = NOW()
+      FROM (
+        SELECT gp.linked_customer_id, MAX(ge.event_ts) AS purchase_ts
+        FROM ga4_events ge
+        JOIN ga4_user_profiles gp ON gp.user_pseudo_id = ge.user_pseudo_id
+        WHERE ge.event_name = 'purchase'
+          AND gp.linked_customer_id IS NOT NULL
+          AND ge.event_ts > (SELECT MIN(enrolled_at) FROM journey_enrollments WHERE journey_id = $1)
+        GROUP BY gp.linked_customer_id
+      ) g
+      WHERE je.journey_id = $1
+        AND je.customer_id = g.linked_customer_id
+        AND je.status = 'active'
+      RETURNING je.id
+    `, [journeyId]);
+    converted += bqConverted.length;
+
+    // 2. Check offline bookings: travel_data for enrolled customers
+    const { rows: offlineConverted } = await db.query(`
+      UPDATE journey_enrollments je SET
+        status = 'converted',
+        conversion_event = 'offline_booking',
+        conversion_at = td.booking_ts,
+        updated_at = NOW()
+      FROM (
+        SELECT c.customer_id, MAX(td.booking_date) AS booking_ts
+        FROM customers c
+        JOIN mysql_travel_data td ON LOWER(td.email) = LOWER(c.email)
+        WHERE td.booking_date > (SELECT MIN(enrolled_at) FROM journey_enrollments WHERE journey_id = $1)
+        GROUP BY c.customer_id
+      ) td
+      WHERE je.journey_id = $1
+        AND je.customer_id = td.customer_id
+        AND je.status = 'active'
+      RETURNING je.id
+    `, [journeyId]);
+    converted += offlineConverted.length;
+
+    // Update journey stats
+    await db.query(`
+      UPDATE journey_flows SET
+        total_conversions = (SELECT COUNT(*) FROM journey_enrollments WHERE journey_id = $1 AND status = 'converted'),
+        conversion_rate = CASE
+          WHEN (SELECT COUNT(*) FROM journey_enrollments WHERE journey_id = $1) > 0
+          THEN ROUND((SELECT COUNT(*)::numeric FROM journey_enrollments WHERE journey_id = $1 AND status = 'converted') /
+                     (SELECT COUNT(*)::numeric FROM journey_enrollments WHERE journey_id = $1) * 100, 2)
+          ELSE 0
+        END,
+        updated_at = NOW()
+      WHERE journey_id = $1
+    `, [journeyId]);
+
+    return {
+      ga4_conversions: bqConverted.length,
+      offline_conversions: offlineConverted.length,
+      total_converted: converted
+    };
+  }
+
+  // ── Get Enrollments ────────────────────────────────────────
+
+  static async getEnrollments(journeyId) {
+    const { rows } = await db.query(`
+      SELECT je.*,
+        c.first_name, c.last_name, c.email, c.phone_number,
+        c.enquiry_department, c.enquiry_product_line
+      FROM journey_enrollments je
+      JOIN customers c ON c.customer_id = je.customer_id
+      WHERE je.journey_id = $1
+      ORDER BY je.enrolled_at DESC
+      LIMIT 100
+    `, [journeyId]);
+
+    const { rows: [stats] } = await db.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'active') AS active,
+        COUNT(*) FILTER (WHERE status = 'converted') AS converted,
+        COUNT(*) FILTER (WHERE status = 'exited') AS exited,
+        COUNT(*) FILTER (WHERE status = 'paused') AS paused
+      FROM journey_enrollments WHERE journey_id = $1
+    `, [journeyId]);
+
+    return { enrollments: rows, stats };
+  }
 }
 
 export default JourneyService;

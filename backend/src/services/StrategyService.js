@@ -1,5 +1,17 @@
 import { query } from '../config/database.js';
 
+// Parse PG array string "{a,b,c}" → ["a","b","c"]
+function parseChannels(val) {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') return val.replace(/[{}]/g, '').split(',').filter(Boolean);
+  return [];
+}
+function fixRow(row) {
+  if (!row) return row;
+  row.channels = parseChannels(row.channels);
+  return row;
+}
+
 export class StrategyService {
 
   /** Get all strategies with segment stats */
@@ -13,7 +25,7 @@ export class StrategyService {
       FROM omnichannel_strategies s
       ORDER BY s.updated_at DESC
     `);
-    return rows;
+    return rows.map(fixRow);
   }
 
   /** Get strategy by ID with full details */
@@ -34,7 +46,7 @@ export class StrategyService {
       ORDER BY created_at DESC
     `, [id]);
 
-    return { ...rows[0], campaigns: campaigns.rows };
+    return { ...fixRow(rows[0]), campaigns: campaigns.rows };
   }
 
   /** Create a new strategy */
@@ -80,6 +92,6 @@ export class StrategyService {
       WHERE s.segment_label = $1 AND s.status != 'archived'
       ORDER BY s.created_at DESC
     `, [segmentLabel]);
-    return rows;
+    return rows.map(fixRow);
   }
 }

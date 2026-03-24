@@ -219,19 +219,23 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// ── BigQuery Sync Cron ──────────────────────────────────────
+// ── GA4 BigQuery Sync Cron (every 30 seconds) ──────────────
 if (process.env.BQ_SYNC_ENABLED === 'true') {
-  const schedule = process.env.BQ_SYNC_CRON || '0 */4 * * *';
+  const schedule = process.env.BQ_SYNC_CRON || '*/30 * * * * *';
+  let syncing = false;
   cron.schedule(schedule, async () => {
-    console.log('[BQ Sync] Scheduled sync starting...');
+    if (syncing) return; // skip if previous sync still running
+    syncing = true;
+    console.log('[GA4 Sync] Scheduled sync starting...');
     try {
       const results = await BigQuerySyncService.syncAll();
-      console.log('[BQ Sync] Scheduled sync completed:', JSON.stringify(results));
+      console.log('[GA4 Sync] Completed:', JSON.stringify(results));
     } catch (err) {
-      console.error('[BQ Sync] Scheduled sync failed:', err.message);
+      console.error('[GA4 Sync] Failed:', err.message);
     }
-  });
-  console.log(`[BQ Sync] Cron scheduled: ${schedule}`);
+    syncing = false;
+  }, { scheduled: true });
+  console.log(`[GA4 Sync] Cron scheduled: ${schedule} (every 30 seconds)`);
 }
 
 // ── MySQL Sync Cron (every 30 minutes) ──────────────────

@@ -101,6 +101,157 @@ class ApprovalService {
     }
   }
 
+  // ── AI Strategy Analysis → Approval Queue ────────────────
+  static async aiAnalyzeStrategies() {
+    // Get all active strategies with campaign performance
+    const { rows: strategies } = await db.query(`
+      SELECT s.id, s.name, s.segment_label, s.channels, s.flow_steps,
+        COALESCE(camp.total_sent, 0) AS total_sent,
+        COALESCE(camp.total_delivered, 0) AS total_delivered,
+        COALESCE(camp.total_read, 0) AS total_read,
+        COALESCE(camp.total_clicked, 0) AS total_clicked,
+        COALESCE(camp.total_bounced, 0) AS total_bounced,
+        COALESCE(camp.campaign_count, 0) AS campaign_count,
+        COALESCE(seg.customer_count, 0) AS customer_count,
+        COALESCE(conv.conversion_count, 0) AS conversion_count
+      FROM omnichannel_strategies s
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS campaign_count,
+          COALESCE(SUM(sent_count), 0) AS total_sent,
+          COALESCE(SUM(delivered_count), 0) AS total_delivered,
+          COALESCE(SUM(read_count), 0) AS total_read,
+          COALESCE(SUM(click_count), 0) AS total_clicked,
+          COALESCE(SUM(bounce_count), 0) AS total_bounced
+        FROM campaigns WHERE strategy_id = s.id
+      ) camp ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS customer_count
+        FROM segment_customers WHERE segment_id = (
+          SELECT segment_id FROM segment_definitions WHERE segment_name = s.segment_label LIMIT 1
+        ) AND is_active = true
+      ) seg ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS conversion_count
+        FROM journey_enrollments je
+        JOIN journey_flows jf ON jf.journey_id = je.journey_id
+        WHERE jf.strategy_id = s.id AND je.status = 'converted'
+      ) conv ON true
+      WHERE s.status = 'active'
+    `);
+
+    const suggestions = [];
+
+    for (const s of strategies) {
+      const sent = parseInt(s.total_sent) || 0;
+      const delivered = parseInt(s.total_delivered) || 0;
+      const read = parseInt(s.total_read) || 0;
+      const clicked = parseInt(s.total_clicked) || 0;
+      const bounced = parseInt(s.total_bounced) || 0;
+      const customers = parseInt(s.customer_count) || 0;
+      const conversions = parseInt(s.conversion_count) || 0;
+
+      const deliveryRate = sent > 0 ? (delivered / sent * 100) : 0;
+      const openRate = delivered > 0 ? (read / delivered * 100) : 0;
+      const clickRate = delivered > 0 ? (clicked / delivered * 100) : 0;
+      const bounceRate = sent > 0 ? (bounced / sent * 100) : 0;
+      const conversionRate = customers > 0 ? (conversions / customers * 100) : 0;
+
+      const analysis = { deliveryRate, openRate, clickRate, bounceRate, conversionRate, sent, customers };
+      let suggestion = null;
+
+      // Rule 1: No campaigns sent yet — recommend launching
+      if (sent === 0 && customers > 0) {
+        suggestion = {
+          action: 'activate',
+          priority: customers > 100 ? 'high' : 'normal',
+          summary: `Strategy "${s.name}" has ${customers} customers but 0 messages sent. Recommend launching campaigns.`,
+          reasoning: `Segment "${s.segment_label}" has ${customers} customers waiting. No campaigns have been executed. Starting the journey will begin engaging these customers.`,
+          confidence: 0.85,
+          predictedImprovement: 5.0
+        };
+      }
+      // Rule 2: High bounce rate — suggest channel switch
+      else if (bounceRate > 15 && sent > 50) {
+        suggestion = {
+          action: 'optimize',
+          priority: 'high',
+          summary: `High bounce rate (${bounceRate.toFixed(1)}%) for "${s.name}". Suggest switching primary channel.`,
+          reasoning: `Bounce rate of ${bounceRate.toFixed(1)}% indicates delivery issues. Consider switching from email to WhatsApp for better reachability, or cleaning the email list.`,
+          confidence: 0.78,
+          predictedImprovement: bounceRate * 0.4
+        };
+      }
+      // Rule 3: Low open rate — suggest subject line / timing change
+      else if (openRate < 15 && sent > 50) {
+        suggestion = {
+          action: 'optimize',
+          priority: 'normal',
+          summary: `Low open rate (${openRate.toFixed(1)}%) for "${s.name}". Suggest A/B testing subject lines.`,
+          reasoning: `Open rate of ${openRate.toFixed(1)}% is below the 20% industry average. Try personalized subject lines with customer name and enquiry topic. Also consider sending at different times.`,
+          confidence: 0.72,
+          predictedImprovement: 8.0
+        };
+      }
+      // Rule 4: Good opens but low clicks — suggest CTA improvement
+      else if (openRate > 20 && clickRate < 3 && sent > 50) {
+        suggestion = {
+          action: 'optimize',
+          priority: 'normal',
+          summary: `Good opens (${openRate.toFixed(1)}%) but low clicks (${clickRate.toFixed(1)}%) for "${s.name}". CTA needs improvement.`,
+          reasoning: `Emails are being opened but not clicked. Recommend stronger CTAs, adding urgency ("Limited spots"), or including product images matching enquiry context.`,
+          confidence: 0.75,
+          predictedImprovement: 5.0
+        };
+      }
+      // Rule 5: Zero conversions with decent engagement — suggest offer/discount
+      else if (sent > 100 && conversions === 0 && clicked > 0) {
+        suggestion = {
+          action: 'optimize',
+          priority: 'high',
+          summary: `${clicked} clicks but 0 conversions for "${s.name}". Suggest adding incentive/discount.`,
+          reasoning: `Customers are engaging (${clicked} clicks) but not converting. Add a time-limited discount coupon or free add-on to push them over the edge.`,
+          confidence: 0.80,
+          predictedImprovement: 3.0
+        };
+      }
+
+      if (suggestion) {
+        // Check if similar pending approval already exists
+        const { rows: existing } = await db.query(
+          `SELECT 1 FROM approval_queue WHERE entity_type = 'strategy' AND entity_id = $1 AND status = 'pending' LIMIT 1`,
+          [s.id]
+        );
+
+        if (existing.length === 0) {
+          await this.requestApproval({
+            entityType: 'strategy',
+            entityId: s.id,
+            action: suggestion.action,
+            payload: { analysis, flow_steps: s.flow_steps },
+            changesSummary: suggestion.summary,
+            aiConfidence: suggestion.confidence,
+            aiReasoning: suggestion.reasoning,
+            segmentLabel: s.segment_label,
+            priority: suggestion.priority
+          });
+
+          // Also update the new approval columns
+          await db.query(`
+            UPDATE approval_queue SET
+              ai_analysis = $2,
+              conversion_rate_before = $3,
+              predicted_improvement = $4
+            WHERE entity_type = 'strategy' AND entity_id = $1 AND status = 'pending'
+          `, [s.id, JSON.stringify(analysis), conversionRate, suggestion.predictedImprovement]);
+
+          suggestions.push({ strategy: s.name, segment: s.segment_label, ...suggestion });
+        }
+      }
+    }
+
+    return { analyzed: strategies.length, suggestions_created: suggestions.length, suggestions };
+  }
+
   static async getStats() {
     const { rows: [stats] } = await db.query(`
       SELECT

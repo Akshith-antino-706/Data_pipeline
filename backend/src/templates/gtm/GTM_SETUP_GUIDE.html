@@ -70,7 +70,7 @@
 <h2>2. Webhook Endpoint</h2>
 
 <div class="endpoint">
-  <span class="method">POST</span> https://localhost:3443/api/v3/gtm/events
+  <span class="method">POST</span> https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events
 </div>
 
 <div class="important">
@@ -100,7 +100,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='view_item'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'view_item',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'ecommerce',eventAction:'view',eventLabel:fi.item_name||null,eventValue:ecom.value||fi.price||null,
@@ -128,7 +128,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='add_to_cart'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'add_to_cart',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'ecommerce',eventAction:'add',eventLabel:fi.item_name||e.item_name||e.product_name||null,eventValue:ecom.value||e.value||fi.price||null,
@@ -156,7 +156,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='check_availability_click'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'check_availability_click',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'ecommerce',eventAction:'click',eventLabel:fi.item_name||e.item_name||null,eventValue:ecom.value||fi.price||null,
@@ -184,7 +184,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='event_date'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'event_date',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'ecommerce',eventAction:'select',eventLabel:fi.item_name||e.selected_date||null,eventValue:ecom.value||fi.price||null,
@@ -212,7 +212,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='begin_checkout'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'begin_checkout',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'conversion',eventAction:'checkout',eventLabel:fi.item_name||null,eventValue:ecom.value||null,
@@ -240,7 +240,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='add_payment_info'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'add_payment_info',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'conversion',eventAction:'payment',eventLabel:e.payment_type||fi.item_name||null,eventValue:ecom.value||null,
@@ -268,7 +268,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='purchase'&amp;&amp;dl[i].ecommerce){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'purchase',customerId:e.email_id||e.email||e.user_id||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'conversion',eventAction:'purchase',eventLabel:fi.item_name||null,eventValue:ecom.value||null,
@@ -297,7 +297,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='payment_failed'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'payment_failed',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'conversion',eventAction:'error',eventLabel:e.error_message||e.payment_type||fi.item_name||null,eventValue:ecom.value||null,
@@ -325,7 +325,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='generate_lead'){var e=dl[i];
   var p={eventName:'generate_lead',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'conversion',eventAction:'submit',eventLabel:e.lead_type||e.product_interest||null,eventValue:e.value||null,ecommerceData:null,
@@ -351,7 +351,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='lead'){var e=dl[i];
   var p={eventName:'lead',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'conversion',eventAction:'submit',eventLabel:e.lead_type||e.product_interest||e.source||null,eventValue:e.value||null,ecommerceData:null,
@@ -377,7 +377,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='click_whatsapp'){var e=dl[i];
   var p={eventName:'click_whatsapp',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'engagement',eventAction:'click',eventLabel:e.click_location||e.product_context||e.product_name||null,eventValue:null,ecommerceData:null,
@@ -403,7 +403,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='click_call'){var e=dl[i];
   var p={eventName:'click_call',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'engagement',eventAction:'click',eventLabel:e.click_location||e.product_name||null,eventValue:null,ecommerceData:null,
@@ -429,7 +429,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='click_email'){var e=dl[i];
   var p={eventName:'click_email',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'engagement',eventAction:'click',eventLabel:e.click_location||e.product_name||null,eventValue:null,ecommerceData:null,
@@ -455,7 +455,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='share'){var e=dl[i];
   var p={eventName:'share',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'engagement',eventAction:'share',eventLabel:e.method||e.content_type||e.product_name||null,eventValue:null,ecommerceData:null,
@@ -481,7 +481,7 @@
   </div>
 <pre><code>&lt;script&gt;
 (function(){
-  var API='https://localhost:3443/api/v3/gtm/events',dl=window.dataLayer||[];
+  var API='https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events',dl=window.dataLayer||[];
   for(var i=dl.length-1;i>=0;i--){if(dl[i].event==='add_to_wishlist'){var e=dl[i],ecom=e.ecommerce||{},items=ecom.items||[],fi=items[0]||{};
   var p={eventName:'add_to_wishlist',customerId:e.email_id||e.user_id||e.email||null,sessionId:getSid(),pageUrl:location.href,pageTitle:document.title,
     eventCategory:'engagement',eventAction:'add',eventLabel:fi.item_name||e.item_name||null,eventValue:ecom.value||fi.price||null,

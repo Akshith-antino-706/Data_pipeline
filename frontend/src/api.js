@@ -78,6 +78,9 @@ export const generateJourneyFromStrategy = (strategyId) => request(`/api/v3/jour
 export const enrollJourney = (id) => request(`/api/v3/journeys/${id}/enroll`, { method: 'POST' });
 export const processJourney = (id) => request(`/api/v3/journeys/${id}/process`, { method: 'POST' });
 export const getJourneyAnalytics = (id) => request(`/api/v3/journeys/${id}/analytics`);
+export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${id}/campaign-analytics`);
+export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
+export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
 
 // ── Conversion Funnel ───────────────────────────────────────
 export const getFunnelData = () => request('/api/v3/funnel/overview');
@@ -105,7 +108,9 @@ export const recalculateRFM = () => request('/api/v3/rfm/recalculate', { method:
 
 // ── UTM Tracking ──────────────────────────────────────────────
 export const buildUTM = (data) => request('/api/v3/utm/build', { method: 'POST', body: JSON.stringify(data) });
+export const getUTMSegments = () => request('/api/v3/utm/segments');
 export const generateSegmentUTM = (label) => request(`/api/v3/utm/segment/${encodeURIComponent(label)}`, { method: 'POST' });
+export const generateAllUTM = () => request('/api/v3/utm/generate-all', { method: 'POST' });
 export const generateCampaignUTM = (id) => request(`/api/v3/utm/campaign/${id}`, { method: 'POST' });
 export const getUTMAnalytics = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
@@ -134,6 +139,7 @@ export const getApproval = (id) => request(`/api/v3/approvals/${id}`);
 export const requestApproval = (data) => request('/api/v3/approvals', { method: 'POST', body: JSON.stringify(data) });
 export const approveItem = (id, reviewedBy) => request(`/api/v3/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify({ reviewedBy }) });
 export const rejectItem = (id, reviewedBy) => request(`/api/v3/approvals/${id}/reject`, { method: 'POST', body: JSON.stringify({ reviewedBy }) });
+export const aiAnalyzeStrategies = () => request('/api/v3/approvals/ai-analyze', { method: 'POST' });
 
 // ── GTM & BigQuery ────────────────────────────────────────────
 export const getGTMSnippet = (containerId) => request(`/api/v3/gtm/snippet?containerId=${containerId || ''}`);

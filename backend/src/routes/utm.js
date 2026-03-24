@@ -13,11 +13,32 @@ router.post('/build', async (req, res) => {
   }
 });
 
+// GET /api/v3/utm/segments — Get all segments with UTM stats (for dropdown)
+router.get('/segments', async (req, res) => {
+  try {
+    const data = await UTMService.getSegmentsList();
+    res.json({ data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/v3/utm/segment/:label — Generate UTM for all templates in a segment
 router.post('/segment/:label', async (req, res) => {
   try {
-    const links = await UTMService.generateForSegment(req.params.label);
+    const links = await UTMService.generateForSegment(decodeURIComponent(req.params.label));
     res.json({ segment: req.params.label, links });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v3/utm/generate-all — Generate UTM for ALL segments
+router.post('/generate-all', async (req, res) => {
+  try {
+    const results = await UTMService.generateForAllSegments();
+    const totalLinks = results.reduce((sum, r) => sum + r.links_generated, 0);
+    res.json({ segments_processed: results.length, total_links: totalLinks, results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

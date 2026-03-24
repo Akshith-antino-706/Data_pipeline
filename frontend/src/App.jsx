@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom';
 import { Component, Suspense, lazy, useState } from 'react';
-import { LayoutDashboard, Zap, FileText, Send, Target, GitBranch, TrendingUp, Menu, X, PieChart, Link2, Ticket, Shield, Code } from 'lucide-react';
+import { LayoutDashboard, Zap, Target, GitBranch, Menu, X, Link2, Ticket, Shield, Code } from 'lucide-react';
 import './App.css';
 
 // Lazy-loaded pages for code splitting
@@ -20,12 +20,8 @@ const GTMIntegration = lazy(() => import('./pages/GTMIntegration'));
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/segments', icon: Target, label: 'Segments' },
-  { to: '/rfm', icon: PieChart, label: 'RFM Analysis' },
   { to: '/journeys', icon: GitBranch, label: 'Journeys' },
-  { to: '/funnel', icon: TrendingUp, label: 'Funnel' },
   { to: '/strategies', icon: Zap, label: 'Strategies' },
-  { to: '/content', icon: FileText, label: 'Content' },
-  { to: '/campaigns', icon: Send, label: 'Campaigns' },
   { to: '/utm', icon: Link2, label: 'UTM Tracking' },
   { to: '/coupons', icon: Ticket, label: 'Coupons' },
   { to: '/approvals', icon: Shield, label: 'Approvals' },
@@ -79,7 +75,7 @@ export default function App() {
 
         <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
           <div className="logo">
-            <h1>Rayna</h1>
+            <h1>Rayna Tours</h1>
             <span className="logo-sub">Omnichannel Platform</span>
           </div>
           <nav>

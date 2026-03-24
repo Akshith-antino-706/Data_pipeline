@@ -1,5 +1,7 @@
 import { query, transaction } from '../config/database.js';
 import { ContentService } from './ContentService.js';
+import { BaseTemplateService } from './BaseTemplateService.js';
+import { getSegmentProducts } from '../templates/segmentProducts.js';
 
 export class CampaignService {
 
@@ -141,7 +143,37 @@ export class CampaignService {
       // Queue messages
       let queued = 0;
       for (const customer of customers) {
-        const { body, subject } = ContentService.renderTemplate(template, customer);
+        let { body, subject } = ContentService.renderTemplate(template, customer);
+
+        // For email campaigns: wrap in Rayna Tours base template with products + coupon
+        if (campaign.channel === 'email') {
+          try {
+            const firstName = (customer.full_name || '').split(' ')[0] || 'Traveler';
+            const cleanBody = body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            const products = getSegmentProducts(campaign.segment_label);
+
+            // Add UTM params to each product URL
+            const slug = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+            const utmParams = `utm_source=rayna_platform&utm_medium=email&utm_campaign=${slug(campaign.segment_label)}&utm_content=${slug(campaign.name)}`;
+            const trackedProducts = products.map(p => ({
+              ...p,
+              product_url: p.product_url + (p.product_url.includes('?') ? '&' : '?') + utmParams,
+            }));
+
+            body = BaseTemplateService.render('product-recommendation', {
+              customer_name: firstName,
+              email_heading: subject || template.subject || 'Special Offer from Rayna Tours',
+              email_body: cleanBody.slice(0, 300),
+              cta_url: (trackedProducts[0]?.product_url) || 'https://www.raynatours.com/activities?' + utmParams,
+              coupon_code: template.cta_text || 'RAYNA2026',
+              coupon_discount: 'Flat 15% Off',
+              coupon_expiry: '7 days',
+              products: trackedProducts,
+            });
+          } catch (e) {
+            console.warn('[Campaign] Base template render failed, using raw:', e.message);
+          }
+        }
 
         await client.query(`
           INSERT INTO message_log (campaign_id, customer_email, channel, template_id, status, rendered_body, rendered_subject)

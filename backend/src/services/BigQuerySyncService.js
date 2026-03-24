@@ -2,358 +2,343 @@ import { BigQuery } from '@google-cloud/bigquery';
 import { query, transaction } from '../config/database.js';
 
 /**
- * BigQuery → PostgreSQL Incremental Sync Service
- * Pulls data from BigQuery (read-only) and upserts into local PostgreSQL.
+ * BigQuery GA4 → PostgreSQL Sync Service
+ * Pulls GA4 events from BigQuery every 10 minutes, builds user profiles,
+ * and links them to the segmentation engine.
  */
 class BigQuerySyncService {
 
-  // ── Table Mappings ────────────────────────────────────────
-  // Format: project_id.dataset.table_name
-  // mode: 'primary' = always sync, 'fallback' = only backfill gaps
-  static TABLE_MAPPINGS = {
-    customers: {
-      bqTable: `${process.env.BQ_PROJECT_ID}.${process.env.BQ_DATASET}.customers`,
-      pgTable: 'customers',
-      conflictKey: 'customer_id',
-      timestampColumn: 'updated_at',
-      columnMap: null,
-      mode: 'primary',
-    },
-    bookings: {
-      bqTable: `${process.env.BQ_PROJECT_ID}.${process.env.BQ_DATASET}.bookings`,
-      pgTable: 'bookings',
-      conflictKey: 'booking_id',
-      timestampColumn: 'updated_at',
-      columnMap: null,
-      mode: 'primary',
-    },
-    gtm_events: {
-      bqTable: `${process.env.BQ_PROJECT_ID}.${process.env.BQ_DATASET}.events_*`,
-      pgTable: 'gtm_events',
-      conflictKey: 'event_id',
-      timestampColumn: 'created_at',
-      columnMap: null,
-      mode: 'fallback',  // GTM webhook is primary; BQ only fills gaps
-    },
-  };
+  static BQ_TABLE = process.env.BQ_FULL_TABLE || 'rayna-ga4-bigquery-483612.shared_dataset.ga4_clean';
+  static BATCH_SIZE = parseInt(process.env.BQ_SYNC_BATCH_SIZE || '500');
 
-  // ── BigQuery Client (lazy singleton) ──────────────────────
+  // Lazy BigQuery client — uses Application Default Credentials
   static #bq = null;
-
-  static getBQClient() {
+  static getBQ() {
     if (!this.#bq) {
-      this.#bq = new BigQuery({ projectId: process.env.BQ_PROJECT_ID });
+      this.#bq = new BigQuery({ projectId: process.env.BQ_PROJECT_ID || 'rayna-data-pipeline' });
     }
     return this.#bq;
   }
 
   // ── Sync Metadata ─────────────────────────────────────────
 
-  static async getLastSyncTime(tableName) {
+  static async getLastSyncTime() {
     const { rows } = await query(
-      'SELECT last_synced_at FROM sync_metadata WHERE table_name = $1',
-      [tableName]
+      "SELECT last_synced_at FROM sync_metadata WHERE table_name = 'ga4_events'"
     );
-    if (rows.length === 0) {
-      await query(
-        `INSERT INTO sync_metadata (table_name) VALUES ($1) ON CONFLICT DO NOTHING`,
-        [tableName]
-      );
-      return new Date('1970-01-01T00:00:00Z');
+    if (!rows.length || !rows[0].last_synced_at || rows[0].last_synced_at.getTime() < 1000) {
+      // First sync: pull last 30 days
+      const d = new Date(); d.setDate(d.getDate() - 30);
+      return d;
     }
     return rows[0].last_synced_at;
   }
 
-  static async updateSyncMetadata(tableName, { rowsSynced, status, error, durationMs }) {
+  static async updateSyncMeta(status, rowsSynced, error, durationMs) {
     await query(
       `INSERT INTO sync_metadata (table_name, rows_synced, sync_status, error_message, sync_duration_ms, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
+       VALUES ('ga4_events', $1, $2, $3, $4, NOW())
        ON CONFLICT (table_name) DO UPDATE SET
-         rows_synced = COALESCE($2, sync_metadata.rows_synced),
-         sync_status = COALESCE($3, sync_metadata.sync_status),
-         error_message = $4,
-         sync_duration_ms = COALESCE($5, sync_metadata.sync_duration_ms),
-         last_synced_at = CASE WHEN $3 = 'success' THEN NOW() ELSE sync_metadata.last_synced_at END,
+         rows_synced = COALESCE($1, sync_metadata.rows_synced),
+         sync_status = $2,
+         error_message = $3,
+         sync_duration_ms = COALESCE($4, sync_metadata.sync_duration_ms),
+         last_synced_at = CASE WHEN $2 = 'success' THEN NOW() ELSE sync_metadata.last_synced_at END,
          updated_at = NOW()`,
-      [tableName, rowsSynced ?? null, status ?? null, error ?? null, durationMs ?? null]
+      [rowsSynced, status, error, durationMs]
     );
   }
 
-  // ── Core Sync Methods ─────────────────────────────────────
+  // ── Core Sync: Pull GA4 events from BigQuery ──────────────
 
-  /**
-   * Pull a single table from BigQuery and upsert into PostgreSQL.
-   * Read-only on BigQuery — no deletes or modifications.
-   */
-  static async pullTable(tableName) {
-    const mapping = this.TABLE_MAPPINGS[tableName];
-    if (!mapping) throw new Error(`No mapping configured for table: ${tableName}`);
-
+  static async syncEvents() {
     const startTime = Date.now();
-    await this.updateSyncMetadata(tableName, { status: 'running' });
+    await this.updateSyncMeta('running', null, null, null);
+    console.log('[GA4 Sync] Starting event sync...');
 
     try {
-      const lastSync = await this.getLastSyncTime(tableName);
-      const bq = this.getBQClient();
-      const batchSize = parseInt(process.env.BQ_SYNC_BATCH_SIZE || '500');
-
-      // Query BigQuery for rows updated since last sync (READ-ONLY)
-      const bqQuery = `
-        SELECT *
-        FROM \`${mapping.bqTable}\`
-        WHERE ${mapping.timestampColumn} > @lastSync
-        ORDER BY ${mapping.timestampColumn} ASC
-      `;
-
-      const [rows] = await bq.query({
-        query: bqQuery,
-        params: { lastSync: lastSync.toISOString() },
-      });
-
-      console.log(`[BQ Sync] ${tableName}: fetched ${rows.length} rows from BigQuery`);
-
-      if (rows.length === 0) {
-        await this.updateSyncMetadata(tableName, {
-          status: 'success',
-          rowsSynced: 0,
-          durationMs: Date.now() - startTime,
-        });
-        return { table: tableName, rowsSynced: 0 };
-      }
-
-      // Upsert into PostgreSQL in batches
+      const lastSync = await this.getLastSyncTime();
+      const bq = this.getBQ();
       let totalSynced = 0;
-      for (let i = 0; i < rows.length; i += batchSize) {
-        const batch = rows.slice(i, i + batchSize);
-        await transaction(async (client) => {
-          await this.upsertBatch(client, mapping.pgTable, mapping.conflictKey, batch, mapping.columnMap);
+
+      // Paginate by day to avoid OOM on large datasets
+      const startDate = new Date(lastSync);
+      const endDate = new Date();
+      const dayMs = 86400000;
+
+      for (let d = startDate.getTime(); d < endDate.getTime(); d += dayMs) {
+        const dayStart = new Date(d).toISOString();
+        const dayEnd = new Date(d + dayMs).toISOString();
+
+        const [rows] = await bq.query({
+          query: `
+            SELECT
+              event_date, event_ts, event_name, user_pseudo_id, user_id,
+              hostname, device_category, geo_country, geo_city,
+              ga_session_id, ga_session_number,
+              ep_source, ep_medium, ep_campaign, ep_campaign_id, gclid,
+              page_location, page_referrer, page_title, page_path_clean,
+              landing_page_path_clean, session_engaged_final, engagement_time_msec,
+              email_any, name_any, contact_number_any, logged_in_status,
+              transaction_id, final_order_id, currency,
+              item_id, item_name, item_brand, item_category,
+              item_price, item_quantity, item_revenue, item_value,
+              coupon, discount, coupon_applied, search_term,
+              item_adult_count, item_children_count,
+              campaign_source, campaign_medium, campaign_name
+            FROM \`${this.BQ_TABLE}\`
+            WHERE event_ts > @dayStart AND event_ts <= @dayEnd
+            ORDER BY event_ts ASC
+          `,
+          params: { dayStart, dayEnd },
         });
-        totalSynced += batch.length;
-        console.log(`[BQ Sync] ${tableName}: upserted ${totalSynced}/${rows.length} rows`);
+
+        if (rows.length === 0) continue;
+
+        // Batch upsert
+        for (let i = 0; i < rows.length; i += this.BATCH_SIZE) {
+          const batch = rows.slice(i, i + this.BATCH_SIZE);
+          await this.upsertEventBatch(batch);
+          totalSynced += batch.length;
+        }
+
+        console.log(`[GA4 Sync] Day ${new Date(d).toISOString().slice(0, 10)}: ${rows.length} events (total: ${totalSynced})`);
       }
 
-      await this.updateSyncMetadata(tableName, {
-        status: 'success',
-        rowsSynced: totalSynced,
-        durationMs: Date.now() - startTime,
-      });
+      console.log(`[GA4 Sync] Events synced: ${totalSynced}`);
+      await this.updateSyncMeta('success', totalSynced, null, Date.now() - startTime);
 
-      return { table: tableName, rowsSynced: totalSynced };
+      // After syncing events, rebuild user profiles + link to customers
+      const profileResult = await this.rebuildUserProfiles();
+      const linkResult = await this.linkToCustomers();
+
+      return {
+        events_synced: totalSynced,
+        profiles_updated: profileResult,
+        customers_linked: linkResult,
+        duration_ms: Date.now() - startTime
+      };
     } catch (err) {
-      console.error(`[BQ Sync] ${tableName} failed:`, err.message);
-      await this.updateSyncMetadata(tableName, {
-        status: 'error',
-        error: err.message,
-        durationMs: Date.now() - startTime,
-      });
+      console.error('[GA4 Sync] Failed:', err.message);
+      await this.updateSyncMeta('error', null, err.message, Date.now() - startTime);
       throw err;
     }
   }
 
-  /**
-   * Dynamically build and execute INSERT ... ON CONFLICT DO UPDATE
-   * Column names are derived from the BigQuery result (no hardcoding).
-   */
-  static async upsertBatch(client, pgTable, conflictKey, rows, columnMap) {
-    if (rows.length === 0) return;
+  static async upsertEventBatch(rows) {
+    if (!rows.length) return;
 
-    const bqColumns = Object.keys(rows[0]);
-    const pgColumns = columnMap
-      ? bqColumns.map(c => columnMap[c] || c)
-      : bqColumns;
+    const cols = [
+      'event_date', 'event_ts', 'event_name', 'user_pseudo_id', 'user_id',
+      'hostname', 'device_category', 'geo_country', 'geo_city',
+      'ga_session_id', 'ga_session_number',
+      'ep_source', 'ep_medium', 'ep_campaign', 'ep_campaign_id', 'gclid',
+      'page_location', 'page_referrer', 'page_title', 'page_path_clean',
+      'landing_page_path_clean', 'session_engaged_final', 'engagement_time_msec',
+      'email_any', 'name_any', 'contact_number_any', 'logged_in_status',
+      'transaction_id', 'final_order_id', 'currency',
+      'item_id', 'item_name', 'item_brand', 'item_category',
+      'item_price', 'item_quantity', 'item_revenue', 'item_value',
+      'coupon', 'discount', 'coupon_applied', 'search_term',
+      'item_adult_count', 'item_children_count',
+      'campaign_source', 'campaign_medium', 'campaign_name'
+    ];
 
-    const conflictUpdate = pgColumns
-      .filter(c => c !== conflictKey)
-      .map(c => `${c} = EXCLUDED.${c}`)
-      .join(', ');
-
-    // Build multi-row parameterized VALUES
     const values = [];
-    const valueClauses = rows.map((row, rowIdx) => {
-      const placeholders = bqColumns.map((col, colIdx) => {
-        const val = row[col];
-        // Handle BigQuery objects/arrays → JSON string for JSONB columns
-        values.push(val !== null && typeof val === 'object' && !(val instanceof Date) ? JSON.stringify(val) : val ?? null);
-        return `$${rowIdx * bqColumns.length + colIdx + 1}`;
-      });
-      return `(${placeholders.join(', ')})`;
-    });
+    const valueClauses = [];
 
-    const sql = `
-      INSERT INTO ${pgTable} (${pgColumns.join(', ')})
-      VALUES ${valueClauses.join(', ')}
-      ON CONFLICT (${conflictKey}) DO UPDATE SET ${conflictUpdate}
-    `;
-
-    await client.query(sql, values);
-  }
-
-  /**
-   * Sync all PRIMARY tables sequentially (skips fallback tables like gtm_events).
-   * Order matters: customers before bookings (FK dependency).
-   */
-  static async syncAll() {
-    console.log('[BQ Sync] Starting full sync (primary tables only)...');
-    const results = [];
-
-    for (const [tableName, mapping] of Object.entries(this.TABLE_MAPPINGS)) {
-      if (mapping.mode === 'fallback') {
-        console.log(`[BQ Sync] ${tableName}: skipped (fallback mode — use /sync/backfill-gtm)`);
-        continue;
+    for (let ri = 0; ri < rows.length; ri++) {
+      const r = rows[ri];
+      const placeholders = [];
+      for (let ci = 0; ci < cols.length; ci++) {
+        let val = r[cols[ci]];
+        // Handle BigQuery date/timestamp objects
+        if (val && typeof val === 'object' && val.value !== undefined) val = val.value;
+        // Null out empty strings
+        if (val === '') val = null;
+        // Truncate long strings
+        if (typeof val === 'string' && val.length > 2000) val = val.slice(0, 2000);
+        values.push(val ?? null);
+        placeholders.push(`$${ri * cols.length + ci + 1}`);
       }
-      try {
-        const result = await this.pullTable(tableName);
-        results.push(result);
-        console.log(`[BQ Sync] ${tableName}: ${result.rowsSynced} rows synced`);
-      } catch (err) {
-        console.error(`[BQ Sync] ${tableName} failed:`, err.message);
-        results.push({ table: tableName, error: err.message });
-      }
+      valueClauses.push(`(${placeholders.join(',')})`);
     }
 
-    console.log('[BQ Sync] Full sync completed:', JSON.stringify(results));
-    return results;
+    const sql = `
+      INSERT INTO ga4_events (${cols.join(',')})
+      VALUES ${valueClauses.join(',')}
+      ON CONFLICT (user_pseudo_id, event_name, event_ts, COALESCE(item_name, ''))
+      DO NOTHING
+    `;
+
+    await query(sql, values);
   }
 
-  // ── GTM Fallback: Gap Detection & Backfill ─────────────────
+  // ── Build User Profiles from GA4 events ───────────────────
 
-  /**
-   * Detect gaps in gtm_events where the GTM webhook may have missed events.
-   * Compares hourly event counts between PG and BigQuery.
-   */
-  static async detectGTMGaps(hoursBack = 24) {
-    const bq = this.getBQClient();
-    const mapping = this.TABLE_MAPPINGS.gtm_events;
-
-    // Count events per hour in PG
-    const pgResult = await query(`
-      SELECT date_trunc('hour', created_at) AS hour, COUNT(*) AS cnt
-      FROM gtm_events
-      WHERE created_at > NOW() - INTERVAL '${hoursBack} hours'
-      GROUP BY 1 ORDER BY 1
+  static async rebuildUserProfiles() {
+    const { rowCount } = await query(`
+      INSERT INTO ga4_user_profiles (
+        user_pseudo_id, email, name, phone,
+        first_seen, last_seen, total_sessions, total_pageviews,
+        total_item_views, total_checkouts, total_purchases, total_revenue,
+        engagement_time_sec, top_country, top_city, top_device,
+        last_source, last_medium, last_campaign,
+        viewed_products, checkout_products, purchased_products,
+        last_search_term, last_coupon_used, is_engaged, updated_at
+      )
+      SELECT
+        user_pseudo_id,
+        MAX(email_any) FILTER (WHERE email_any IS NOT NULL),
+        MAX(name_any) FILTER (WHERE name_any IS NOT NULL),
+        MAX(contact_number_any) FILTER (WHERE contact_number_any IS NOT NULL),
+        MIN(event_date),
+        MAX(event_date),
+        COUNT(DISTINCT ga_session_id),
+        COUNT(*) FILTER (WHERE event_name = 'page_view'),
+        COUNT(*) FILTER (WHERE event_name = 'view_item'),
+        COUNT(*) FILTER (WHERE event_name = 'begin_checkout'),
+        COUNT(*) FILTER (WHERE event_name = 'purchase'),
+        COALESCE(SUM(item_revenue) FILTER (WHERE event_name = 'purchase'), 0),
+        COALESCE(SUM(engagement_time_msec) / 1000, 0)::INT,
+        MODE() WITHIN GROUP (ORDER BY geo_country),
+        MODE() WITHIN GROUP (ORDER BY geo_city),
+        MODE() WITHIN GROUP (ORDER BY device_category),
+        (ARRAY_AGG(ep_source ORDER BY event_ts DESC) FILTER (WHERE ep_source IS NOT NULL))[1],
+        (ARRAY_AGG(ep_medium ORDER BY event_ts DESC) FILTER (WHERE ep_medium IS NOT NULL))[1],
+        (ARRAY_AGG(ep_campaign ORDER BY event_ts DESC) FILTER (WHERE ep_campaign IS NOT NULL))[1],
+        ARRAY(SELECT DISTINCT unnest FROM unnest(ARRAY_AGG(DISTINCT item_name) FILTER (WHERE event_name = 'view_item' AND item_name IS NOT NULL)) LIMIT 20),
+        ARRAY(SELECT DISTINCT unnest FROM unnest(ARRAY_AGG(DISTINCT item_name) FILTER (WHERE event_name = 'begin_checkout' AND item_name IS NOT NULL)) LIMIT 10),
+        ARRAY(SELECT DISTINCT unnest FROM unnest(ARRAY_AGG(DISTINCT item_name) FILTER (WHERE event_name = 'purchase' AND item_name IS NOT NULL)) LIMIT 10),
+        (ARRAY_AGG(search_term ORDER BY event_ts DESC) FILTER (WHERE search_term IS NOT NULL))[1],
+        (ARRAY_AGG(coupon ORDER BY event_ts DESC) FILTER (WHERE coupon IS NOT NULL))[1],
+        COUNT(DISTINCT ga_session_id) >= 2 OR SUM(engagement_time_msec) > 60000,
+        NOW()
+      FROM ga4_events
+      WHERE user_pseudo_id IS NOT NULL
+      GROUP BY user_pseudo_id
+      ON CONFLICT (user_pseudo_id) DO UPDATE SET
+        email = COALESCE(EXCLUDED.email, ga4_user_profiles.email),
+        name = COALESCE(EXCLUDED.name, ga4_user_profiles.name),
+        phone = COALESCE(EXCLUDED.phone, ga4_user_profiles.phone),
+        first_seen = LEAST(EXCLUDED.first_seen, ga4_user_profiles.first_seen),
+        last_seen = GREATEST(EXCLUDED.last_seen, ga4_user_profiles.last_seen),
+        total_sessions = EXCLUDED.total_sessions,
+        total_pageviews = EXCLUDED.total_pageviews,
+        total_item_views = EXCLUDED.total_item_views,
+        total_checkouts = EXCLUDED.total_checkouts,
+        total_purchases = EXCLUDED.total_purchases,
+        total_revenue = EXCLUDED.total_revenue,
+        engagement_time_sec = EXCLUDED.engagement_time_sec,
+        top_country = EXCLUDED.top_country,
+        top_city = EXCLUDED.top_city,
+        top_device = EXCLUDED.top_device,
+        last_source = EXCLUDED.last_source,
+        last_medium = EXCLUDED.last_medium,
+        last_campaign = EXCLUDED.last_campaign,
+        viewed_products = EXCLUDED.viewed_products,
+        checkout_products = EXCLUDED.checkout_products,
+        purchased_products = EXCLUDED.purchased_products,
+        last_search_term = EXCLUDED.last_search_term,
+        last_coupon_used = EXCLUDED.last_coupon_used,
+        is_engaged = EXCLUDED.is_engaged,
+        updated_at = NOW()
     `);
-    const pgCounts = new Map(pgResult.rows.map(r => [r.hour.toISOString(), parseInt(r.cnt)]));
 
-    // Count events per hour in BigQuery
-    const [bqRows] = await bq.query({
-      query: `
-        SELECT TIMESTAMP_TRUNC(${mapping.timestampColumn}, HOUR) AS hour, COUNT(*) AS cnt
-        FROM \`${mapping.bqTable}\`
-        WHERE ${mapping.timestampColumn} > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL ${hoursBack} HOUR)
-        GROUP BY 1 ORDER BY 1
-      `,
-    });
-
-    // Find hours where BQ has more events than PG (= missed by webhook)
-    const gaps = [];
-    for (const row of bqRows) {
-      const hourKey = row.hour.value || row.hour.toISOString();
-      const bqCount = parseInt(row.cnt);
-      const pgCount = pgCounts.get(hourKey) || 0;
-      if (bqCount > pgCount) {
-        gaps.push({ hour: hourKey, bqCount, pgCount, missing: bqCount - pgCount });
-      }
-    }
-
-    console.log(`[BQ Sync] GTM gap detection: ${gaps.length} hours with missing events`);
-    return gaps;
+    console.log(`[GA4 Sync] User profiles rebuilt: ${rowCount}`);
+    return rowCount;
   }
 
-  /**
-   * Backfill gtm_events from BigQuery for specific time gaps.
-   * Only inserts events that don't already exist in PG (ON CONFLICT DO NOTHING).
-   */
-  static async backfillGTMEvents(hoursBack = 24) {
-    const mapping = this.TABLE_MAPPINGS.gtm_events;
-    const startTime = Date.now();
-    await this.updateSyncMetadata('gtm_events', { status: 'running' });
+  // ── Link GA4 profiles to customers (by email) ────────────
 
-    try {
-      const gaps = await this.detectGTMGaps(hoursBack);
-      if (gaps.length === 0) {
-        await this.updateSyncMetadata('gtm_events', {
-          status: 'success', rowsSynced: 0, durationMs: Date.now() - startTime,
-        });
-        return { table: 'gtm_events', rowsSynced: 0, gaps: 0 };
-      }
+  static async linkToCustomers() {
+    // Link by email match
+    const { rowCount: emailLinked } = await query(`
+      UPDATE ga4_user_profiles gp SET linked_customer_id = c.customer_id
+      FROM customers c
+      WHERE gp.email IS NOT NULL
+        AND LOWER(gp.email) = LOWER(c.email)
+        AND gp.linked_customer_id IS NULL
+    `);
 
-      const bq = this.getBQClient();
-      const batchSize = parseInt(process.env.BQ_SYNC_BATCH_SIZE || '500');
+    // Enrich customers with GA4 data
+    const { rowCount: enriched } = await query(`
+      UPDATE customers c SET
+        ga4_user_pseudo_id = gp.user_pseudo_id,
+        ga4_sessions = gp.total_sessions,
+        ga4_pageviews = gp.total_pageviews,
+        ga4_item_views = gp.total_item_views,
+        ga4_checkouts = gp.total_checkouts,
+        ga4_last_source = gp.last_source,
+        ga4_last_medium = gp.last_medium,
+        ga4_last_campaign = gp.last_campaign,
+        ga4_viewed_products = gp.viewed_products,
+        ga4_last_active = gp.last_seen,
+        website_sessions_total = gp.total_sessions,
+        product_views_count = gp.total_item_views,
+        lead_source = COALESCE(c.lead_source, gp.last_source)
+      FROM ga4_user_profiles gp
+      WHERE gp.linked_customer_id = c.customer_id
+    `);
 
-      // Pull events for gap hours only
-      const gapHours = gaps.map(g => `"${g.hour}"`).join(', ');
-      const [rows] = await bq.query({
-        query: `
-          SELECT *
-          FROM \`${mapping.bqTable}\`
-          WHERE TIMESTAMP_TRUNC(${mapping.timestampColumn}, HOUR) IN (${gapHours})
-          ORDER BY ${mapping.timestampColumn} ASC
-        `,
-      });
+    // Also update segment-relevant fields for customers with GA4 cart abandonment
+    await query(`
+      UPDATE customers c SET
+        last_abandoned_cart_date = sub.last_checkout
+      FROM (
+        SELECT gp.linked_customer_id, MAX(g.event_ts) AS last_checkout
+        FROM ga4_events g
+        JOIN ga4_user_profiles gp ON gp.user_pseudo_id = g.user_pseudo_id
+        WHERE g.event_name = 'begin_checkout'
+          AND gp.linked_customer_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ga4_events g2
+            WHERE g2.user_pseudo_id = g.user_pseudo_id
+              AND g2.event_name = 'purchase'
+              AND g2.event_ts > g.event_ts
+          )
+        GROUP BY gp.linked_customer_id
+      ) sub
+      WHERE c.customer_id = sub.linked_customer_id
+        AND (c.last_abandoned_cart_date IS NULL OR c.last_abandoned_cart_date < sub.last_checkout)
+    `);
 
-      console.log(`[BQ Sync] gtm_events backfill: fetched ${rows.length} rows for ${gaps.length} gap hours`);
-
-      let totalSynced = 0;
-      for (let i = 0; i < rows.length; i += batchSize) {
-        const batch = rows.slice(i, i + batchSize);
-        await transaction(async (client) => {
-          await this.upsertBatchNoOverwrite(client, mapping.pgTable, mapping.conflictKey, batch, mapping.columnMap);
-        });
-        totalSynced += batch.length;
-      }
-
-      await this.updateSyncMetadata('gtm_events', {
-        status: 'success', rowsSynced: totalSynced, durationMs: Date.now() - startTime,
-      });
-
-      return { table: 'gtm_events', rowsSynced: totalSynced, gaps: gaps.length };
-    } catch (err) {
-      console.error('[BQ Sync] gtm_events backfill failed:', err.message);
-      await this.updateSyncMetadata('gtm_events', {
-        status: 'error', error: err.message, durationMs: Date.now() - startTime,
-      });
-      throw err;
-    }
+    console.log(`[GA4 Sync] Linked ${emailLinked} profiles, enriched ${enriched} customers`);
+    return { email_linked: emailLinked, customers_enriched: enriched };
   }
 
-  /**
-   * INSERT ... ON CONFLICT DO NOTHING — preserves existing GTM webhook data.
-   */
-  static async upsertBatchNoOverwrite(client, pgTable, conflictKey, rows, columnMap) {
-    if (rows.length === 0) return;
+  // ── Full sync (called by cron and API) ────────────────────
 
-    const bqColumns = Object.keys(rows[0]);
-    const pgColumns = columnMap
-      ? bqColumns.map(c => columnMap[c] || c)
-      : bqColumns;
-
-    const values = [];
-    const valueClauses = rows.map((row, rowIdx) => {
-      const placeholders = bqColumns.map((col, colIdx) => {
-        const val = row[col];
-        values.push(val !== null && typeof val === 'object' && !(val instanceof Date) ? JSON.stringify(val) : val ?? null);
-        return `$${rowIdx * bqColumns.length + colIdx + 1}`;
-      });
-      return `(${placeholders.join(', ')})`;
-    });
-
-    const sql = `
-      INSERT INTO ${pgTable} (${pgColumns.join(', ')})
-      VALUES ${valueClauses.join(', ')}
-      ON CONFLICT (${conflictKey}) DO NOTHING
-    `;
-
-    await client.query(sql, values);
+  static async syncAll() {
+    return this.syncEvents();
   }
 
-  /**
-   * Get sync status for all tables.
-   */
+  // ── Sync Status ───────────────────────────────────────────
+
   static async getSyncStatus() {
     const { rows } = await query(
-      'SELECT * FROM sync_metadata ORDER BY table_name'
+      "SELECT * FROM sync_metadata WHERE table_name IN ('ga4_events', 'mysql_tickets', 'mysql_chats', 'mysql_travel_data', 'mysql_contacts') ORDER BY table_name"
     );
-    return rows;
+
+    const { rows: [ga4Stats] } = await query(`
+      SELECT
+        COUNT(*) AS total_events,
+        COUNT(DISTINCT user_pseudo_id) AS unique_users,
+        COUNT(DISTINCT email_any) FILTER (WHERE email_any IS NOT NULL) AS unique_emails,
+        MIN(event_date) AS earliest,
+        MAX(event_date) AS latest
+      FROM ga4_events
+    `);
+
+    const { rows: [profileStats] } = await query(`
+      SELECT
+        COUNT(*) AS total_profiles,
+        COUNT(*) FILTER (WHERE linked_customer_id IS NOT NULL) AS linked_profiles,
+        COUNT(*) FILTER (WHERE is_engaged) AS engaged_profiles
+      FROM ga4_user_profiles
+    `);
+
+    return { sync_metadata: rows, ga4_stats: ga4Stats, profile_stats: profileStats };
   }
 }
 

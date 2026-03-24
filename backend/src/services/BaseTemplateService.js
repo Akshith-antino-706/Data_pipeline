@@ -163,7 +163,7 @@ export class BaseTemplateService {
       coupon_expiry: '48 hours',
       products: [
         {
-          product_image: 'https://d1i3enf1i5tb1f.cloudfront.net/images/new_web_img/desert-safari-dubai-6.jpg',
+          product_image: 'https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_300,h_200/f_auto/q_auto/https://d31sl6cu4pqx6g.cloudfront.net/City-Images/13668/dubai-city.png',
           product_category: 'Desert Safari',
           product_name: 'Premium Desert Safari with BBQ Dinner',
           product_rating: '4.8',
@@ -177,7 +177,7 @@ export class BaseTemplateService {
           child_count: '1',
         },
         {
-          product_image: 'https://d1i3enf1i5tb1f.cloudfront.net/images/new_web_img/burj-khalifa-8.jpg',
+          product_image: 'https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_300,h_200/f_auto/q_auto/https://d31sl6cu4pqx6g.cloudfront.net/City-Images/13236/abu-dhabi.jpg',
           product_category: 'City Tour',
           product_name: 'Burj Khalifa At The Top — 124th Floor',
           product_rating: '4.9',
@@ -191,7 +191,7 @@ export class BaseTemplateService {
           child_count: '0',
         },
         {
-          product_image: 'https://d1i3enf1i5tb1f.cloudfront.net/images/new_web_img/dubai-marina-cruise-1.jpg',
+          product_image: 'https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_300,h_200/f_auto/q_auto/https://d31sl6cu4pqx6g.cloudfront.net/City-Images/14644/ras-al-khaimah-city.png',
           product_category: 'Cruise',
           product_name: 'Dubai Marina Luxury Dhow Cruise with Dinner',
           product_rating: '4.7',
@@ -258,7 +258,7 @@ export class BaseTemplateService {
   static previewForSegment(segmentName) {
     const sampleProducts = [
       {
-        product_image: 'https://d1i3enf1i5tb1f.cloudfront.net/images/new_web_img/desert-safari-dubai-6.jpg',
+        product_image: 'https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_300,h_200/f_auto/q_auto/https://d31sl6cu4pqx6g.cloudfront.net/City-Images/13668/dubai-city.png',
         product_category: 'Desert Safari',
         product_name: 'Premium Desert Safari with BBQ Dinner',
         product_rating: '4.8',
@@ -272,7 +272,7 @@ export class BaseTemplateService {
         child_count: '1',
       },
       {
-        product_image: 'https://d1i3enf1i5tb1f.cloudfront.net/images/new_web_img/burj-khalifa-8.jpg',
+        product_image: 'https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_300,h_200/f_auto/q_auto/https://d31sl6cu4pqx6g.cloudfront.net/City-Images/13236/abu-dhabi.jpg',
         product_category: 'City Tour',
         product_name: 'Burj Khalifa At The Top — 124th Floor',
         product_rating: '4.9',
@@ -286,7 +286,7 @@ export class BaseTemplateService {
         child_count: '0',
       },
       {
-        product_image: 'https://d1i3enf1i5tb1f.cloudfront.net/images/new_web_img/dubai-marina-cruise-1.jpg',
+        product_image: 'https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_300,h_200/f_auto/q_auto/https://d31sl6cu4pqx6g.cloudfront.net/City-Images/14644/ras-al-khaimah-city.png',
         product_category: 'Cruise',
         product_name: 'Dubai Marina Luxury Dhow Cruise with Dinner',
         product_rating: '4.7',

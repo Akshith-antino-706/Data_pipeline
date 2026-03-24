@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { getApprovalQueue, getApprovalStats, approveItem, rejectItem } from '../api';
-import { Shield, Check, X, Clock, AlertTriangle } from 'lucide-react';
+import { getApprovalQueue, getApprovalStats, approveItem, rejectItem, aiAnalyzeStrategies } from '../api';
+import { Shield, Check, X, Clock, AlertTriangle, Brain } from 'lucide-react';
 
 export default function Approvals() {
   const [queue, setQueue] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState(null);
   const [filter, setFilter] = useState('pending');
 
   useEffect(() => { load(); }, [filter]);
@@ -20,6 +22,20 @@ export default function Approvals() {
     setLoading(false);
   }
 
+  async function handleAnalyze() {
+    setAnalyzing(true);
+    setAnalysisResult(null);
+    try {
+      const res = await aiAnalyzeStrategies();
+      setAnalysisResult(res.data);
+      if (res.data?.suggestions_created > 0) {
+        setFilter('pending');
+        await load();
+      }
+    } catch (err) { console.error(err); }
+    setAnalyzing(false);
+  }
+
   async function handleApprove(id) {
     try { await approveItem(id, 'admin'); load(); } catch (err) { console.error(err); }
   }
@@ -32,8 +48,32 @@ export default function Approvals() {
 
   return (
     <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700, margin: '0 0 4px' }}>Human Approval</h1>
-      <p style={{ color: '#78716c', margin: '0 0 24px' }}>Review and approve AI-optimized strategies, campaigns, and content before activation</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: '0 0 4px' }}>Human Approval</h1>
+          <p style={{ color: '#78716c', margin: 0 }}>Review and approve AI-optimized strategies, campaigns, and content before activation</p>
+        </div>
+        <button onClick={handleAnalyze} disabled={analyzing}
+          style={{ padding: '10px 20px', borderRadius: 10, border: '2px solid #dc2626', background: analyzing ? '#fef2f2' : '#dc2626', color: analyzing ? '#dc2626' : '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Brain size={16} /> {analyzing ? 'Analyzing Strategies...' : 'AI Analyze All Strategies'}
+        </button>
+      </div>
+
+      {analysisResult && (
+        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6, color: '#166534' }}>
+            AI Analysis Complete — {analysisResult.analyzed} strategies analyzed, {analysisResult.suggestions_created} suggestions created
+          </div>
+          {analysisResult.suggestions?.map((s, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#15803d', marginTop: 4 }}>
+              • <b>{s.segment}</b>: {s.summary}
+            </div>
+          ))}
+          {analysisResult.suggestions_created === 0 && (
+            <div style={{ fontSize: 12, color: '#15803d' }}>All strategies look healthy. No changes suggested.</div>
+          )}
+        </div>
+      )}
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
