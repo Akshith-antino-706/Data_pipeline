@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { getCampaigns, getCampaign, createCampaign, executeCampaign, getSegments, getTemplates, getStrategies } from '../api';
 import { Plus, Play, Eye } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const STATUS_BADGE = { draft: 'badge-gray', scheduled: 'badge-blue', running: 'badge-purple', paused: 'badge-orange', completed: 'badge-green', failed: 'badge-red' };
+
+const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
+const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 export default function Campaigns() {
   const [campaigns, setCampaigns] = useState([]);
@@ -18,36 +22,42 @@ export default function Campaigns() {
   useEffect(() => {
     Promise.all([getCampaigns(), getSegments(), getTemplates(), getStrategies()])
       .then(([c, s, t, st]) => {
-        setCampaigns(c.data);
-        setSegments(s.data);
-        setTemplates(t.data);
-        setStrategies(st.data);
+        setCampaigns(c.data || []);
+        setSegments(Array.isArray(s) ? s : (s.data || []));
+        setTemplates(t.data || []);
+        setStrategies(st.data || []);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
   const selectCampaign = async (id) => {
-    const data = await getCampaign(id);
-    setSelected(data.data);
+    try {
+      const data = await getCampaign(id);
+      setSelected(data.data || null);
+    } catch (err) { console.error(err); }
   };
 
   const handleCreate = async () => {
-    const data = await createCampaign({
-      ...form,
-      templateId: parseInt(form.templateId),
-      strategyId: form.strategyId ? parseInt(form.strategyId) : null,
-    });
-    setCampaigns([data.data, ...campaigns]);
-    setShowCreate(false);
-    setForm({ name: '', segmentLabel: '', channel: 'email', templateId: '', strategyId: '' });
+    try {
+      const data = await createCampaign({
+        ...form,
+        templateId: parseInt(form.templateId),
+        strategyId: form.strategyId ? parseInt(form.strategyId) : null,
+      });
+      if (data.data) setCampaigns([data.data, ...campaigns]);
+      setShowCreate(false);
+      setForm({ name: '', segmentLabel: '', channel: 'email', templateId: '', strategyId: '' });
+    } catch (err) { console.error(err); }
   };
 
   const handleExecute = async (id) => {
-    await executeCampaign(id);
-    const updated = await getCampaigns();
-    setCampaigns(updated.data);
-    selectCampaign(id);
+    try {
+      await executeCampaign(id);
+      const updated = await getCampaigns();
+      setCampaigns(updated.data || []);
+      selectCampaign(id);
+    } catch (err) { console.error(err); }
   };
 
   if (loading) return <div className="spinner">Loading campaigns...</div>;
@@ -55,13 +65,13 @@ export default function Campaigns() {
   const fmt = (n) => Number(n || 0).toLocaleString();
 
   return (
-    <div>
-      <div className="page-header">
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
+      <motion.div variants={fadeInUp} className="page-header">
         <h2>Campaigns</h2>
         <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={14} /> New Campaign</button>
-      </div>
+      </motion.div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 1fr' : '1fr', gap: 20 }}>
+      <motion.div variants={fadeInUp} className={`split-pane ${selected ? 'has-detail' : ''}`}>
         {/* Campaign List */}
         <div className="card">
           <div className="card-header"><h3>All Campaigns ({campaigns.length})</h3></div>
@@ -73,14 +83,14 @@ export default function Campaigns() {
               <tbody>
                 {campaigns.map(c => (
                   <tr key={c.id}>
-                    <td style={{ fontWeight: 500 }}>{c.name}</td>
+                    <td className="font-medium">{c.name}</td>
                     <td className={`channel-${c.channel}`}>{c.channel}</td>
                     <td>{c.segment_label}</td>
                     <td><span className={`badge ${STATUS_BADGE[c.status]}`}>{c.status}</span></td>
                     <td>{fmt(c.sent_count)}</td>
                     <td>{fmt(c.delivered_count)}</td>
                     <td>
-                      <div style={{ display: 'flex', gap: 4 }}>
+                      <div className="flex gap-4">
                         <button className="btn btn-secondary btn-sm" onClick={() => selectCampaign(c.id)}><Eye size={12} /></button>
                         {['draft', 'scheduled'].includes(c.status) && (
                           <button className="btn btn-success btn-sm" onClick={() => handleExecute(c.id)}><Play size={12} /> Launch</button>
@@ -104,50 +114,50 @@ export default function Campaigns() {
             </div>
 
             {/* KPI Row */}
-            <div className="card-grid card-grid-3" style={{ marginBottom: 16 }}>
-              <div style={{ textAlign: 'center', padding: 12, background: 'var(--bg)', borderRadius: 8 }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--blue)' }}>{fmt(selected.target_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>TARGET</div>
+            <div className="card-grid card-grid-3 mb-16">
+              <div className="text-center" style={{ padding: 12, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                <div className="text-2xl font-bold" style={{ color: 'var(--blue)' }}>{fmt(selected.target_count)}</div>
+                <div className="text-xs text-secondary">TARGET</div>
               </div>
-              <div style={{ textAlign: 'center', padding: 12, background: 'var(--bg)', borderRadius: 8 }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--green)' }}>{fmt(selected.sent_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>SENT</div>
+              <div className="text-center" style={{ padding: 12, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                <div className="text-2xl font-bold" style={{ color: 'var(--green)' }}>{fmt(selected.sent_count)}</div>
+                <div className="text-xs text-secondary">SENT</div>
               </div>
-              <div style={{ textAlign: 'center', padding: 12, background: 'var(--bg)', borderRadius: 8 }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--purple)' }}>{fmt(selected.delivered_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>DELIVERED</div>
+              <div className="text-center" style={{ padding: 12, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                <div className="text-2xl font-bold" style={{ color: 'var(--purple)' }}>{fmt(selected.delivered_count)}</div>
+                <div className="text-xs text-secondary">DELIVERED</div>
               </div>
             </div>
 
-            <div className="card-grid card-grid-4" style={{ marginBottom: 16 }}>
-              <div style={{ textAlign: 'center', padding: 8 }}>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>{fmt(selected.read_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Read</div>
+            <div className="card-grid card-grid-4 mb-16">
+              <div className="text-center" style={{ padding: 8 }}>
+                <div className="text-xl font-semibold">{fmt(selected.read_count)}</div>
+                <div className="text-xs text-secondary">Read</div>
               </div>
-              <div style={{ textAlign: 'center', padding: 8 }}>
-                <div style={{ fontSize: 18, fontWeight: 600 }}>{fmt(selected.clicked_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Clicked</div>
+              <div className="text-center" style={{ padding: 8 }}>
+                <div className="text-xl font-semibold">{fmt(selected.clicked_count)}</div>
+                <div className="text-xs text-secondary">Clicked</div>
               </div>
-              <div style={{ textAlign: 'center', padding: 8 }}>
-                <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--red)' }}>{fmt(selected.bounced_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Bounced</div>
+              <div className="text-center" style={{ padding: 8 }}>
+                <div className="text-xl font-semibold" style={{ color: 'var(--red)' }}>{fmt(selected.bounced_count)}</div>
+                <div className="text-xs text-secondary">Bounced</div>
               </div>
-              <div style={{ textAlign: 'center', padding: 8 }}>
-                <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--red)' }}>{fmt(selected.failed_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Failed</div>
+              <div className="text-center" style={{ padding: 8 }}>
+                <div className="text-xl font-semibold" style={{ color: 'var(--red)' }}>{fmt(selected.failed_count)}</div>
+                <div className="text-xs text-secondary">Failed</div>
               </div>
             </div>
 
             {/* Status Breakdown */}
             {selected.statusBreakdown?.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Message Status</div>
+              <div className="mb-16">
+                <div className="text-sm text-secondary mb-8">Message Status</div>
                 <ResponsiveContainer width="100%" height={150}>
                   <BarChart data={selected.statusBreakdown} layout="vertical">
-                    <XAxis type="number" stroke="#a8a29e" fontSize={11} />
-                    <YAxis type="category" dataKey="status" stroke="#a8a29e" fontSize={11} width={70} />
-                    <Tooltip contentStyle={{ background: '#fff', border: '1px solid #e7e5e4', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }} />
-                    <Bar dataKey="count" fill="#dc2626" radius={[0, 4, 4, 0]} />
+                    <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} />
+                    <YAxis type="category" dataKey="status" stroke="var(--text-tertiary)" fontSize={11} width={70} />
+                    <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
+                    <Bar dataKey="count" fill="var(--red)" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -156,15 +166,15 @@ export default function Campaigns() {
             {/* Template Preview */}
             {selected.template_body && (
               <div>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Template Preview</div>
-                {selected.template_subject && <div style={{ fontWeight: 600, marginBottom: 6 }}>{selected.template_subject}</div>}
-                <div style={{ padding: 12, background: 'var(--bg)', borderRadius: 8, fontSize: 13, maxHeight: 200, overflow: 'auto' }}
+                <div className="text-sm text-secondary mb-8">Template Preview</div>
+                {selected.template_subject && <div className="font-semibold mb-6">{selected.template_subject}</div>}
+                <div className="text-base" style={{ padding: 12, background: 'var(--bg-secondary)', borderRadius: 8, maxHeight: 200, overflow: 'auto' }}
                   dangerouslySetInnerHTML={{ __html: selected.template_body }} />
               </div>
             )}
           </div>
         )}
-      </div>
+      </motion.div>
 
       {/* Create Campaign Modal */}
       {showCreate && (
@@ -179,7 +189,7 @@ export default function Campaigns() {
               <label>Target Segment</label>
               <select value={form.segmentLabel} onChange={e => setForm({ ...form, segmentLabel: e.target.value })}>
                 <option value="">Select...</option>
-                {segments.map(s => <option key={s.segment_label} value={s.segment_label}>{s.segment_label} ({s.total})</option>)}
+                {segments.map(s => <option key={s.segment_label || s.segment_name} value={s.segment_label || s.segment_name}>{s.segment_label || s.segment_name} ({s.total || s.customer_count || 0})</option>)}
               </select>
             </div>
             <div className="form-group">
@@ -211,6 +221,6 @@ export default function Campaigns() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

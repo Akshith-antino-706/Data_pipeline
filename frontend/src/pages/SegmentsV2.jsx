@@ -1,10 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getFunnelOverview, getSegmentV3, runSegmentation, getSegmentSummary, getSegmentV3Customers, runV3MigrateAll, getSegmentAffinity, previewSegmentEmail, useSegmentEmail, createCampaign, executeCampaign, processQueue } from '../api';
-import { Target, Users, Play, ChevronRight, ArrowLeft, Search, Database, RefreshCw, ShoppingBag, Clock, Megaphone, Package, Send, X, Eye, Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import { Target, Users, Play, ChevronRight, ArrowLeft, Search, Database, RefreshCw, ShoppingBag, Clock, Megaphone, Package, Send, X, Eye, Loader, CheckCircle, AlertCircle, MessageCircle, Mail, MessageSquare, Bell, Gem, Globe } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
 
-const PRIORITY_COLORS = { Critical: '#dc2626', High: '#fbbf24', Medium: '#4caf50', Low: '#eab308' };
-const CHANNEL_ICONS = { whatsapp: '📱', email: '✉️', sms: '💬', push: '🔔', rcs: '💎', web: '🌐' };
+const PRIORITY_COLORS = { Critical: 'var(--red)', High: 'var(--yellow)', Medium: 'var(--green)', Low: 'var(--orange)' };
+
+const CHANNEL_ICON_MAP = { whatsapp: MessageCircle, email: Mail, sms: MessageSquare, push: Bell, rcs: Gem, web: Globe };
+const ChannelIcon = ({ channel, size = 14 }) => { const Icon = CHANNEL_ICON_MAP[channel]; return Icon ? <Icon size={size} /> : null; };
+
+const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
+const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 export default function SegmentsV2() {
   const [stages, setStages] = useState([]);
@@ -158,55 +164,55 @@ export default function SegmentsV2() {
 
     return (
       <div>
-        <button className="btn btn-secondary" onClick={() => { setSelected(null); setDetail(null); }} style={{ marginBottom: 20 }}>
+        <button className="btn btn-secondary mb-24" onClick={() => { setSelected(null); setDetail(null); }}>
           <ArrowLeft size={14} /> Back to Segments
         </button>
 
         <div className="page-header">
           <div>
             <h2>{detail.segment_name}</h2>
-            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <div className="flex gap-8 flex-wrap" style={{ marginTop: 8 }}>
               <span className="badge" style={{ background: detail.stage_color + '25', color: detail.stage_color }}>{detail.stage_name}</span>
               <span className="badge" style={{ background: PRIORITY_COLORS[detail.priority] + '25', color: PRIORITY_COLORS[detail.priority] }}>{detail.priority} Priority</span>
               <span className="badge badge-blue">{detail.customer_type}</span>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div className="flex items-center gap-16">
             <button
-              className="btn btn-primary"
+              className="btn btn-primary flex items-center gap-6"
               onClick={() => openRunModal(detail.segment_name)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#dc2626', border: 'none', padding: '10px 20px', fontSize: 13, fontWeight: 600 }}
+              style={{ background: 'var(--red)', border: 'none', padding: '10px 20px', fontSize: 13, fontWeight: 600 }}
             >
               <Send size={14} /> Run Segment
             </button>
-            <div className="kpi-value kpi-blue" style={{ fontSize: 24 }}>{fmt(detail.customer_count)}<span style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 400, marginLeft: 6 }}>customers</span></div>
+            <div className="kpi-value kpi-blue" style={{ fontSize: 24 }}>{fmt(detail.customer_count)}<span className="text-sm text-secondary" style={{ fontWeight: 400, marginLeft: 6 }}>customers</span></div>
           </div>
         </div>
 
-        <p style={{ color: 'var(--text-dim)', fontSize: 14, marginBottom: 16, lineHeight: 1.7 }}>{detail.segment_description}</p>
+        <p className="text-secondary mb-16" style={{ fontSize: 14, lineHeight: 1.7 }}>{detail.segment_description}</p>
 
         {/* Segment Logic — WHY this segment exists */}
         {detail.segment_logic && (
-          <div className="card" style={{ marginBottom: 20, borderLeft: '4px solid #dc2626', background: 'var(--card)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <Database size={18} color="#dc2626" style={{ marginTop: 2, flexShrink: 0 }} />
+          <div className="card" style={{ marginBottom: 20, borderLeft: '4px solid var(--red)', background: 'var(--bg-card)' }}>
+            <div className="flex" style={{ alignItems: 'flex-start', gap: 12 }}>
+              <Database size={18} color="var(--red)" style={{ marginTop: 2, flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: '#dc2626', marginBottom: 6, letterSpacing: '0.5px' }}>Segment Logic</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.6, fontWeight: 500 }}>{detail.segment_logic}</div>
-                {detail.data_sources && detail.data_sources.length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text-dim)', alignSelf: 'center' }}>Data Sources:</span>
-                    {detail.data_sources.map((ds, i) => (
-                      <span key={i} className="badge" style={{ fontSize: 10, background: '#4caf5020', color: '#4caf50', padding: '2px 8px' }}>{ds.replace(/_/g, ' ')}</span>
+                <div className="font-bold" style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--red)', marginBottom: 6, letterSpacing: '0.5px' }}>Segment Logic</div>
+                <div className="font-medium" style={{ fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6 }}>{detail.segment_logic}</div>
+                {detail.data_sources && (Array.isArray(detail.data_sources) ? detail.data_sources : typeof detail.data_sources === 'string' ? detail.data_sources.replace(/[{}]/g, '').split(',').filter(Boolean) : []).length > 0 && (
+                  <div className="flex gap-6 flex-wrap" style={{ marginTop: 10 }}>
+                    <span className="text-xs text-secondary" style={{ alignSelf: 'center' }}>Data Sources:</span>
+                    {(Array.isArray(detail.data_sources) ? detail.data_sources : typeof detail.data_sources === 'string' ? detail.data_sources.replace(/[{}]/g, '').split(',').filter(Boolean) : []).map((ds, i) => (
+                      <span key={i} className="badge" style={{ fontSize: 10, background: 'var(--green-dim)', color: 'var(--green)', padding: '2px 8px' }}>{ds.replace(/_/g, ' ')}</span>
                     ))}
                   </div>
                 )}
                 {detail.department_filter && (
-                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>
-                    <span style={{ fontWeight: 600 }}>Department:</span> {detail.department_filter}
+                  <div className="text-sm text-secondary" style={{ marginTop: 8 }}>
+                    <span className="font-semibold">Department:</span> {detail.department_filter}
                   </div>
                 )}
-                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 8, fontFamily: 'monospace', background: 'var(--bg)', padding: '6px 10px', borderRadius: 6, overflowX: 'auto' }}>
+                <div className="text-xs text-secondary" style={{ marginTop: 8, fontFamily: 'monospace', background: 'var(--bg-secondary)', padding: '6px 10px', borderRadius: 6, overflowX: 'auto' }}>
                   SQL: {detail.sql_criteria}
                 </div>
               </div>
@@ -226,37 +232,37 @@ export default function SegmentsV2() {
         {affinity && (
           <div className="card-grid card-grid-3" style={{ marginBottom: 20 }}>
             {/* WHAT to sell */}
-            <div className="card" style={{ borderTop: '3px solid #dc2626' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <ShoppingBag size={18} color="#dc2626" />
+            <div className="card" style={{ borderTop: '3px solid var(--red)' }}>
+              <div className="flex items-center gap-8 mb-16">
+                <ShoppingBag size={18} color="var(--red)" />
                 <h3 style={{ margin: 0, fontSize: 14 }}>What to Sell</h3>
               </div>
               {affinity.what?.hero?.product && (
-                <div style={{ background: 'var(--bg)', borderRadius: 10, padding: 12, marginBottom: 12, border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Hero Product</div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: 12, marginBottom: 12, border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary mb-4">Hero Product</div>
+                  <div className="flex items-center" style={{ gap: 10 }}>
                     {affinity.what.hero.image && (
                       <img src={affinity.what.hero.image} alt="" style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover' }} />
                     )}
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{affinity.what.hero.product}</div>
+                      <div className="font-semibold" style={{ fontSize: 13 }}>{affinity.what.hero.product}</div>
                       {affinity.what.hero.url && (
-                        <a href={affinity.what.hero.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--accent)' }}>View →</a>
+                        <a href={affinity.what.hero.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--red)' }}>View →</a>
                       )}
                     </div>
                   </div>
                 </div>
               )}
-              <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>Primary Products</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+              <div className="text-xs text-secondary" style={{ marginBottom: 6 }}>Primary Products</div>
+              <div className="flex flex-wrap gap-4" style={{ marginBottom: 10 }}>
                 {(affinity.what?.primary || []).map((p, i) => (
                   <span key={i} className="badge badge-purple" style={{ fontSize: 10 }}>{p}</span>
                 ))}
               </div>
               {affinity.what?.crossSell?.length > 0 && (
                 <>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>Cross-Sell</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                  <div className="text-xs text-secondary" style={{ marginBottom: 6 }}>Cross-Sell</div>
+                  <div className="flex flex-wrap gap-4" style={{ marginBottom: 10 }}>
                     {affinity.what.crossSell.map((p, i) => (
                       <span key={i} className="badge badge-blue" style={{ fontSize: 10 }}>{p}</span>
                     ))}
@@ -265,52 +271,52 @@ export default function SegmentsV2() {
               )}
               {affinity.what?.upsell?.length > 0 && (
                 <>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>Upsell</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <div className="text-xs text-secondary" style={{ marginBottom: 6 }}>Upsell</div>
+                  <div className="flex flex-wrap gap-4">
                     {affinity.what.upsell.map((p, i) => (
                       <span key={i} className="badge badge-green" style={{ fontSize: 10 }}>{p}</span>
                     ))}
                   </div>
                 </>
               )}
-              <div style={{ display: 'flex', gap: 16, marginTop: 12, padding: '10px 0 0', borderTop: '1px solid var(--border)' }}>
-                <div><div style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)' }}>{affinity.what?.affinityScore || 0}</div><div style={{ fontSize: 10, color: 'var(--text-dim)' }}>Affinity Score</div></div>
-                <div><div style={{ fontSize: 18, fontWeight: 700, color: 'var(--green)' }}>AED {affinity.what?.expectedAOV || 0}</div><div style={{ fontSize: 10, color: 'var(--text-dim)' }}>Expected AOV</div></div>
+              <div className="flex gap-16" style={{ marginTop: 12, padding: '10px 0 0', borderTop: '1px solid var(--border-color)' }}>
+                <div><div className="font-bold" style={{ fontSize: 18, color: 'var(--red)' }}>{affinity.what?.affinityScore || 0}</div><div className="text-xs text-secondary">Affinity Score</div></div>
+                <div><div className="font-bold" style={{ fontSize: 18, color: 'var(--green)' }}>AED {affinity.what?.expectedAOV || 0}</div><div className="text-xs text-secondary">Expected AOV</div></div>
               </div>
             </div>
 
             {/* WHEN to sell */}
-            <div className="card" style={{ borderTop: '3px solid #fbbf24' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <Clock size={18} color="#fbbf24" />
+            <div className="card" style={{ borderTop: '3px solid var(--yellow)' }}>
+              <div className="flex items-center gap-8 mb-16">
+                <Clock size={18} color="var(--yellow)" />
                 <h3 style={{ margin: 0, fontSize: 14 }}>When to Sell</h3>
               </div>
               <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Best Day & Time</div>
-                  <div style={{ fontWeight: 600, fontSize: 15, marginTop: 2 }}>{affinity.when?.bestDay} at {affinity.when?.bestTime}</div>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Best Day & Time</div>
+                  <div className="font-semibold" style={{ fontSize: 15, marginTop: 2 }}>{affinity.when?.bestDay} at {affinity.when?.bestTime}</div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Urgency</div>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Urgency</div>
                   <div style={{ marginTop: 4 }}>
                     <span className={`badge ${affinity.when?.urgency === 'critical' ? 'badge-red' : affinity.when?.urgency === 'high' ? 'badge-orange' : affinity.when?.urgency === 'medium' ? 'badge-blue' : 'badge-green'}`}>
                       {affinity.when?.urgency?.toUpperCase()}
                     </span>
                   </div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Frequency</div>
-                  <div style={{ fontWeight: 600, fontSize: 14, marginTop: 2 }}>{affinity.when?.frequency?.replace('_', ' ')}</div>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Frequency</div>
+                  <div className="font-semibold" style={{ fontSize: 14, marginTop: 2 }}>{affinity.when?.frequency?.replace('_', ' ')}</div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Trigger Event</div>
-                  <div style={{ fontWeight: 600, fontSize: 13, marginTop: 2, color: '#fbbf24' }}>{affinity.when?.trigger?.replace(/_/g, ' ')}</div>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Trigger Event</div>
+                  <div className="font-semibold" style={{ fontSize: 13, marginTop: 2, color: 'var(--yellow)' }}>{affinity.when?.trigger?.replace(/_/g, ' ')}</div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Follow-up Sequence</div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Follow-up Sequence</div>
+                  <div className="flex gap-6" style={{ marginTop: 4 }}>
                     {(affinity.when?.followUpDays || []).map((d, i) => (
-                      <span key={i} style={{ background: '#fbbf2420', color: '#fbbf24', padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>Day {d}</span>
+                      <span key={i} className="font-semibold" style={{ background: 'var(--yellow-dim)', color: 'var(--yellow)', padding: '2px 8px', borderRadius: 6, fontSize: 11 }}>Day {d}</span>
                     ))}
                   </div>
                 </div>
@@ -318,53 +324,53 @@ export default function SegmentsV2() {
             </div>
 
             {/* HOW to sell */}
-            <div className="card" style={{ borderTop: '3px solid #10b981' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <Megaphone size={18} color="#10b981" />
+            <div className="card" style={{ borderTop: '3px solid var(--green)' }}>
+              <div className="flex items-center gap-8 mb-16">
+                <Megaphone size={18} color="var(--green)" />
                 <h3 style={{ margin: 0, fontSize: 14 }}>How to Sell</h3>
               </div>
               <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Channels</div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Channels</div>
+                  <div className="flex gap-6" style={{ marginTop: 4 }}>
                     <span className={`badge ${affinity.how?.channel?.primary === 'whatsapp' ? 'badge-green' : 'badge-blue'}`}>{affinity.how?.channel?.primary} (primary)</span>
                     <span className="badge badge-orange">{affinity.how?.channel?.secondary}</span>
                   </div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Tone</div>
-                  <div style={{ fontWeight: 600, fontSize: 14, marginTop: 2, textTransform: 'capitalize' }}>{affinity.how?.tone}</div>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Tone</div>
+                  <div className="font-semibold" style={{ fontSize: 14, marginTop: 2, textTransform: 'capitalize' }}>{affinity.how?.tone}</div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Discount Strategy</div>
-                  <div style={{ fontWeight: 600, fontSize: 14, marginTop: 2, color: '#10b981' }}>
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Discount Strategy</div>
+                  <div className="font-semibold" style={{ fontSize: 14, marginTop: 2, color: 'var(--green)' }}>
                     {affinity.how?.discount?.strategy === 'no_discount' ? 'No Discount' : `${affinity.how?.discount?.value || ''} (${affinity.how?.discount?.strategy})`}
                   </div>
                 </div>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>CTA</div>
-                  <div style={{
-                    marginTop: 6, display: 'inline-block', background: '#dc2626', color: '#fff',
-                    padding: '6px 16px', borderRadius: 8, fontWeight: 600, fontSize: 13
+                <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">CTA</div>
+                  <div className="font-semibold" style={{
+                    marginTop: 6, display: 'inline-block', background: 'var(--red)', color: 'var(--bg-card)',
+                    padding: '6px 16px', borderRadius: 8, fontSize: 13
                   }}>{affinity.how?.cta}</div>
                 </div>
-                <div style={{ display: 'flex', gap: 10 }}>
+                <div className="flex" style={{ gap: 10 }}>
                   {affinity.how?.socialProof && (
-                    <span style={{ background: '#dc262620', color: '#dc2626', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>Social Proof</span>
+                    <span className="font-semibold" style={{ background: 'var(--red-dim)', color: 'var(--red)', padding: '4px 10px', borderRadius: 6, fontSize: 11 }}>Social Proof</span>
                   )}
                   {affinity.how?.scarcity && (
-                    <span style={{ background: '#ef444420', color: '#ef4444', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>Scarcity</span>
+                    <span className="font-semibold" style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--red)', padding: '4px 10px', borderRadius: 6, fontSize: 11 }}>Scarcity</span>
                   )}
                 </div>
-                <div style={{ padding: '10px 0 0', borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Personalize With</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                <div style={{ padding: '10px 0 0', borderTop: '1px solid var(--border-color)' }}>
+                  <div className="text-xs text-secondary">Personalize With</div>
+                  <div className="flex flex-wrap gap-4" style={{ marginTop: 4 }}>
                     {(affinity.how?.personalization || []).map((f, i) => (
-                      <span key={i} style={{ background: 'var(--bg)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 4, fontSize: 10 }}>{f}</span>
+                      <span key={i} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: 4, fontSize: 10 }}>{f}</span>
                     ))}
                   </div>
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#10b981' }}>
+                <div className="font-bold" style={{ fontSize: 14, color: 'var(--green)' }}>
                   {affinity.how?.expectedConversion || 0}% expected conversion
                 </div>
               </div>
@@ -382,10 +388,10 @@ export default function SegmentsV2() {
                 { channel: 'Email', count: parseInt(m.email_reachable || 0) },
                 { channel: 'SMS', count: parseInt(m.sms_reachable || 0) },
               ]}>
-                <XAxis dataKey="channel" tick={{ fill: '#a8a29e', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#a8a29e', fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: '#fff', border: '1px solid #e7e5e4', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8, fontSize: 12 }} />
-                <Bar dataKey="count" fill="#dc2626" radius={[4, 4, 0, 0]} />
+                <XAxis dataKey="channel" tick={{ fill: 'var(--text-tertiary)', fontSize: 12 }} />
+                <YAxis tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
+                <Bar dataKey="count" fill="var(--red)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -398,9 +404,9 @@ export default function SegmentsV2() {
                   { name: 'Female', value: parseInt(m.female_count || 0) },
                   { name: 'Other', value: Math.max(0, parseInt(m.total_customers || 0) - parseInt(m.male_count || 0) - parseInt(m.female_count || 0)) }
                 ].filter(d => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                  <Cell fill="#dc2626" /><Cell fill="#fbbf24" /><Cell fill="#a8a29e" />
+                  <Cell fill="var(--red)" /><Cell fill="var(--yellow)" /><Cell fill="var(--text-tertiary)" />
                 </Pie>
-                <Tooltip contentStyle={{ background: '#fff', border: '1px solid #e7e5e4', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8 }} />
+                <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -416,42 +422,42 @@ export default function SegmentsV2() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {steps.map((step, i) => {
                 const ch = step.channel || 'email';
-                const chColor = ch === 'whatsapp' ? '#22c55e' : ch === 'email' ? '#3b82f6' : ch === 'sms' ? '#f59e0b' : ch === 'push' ? '#ef4444' : ch === 'web' ? '#8b5cf6' : '#6b7280';
+                const chColor = ch === 'whatsapp' ? 'var(--green)' : ch === 'email' ? 'var(--blue)' : ch === 'sms' ? 'var(--orange)' : ch === 'push' ? 'var(--red)' : ch === 'web' ? 'var(--purple)' : 'var(--text-tertiary)';
                 return (
                   <div key={i}>
                     <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr', gap: 10, alignItems: 'stretch' }}>
                       {/* Day badge */}
-                      <div style={{
+                      <div className="text-center font-bold" style={{
                         background: chColor + '15', border: `2px solid ${chColor}`,
-                        borderRadius: 10, padding: '8px 6px', textAlign: 'center',
-                        fontWeight: 700, color: chColor, fontSize: 12,
+                        borderRadius: 10, padding: '8px 6px',
+                        color: chColor, fontSize: 12,
                         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2
                       }}>
                         <div style={{ fontSize: 10, opacity: 0.7 }}>Day</div>
                         <div style={{ fontSize: 18 }}>{step.day}</div>
                       </div>
                       {/* Step content */}
-                      <div style={{ background: 'var(--bg)', borderRadius: 10, padding: '10px 14px', border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                          <span style={{ fontSize: 16 }}>{CHANNEL_ICONS[ch] || '📢'}</span>
+                      <div style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 14px', border: '1px solid var(--border-color)' }}>
+                        <div className="flex items-center gap-8 mb-4">
+                          <ChannelIcon channel={ch} size={16} />
                           <span className={`badge badge-${ch === 'whatsapp' ? 'green' : ch === 'email' ? 'blue' : ch === 'sms' ? 'orange' : ch === 'push' ? 'red' : 'purple'}`} style={{ fontSize: 10 }}>
                             {ch}
                           </span>
                           {step.condition && <span className="badge badge-orange" style={{ fontSize: 9 }}>CONDITION</span>}
                           {step.goal && <span className="badge badge-green" style={{ fontSize: 9 }}>GOAL</span>}
                         </div>
-                        <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{step.action || step.label || step.message || 'Send message'}</div>
-                        {step.condition && <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>⚡ {step.condition}</div>}
-                        {step.condition_next && <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4 }}>↳ {step.condition_next}</div>}
-                        {step.goal && <div style={{ fontSize: 11, color: '#22c55e', marginTop: 4, fontWeight: 600 }}>🎯 Goal: {step.goal}</div>}
+                        <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.6 }}>{step.action || step.label || step.message || 'Send message'}</div>
+                        {step.condition && <div className="text-xs" style={{ color: 'var(--orange)', marginTop: 4 }}>⚡ {step.condition}</div>}
+                        {step.condition_next && <div className="text-xs" style={{ color: 'var(--orange)', marginTop: 4 }}>↳ {step.condition_next}</div>}
+                        {step.goal && <div className="text-xs font-semibold" style={{ color: 'var(--green)', marginTop: 4 }}>🎯 Goal: {step.goal}</div>}
                       </div>
                     </div>
                     {/* Connector line */}
                     {i < steps.length - 1 && (
-                      <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 35, height: 16 }}>
-                        <div style={{ width: 2, height: 16, background: 'var(--border)' }} />
+                      <div className="flex items-center" style={{ paddingLeft: 35, height: 16 }}>
+                        <div style={{ width: 2, height: 16, background: 'var(--border-color)' }} />
                         {steps[i + 1].day > step.day && (
-                          <span style={{ fontSize: 10, color: 'var(--text-dim)', marginLeft: 8 }}>
+                          <span className="text-xs text-secondary" style={{ marginLeft: 8 }}>
                             ⏳ Wait {steps[i + 1].day - step.day} day{steps[i + 1].day - step.day > 1 ? 's' : ''}
                           </span>
                         )}
@@ -470,12 +476,12 @@ export default function SegmentsV2() {
             <div className="card-header"><h3>Key Points</h3></div>
             <div style={{ display: 'grid', gap: 8 }}>
               {parseKeyPoints(detail.key_points).map((pt, i) => (
-                <div key={i} style={{
-                  padding: '10px 14px', background: 'var(--bg)', borderRadius: 8,
-                  fontSize: 13, color: 'var(--text-dim)', display: 'flex', gap: 10, alignItems: 'flex-start',
-                  border: '1px solid var(--border)'
+                <div key={i} className="flex text-secondary" style={{
+                  padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8,
+                  fontSize: 13, gap: 10, alignItems: 'flex-start',
+                  border: '1px solid var(--border-color)'
                 }}>
-                  <span style={{ color: 'var(--accent)', fontWeight: 700, minWidth: 16 }}>{i + 1}.</span>
+                  <span className="font-bold" style={{ color: 'var(--red)', minWidth: 16 }}>{i + 1}.</span>
                   {pt}
                 </div>
               ))}
@@ -487,9 +493,9 @@ export default function SegmentsV2() {
         <div className="card">
           <div className="card-header">
             <h3>Customers ({fmt(customers?.total || 0)})</h3>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="flex items-center gap-8">
               <div style={{ position: 'relative' }}>
-                <Search size={14} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--text-dim)' }} />
+                <Search size={14} className="text-secondary" style={{ position: 'absolute', left: 10, top: 9 }} />
                 <input
                   className="input-sm"
                   value={search}
@@ -512,18 +518,18 @@ export default function SegmentsV2() {
               <tbody>
                 {(customers?.data || []).map(c => (
                   <tr key={c.customer_id}>
-                    <td style={{ fontWeight: 500 }}>{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{c.email || '—'}</td>
+                    <td className="font-medium">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
+                    <td className="text-sm text-secondary">{c.email || '—'}</td>
                     <td><span className={`badge ${c.customer_type === 'B2B' ? 'badge-purple' : 'badge-blue'}`}>{c.customer_type}</span></td>
                     <td>{c.nationality || '—'}</td>
-                    <td style={{ fontWeight: 500 }}>{c.total_bookings || 0}</td>
-                    <td style={{ fontWeight: 500 }}>AED {fmt(c.total_revenue)}</td>
+                    <td className="font-medium">{c.total_bookings || 0}</td>
+                    <td className="font-medium">AED {fmt(c.total_revenue)}</td>
                     <td>{c.days_since_last_booking != null ? `${c.days_since_last_booking}d` : '—'}</td>
                     <td><span className={`badge ${c.lead_status === 'converted' ? 'badge-green' : c.lead_status === 'active' ? 'badge-blue' : 'badge-orange'}`}>{c.lead_status || 'new'}</span></td>
                   </tr>
                 ))}
                 {!customers?.data?.length && (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text-dim)' }}>
+                  <tr><td colSpan={8} className="text-center text-secondary p-24">
                     {custLoading ? 'Loading...' : 'No customers in this segment yet. Run segmentation first.'}
                   </td></tr>
                 )}
@@ -531,9 +537,9 @@ export default function SegmentsV2() {
             </table>
           </div>
           {customers && customers.totalPages > 1 && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <div className="flex justify-between items-center" style={{ justifyContent: 'center', gap: 8, marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border-color)' }}>
               <button className="btn btn-sm btn-secondary" disabled={custPage <= 1} onClick={() => loadCustPage(custPage - 1)}>Previous</button>
-              <span style={{ fontSize: 13, padding: '4px 12px', color: 'var(--text-dim)', display: 'flex', alignItems: 'center' }}>
+              <span className="text-secondary flex items-center" style={{ fontSize: 13, padding: '4px 12px' }}>
                 Page {custPage} of {customers.totalPages}
               </span>
               <button className="btn btn-sm btn-secondary" disabled={custPage >= customers.totalPages} onClick={() => loadCustPage(custPage + 1)}>Next</button>
@@ -548,24 +554,21 @@ export default function SegmentsV2() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
           }} onClick={() => runStep !== 'running' && setRunModal(false)}>
             <div style={{
-              background: '#fff', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '90vh',
+              background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '90vh',
               overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.2)'
             }} onClick={e => e.stopPropagation()}>
 
               {/* Modal Header */}
-              <div style={{
-                padding: '20px 24px', borderBottom: '1px solid #e7e5e4',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-              }}>
+              <div className="flex justify-between items-center" style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)' }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 16 }}>Run Segment Campaign</h3>
-                  <p style={{ margin: '4px 0 0', fontSize: 13, color: '#78716c' }}>
+                  <p className="text-secondary" style={{ margin: '4px 0 0', fontSize: 13 }}>
                     {detail.segment_name} — {fmt(detail.customer_count)} customers
                   </p>
                 </div>
                 {runStep !== 'running' && (
-                  <button onClick={() => setRunModal(false)} style={{
-                    background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: '#78716c'
+                  <button onClick={() => setRunModal(false)} className="text-secondary" style={{
+                    background: 'none', border: 'none', cursor: 'pointer', padding: 4
                   }}><X size={20} /></button>
                 )}
               </div>
@@ -577,28 +580,28 @@ export default function SegmentsV2() {
                 {runStep === 'preview' && (
                   <>
                     {!emailPreview ? (
-                      <div style={{ textAlign: 'center', padding: 40, color: '#78716c' }}>
+                      <div className="text-center text-secondary p-24">
                         <Loader size={24} className="spin" style={{ marginBottom: 12 }} />
                         <div>Loading email preview...</div>
                       </div>
                     ) : emailPreview.error ? (
-                      <div style={{ textAlign: 'center', padding: 40, color: '#78716c' }}>
-                        <AlertCircle size={32} color="#dc2626" style={{ marginBottom: 12 }} />
+                      <div className="text-center text-secondary p-24">
+                        <AlertCircle size={32} color="var(--red)" style={{ marginBottom: 12 }} />
                         <div>{emailPreview.error}</div>
                       </div>
                     ) : (
                       <>
-                        <div style={{ marginBottom: 16 }}>
-                          <div style={{ fontSize: 12, color: '#78716c', marginBottom: 4 }}>Subject Line</div>
-                          <div style={{ fontWeight: 600, fontSize: 14, padding: '10px 14px', background: '#fafaf9', borderRadius: 8, border: '1px solid #e7e5e4' }}>
+                        <div className="mb-16">
+                          <div className="text-sm text-secondary mb-4">Subject Line</div>
+                          <div className="font-semibold" style={{ fontSize: 14, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
                             {emailPreview.subject || 'No subject'}
                           </div>
                         </div>
-                        <div style={{ fontSize: 12, color: '#78716c', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div className="text-sm text-secondary flex items-center gap-6 mb-8">
                           <Eye size={12} /> Email Preview
                         </div>
                         <div style={{
-                          border: '1px solid #e7e5e4', borderRadius: 10, overflow: 'hidden',
+                          border: '1px solid var(--border-color)', borderRadius: 10, overflow: 'hidden',
                           maxHeight: 400, overflowY: 'auto'
                         }}>
                           <iframe
@@ -608,7 +611,7 @@ export default function SegmentsV2() {
                             sandbox=""
                           />
                         </div>
-                        <div style={{ marginTop: 12, padding: '10px 14px', background: '#fefce8', borderRadius: 8, border: '1px solid #fde68a', fontSize: 12, color: '#92400e' }}>
+                        <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--yellow-dim)', borderRadius: 8, border: '1px solid var(--yellow)', fontSize: 12, color: 'var(--orange)' }}>
                           This will send emails to all <strong>{fmt(detail.customer_count)}</strong> customers in this segment via SMTP. Make sure your email template is ready.
                         </div>
                       </>
@@ -618,34 +621,34 @@ export default function SegmentsV2() {
 
                 {/* Running Step */}
                 {runStep === 'running' && (
-                  <div style={{ textAlign: 'center', padding: 40 }}>
-                    <Loader size={32} className="spin" style={{ color: '#dc2626', marginBottom: 16 }} />
-                    <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Executing Campaign...</div>
-                    <div style={{ fontSize: 13, color: '#78716c' }}>Creating template, queueing messages, and sending emails.</div>
-                    <div style={{ fontSize: 12, color: '#a8a29e', marginTop: 8 }}>Please don't close this modal.</div>
+                  <div className="text-center p-24">
+                    <Loader size={32} className="spin" style={{ color: 'var(--red)', marginBottom: 16 }} />
+                    <div className="font-semibold mb-8" style={{ fontSize: 16 }}>Executing Campaign...</div>
+                    <div className="text-secondary" style={{ fontSize: 13 }}>Creating template, queueing messages, and sending emails.</div>
+                    <div className="text-tertiary" style={{ fontSize: 12, marginTop: 8 }}>Please don't close this modal.</div>
                   </div>
                 )}
 
                 {/* Done Step */}
                 {runStep === 'done' && runResult && (
-                  <div style={{ textAlign: 'center', padding: 30 }}>
-                    <CheckCircle size={48} color="#22c55e" style={{ marginBottom: 16 }} />
-                    <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, color: '#1c1917' }}>Campaign Executed!</div>
+                  <div className="text-center" style={{ padding: 30 }}>
+                    <CheckCircle size={48} color="var(--green)" style={{ marginBottom: 16 }} />
+                    <div className="font-bold mb-8" style={{ fontSize: 18, color: 'var(--text-primary)' }}>Campaign Executed!</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 20 }}>
-                      <div style={{ background: '#fafaf9', borderRadius: 10, padding: 16, border: '1px solid #e7e5e4' }}>
-                        <div style={{ fontSize: 24, fontWeight: 700, color: '#dc2626' }}>{runResult.queued}</div>
-                        <div style={{ fontSize: 11, color: '#78716c', marginTop: 4 }}>Queued</div>
+                      <div style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: 16, border: '1px solid var(--border-color)' }}>
+                        <div className="font-bold" style={{ fontSize: 24, color: 'var(--red)' }}>{runResult.queued}</div>
+                        <div className="text-xs text-secondary" style={{ marginTop: 4 }}>Queued</div>
                       </div>
-                      <div style={{ background: '#f0fdf4', borderRadius: 10, padding: 16, border: '1px solid #bbf7d0' }}>
-                        <div style={{ fontSize: 24, fontWeight: 700, color: '#22c55e' }}>{runResult.sent}</div>
-                        <div style={{ fontSize: 11, color: '#78716c', marginTop: 4 }}>Sent</div>
+                      <div style={{ background: 'var(--green-dim)', borderRadius: 10, padding: 16, border: '1px solid var(--green)' }}>
+                        <div className="font-bold" style={{ fontSize: 24, color: 'var(--green)' }}>{runResult.sent}</div>
+                        <div className="text-xs text-secondary" style={{ marginTop: 4 }}>Sent</div>
                       </div>
-                      <div style={{ background: runResult.failed > 0 ? '#fef2f2' : '#fafaf9', borderRadius: 10, padding: 16, border: `1px solid ${runResult.failed > 0 ? '#fecaca' : '#e7e5e4'}` }}>
-                        <div style={{ fontSize: 24, fontWeight: 700, color: runResult.failed > 0 ? '#dc2626' : '#a8a29e' }}>{runResult.failed}</div>
-                        <div style={{ fontSize: 11, color: '#78716c', marginTop: 4 }}>Failed</div>
+                      <div style={{ background: runResult.failed > 0 ? 'var(--red-dim)' : 'var(--bg-secondary)', borderRadius: 10, padding: 16, border: `1px solid ${runResult.failed > 0 ? 'var(--red)' : 'var(--border-color)'}` }}>
+                        <div className="font-bold" style={{ fontSize: 24, color: runResult.failed > 0 ? 'var(--red)' : 'var(--text-tertiary)' }}>{runResult.failed}</div>
+                        <div className="text-xs text-secondary" style={{ marginTop: 4 }}>Failed</div>
                       </div>
                     </div>
-                    <div style={{ marginTop: 16, fontSize: 12, color: '#78716c' }}>
+                    <div className="text-sm text-secondary" style={{ marginTop: 16 }}>
                       Campaign #{runResult.campaignId} — Check the Campaigns page for detailed tracking.
                     </div>
                   </div>
@@ -653,10 +656,10 @@ export default function SegmentsV2() {
 
                 {/* Error Step */}
                 {runStep === 'error' && (
-                  <div style={{ textAlign: 'center', padding: 30 }}>
-                    <AlertCircle size={48} color="#dc2626" style={{ marginBottom: 16 }} />
-                    <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: '#dc2626' }}>Campaign Failed</div>
-                    <div style={{ fontSize: 13, color: '#78716c', marginBottom: 16 }}>{runError}</div>
+                  <div className="text-center" style={{ padding: 30 }}>
+                    <AlertCircle size={48} color="var(--red)" style={{ marginBottom: 16 }} />
+                    <div className="font-semibold mb-8" style={{ fontSize: 16, color: 'var(--red)' }}>Campaign Failed</div>
+                    <div className="text-secondary mb-16" style={{ fontSize: 13 }}>{runError}</div>
                     <button className="btn btn-secondary" onClick={() => setRunStep('preview')}>Try Again</button>
                   </div>
                 )}
@@ -664,15 +667,15 @@ export default function SegmentsV2() {
 
               {/* Modal Footer */}
               {runStep === 'preview' && emailPreview && !emailPreview.error && (
-                <div style={{
-                  padding: '16px 24px', borderTop: '1px solid #e7e5e4',
-                  display: 'flex', justifyContent: 'flex-end', gap: 10
+                <div className="flex justify-between" style={{
+                  padding: '16px 24px', borderTop: '1px solid var(--border-color)',
+                  justifyContent: 'flex-end', gap: 10
                 }}>
                   <button className="btn btn-secondary" onClick={() => setRunModal(false)}>Cancel</button>
                   <button
-                    className="btn btn-primary"
+                    className="btn btn-primary flex items-center gap-6"
                     onClick={() => executeSegmentCampaign(detail.segment_name)}
-                    style={{ background: '#dc2626', border: 'none', display: 'flex', alignItems: 'center', gap: 6, padding: '10px 20px' }}
+                    style={{ background: 'var(--red)', border: 'none', padding: '10px 20px' }}
                   >
                     <Send size={14} /> Send Campaign
                   </button>
@@ -680,9 +683,9 @@ export default function SegmentsV2() {
               )}
 
               {runStep === 'done' && (
-                <div style={{ padding: '16px 24px', borderTop: '1px solid #e7e5e4', display: 'flex', justifyContent: 'flex-end' }}>
+                <div className="flex" style={{ padding: '16px 24px', borderTop: '1px solid var(--border-color)', justifyContent: 'flex-end' }}>
                   <button className="btn btn-primary" onClick={() => setRunModal(false)}
-                    style={{ background: '#22c55e', border: 'none', padding: '10px 20px' }}>
+                    style={{ background: 'var(--green)', border: 'none', padding: '10px 20px' }}>
                     Done
                   </button>
                 </div>
@@ -702,7 +705,8 @@ export default function SegmentsV2() {
   const segPct = totalCustomers > 0 ? ((segmentedCustomers / totalCustomers) * 100).toFixed(1) : '0.0';
 
   return (
-    <div>
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
+      <motion.div variants={fadeInUp}>
       <div className="page-header">
         <div>
           <h2>Customer Segments</h2>
@@ -717,9 +721,11 @@ export default function SegmentsV2() {
           </button>
         </div>
       </div>
+      </motion.div>
 
       {/* Summary KPIs */}
-      <div className="card-grid card-grid-4" style={{ marginBottom: 24 }}>
+      <motion.div variants={fadeInUp}>
+      <div className="card-grid card-grid-4 mb-24">
         <div className="card kpi">
           <div className="kpi-value kpi-blue">{fmt(totalCustomers)}</div>
           <div className="kpi-label">Total Customers</div>
@@ -740,7 +746,7 @@ export default function SegmentsV2() {
 
       {/* Stage Distribution Chart */}
       {summary?.stages && (
-        <div className="card" style={{ marginBottom: 24 }}>
+        <div className="card mb-24">
           <div className="card-header"><h3>Funnel Stage Distribution</h3></div>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={summary.stages.map(s => ({
@@ -748,9 +754,9 @@ export default function SegmentsV2() {
               customers: parseInt(s.customer_count || 0),
               color: s.stage_color
             }))}>
-              <XAxis dataKey="name" tick={{ fill: '#a8a29e', fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={50} />
-              <YAxis tick={{ fill: '#a8a29e', fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: '#fff', border: '1px solid #e7e5e4', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8, fontSize: 12 }} />
+              <XAxis dataKey="name" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={50} />
+              <YAxis tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
               <Bar dataKey="customers" radius={[6, 6, 0, 0]}>
                 {summary.stages.map((s, i) => <Cell key={i} fill={s.stage_color} />)}
               </Bar>
@@ -758,8 +764,10 @@ export default function SegmentsV2() {
           </ResponsiveContainer>
         </div>
       )}
+      </motion.div>
 
       {/* 7 Funnel Stages */}
+      <motion.div variants={fadeInUp}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {stages.map(stage => {
           const segments = stage.segments || [];
@@ -771,29 +779,30 @@ export default function SegmentsV2() {
               <div
                 role="button"
                 tabIndex={0}
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                className="flex justify-between items-center"
+                style={{ cursor: 'pointer' }}
                 onClick={() => setExpandedStage(isExpanded ? null : stage.stage_number)}
                 onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setExpandedStage(isExpanded ? null : stage.stage_number)}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div className="flex items-center" style={{ gap: 14 }}>
                   <div style={{
                     width: 38, height: 38, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: stage.stage_color, color: '#fff', fontWeight: 800, fontSize: 16, flexShrink: 0
+                    background: stage.stage_color, color: 'var(--bg-card)', fontWeight: 800, fontSize: 16, flexShrink: 0
                   }}>
                     {stage.stage_number}
                   </div>
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{stage.stage_name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 1 }}>{stage.stage_description}</div>
+                    <div className="font-semibold" style={{ fontSize: 15 }}>{stage.stage_name}</div>
+                    <div className="text-sm text-secondary" style={{ marginTop: 1 }}>{stage.stage_description}</div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+                <div className="flex items-center" style={{ gap: 14, flexShrink: 0 }}>
                   <span className="badge badge-blue">{segments.length} segments</span>
                   <div style={{ textAlign: 'right', minWidth: 60 }}>
-                    <div style={{ fontWeight: 700, fontSize: 16 }}>{fmt(totalInStage)}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>customers</div>
+                    <div className="font-bold" style={{ fontSize: 16 }}>{fmt(totalInStage)}</div>
+                    <div className="text-xs text-secondary">customers</div>
                   </div>
-                  <ChevronRight size={18} style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', color: 'var(--text-dim)' }} />
+                  <ChevronRight size={18} className="text-secondary" style={{ transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
                 </div>
               </div>
 
@@ -810,27 +819,27 @@ export default function SegmentsV2() {
                       style={{
                         padding: '14px 16px', cursor: 'pointer',
                         borderLeft: `3px solid ${PRIORITY_COLORS[seg.priority]}`,
-                        background: 'var(--bg)'
+                        background: 'var(--bg-secondary)'
                       }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div className="flex justify-between items-center">
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 600, fontSize: 14 }}>{seg.segment_number}. {seg.segment_name}</span>
+                          <div className="flex items-center gap-8 flex-wrap">
+                            <span className="font-semibold" style={{ fontSize: 14 }}>{seg.segment_number}. {seg.segment_name}</span>
                             <span className="badge" style={{ background: PRIORITY_COLORS[seg.priority] + '20', color: PRIORITY_COLORS[seg.priority], fontSize: 10 }}>
                               {seg.priority}
                             </span>
                           </div>
-                          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <div className="text-sm text-secondary" style={{ marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {seg.segment_logic || seg.segment_description}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 16 }}>
+                        <div className="flex items-center gap-12" style={{ flexShrink: 0, marginLeft: 16 }}>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontWeight: 700, fontSize: 18 }}>{fmt(seg.customer_count)}</div>
-                            <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>customers</div>
+                            <div className="font-bold" style={{ fontSize: 18 }}>{fmt(seg.customer_count)}</div>
+                            <div className="text-xs text-secondary">customers</div>
                           </div>
-                          <ChevronRight size={16} color="var(--text-dim)" />
+                          <ChevronRight size={16} color="var(--text-secondary)" />
                         </div>
                       </div>
                     </div>
@@ -841,8 +850,9 @@ export default function SegmentsV2() {
           );
         })}
       </div>
+      </motion.div>
 
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
-    </div>
+    </motion.div>
   );
 }

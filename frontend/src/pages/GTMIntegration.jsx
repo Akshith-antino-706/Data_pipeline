@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getSpecialOccasions, getGTMExport } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Code, Calendar, Download, Activity, Layers, Copy } from 'lucide-react';
+
+const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
+const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 export default function GTMIntegration() {
   const [snippet, setSnippet] = useState(null);
@@ -19,10 +23,10 @@ export default function GTMIntegration() {
       const [snip, scr, ana, occ] = await Promise.all([
         getGTMSnippet(), getDataLayerScripts(), getGTMAnalytics(), getSpecialOccasions()
       ]);
-      setSnippet(snip);
-      setScripts(scr);
-      setAnalytics(ana);
-      setOccasions(occ);
+      setSnippet(snip?.data || snip || null);
+      setScripts(scr?.data || scr || {});
+      setAnalytics(ana?.data || ana || { daily: [], top_events: [] });
+      setOccasions(Array.isArray(occ) ? occ : (occ?.data || []));
     } catch (err) { console.error(err); }
   }
 
@@ -50,46 +54,46 @@ export default function GTMIntegration() {
     { id: 'snippet', label: 'GTM Container', icon: Layers },
   ];
 
-  const occasionColors = { festival: '#fbbf24', holiday: '#ef4444', season: '#22c55e', event: '#dc2626', custom: '#eab308' };
+  const occasionColors = { festival: 'var(--yellow)', holiday: 'var(--red)', season: 'var(--green)', event: 'var(--red)', custom: 'var(--yellow)' };
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
+      <motion.div variants={fadeInUp} className="card-header" style={{ marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>GTM & BigQuery</h1>
-          <p style={{ color: '#78716c', margin: '4px 0 0' }}>Google Tag Manager integration, dataLayer events, and BigQuery export</p>
+          <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>Google Tag Manager integration, dataLayer events, and BigQuery export</p>
         </div>
-        <button onClick={handleExport}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', background: '#dc2626', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+        <button className="btn btn-primary" onClick={handleExport} style={{ gap: 8 }}>
           <Download size={16} /> Export to BigQuery
         </button>
-      </div>
+      </motion.div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+      <motion.div variants={fadeInUp} className="tabs" style={{ marginBottom: 24 }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 20px', borderRadius: 20, border: activeTab === t.id ? '2px solid #dc2626' : '1px solid #e7e5e4', background: activeTab === t.id ? '#fef2f2' : 'white', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+            className={`tab ${activeTab === t.id ? 'active' : ''}`}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <t.icon size={14} /> {t.label}
           </button>
         ))}
-      </div>
+      </motion.div>
 
       {/* Event Analytics */}
       {activeTab === 'overview' && (
-        <div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
+        <motion.div variants={fadeInUp}>
+          <div className="kpi-strip" style={{ marginBottom: 24 }}>
             {analytics.top_events?.map(e => (
-              <div key={e.event_name} style={{ background: 'white', borderRadius: 12, padding: 20, border: '1px solid #e7e5e4' }}>
-                <div style={{ fontSize: 12, color: '#78716c', marginBottom: 4 }}>{e.event_name}</div>
+              <div key={e.event_name} className="card">
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{e.event_name}</div>
                 <div style={{ fontSize: 28, fontWeight: 700 }}>{parseInt(e.count).toLocaleString()}</div>
-                <div style={{ fontSize: 12, color: '#a8a29e' }}>{parseInt(e.unique_users).toLocaleString()} unique users</div>
-                {parseFloat(e.total_value) > 0 && <div style={{ fontSize: 12, color: '#22c55e', fontWeight: 600 }}>AED {parseFloat(e.total_value).toFixed(0)}</div>}
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{parseInt(e.unique_users).toLocaleString()} unique users</div>
+                {parseFloat(e.total_value) > 0 && <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>AED {parseFloat(e.total_value).toFixed(0)}</div>}
               </div>
             ))}
           </div>
 
-          <div style={{ background: 'white', borderRadius: 12, padding: 24, border: '1px solid #e7e5e4' }}>
+          <div className="card" style={{ padding: 24 }}>
             <h3 style={{ margin: '0 0 16px' }}>Daily Event Volume</h3>
             {analytics.daily?.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
@@ -97,101 +101,105 @@ export default function GTMIntegration() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" tickFormatter={d => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
                   <YAxis />
-                  <Tooltip labelFormatter={d => new Date(d).toLocaleDateString()} />
-                  <Bar dataKey="event_count" fill="#dc2626" radius={[6, 6, 0, 0]} name="Events" />
-                  <Bar dataKey="unique_users" fill="#22c55e" radius={[6, 6, 0, 0]} name="Users" />
+                  <Tooltip labelFormatter={d => new Date(d).toLocaleDateString()} contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
+                  <Bar dataKey="event_count" fill="var(--red)" radius={[6, 6, 0, 0]} name="Events" />
+                  <Bar dataKey="unique_users" fill="var(--green)" radius={[6, 6, 0, 0]} name="Users" />
                 </BarChart>
               </ResponsiveContainer>
-            ) : <p style={{ color: '#a8a29e', textAlign: 'center', padding: 40 }}>GTM events will appear here as they are captured.</p>}
+            ) : <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', padding: 40 }}>GTM events will appear here as they are captured.</p>}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* DataLayer Scripts */}
       {activeTab === 'datalayer' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: 24 }}>
-          <div style={{ background: 'white', borderRadius: 12, padding: 16, border: '1px solid #e7e5e4' }}>
+        <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: 24 }}>
+          <div className="card" style={{ padding: 16 }}>
             <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>Events ({Object.keys(scripts).length})</h4>
             {Object.keys(scripts).map(key => (
               <button key={key} onClick={() => setSelectedScript(key)}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', marginBottom: 4, borderRadius: 6, border: selectedScript === key ? '2px solid #dc2626' : '1px solid transparent', background: selectedScript === key ? '#fef2f2' : 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                className={`tab ${selectedScript === key ? 'active' : ''}`}
+                style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4 }}>
                 {key}
               </button>
             ))}
           </div>
-          <div style={{ background: 'white', borderRadius: 12, padding: 24, border: '1px solid #e7e5e4' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div className="card" style={{ padding: 24 }}>
+            <div className="card-header" style={{ marginBottom: 12 }}>
               <h3 style={{ margin: 0, fontSize: 16 }}>{selectedScript}</h3>
               <button onClick={() => copyToClipboard(scripts[selectedScript], selectedScript)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', border: '1px solid #e7e5e4', borderRadius: 6, cursor: 'pointer', fontSize: 12, background: copied === selectedScript ? '#22c55e' : 'white', color: copied === selectedScript ? 'white' : '#333' }}>
+                className={`btn btn-sm ${copied === selectedScript ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ gap: 4 }}>
                 <Copy size={12} /> {copied === selectedScript ? 'Copied!' : 'Copy'}
               </button>
             </div>
-            <pre style={{ background: '#1e293b', color: '#e7e5e4', padding: 20, borderRadius: 8, fontSize: 12, lineHeight: 1.6, overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap' }}>
+            <pre className="code-block">
               {scripts[selectedScript]}
             </pre>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Special Occasions */}
       {activeTab === 'occasions' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 16 }}>
+        <motion.div variants={fadeInUp} className="grid-auto">
           {occasions.map(o => (
-            <div key={o.occasion_id} style={{ background: 'white', borderRadius: 12, padding: 20, border: '1px solid #e7e5e4', borderLeft: `4px solid ${occasionColors[o.occasion_type]}` }}>
+            <div key={o.occasion_id} className="card" style={{ borderLeft: `4px solid ${occasionColors[o.occasion_type]}` }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 700 }}>{o.name}</div>
-                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: `${occasionColors[o.occasion_type]}15`, color: occasionColors[o.occasion_type], fontWeight: 600, textTransform: 'capitalize' }}>
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: `color-mix(in srgb, ${occasionColors[o.occasion_type]} 10%, transparent)`, color: occasionColors[o.occasion_type], fontWeight: 600, textTransform: 'capitalize' }}>
                     {o.occasion_type}
                   </span>
                 </div>
-                {o.is_active && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: '#22c55e', color: 'white' }}>Active</span>}
+                {o.is_active && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'var(--green)', color: '#fff' }}>Active</span>}
               </div>
-              <div style={{ fontSize: 13, color: '#78716c', marginBottom: 8 }}>{o.campaign_theme}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{o.campaign_theme}</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
-                <div><span style={{ color: '#a8a29e' }}>Start:</span> {new Date(o.start_date).toLocaleDateString()}</div>
-                <div><span style={{ color: '#a8a29e' }}>End:</span> {new Date(o.end_date).toLocaleDateString()}</div>
-                <div><span style={{ color: '#a8a29e' }}>Coupon:</span> <code style={{ background: '#f5f5f4', padding: '1px 4px', borderRadius: 3 }}>{o.discount_code}</code></div>
+                <div><span style={{ color: 'var(--text-tertiary)' }}>Start:</span> {new Date(o.start_date).toLocaleDateString()}</div>
+                <div><span style={{ color: 'var(--text-tertiary)' }}>End:</span> {new Date(o.end_date).toLocaleDateString()}</div>
+                <div><span style={{ color: 'var(--text-tertiary)' }}>Coupon:</span> <code style={{ background: 'var(--bg-secondary)', padding: '1px 4px', borderRadius: 3 }}>{o.discount_code}</code></div>
                 <div>
-                  {o.coupon_active && <span style={{ color: '#22c55e', fontWeight: 600 }}>{o.discount_value}% off</span>}
+                  {o.coupon_active && <span style={{ color: 'var(--green)', fontWeight: 600 }}>{o.discount_value}% off</span>}
                 </div>
                 {o.target_markets && (
                   <div style={{ gridColumn: '1 / -1' }}>
-                    <span style={{ color: '#a8a29e' }}>Markets:</span> {o.target_markets?.join(', ')}
+                    <span style={{ color: 'var(--text-tertiary)' }}>Markets:</span> {(Array.isArray(o.target_markets) ? o.target_markets : typeof o.target_markets === 'string' ? o.target_markets.replace(/[{}]/g, '').split(',').filter(Boolean) : []).join(', ')}
                   </div>
                 )}
               </div>
             </div>
           ))}
-        </div>
+        </motion.div>
       )}
 
       {/* GTM Container Snippet */}
       {activeTab === 'snippet' && snippet && (
-        <div>
-          <div style={{ background: 'white', borderRadius: 12, padding: 24, border: '1px solid #e7e5e4', marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <motion.div variants={fadeInUp}>
+          <div className="card" style={{ padding: 24, marginBottom: 16 }}>
+            <div className="card-header" style={{ marginBottom: 12 }}>
               <h3 style={{ margin: 0 }}>Head Snippet (place in &lt;head&gt;)</h3>
               <button onClick={() => copyToClipboard(snippet.head, 'head')}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', border: '1px solid #e7e5e4', borderRadius: 6, cursor: 'pointer', fontSize: 12, background: copied === 'head' ? '#22c55e' : 'white', color: copied === 'head' ? 'white' : '#333' }}>
+                className={`btn btn-sm ${copied === 'head' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ gap: 4 }}>
                 <Copy size={12} /> {copied === 'head' ? 'Copied!' : 'Copy'}
               </button>
             </div>
-            <pre style={{ background: '#1e293b', color: '#e7e5e4', padding: 16, borderRadius: 8, fontSize: 12, overflowX: 'auto', margin: 0 }}>{snippet.head}</pre>
+            <pre className="code-block">{snippet.head}</pre>
           </div>
-          <div style={{ background: 'white', borderRadius: 12, padding: 24, border: '1px solid #e7e5e4' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div className="card" style={{ padding: 24 }}>
+            <div className="card-header" style={{ marginBottom: 12 }}>
               <h3 style={{ margin: 0 }}>Body Snippet (place after &lt;body&gt;)</h3>
               <button onClick={() => copyToClipboard(snippet.body, 'body')}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', border: '1px solid #e7e5e4', borderRadius: 6, cursor: 'pointer', fontSize: 12, background: copied === 'body' ? '#22c55e' : 'white', color: copied === 'body' ? 'white' : '#333' }}>
+                className={`btn btn-sm ${copied === 'body' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ gap: 4 }}>
                 <Copy size={12} /> {copied === 'body' ? 'Copied!' : 'Copy'}
               </button>
             </div>
-            <pre style={{ background: '#1e293b', color: '#e7e5e4', padding: 16, borderRadius: 8, fontSize: 12, overflowX: 'auto', margin: 0 }}>{snippet.body}</pre>
+            <pre className="code-block">{snippet.body}</pre>
           </div>
-        </div>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }

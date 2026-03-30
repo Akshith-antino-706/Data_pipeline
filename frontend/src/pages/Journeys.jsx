@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
@@ -16,8 +17,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pi
 
 // ── Constants ──────────────────────────────────────────────────
 const NODE_COLORS = {
-  trigger: '#dc2626', action: '#00b894', condition: '#fbbf24',
-  wait: '#eab308', goal: '#8b5cf6'
+  trigger: 'var(--red)', action: 'var(--green)', condition: 'var(--yellow)',
+  wait: 'var(--yellow)', goal: 'var(--purple)'
 };
 const NODE_ICONS = {
   trigger: Zap, action: Send, condition: GitBranch, wait: Clock, goal: Target
@@ -28,19 +29,22 @@ const NODE_LABELS = {
 };
 const CHANNEL_CONFIG = {
   whatsapp: { color: '#25d366', icon: MessageCircle, label: 'WhatsApp' },
-  email: { color: '#dc2626', icon: Mail, label: 'Email' },
-  sms: { color: '#f59e0b', icon: Smartphone, label: 'SMS' },
-  push: { color: '#8b5cf6', icon: Bell, label: 'Push' },
-  rcs: { color: '#eab308', icon: MessageSquare, label: 'RCS' },
-  web: { color: '#06b6d4', icon: Globe, label: 'Web' }
+  email: { color: 'var(--red)', icon: Mail, label: 'Email' },
+  sms: { color: 'var(--orange)', icon: Smartphone, label: 'SMS' },
+  push: { color: 'var(--purple)', icon: Bell, label: 'Push' },
+  rcs: { color: 'var(--yellow)', icon: MessageSquare, label: 'RCS' },
+  web: { color: 'var(--brand-primary)', icon: Globe, label: 'Web' }
 };
 const STATUS_CONFIG = {
-  active: { color: '#22c55e', bg: 'rgba(34,197,94,0.1)', label: 'Active' },
-  draft: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', label: 'Draft' },
-  paused: { color: '#78716c', bg: 'rgba(120,113,108,0.1)', label: 'Paused' },
-  completed: { color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)', label: 'Completed' }
+  active: { color: 'var(--green)', bg: 'var(--green-dim)', label: 'Active' },
+  draft: { color: 'var(--orange)', bg: 'var(--orange-dim)', label: 'Draft' },
+  paused: { color: 'var(--text-tertiary)', bg: 'rgba(120,113,108,0.1)', label: 'Paused' },
+  completed: { color: 'var(--purple)', bg: 'var(--purple-dim)', label: 'Completed' }
 };
-const PIE_COLORS = ['#22c55e', '#dc2626', '#f59e0b', '#8b5cf6', '#06b6d4', '#eab308'];
+const PIE_COLORS = ['var(--green)', 'var(--red)', 'var(--orange)', 'var(--purple)', 'var(--brand-primary)', 'var(--yellow)'];
+
+const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
+const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 // ── Utility ────────────────────────────────────────────────────
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -341,14 +345,14 @@ export default function Journeys() {
   // LOADING STATE
   // ══════════════════════════════════════════════════════════════
   if (loading) return (
-    <div style={{ padding: '40px 0' }}>
+    <div className="pt-10">
       <div className="page-header">
         <div>
           <div className="skeleton" style={{ width: 200, height: 28, marginBottom: 8 }} />
           <div className="skeleton" style={{ width: 300, height: 16 }} />
         </div>
       </div>
-      <div className="card-grid card-grid-4" style={{ marginBottom: 24 }}>
+      <div className="card-grid card-grid-4 mb-6">
         {[1,2,3,4].map(i => <div key={i} className="card skeleton" style={{ height: 90 }} />)}
       </div>
       {[1,2,3].map(i => <div key={i} className="card skeleton" style={{ height: 80, marginBottom: 8 }} />)}
@@ -426,24 +430,25 @@ export default function Journeys() {
 
     const funnelData = analytics?.funnelData || [];
     const entryFunnelData = [
-      { name: 'Entered', value: parseInt(stats.total_entries) || 0, color: '#eab308' },
-      { name: 'Active', value: parseInt(stats.active) || 0, color: '#22c55e' },
-      { name: 'Completed', value: parseInt(stats.completed) || 0, color: '#06b6d4' },
-      { name: 'Converted', value: parseInt(stats.converted) || 0, color: '#8b5cf6' },
-      { name: 'Exited', value: parseInt(stats.exited) || 0, color: '#dc2626' },
+      { name: 'Entered', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
+      { name: 'Active', value: parseInt(stats.active) || 0, color: 'var(--green)' },
+      { name: 'Completed', value: parseInt(stats.completed) || 0, color: 'var(--brand-primary)' },
+      { name: 'Converted', value: parseInt(stats.converted) || 0, color: 'var(--purple)' },
+      { name: 'Exited', value: parseInt(stats.exited) || 0, color: 'var(--red)' },
     ].filter(d => d.value > 0);
 
     return (
-      <div>
+      <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
         {/* ── Back + Header ─────────────────────────────────────── */}
-        <button className="btn btn-ghost" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); }} style={{ marginBottom: 16 }}>
+        <motion.div variants={fadeInUp}>
+        <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); }}>
           <ArrowLeft size={14} /> All Journeys
         </button>
 
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+        <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
           <div style={{ flex: 1, minWidth: 0 }}>
             {editMode ? (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <div className="flex gap-2 items-center mb-2">
                 <input
                   value={editForm.name || ''}
                   onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
@@ -453,14 +458,14 @@ export default function Journeys() {
                 <button className="btn btn-sm btn-ghost" onClick={() => setEditMode(false)}>Cancel</button>
               </div>
             ) : (
-              <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h2 className="flex items-center gap-2.5" style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>
                 {detail.name}
                 <button className="btn btn-ghost btn-sm" onClick={() => { setEditMode(true); setEditForm({ name: detail.name, description: detail.description, status: detail.status }); }}>
                   <Edit3 size={14} />
                 </button>
               </h2>
             )}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="flex gap-2 flex-wrap items-center">
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
@@ -471,7 +476,7 @@ export default function Journeys() {
               </span>
               {detail.segment_name && <span className="badge badge-purple">{detail.segment_name}</span>}
               {detail.stage_name && (
-                <span className="badge" style={{ background: (detail.stage_color || '#dc2626') + '20', color: detail.stage_color || '#dc2626' }}>
+                <span className="badge" style={{ background: (detail.stage_color || 'var(--red)') + '20', color: detail.stage_color || 'var(--red)' }}>
                   {detail.stage_name}
                 </span>
               )}
@@ -490,7 +495,7 @@ export default function Journeys() {
               })}
             </div>
             {detail.description && !editMode && (
-              <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 10, lineHeight: 1.7, maxWidth: 600 }}>{detail.description}</p>
+              <p className="text-secondary" style={{ fontSize: 13, marginTop: 10, lineHeight: 1.7, maxWidth: 600 }}>{detail.description}</p>
             )}
             {editMode && (
               <textarea
@@ -501,7 +506,7 @@ export default function Journeys() {
               />
             )}
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className="flex gap-2 flex-wrap">
             <button className="btn btn-secondary" onClick={handleAISuggest} disabled={suggestLoading}>
               <Sparkles size={14} /> {suggestLoading ? 'Analyzing...' : 'AI Optimize'}
             </button>
@@ -520,16 +525,16 @@ export default function Journeys() {
                   <div style={{ position: 'fixed', inset: 0, zIndex: 50 }} onClick={() => setShowActions(false)} />
                   <div style={{
                     position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                    background: 'var(--bg-card)', border: '1px solid var(--border-color)',
                     borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-lg)',
                     minWidth: 180, zIndex: 51, overflow: 'hidden'
                   }}>
                     <button onClick={() => { setShowActions(false); navigator.clipboard?.writeText(String(selected)); showToast('Journey ID copied', 'info'); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', width: '100%', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text)' }}>
+                      className="flex items-center gap-2" style={{ padding: '10px 14px', width: '100%', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
                       <Copy size={14} /> Copy ID
                     </button>
                     <button onClick={() => { setShowActions(false); setConfirmAction('delete'); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', width: '100%', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: '#dc2626' }}>
+                      className="flex items-center gap-2" style={{ padding: '10px 14px', width: '100%', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--red)' }}>
                       <Trash2 size={14} /> Delete Journey
                     </button>
                   </div>
@@ -538,9 +543,11 @@ export default function Journeys() {
             </div>
           </div>
         </div>
+        </motion.div>
 
         {/* ── KPIs ──────────────────────────────────────────────── */}
-        <div className="card-grid card-grid-4" style={{ marginBottom: 24 }}>
+        <motion.div variants={fadeInUp}>
+        <div className="card-grid card-grid-4 mb-6">
           {[
             { label: 'Total Entries', value: fmt(stats.total_entries), color: 'kpi-blue', icon: Users },
             { label: 'Active Now', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
@@ -548,13 +555,13 @@ export default function Journeys() {
             { label: 'Conversion Rate', value: pct(detail.conversion_rate), color: 'kpi-orange', icon: TrendingUp },
           ].map((kpi, i) => (
             <div key={i} className="card" style={{ padding: '20px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="flex items-center justify-between">
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 4 }}>{kpi.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 4 }}>{kpi.label}</div>
                   <div className={`kpi-value ${kpi.color}`} style={{ fontSize: 26 }}>{kpi.value}</div>
                 </div>
-                <div style={{ width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-                  <kpi.icon size={20} color="var(--text-dim)" />
+                <div className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-secondary)' }}>
+                  <kpi.icon size={20} color="var(--text-secondary)" />
                 </div>
               </div>
             </div>
@@ -562,7 +569,7 @@ export default function Journeys() {
         </div>
 
         {/* ── Tabs ──────────────────────────────────────────────── */}
-        <div className="tabs" style={{ marginBottom: 20 }}>
+        <div className="tabs mb-5">
           {[
             { id: 'flow', label: 'Journey Flow', icon: GitBranch },
             { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -571,9 +578,8 @@ export default function Journeys() {
           ].map(tab => (
             <button
               key={tab.id}
-              className={`tab ${activeTab === tab.id ? 'active' : ''}`}
+              className={`tab flex items-center gap-1.5 ${activeTab === tab.id ? 'active' : ''}`}
               onClick={() => setActiveTab(tab.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             >
               <tab.icon size={14} /> {tab.label}
             </button>
@@ -585,45 +591,45 @@ export default function Journeys() {
           <>
             {/* AI Suggestions Banner */}
             {suggestions && (
-              <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid #8b5cf6' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Sparkles size={16} color="#8b5cf6" />
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>AI Flow Analysis</span>
+              <div className="card mb-4" style={{ borderLeft: '4px solid var(--purple)' }}>
+                <div className="flex justify-between items-center mb-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} color="var(--purple)" />
+                    <span className="font-semibold text-sm">AI Flow Analysis</span>
                   </div>
                   <span style={{
                     padding: '4px 12px', borderRadius: 20, fontSize: 13, fontWeight: 700,
-                    background: suggestions.overall_score >= 80 ? 'rgba(34,197,94,0.1)' : suggestions.overall_score >= 60 ? 'rgba(245,158,11,0.1)' : 'rgba(220,38,38,0.1)',
-                    color: suggestions.overall_score >= 80 ? '#22c55e' : suggestions.overall_score >= 60 ? '#f59e0b' : '#dc2626'
+                    background: suggestions.overall_score >= 80 ? 'var(--green-dim)' : suggestions.overall_score >= 60 ? 'var(--orange-dim)' : 'rgba(220,38,38,0.1)',
+                    color: suggestions.overall_score >= 80 ? 'var(--green)' : suggestions.overall_score >= 60 ? 'var(--orange)' : 'var(--red)'
                   }}>
                     Score: {suggestions.overall_score}/100
                   </span>
                 </div>
                 {(suggestions.suggestions || []).length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div className="flex flex-col gap-2">
                     {suggestions.suggestions.map((s, i) => (
-                      <div key={i} style={{
-                        display: 'flex', gap: 12, padding: '10px 14px',
-                        background: 'var(--bg)', borderRadius: 8, border: '1px solid var(--border)'
+                      <div key={i} className="flex gap-3" style={{
+                        padding: '10px 14px',
+                        background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)'
                       }}>
                         <span style={{
                           display: 'inline-flex', alignItems: 'center', padding: '2px 8px',
                           borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
                           alignSelf: 'flex-start', marginTop: 2,
-                          background: s.impact === 'high' ? 'rgba(220,38,38,0.1)' : s.impact === 'medium' ? 'rgba(245,158,11,0.1)' : 'rgba(34,197,94,0.1)',
-                          color: s.impact === 'high' ? '#dc2626' : s.impact === 'medium' ? '#f59e0b' : '#22c55e'
+                          background: s.impact === 'high' ? 'rgba(220,38,38,0.1)' : s.impact === 'medium' ? 'var(--orange-dim)' : 'var(--green-dim)',
+                          color: s.impact === 'high' ? 'var(--red)' : s.impact === 'medium' ? 'var(--orange)' : 'var(--green)'
                         }}>
                           {s.impact}
                         </span>
                         <div>
-                          <div style={{ fontWeight: 600, fontSize: 13 }}>{s.title}</div>
-                          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2, lineHeight: 1.5 }}>{s.description}</div>
+                          <div className="font-semibold text-sm">{s.title}</div>
+                          <div className="text-secondary" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>{s.description}</div>
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-dim)', fontSize: 13 }}>
+                  <div className="text-secondary" style={{ padding: 12, textAlign: 'center', fontSize: 13 }}>
                     <CheckCircle2 size={16} style={{ marginRight: 6, verticalAlign: -3 }} />
                     Flow looks optimized — no suggestions at this time.
                   </div>
@@ -633,18 +639,18 @@ export default function Journeys() {
 
             {/* Visual Flow Canvas */}
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Layers size={16} color="var(--text-dim)" />
-                  <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <div className="flex justify-between items-center" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)' }}>
+                <div className="flex items-center gap-2">
+                  <Layers size={16} color="var(--text-secondary)" />
+                  <span className="font-semibold text-secondary" style={{ fontSize: 14, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                     Journey Flow
                   </span>
                   <span className="badge badge-gray">{nodes.length} nodes</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+                <div className="flex items-center gap-4">
+                  <div className="flex gap-3" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                     {Object.entries(NODE_COLORS).map(([type, color]) => (
-                      <span key={type} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span key={type} className="flex items-center gap-1">
                         <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
                         {type}
                       </span>
@@ -660,18 +666,18 @@ export default function Journeys() {
                 </div>
               </div>
 
-              <div style={{ padding: '24px 32px', background: 'linear-gradient(180deg, var(--bg) 0%, var(--bg-card) 100%)', minHeight: 200 }}>
+              <div style={{ padding: '24px 32px', background: 'linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-card) 100%)', minHeight: 200 }}>
                 {nodes.length === 0 ? (
                   <div className="empty" style={{ padding: '40px 20px' }}>
                     <GitBranch size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
                     <h4 style={{ marginTop: 12 }}>No nodes in this journey</h4>
-                    <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Generate from a strategy to populate the flow.</p>
+                    <p className="text-secondary text-sm">Generate from a strategy to populate the flow.</p>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                  <div className="flex flex-col items-center">
                     {nodes.map((node, i) => {
                       const Icon = NODE_ICONS[node.type] || Target;
-                      const color = NODE_COLORS[node.type] || '#a8a29e';
+                      const color = NODE_COLORS[node.type] || 'var(--text-tertiary)';
                       const channelConf = node.data?.channel ? CHANNEL_CONFIG[node.data.channel.toLowerCase()] : null;
                       const ChannelIcon = channelConf?.icon || null;
                       const nodeStats = nodeAnalyticsMap[node.id] || {};
@@ -682,28 +688,28 @@ export default function Journeys() {
                         <div key={node.id} style={{ width: '100%', maxWidth: 520 }}>
                           {/* Connector Arrow + Insert Button */}
                           {i > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0', position: 'relative' }}>
+                            <div className="flex flex-col items-center" style={{ position: 'relative' }}>
                               <div style={{ width: 2, height: 12, background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
                               {flowEditMode ? (
                                 addNodeAfter === i - 1 ? (
-                                  <div style={{ background: 'var(--bg-card)', border: '2px dashed var(--accent)', borderRadius: 10, padding: 12, margin: '4px 0', width: '100%', maxWidth: 480 }}>
-                                    <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                                  <div style={{ background: 'var(--bg-card)', border: '2px dashed var(--red)', borderRadius: 10, padding: 12, margin: '4px 0', width: '100%', maxWidth: 480 }}>
+                                    <div className="flex gap-2 mb-2 flex-wrap">
                                       {['action', 'wait', 'condition', 'goal'].map(t => (
                                         <button key={t} onClick={() => setNodeForm(f => ({...f, type: t}))}
                                           style={{ padding: '3px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-                                            border: nodeForm.type === t ? `2px solid ${NODE_COLORS[t]}` : '1px solid var(--border)',
-                                            background: nodeForm.type === t ? NODE_COLORS[t] + '15' : 'var(--bg)', color: NODE_COLORS[t] || 'var(--text)' }}>
+                                            border: nodeForm.type === t ? `2px solid ${NODE_COLORS[t]}` : '1px solid var(--border-color)',
+                                            background: nodeForm.type === t ? NODE_COLORS[t] + '15' : 'var(--bg-secondary)', color: NODE_COLORS[t] || 'var(--text-primary)' }}>
                                           {t}
                                         </button>
                                       ))}
                                     </div>
                                     {nodeForm.type === 'action' && (
-                                      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                      <div className="flex gap-1.5 mb-2">
                                         {['email', 'whatsapp', 'sms', 'push'].map(ch => (
                                           <button key={ch} onClick={() => setNodeForm(f => ({...f, channel: ch}))}
                                             style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
-                                              border: nodeForm.channel === ch ? '2px solid var(--accent)' : '1px solid var(--border)',
-                                              background: nodeForm.channel === ch ? 'var(--accent)' + '15' : 'var(--bg)', textTransform: 'capitalize' }}>
+                                              border: nodeForm.channel === ch ? '2px solid var(--red)' : '1px solid var(--border-color)',
+                                              background: nodeForm.channel === ch ? 'var(--red)' + '15' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
                                             {ch}
                                           </button>
                                         ))}
@@ -711,20 +717,21 @@ export default function Journeys() {
                                     )}
                                     <input value={nodeForm.label} onChange={e => setNodeForm(f => ({...f, label: e.target.value}))}
                                       placeholder={nodeForm.type === 'wait' ? 'e.g. Wait 3 days' : 'Step description...'}
-                                      style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                                      style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                                     {nodeForm.type === 'wait' && (
                                       <input type="number" value={nodeForm.waitDays} onChange={e => setNodeForm(f => ({...f, waitDays: parseInt(e.target.value) || 1}))}
-                                        placeholder="Days to wait" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                                        placeholder="Days to wait" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                                     )}
-                                    <div style={{ display: 'flex', gap: 6 }}>
+                                    <div className="flex gap-1.5">
                                       <button onClick={() => handleAddNode(i - 1)} className="btn btn-sm btn-primary" style={{ fontSize: 11 }}>Add</button>
                                       <button onClick={() => setAddNodeAfter(null)} className="btn btn-sm btn-ghost" style={{ fontSize: 11 }}>Cancel</button>
                                     </div>
                                   </div>
                                 ) : (
                                   <button onClick={() => { setAddNodeAfter(i - 1); setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' }); }}
-                                    style={{ width: 22, height: 22, borderRadius: '50%', border: '2px dashed var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)',
-                                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, margin: '2px 0' }}>
+                                    className="flex items-center justify-center"
+                                    style={{ width: 22, height: 22, borderRadius: '50%', border: '2px dashed var(--red)', background: 'var(--bg-card)', color: 'var(--red)',
+                                      cursor: 'pointer', fontSize: 14, fontWeight: 700, margin: '2px 0' }}>
                                     +
                                   </button>
                                 )
@@ -740,7 +747,7 @@ export default function Journeys() {
                             onClick={() => setExpandedNode(isExpanded ? null : node.id)}
                             style={{
                               background: 'var(--bg-card)',
-                              border: `1px solid ${isExpanded ? color + '50' : 'var(--border)'}`,
+                              border: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
                               borderLeft: `4px solid ${color}`,
                               borderRadius: 12,
                               padding: '14px 16px',
@@ -749,19 +756,18 @@ export default function Journeys() {
                               boxShadow: isExpanded ? `0 4px 16px ${color}15` : 'var(--shadow)',
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div className="flex items-center gap-3">
                               {/* Node icon */}
-                              <div style={{
+                              <div className="flex items-center justify-center shrink-0" style={{
                                 width: 40, height: 40, borderRadius: 10,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                background: color + '12', color, flexShrink: 0
+                                background: color + '12', color
                               }}>
                                 <Icon size={20} />
                               </div>
 
                               {/* Node content */}
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color, lineHeight: 1 }}>
                                     {NODE_LABELS[node.type] || node.type}
                                   </span>
@@ -775,37 +781,40 @@ export default function Journeys() {
                                     </span>
                                   )}
                                   {node.data?.timing && (
-                                    <span style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    <span className="flex items-center gap-0.5" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                                       <Clock size={10} /> {node.data.timing}
                                     </span>
                                   )}
                                 </div>
                                 {node.data?.label && (
-                                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginTop: 4 }}>{node.data.label}</div>
+                                  <div className="font-medium" style={{ fontSize: 13, color: 'var(--text-primary)', marginTop: 4 }}>{node.data.label}</div>
                                 )}
                               </div>
 
                               {/* Node stats preview */}
                               {hasSent && (
-                                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmt(nodeStats.action_sent)}</div>
+                                <div className="text-right shrink-0">
+                                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(nodeStats.action_sent)}</div>
                                   <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>sent</div>
                                 </div>
                               )}
 
                               {/* Flow edit controls */}
                               {flowEditMode && (
-                                <div style={{ display: 'flex', gap: 2, marginRight: 4 }} onClick={e => e.stopPropagation()}>
+                                <div className="flex gap-0.5" style={{ marginRight: 4 }} onClick={e => e.stopPropagation()}>
                                   {i > 0 && (
                                     <button onClick={() => handleMoveNode(node.id, 'up')} title="Move up"
-                                      style={{ width: 24, height: 24, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>↑</button>
+                                      className="flex items-center justify-center"
+                                      style={{ width: 24, height: 24, border: '1px solid var(--border-color)', borderRadius: 6, background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 12 }}>↑</button>
                                   )}
                                   {i < nodes.length - 1 && (
                                     <button onClick={() => handleMoveNode(node.id, 'down')} title="Move down"
-                                      style={{ width: 24, height: 24, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>↓</button>
+                                      className="flex items-center justify-center"
+                                      style={{ width: 24, height: 24, border: '1px solid var(--border-color)', borderRadius: 6, background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 12 }}>↓</button>
                                   )}
                                   <button onClick={() => handleDeleteNode(node.id)} title="Delete node"
-                                    style={{ width: 24, height: 24, border: '1px solid #ef4444', borderRadius: 6, background: '#fef2f2', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>×</button>
+                                    className="flex items-center justify-center"
+                                    style={{ width: 24, height: 24, border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-dim)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>×</button>
                                 </div>
                               )}
                               <ChevronDown size={14} color="var(--text-muted)" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
@@ -813,37 +822,37 @@ export default function Journeys() {
 
                             {/* Expanded details */}
                             {isExpanded && (
-                              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+                              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border-color)' }}>
                                 {node.data?.message && (
                                   <div style={{
-                                    background: 'var(--bg)', borderRadius: 8, padding: '12px 14px',
-                                    fontSize: 13, color: 'var(--text)', lineHeight: 1.7, marginBottom: 12,
+                                    background: 'var(--bg-secondary)', borderRadius: 8, padding: '12px 14px',
+                                    fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.7, marginBottom: 12,
                                     borderLeft: `3px solid ${channelConf?.color || color}20`
                                   }}>
                                     {node.data.message}
                                   </div>
                                 )}
                                 {node.data?.waitDays && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                                  <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
                                     <Clock size={14} color={color} />
-                                    <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                                    <span className="text-secondary text-sm">
                                       Wait <strong>{node.data.waitDays} day{node.data.waitDays !== 1 ? 's' : ''}</strong> before proceeding
                                     </span>
                                   </div>
                                 )}
                                 {node.data?.triggerType && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                                  <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
                                     <Zap size={14} color={color} />
-                                    <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                                    <span className="text-secondary text-sm">
                                       Trigger: <strong>{node.data.triggerType}</strong>
                                       {node.data?.segmentLabel && <span> — {node.data.segmentLabel}</span>}
                                     </span>
                                   </div>
                                 )}
                                 {node.data?.goalType && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                                  <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
                                     <Target size={14} color={color} />
-                                    <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                                    <span className="text-secondary text-sm">
                                       Conversion goal: <strong>{node.data.goalType}</strong>
                                     </span>
                                   </div>
@@ -860,15 +869,15 @@ export default function Journeys() {
                                   const bounced = camp?.bounced || parseInt(nodeStats?.action_bounced) || 0;
                                   const failed = camp?.failed || parseInt(nodeStats?.action_failed) || 0;
                                   return (
-                                    <div style={{ marginTop: 12 }}>
+                                    <div className="mt-3">
                                       {/* Top row — Target, Sent, Delivered */}
                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                                         {[
-                                          { label: 'TARGET', value: target, color: '#22c55e' },
-                                          { label: 'SENT', value: sent, color: '#22c55e' },
-                                          { label: 'DELIVERED', value: delivered, color: '#22c55e' },
+                                          { label: 'TARGET', value: target, color: 'var(--green)' },
+                                          { label: 'SENT', value: sent, color: 'var(--green)' },
+                                          { label: 'DELIVERED', value: delivered, color: 'var(--green)' },
                                         ].map(m => (
-                                          <div key={m.label} style={{ background: 'var(--bg)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border)' }}>
+                                          <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontSize: 22, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
                                             <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px', marginTop: 2 }}>{m.label}</div>
                                           </div>
@@ -877,10 +886,10 @@ export default function Journeys() {
                                       {/* Bottom row — Read, Clicked, Bounced, Failed */}
                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
                                         {[
-                                          { label: 'Read', value: read, color: 'var(--text)' },
-                                          { label: 'Clicked', value: clicked, color: 'var(--text)' },
-                                          { label: 'Bounced', value: bounced, color: '#f59e0b' },
-                                          { label: 'Failed', value: failed, color: '#ef4444' },
+                                          { label: 'Read', value: read, color: 'var(--text-primary)' },
+                                          { label: 'Clicked', value: clicked, color: 'var(--text-primary)' },
+                                          { label: 'Bounced', value: bounced, color: 'var(--orange)' },
+                                          { label: 'Failed', value: failed, color: 'var(--red)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ textAlign: 'center', padding: '6px 0' }}>
                                             <div style={{ fontSize: 18, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
@@ -894,8 +903,8 @@ export default function Journeys() {
                                         // Strip HTML tags for clean preview
                                         const clean = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
                                         return (
-                                          <div style={{ marginTop: 10 }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                                          <div className="mt-2.5">
+                                            <div className="flex justify-between items-center mb-1">
                                               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Template Preview</span>
                                               <button
                                                 onClick={(e) => {
@@ -905,12 +914,12 @@ export default function Journeys() {
                                                   const tplId = matched?.template_id || '';
                                                   window.location.href = `/content${tplId ? `?templateId=${tplId}` : ''}`;
                                                 }}
-                                                style={{ fontSize: 10, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontWeight: 600 }}
+                                                style={{ fontSize: 10, color: 'var(--red)', background: 'none', border: '1px solid var(--red)', borderRadius: 6, padding: '2px 10px', cursor: 'pointer', fontWeight: 600 }}
                                               >
                                                 Edit Template
                                               </button>
                                             </div>
-                                            <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.6, border: '1px solid var(--border)' }}>
+                                            <div className="text-secondary" style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px', fontSize: 12, lineHeight: 1.6, border: '1px solid var(--border-color)' }}>
                                               {clean.slice(0, 200)}{clean.length > 200 ? '...' : ''}
                                             </div>
                                           </div>
@@ -921,10 +930,10 @@ export default function Journeys() {
                                 })()}
                                 {/* Non-action node stats */}
                                 {node.type !== 'action' && Object.keys(nodeStats).length > 0 && (
-                                  <div style={{ display: 'flex', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+                                  <div className="flex gap-4 mt-2 flex-wrap">
                                     {Object.entries(nodeStats).map(([event, count]) => (
                                       <div key={event} style={{ textAlign: 'center' }}>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{fmt(count)}</div>
+                                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(count)}</div>
                                         <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{event.replace(/_/g, ' ')}</div>
                                       </div>
                                     ))}
@@ -949,47 +958,48 @@ export default function Journeys() {
                     })}
                     {/* Add node at end when in edit mode */}
                     {flowEditMode && (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 8 }}>
-                        <div style={{ width: 2, height: 12, background: 'var(--border)' }} />
+                      <div className="flex flex-col items-center mt-2">
+                        <div style={{ width: 2, height: 12, background: 'var(--border-color)' }} />
                         {addNodeAfter === nodes.length - 1 ? (
-                          <div style={{ background: 'var(--bg-card)', border: '2px dashed var(--accent)', borderRadius: 10, padding: 12, width: '100%', maxWidth: 480 }}>
-                            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                          <div style={{ background: 'var(--bg-card)', border: '2px dashed var(--red)', borderRadius: 10, padding: 12, width: '100%', maxWidth: 480 }}>
+                            <div className="flex gap-2 mb-2 flex-wrap">
                               {['action', 'wait', 'condition', 'goal'].map(t => (
                                 <button key={t} onClick={() => setNodeForm(f => ({...f, type: t}))}
                                   style={{ padding: '3px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-                                    border: nodeForm.type === t ? `2px solid ${NODE_COLORS[t]}` : '1px solid var(--border)',
-                                    background: nodeForm.type === t ? NODE_COLORS[t] + '15' : 'var(--bg)', color: NODE_COLORS[t] || 'var(--text)' }}>
+                                    border: nodeForm.type === t ? `2px solid ${NODE_COLORS[t]}` : '1px solid var(--border-color)',
+                                    background: nodeForm.type === t ? NODE_COLORS[t] + '15' : 'var(--bg-secondary)', color: NODE_COLORS[t] || 'var(--text-primary)' }}>
                                   {t}
                                 </button>
                               ))}
                             </div>
                             {nodeForm.type === 'action' && (
-                              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                              <div className="flex gap-1.5 mb-2">
                                 {['email', 'whatsapp', 'sms', 'push'].map(ch => (
                                   <button key={ch} onClick={() => setNodeForm(f => ({...f, channel: ch}))}
                                     style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
-                                      border: nodeForm.channel === ch ? '2px solid var(--accent)' : '1px solid var(--border)',
-                                      background: nodeForm.channel === ch ? 'var(--accent)' + '15' : 'var(--bg)', textTransform: 'capitalize' }}>
+                                      border: nodeForm.channel === ch ? '2px solid var(--red)' : '1px solid var(--border-color)',
+                                      background: nodeForm.channel === ch ? 'var(--red)' + '15' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
                                     {ch}
                                   </button>
                                 ))}
                               </div>
                             )}
                             <input value={nodeForm.label} onChange={e => setNodeForm(f => ({...f, label: e.target.value}))}
-                              placeholder="Step description..." style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                              placeholder="Step description..." style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                             {nodeForm.type === 'wait' && (
                               <input type="number" value={nodeForm.waitDays} onChange={e => setNodeForm(f => ({...f, waitDays: parseInt(e.target.value) || 1}))}
-                                placeholder="Days" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                                placeholder="Days" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                             )}
-                            <div style={{ display: 'flex', gap: 6 }}>
+                            <div className="flex gap-1.5">
                               <button onClick={() => handleAddNode(nodes.length - 1)} className="btn btn-sm btn-primary" style={{ fontSize: 11 }}>Add</button>
                               <button onClick={() => setAddNodeAfter(null)} className="btn btn-sm btn-ghost" style={{ fontSize: 11 }}>Cancel</button>
                             </div>
                           </div>
                         ) : (
                           <button onClick={() => { setAddNodeAfter(nodes.length - 1); setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' }); }}
-                            style={{ width: 28, height: 28, borderRadius: '50%', border: '2px dashed var(--accent)', background: 'var(--bg-card)', color: 'var(--accent)',
-                              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700 }}>
+                            className="flex items-center justify-center"
+                            style={{ width: 28, height: 28, borderRadius: '50%', border: '2px dashed var(--red)', background: 'var(--bg-card)', color: 'var(--red)',
+                              cursor: 'pointer', fontSize: 16, fontWeight: 700 }}>
                             +
                           </button>
                         )}
@@ -1004,20 +1014,20 @@ export default function Journeys() {
 
         {/* ── TAB: Analytics ────────────────────────────────────── */}
         {activeTab === 'analytics' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="flex flex-col gap-4">
             {/* Entry Funnel */}
             <div className="card-grid card-grid-2">
               <div className="card">
                 <div className="card-header"><h3>Entry Funnel</h3></div>
                 {entryFunnelData.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div className="flex flex-col gap-3">
                     {entryFunnelData.map((d, i) => {
                       const maxVal = Math.max(...entryFunnelData.map(x => x.value), 1);
                       return (
                         <div key={i}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 12 }}>
-                            <span style={{ color: d.color, fontWeight: 600 }}>{d.name}</span>
-                            <span style={{ fontWeight: 600 }}>{fmt(d.value)}</span>
+                          <div className="flex justify-between mb-1" style={{ fontSize: 12 }}>
+                            <span className="font-semibold" style={{ color: d.color }}>{d.name}</span>
+                            <span className="font-semibold">{fmt(d.value)}</span>
                           </div>
                           <div className="progress-bar">
                             <div className="progress-fill" style={{ width: `${(d.value / maxVal) * 100}%`, background: d.color }} />
@@ -1027,14 +1037,14 @@ export default function Journeys() {
                     })}
                   </div>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-dim)', fontSize: 13 }}>No entry data yet. Enroll customers to see funnel data.</div>
+                  <div className="text-secondary" style={{ textAlign: 'center', padding: 40, fontSize: 13 }}>No entry data yet. Enroll customers to see funnel data.</div>
                 )}
               </div>
 
               <div className="card">
                 <div className="card-header"><h3>Channel Distribution</h3></div>
                 {channelDistribution.length > 0 ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                  <div className="flex items-center gap-5">
                     <ResponsiveContainer width="50%" height={160}>
                       <PieChart>
                         <Pie data={channelDistribution} cx="50%" cy="50%" innerRadius={35} outerRadius={65} dataKey="value" paddingAngle={3}>
@@ -1043,18 +1053,18 @@ export default function Journeys() {
                         <Tooltip formatter={(val) => [`${val} nodes`, '']} />
                       </PieChart>
                     </ResponsiveContainer>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+                    <div className="flex flex-col gap-2" style={{ flex: 1 }}>
                       {channelDistribution.map((d, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ width: 10, height: 10, borderRadius: 2, background: d.color, flexShrink: 0 }} />
-                          <span style={{ fontSize: 13, flex: 1 }}>{d.name}</span>
-                          <span style={{ fontSize: 13, fontWeight: 600 }}>{d.value}</span>
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="shrink-0" style={{ width: 10, height: 10, borderRadius: 2, background: d.color }} />
+                          <span className="text-sm" style={{ flex: 1 }}>{d.name}</span>
+                          <span className="text-sm font-semibold">{d.value}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-dim)', fontSize: 13 }}>No channels configured yet.</div>
+                  <div className="text-secondary" style={{ textAlign: 'center', padding: 40, fontSize: 13 }}>No channels configured yet.</div>
                 )}
               </div>
             </div>
@@ -1065,13 +1075,13 @@ export default function Journeys() {
                 <div className="card-header"><h3>Node Performance</h3></div>
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={nodeChartData} barCategoryGap="20%">
-                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#78716c' }} />
-                    <YAxis tick={{ fontSize: 11, fill: '#78716c' }} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} />
+                    <YAxis tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} />
                     <Tooltip />
-                    <Bar dataKey="sent" fill="#eab308" radius={[4,4,0,0]} name="Sent" />
-                    <Bar dataKey="delivered" fill="#22c55e" radius={[4,4,0,0]} name="Delivered" />
-                    <Bar dataKey="opened" fill="#06b6d4" radius={[4,4,0,0]} name="Opened" />
-                    <Bar dataKey="clicked" fill="#8b5cf6" radius={[4,4,0,0]} name="Clicked" />
+                    <Bar dataKey="sent" fill="var(--yellow)" radius={[4,4,0,0]} name="Sent" />
+                    <Bar dataKey="delivered" fill="var(--green)" radius={[4,4,0,0]} name="Delivered" />
+                    <Bar dataKey="opened" fill="var(--brand-primary)" radius={[4,4,0,0]} name="Opened" />
+                    <Bar dataKey="clicked" fill="var(--purple)" radius={[4,4,0,0]} name="Clicked" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1096,7 +1106,7 @@ export default function Journeys() {
                         return (
                           <tr key={i}>
                             <td>
-                              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span className="flex items-center gap-1.5">
                                 <span style={{ width: 8, height: 8, borderRadius: 2, background: NODE_COLORS[node?.type] || '#78716c' }} />
                                 {node?.data?.label || node?.type || row.current_node_id}
                               </span>
@@ -1106,7 +1116,7 @@ export default function Journeys() {
                                 {row.status}
                               </span>
                             </td>
-                            <td style={{ fontWeight: 600 }}>{fmt(row.count)}</td>
+                            <td className="font-semibold">{fmt(row.count)}</td>
                           </tr>
                         );
                       })}
@@ -1119,8 +1129,8 @@ export default function Journeys() {
             {nodeChartData.length === 0 && funnelData.length === 0 && entryFunnelData.length === 0 && (
               <div className="card" style={{ textAlign: 'center', padding: '60px 20px' }}>
                 <BarChart3 size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
-                <h4 style={{ marginTop: 12, marginBottom: 6 }}>No Analytics Data Yet</h4>
-                <p style={{ color: 'var(--text-dim)', fontSize: 13, maxWidth: 400, margin: '0 auto' }}>
+                <h4 className="mt-3 mb-1.5">No Analytics Data Yet</h4>
+                <p className="text-secondary text-sm" style={{ maxWidth: 400, margin: '0 auto' }}>
                   Enroll customers and process the journey to generate analytics data.
                 </p>
               </div>
@@ -1133,26 +1143,25 @@ export default function Journeys() {
           <div className="card">
             <div className="card-header"><h3>Journey Activity Timeline</h3></div>
             {(detail.nodeAnalytics || []).length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div className="flex flex-col">
                 {(detail.nodeAnalytics || []).slice(0, 50).map((event, i) => {
                   const node = nodes.find(n => n.id === event.node_id);
                   const nodeColor = NODE_COLORS[node?.type] || '#78716c';
                   const channelConf = event.channel ? CHANNEL_CONFIG[event.channel.toLowerCase()] : null;
                   return (
-                    <div key={i} style={{
-                      display: 'flex', gap: 16, padding: '14px 0',
+                    <div key={i} className="flex gap-4" style={{
+                      padding: '14px 0',
                       borderBottom: i < (detail.nodeAnalytics.length - 1) ? '1px solid var(--bg-hover)' : 'none'
                     }}>
-                      <div style={{
-                        width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      <div className="flex items-center justify-center shrink-0" style={{
+                        width: 32, height: 32, borderRadius: 8,
                         background: nodeColor + '12', color: nodeColor
                       }}>
                         {(() => { const I = NODE_ICONS[node?.type] || Activity; return <I size={16} />; })()}
                       </div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{event.event_type?.replace(/_/g, ' ')}</span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-sm">{event.event_type?.replace(/_/g, ' ')}</span>
                           {channelConf && (
                             <span style={{
                               padding: '1px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
@@ -1165,7 +1174,7 @@ export default function Journeys() {
                             {node?.data?.label || event.node_id}
                           </span>
                         </div>
-                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>
+                        <div className="text-secondary" style={{ fontSize: 12, marginTop: 2 }}>
                           {fmt(event.event_count)} events logged
                         </div>
                       </div>
@@ -1176,8 +1185,8 @@ export default function Journeys() {
             ) : (
               <div style={{ textAlign: 'center', padding: '60px 20px' }}>
                 <Activity size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
-                <h4 style={{ marginTop: 12, marginBottom: 6 }}>No Activity Yet</h4>
-                <p style={{ color: 'var(--text-dim)', fontSize: 13, maxWidth: 400, margin: '0 auto' }}>
+                <h4 className="mt-3 mb-1.5">No Activity Yet</h4>
+                <p className="text-secondary text-sm" style={{ maxWidth: 400, margin: '0 auto' }}>
                   Process the journey to see customer activity events here.
                 </p>
               </div>
@@ -1187,16 +1196,16 @@ export default function Journeys() {
 
         {/* ── TAB: Settings ─────────────────────────────────────── */}
         {activeTab === 'settings' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="flex flex-col gap-4">
             <div className="card">
               <div className="card-header"><h3>Journey Configuration</h3></div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Journey ID</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, fontFamily: 'monospace' }}>#{detail.journey_id}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Journey ID</div>
+                  <div className="font-medium" style={{ fontSize: 14, fontFamily: 'monospace' }}>#{detail.journey_id}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Status</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Status</div>
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', gap: 5,
                     padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
@@ -1207,28 +1216,28 @@ export default function Journeys() {
                   </span>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Segment</div>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{detail.segment_name || 'Not assigned'}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Segment</div>
+                  <div className="font-medium" style={{ fontSize: 14 }}>{detail.segment_name || 'Not assigned'}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Goal Type</div>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{detail.goal_type || 'Not set'}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Goal Type</div>
+                  <div className="font-medium" style={{ fontSize: 14 }}>{detail.goal_type || 'Not set'}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Created</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Created</div>
                   <div style={{ fontSize: 14 }}>{detail.created_at ? new Date(detail.created_at).toLocaleString() : '—'}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Last Updated</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Last Updated</div>
                   <div style={{ fontSize: 14 }}>{detail.updated_at ? new Date(detail.updated_at).toLocaleString() : '—'}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Total Nodes</div>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{nodes.length}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Total Nodes</div>
+                  <div className="font-medium" style={{ fontSize: 14 }}>{nodes.length}</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Channels</div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Channels</div>
+                  <div className="flex gap-1.5 flex-wrap">
                     {channels.length > 0 ? channels.map(ch => {
                       const conf = CHANNEL_CONFIG[ch] || {};
                       return (
@@ -1240,7 +1249,7 @@ export default function Journeys() {
                           {conf.label || ch}
                         </span>
                       );
-                    }) : <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>None</span>}
+                    }) : <span className="text-secondary text-sm">None</span>}
                   </div>
                 </div>
               </div>
@@ -1250,27 +1259,27 @@ export default function Journeys() {
               <div className="card-header"><h3>Journey Metrics</h3></div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
                 <div style={{ textAlign: 'center', padding: 16 }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)' }}>{fmt(detail.total_entries)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Total Entries</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(detail.total_entries)}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Total Entries</div>
                 </div>
                 <div style={{ textAlign: 'center', padding: 16 }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: '#8b5cf6' }}>{fmt(detail.total_conversions)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Total Conversions</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--purple)' }}>{fmt(detail.total_conversions)}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Total Conversions</div>
                 </div>
                 <div style={{ textAlign: 'center', padding: 16 }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: '#22c55e' }}>{pct(detail.conversion_rate)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Conversion Rate</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--green)' }}>{pct(detail.conversion_rate)}</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Conversion Rate</div>
                 </div>
               </div>
             </div>
 
             {/* Danger Zone */}
             <div className="card" style={{ borderColor: 'rgba(220,38,38,0.2)' }}>
-              <div className="card-header"><h3 style={{ color: '#dc2626' }}>Danger Zone</h3></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="card-header"><h3 style={{ color: 'var(--red)' }}>Danger Zone</h3></div>
+              <div className="flex justify-between items-center">
                 <div>
-                  <div style={{ fontWeight: 500, fontSize: 14 }}>Delete this journey</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Once deleted, this journey and all its data cannot be recovered.</div>
+                  <div className="font-medium" style={{ fontSize: 14 }}>Delete this journey</div>
+                  <div className="text-secondary" style={{ fontSize: 12 }}>Once deleted, this journey and all its data cannot be recovered.</div>
                 </div>
                 <button className="btn btn-danger btn-sm" onClick={() => setConfirmAction('delete')}>
                   <Trash2 size={14} /> Delete
@@ -1284,7 +1293,7 @@ export default function Journeys() {
         {confirmAction && (
           <div className="confirm-overlay" onClick={() => setConfirmAction(null)}>
             <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
-              <AlertCircle size={32} color={confirmAction === 'delete' ? '#dc2626' : 'var(--orange)'} style={{ marginBottom: 12 }} />
+              <AlertCircle size={32} color={confirmAction === 'delete' ? 'var(--red)' : 'var(--orange)'} style={{ marginBottom: 12 }} />
               <h3>
                 {confirmAction === 'enroll' ? 'Enroll Segment Customers?' :
                  confirmAction === 'process' ? 'Process Journey?' :
@@ -1311,7 +1320,8 @@ export default function Journeys() {
         )}
 
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
-      </div>
+        </motion.div>
+      </motion.div>
     );
   }
 
@@ -1319,8 +1329,9 @@ export default function Journeys() {
   // JOURNEY LIST VIEW
   // ══════════════════════════════════════════════════════════════
   return (
-    <div>
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
       {/* ── Page Header ───────────────────────────────────────── */}
+      <motion.div variants={fadeInUp}>
       <div className="page-header">
         <div>
           <h2>Journey Builder</h2>
@@ -1336,9 +1347,11 @@ export default function Journeys() {
           </button>
         </div>
       </div>
+      </motion.div>
 
       {/* ── Summary KPIs ──────────────────────────────────────── */}
-      <div className="card-grid card-grid-4" style={{ marginBottom: 24 }}>
+      <motion.div variants={fadeInUp}>
+      <div className="card-grid card-grid-4 mb-6">
         {[
           { label: 'Total Journeys', value: summaryStats.total, color: 'kpi-blue', icon: GitBranch },
           { label: 'Active Journeys', value: summaryStats.active, color: 'kpi-green', icon: Play },
@@ -1346,13 +1359,13 @@ export default function Journeys() {
           { label: 'Avg. Conversion', value: pct(summaryStats.avgConversion), color: 'kpi-orange', icon: TrendingUp },
         ].map((kpi, i) => (
           <div key={i} className="card" style={{ padding: '20px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="flex items-center justify-between">
               <div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 4 }}>{kpi.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 4 }}>{kpi.label}</div>
                 <div className={`kpi-value ${kpi.color}`} style={{ fontSize: 26 }}>{kpi.value}</div>
               </div>
-              <div style={{ width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-                <kpi.icon size={20} color="var(--text-dim)" />
+              <div className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-secondary)' }}>
+                <kpi.icon size={20} color="var(--text-secondary)" />
               </div>
             </div>
           </div>
@@ -1360,7 +1373,7 @@ export default function Journeys() {
       </div>
 
       {/* ── Filters & Search ──────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="flex gap-3 mb-5 items-center flex-wrap">
         <div style={{ position: 'relative', flex: 1, maxWidth: 320 }}>
           <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
           <input
@@ -1371,7 +1384,7 @@ export default function Journeys() {
             style={{ paddingLeft: 36, width: '100%' }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 4, background: 'var(--bg-hover)', padding: 3, borderRadius: 8, border: '1px solid var(--border)' }}>
+        <div className="flex gap-1" style={{ background: 'var(--bg-hover)', padding: 3, borderRadius: 8, border: '1px solid var(--border-color)' }}>
           {['all', 'active', 'draft', 'paused', 'completed'].map(status => (
             <button
               key={status}
@@ -1379,40 +1392,42 @@ export default function Journeys() {
               style={{
                 padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
                 fontSize: 12, fontWeight: 500, transition: 'all 0.15s',
-                background: statusFilter === status ? 'var(--accent)' : 'transparent',
-                color: statusFilter === status ? '#fff' : 'var(--text-dim)',
+                background: statusFilter === status ? 'var(--red)' : 'transparent',
+                color: statusFilter === status ? 'var(--bg-card)' : 'var(--text-secondary)',
               }}
             >
               {status === 'all' ? 'All' : STATUS_CONFIG[status]?.label || status}
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 2, background: 'var(--bg-hover)', padding: 3, borderRadius: 8, border: '1px solid var(--border)' }}>
+        <div className="flex gap-0.5" style={{ background: 'var(--bg-hover)', padding: 3, borderRadius: 8, border: '1px solid var(--border-color)' }}>
           <button
             onClick={() => setViewMode('cards')}
+            className="flex items-center"
             style={{
               padding: 5, borderRadius: 5, border: 'none', cursor: 'pointer',
               background: viewMode === 'cards' ? 'var(--bg-card)' : 'transparent',
-              color: viewMode === 'cards' ? 'var(--text)' : 'var(--text-muted)',
-              display: 'flex', alignItems: 'center', boxShadow: viewMode === 'cards' ? 'var(--shadow)' : 'none'
+              color: viewMode === 'cards' ? 'var(--text-primary)' : 'var(--text-muted)',
+              boxShadow: viewMode === 'cards' ? 'var(--shadow)' : 'none'
             }}
           >
             <LayoutGrid size={14} />
           </button>
           <button
             onClick={() => setViewMode('list')}
+            className="flex items-center"
             style={{
               padding: 5, borderRadius: 5, border: 'none', cursor: 'pointer',
               background: viewMode === 'list' ? 'var(--bg-card)' : 'transparent',
-              color: viewMode === 'list' ? 'var(--text)' : 'var(--text-muted)',
-              display: 'flex', alignItems: 'center', boxShadow: viewMode === 'list' ? 'var(--shadow)' : 'none'
+              color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
+              boxShadow: viewMode === 'list' ? 'var(--shadow)' : 'none'
             }}
           >
             <List size={14} />
           </button>
         </div>
         {searchQuery && (
-          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+          <span className="text-secondary" style={{ fontSize: 12 }}>
             {filteredJourneys.length} result{filteredJourneys.length !== 1 ? 's' : ''}
           </span>
         )}
@@ -1423,13 +1438,13 @@ export default function Journeys() {
         <div className="card" style={{ textAlign: 'center', padding: '60px 20px' }}>
           {journeys.length === 0 ? (
             <>
-              <GitBranch size={48} color="var(--text-dim)" style={{ opacity: 0.3 }} />
-              <h3 style={{ marginTop: 16, marginBottom: 8 }}>No Journeys Yet</h3>
-              <p style={{ color: 'var(--text-dim)', maxWidth: 440, margin: '0 auto 20px', lineHeight: 1.6 }}>
+              <GitBranch size={48} color="var(--text-secondary)" style={{ opacity: 0.3 }} />
+              <h3 className="mt-4 mb-2">No Journeys Yet</h3>
+              <p className="text-secondary" style={{ maxWidth: 440, margin: '0 auto 20px', lineHeight: 1.6 }}>
                 Create automated customer journeys to engage users across WhatsApp, Email, SMS, Push, and more.
                 Auto-generate from your 28 omnichannel strategies to get started instantly.
               </p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <div className="flex gap-2 justify-center">
                 <button className="btn btn-secondary" onClick={() => setShowCreate(true)}>
                   <Plus size={14} /> Create Blank
                 </button>
@@ -1440,8 +1455,8 @@ export default function Journeys() {
             </>
           ) : (
             <>
-              <Search size={40} color="var(--text-dim)" style={{ opacity: 0.3 }} />
-              <h4 style={{ marginTop: 12, marginBottom: 6 }}>No journeys match your filters</h4>
+              <Search size={40} color="var(--text-secondary)" style={{ opacity: 0.3 }} />
+              <h4 className="mt-3 mb-1.5">No journeys match your filters</h4>
               <button className="btn btn-ghost btn-sm" onClick={() => { setSearchQuery(''); setStatusFilter('all'); }}>Clear filters</button>
             </>
           )}
@@ -1465,26 +1480,25 @@ export default function Journeys() {
                 style={{ cursor: 'pointer', padding: '20px' }}
               >
                 {/* Top row: name + status */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                <div className="flex justify-between items-start mb-3">
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <div style={{
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="flex items-center justify-center shrink-0" style={{
                         width: 32, height: 32, borderRadius: 8,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: statusConf.bg, flexShrink: 0
+                        background: statusConf.bg
                       }}>
                         <GitBranch size={16} color={statusConf.color} />
                       </div>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.name}</div>
-                        {j.segment_name && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{j.segment_name}</div>}
+                        <div className="font-semibold" style={{ fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.name}</div>
+                        {j.segment_name && <div className="text-secondary" style={{ fontSize: 11 }}>{j.segment_name}</div>}
                       </div>
                     </div>
                   </div>
-                  <span style={{
+                  <span className="shrink-0" style={{
                     display: 'inline-flex', alignItems: 'center', gap: 4,
                     padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    background: statusConf.bg, color: statusConf.color, flexShrink: 0
+                    background: statusConf.bg, color: statusConf.color
                   }}>
                     <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusConf.color }} />
                     {statusConf.label}
@@ -1493,7 +1507,7 @@ export default function Journeys() {
 
                 {/* Channel pills */}
                 {channels.length > 0 && (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 12 }}>
+                  <div className="flex gap-1 flex-wrap mb-3">
                     {channels.map(ch => {
                       const conf = CHANNEL_CONFIG[ch] || {};
                       const Icon = conf.icon || MessageSquare;
@@ -1511,27 +1525,27 @@ export default function Journeys() {
                 )}
 
                 {/* Stats row */}
-                <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <div className="flex gap-4 text-secondary mb-2.5" style={{ fontSize: 12 }}>
+                  <span className="flex items-center gap-1">
                     <Layers size={12} /> {j.node_count || 0} nodes
                   </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span className="flex items-center gap-1">
                     <Users size={12} /> {fmt(j.total_entries)} entries
                   </span>
                 </div>
 
                 {/* Conversion progress bar */}
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Conversion</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: convRate >= 10 ? '#22c55e' : convRate > 0 ? '#f59e0b' : 'var(--text-muted)' }}>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-secondary" style={{ fontSize: 11 }}>Conversion</span>
+                    <span className="font-semibold" style={{ fontSize: 11, color: convRate >= 10 ? 'var(--green)' : convRate > 0 ? 'var(--orange)' : 'var(--text-muted)' }}>
                       {pct(convRate)}
                     </span>
                   </div>
                   <div className="progress-bar">
                     <div className="progress-fill" style={{
                       width: `${Math.min(convRate, 100)}%`,
-                      background: convRate >= 10 ? '#22c55e' : convRate > 0 ? '#f59e0b' : 'var(--border)'
+                      background: convRate >= 10 ? 'var(--green)' : convRate > 0 ? 'var(--orange)' : 'var(--border-color)'
                     }} />
                   </div>
                 </div>
@@ -1568,9 +1582,9 @@ export default function Journeys() {
                       onClick={() => openJourney(j.journey_id)}
                     >
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="flex items-center gap-2">
                           <GitBranch size={14} color={statusConf.color} />
-                          <span style={{ fontWeight: 600 }}>{j.name}</span>
+                          <span className="font-semibold">{j.name}</span>
                         </div>
                       </td>
                       <td>
@@ -1583,16 +1597,15 @@ export default function Journeys() {
                           {statusConf.label}
                         </span>
                       </td>
-                      <td style={{ color: 'var(--text-dim)', fontSize: 13 }}>{j.segment_name || '—'}</td>
+                      <td className="text-secondary text-sm">{j.segment_name || '—'}</td>
                       <td>
-                        <div style={{ display: 'flex', gap: 3 }}>
+                        <div className="flex gap-0.5">
                           {channels.slice(0, 3).map(ch => {
                             const conf = CHANNEL_CONFIG[ch] || {};
                             const Icon = conf.icon || MessageSquare;
                             return (
-                              <span key={ch} title={conf.label || ch} style={{
+                              <span key={ch} title={conf.label || ch} className="inline-flex items-center justify-center" style={{
                                 width: 24, height: 24, borderRadius: 6,
-                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                                 background: (conf.color || '#78716c') + '10', color: conf.color || '#78716c'
                               }}>
                                 <Icon size={12} />
@@ -1604,9 +1617,9 @@ export default function Journeys() {
                         </div>
                       </td>
                       <td>{j.node_count || 0}</td>
-                      <td style={{ fontWeight: 500 }}>{fmt(j.total_entries)}</td>
+                      <td className="font-medium">{fmt(j.total_entries)}</td>
                       <td>
-                        <span style={{ fontWeight: 600, color: (j.conversion_rate || 0) >= 10 ? '#22c55e' : 'var(--text-dim)' }}>
+                        <span className="font-semibold" style={{ color: (j.conversion_rate || 0) >= 10 ? 'var(--green)' : 'var(--text-secondary)' }}>
                           {pct(j.conversion_rate)}
                         </span>
                       </td>
@@ -1624,13 +1637,13 @@ export default function Journeys() {
       {showGenerate && (
         <div className="modal-overlay" onClick={() => setShowGenerate(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Zap size={20} color="var(--accent)" /> Generate Journey from Strategy
+            <h3 className="flex items-center gap-2">
+              <Zap size={20} color="var(--red)" /> Generate Journey from Strategy
             </h3>
-            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 20, lineHeight: 1.6 }}>
+            <p className="text-secondary mb-5" style={{ fontSize: 13, lineHeight: 1.6 }}>
               Select a strategy to auto-generate a complete journey flow with entry triggers, channel-specific actions, wait steps, branching conditions, and conversion goals.
             </p>
-            <div style={{ maxHeight: 420, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflow: 'auto' }}>
               {strategies.map(s => {
                 const channelList = typeof s.channels === 'string'
                   ? s.channels.replace(/[{}]/g, '').split(',').filter(Boolean)
@@ -1645,14 +1658,14 @@ export default function Journeys() {
                     onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && handleGenerate(s.id)}
                     style={{
                       padding: '14px 16px', cursor: 'pointer',
-                      background: 'var(--bg)', border: '1px solid var(--border)',
+                      background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
                       borderRadius: 10, transition: 'all 0.15s'
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-light)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--bg)'; }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--accent-light)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                   >
-                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{s.name}</div>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div className="font-semibold mb-1" style={{ fontSize: 14 }}>{s.name}</div>
+                    <div className="flex gap-2 items-center flex-wrap">
                       <span className="badge badge-purple" style={{ fontSize: 10 }}>{s.segment_label}</span>
                       {channelList.slice(0, 4).map(ch => {
                         const conf = CHANNEL_CONFIG[ch.trim().toLowerCase()] || {};
@@ -1669,7 +1682,7 @@ export default function Journeys() {
                       {channelList.length > 4 && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>+{channelList.length - 4}</span>}
                     </div>
                     {s.description && (
-                      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.5 }}>
+                      <div className="text-secondary" style={{ fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
                         {s.description.length > 120 ? s.description.slice(0, 120) + '...' : s.description}
                       </div>
                     )}
@@ -1677,7 +1690,7 @@ export default function Journeys() {
                 );
               })}
               {strategies.length === 0 && (
-                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-dim)' }}>
+                <div className="text-secondary" style={{ textAlign: 'center', padding: 40 }}>
                   <Zap size={24} style={{ opacity: 0.3, marginBottom: 8 }} /><br />
                   No strategies available. Create strategies first.
                 </div>
@@ -1694,8 +1707,8 @@ export default function Journeys() {
       {showCreate && (
         <div className="modal-overlay" onClick={() => setShowCreate(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Plus size={20} color="var(--accent)" /> Create New Journey
+            <h3 className="flex items-center gap-2">
+              <Plus size={20} color="var(--red)" /> Create New Journey
             </h3>
             <div className="form-group">
               <label>Journey Name *</label>
@@ -1739,6 +1752,7 @@ export default function Journeys() {
       )}
 
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

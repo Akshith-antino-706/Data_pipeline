@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { getStrategies, getStrategy, createStrategy, optimizeStrategy, getSegments } from '../api';
 import { Zap, Plus, Brain, ChevronRight } from 'lucide-react';
 
 const STATUS_BADGE = { active: 'badge-green', paused: 'badge-orange', archived: 'badge-gray' };
 const CHANNELS = ['whatsapp', 'email', 'sms', 'push'];
+
+const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
+const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 export default function Strategies() {
   const [strategies, setStrategies] = useState([]);
@@ -27,13 +31,15 @@ export default function Strategies() {
   }, []);
 
   const selectStrategy = async (id) => {
-    const data = await getStrategy(id);
-    setSelected(data.data);
+    try {
+      const data = await getStrategy(id);
+      setSelected(data.data || null);
+    } catch (err) { console.error(err); }
   };
 
   const handleCreate = async () => {
     const data = await createStrategy(form);
-    setStrategies([data.data, ...strategies]);
+    if (data.data) setStrategies([data.data, ...strategies]);
     setShowCreate(false);
     setForm({ name: '', description: '', segmentLabel: '', channels: [], flowSteps: [] });
   };
@@ -45,7 +51,7 @@ export default function Strategies() {
       setSelected(prev => prev?.id === id ? { ...prev, ai_score: result.data.score, ai_suggestions: JSON.stringify(result.data.suggestions) } : prev);
       // Refresh list
       const s = await getStrategies();
-      setStrategies(s.data);
+      setStrategies(s.data || []);
     } catch (err) { console.error(err); }
     setOptimizing(null);
   };
@@ -60,13 +66,13 @@ export default function Strategies() {
   if (loading) return <div className="spinner">Loading strategies...</div>;
 
   return (
-    <div>
-      <div className="page-header">
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
+      <motion.div variants={fadeInUp} className="page-header">
         <h2>Omnichannel Strategies</h2>
         <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={14} /> New Strategy</button>
-      </div>
+      </motion.div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 1fr' : '1fr', gap: 20 }}>
+      <motion.div variants={fadeInUp} className={`split-pane ${selected ? 'has-detail' : ''}`}>
         {/* Strategy List */}
         <div className="card">
           <div className="card-header"><h3>All Strategies ({strategies.length})</h3></div>
@@ -76,22 +82,22 @@ export default function Strategies() {
             <div>
               {strategies.map(s => (
                 <div key={s.id} onClick={() => selectStrategy(s.id)}
-                  style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: selected?.id === s.id ? 'var(--bg-hover)' : 'transparent' }}>
+                  className={`list-item ${selected?.id === s.id ? 'active' : ''}`}>
                   <div>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>{s.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', display: 'flex', gap: 8 }}>
+                    <div className="font-semibold mb-4">{s.name}</div>
+                    <div className="text-sm text-secondary flex gap-8">
                       <span className={`badge ${STATUS_BADGE[s.status]}`}>{s.status}</span>
                       <span>Segment: {s.segment_label}</span>
                       <span>Size: {Number(s.segment_size || 0).toLocaleString()}</span>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="flex items-center gap-8">
                     {s.ai_score && (
                       <span className={`badge ${s.ai_score >= 70 ? 'badge-green' : s.ai_score >= 40 ? 'badge-orange' : 'badge-red'}`}>
                         AI: {s.ai_score}
                       </span>
                     )}
-                    <ChevronRight size={16} color="var(--text-dim)" />
+                    <ChevronRight size={16} className="text-secondary" />
                   </div>
                 </div>
               ))}
@@ -109,9 +115,9 @@ export default function Strategies() {
               </button>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 12 }}>{selected.description || 'No description'}</p>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div className="mb-16">
+              <p className="text-secondary text-base mb-12">{selected.description || 'No description'}</p>
+              <div className="flex gap-8 flex-wrap">
                 <span className={`badge ${STATUS_BADGE[selected.status]}`}>{selected.status}</span>
                 <span className="badge badge-purple">Segment: {selected.segment_label}</span>
                 <span className="badge badge-blue">Audience: {Number(selected.segment_size || 0).toLocaleString()}</span>
@@ -123,23 +129,25 @@ export default function Strategies() {
 
             {/* AI Score */}
             {selected.ai_score != null && (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>AI Health Score</div>
-                <div className="progress-bar" style={{ marginBottom: 6 }}>
+              <div className="mb-16">
+                <div className="text-sm text-secondary mb-6">AI Health Score</div>
+                <div className="progress-bar mb-6">
                   <div className="progress-fill" style={{ width: `${selected.ai_score}%`, background: selected.ai_score >= 70 ? 'var(--green)' : selected.ai_score >= 40 ? 'var(--orange)' : 'var(--red)' }} />
                 </div>
-                <span style={{ fontSize: 20, fontWeight: 700 }}>{selected.ai_score}/100</span>
+                <span className="text-2xl font-bold">{selected.ai_score}/100</span>
               </div>
             )}
 
             {/* AI Suggestions */}
             {selected.ai_suggestions && (() => {
-              const suggestions = typeof selected.ai_suggestions === 'string' ? JSON.parse(selected.ai_suggestions) : selected.ai_suggestions;
+              let suggestions;
+              try { suggestions = typeof selected.ai_suggestions === 'string' ? JSON.parse(selected.ai_suggestions) : selected.ai_suggestions; } catch { suggestions = []; }
+              if (!Array.isArray(suggestions)) suggestions = [];
               return suggestions.length > 0 ? (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>AI Suggestions</div>
+                <div className="mb-16">
+                  <div className="text-sm text-secondary mb-8">AI Suggestions</div>
                   {suggestions.map((s, i) => (
-                    <div key={i} style={{ padding: '10px 12px', background: 'var(--bg)', borderRadius: 8, marginBottom: 6, fontSize: 13 }}>
+                    <div key={i} className="card-compact mb-6 text-base" style={{ background: 'var(--bg-secondary)', borderRadius: 8 }}>
                       <span className={`badge ${s.severity === 'high' ? 'badge-red' : 'badge-orange'}`} style={{ marginRight: 8 }}>{s.type}</span>
                       {s.message}
                     </div>
@@ -150,20 +158,19 @@ export default function Strategies() {
 
             {/* Flow Steps */}
             <div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Flow Steps</div>
+              <div className="text-sm text-secondary mb-8">Flow Steps</div>
               {(typeof selected.flow_steps === 'string' ? JSON.parse(selected.flow_steps) : selected.flow_steps || []).map((step, i, arr) => (
                 <div key={i}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg)', borderRadius: 8, marginBottom: 2 }}>
-                    <span className="badge badge-gray" style={{ minWidth: 50, textAlign: 'center' }}>Day {step.day}</span>
+                  <div className="flex items-center gap-12 mb-0" style={{ padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
+                    <span className="badge badge-gray text-center" style={{ minWidth: 50 }}>Day {step.day}</span>
                     <span className={`badge badge-${step.channel === 'whatsapp' ? 'green' : step.channel === 'email' ? 'blue' : step.channel === 'sms' ? 'orange' : step.channel === 'push' ? 'red' : 'purple'}`}>{step.channel}</span>
-                    <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{step.action || step.label || 'Send message'}</span>
-                    {step.condition && <span className="badge badge-orange" style={{ fontSize: 11 }}>{step.condition}</span>}
-                    {step.goal && <span className="badge badge-green" style={{ fontSize: 11 }}>{step.goal}</span>}
+                    <span className="font-medium text-base" style={{ flex: 1 }}>{step.action || step.label || 'Send message'}</span>
+                    {step.condition && <span className="badge badge-orange text-xs">{step.condition}</span>}
+                    {step.goal && <span className="badge badge-green text-xs">{step.goal}</span>}
                   </div>
                   {i < arr.length - 1 && (
-                    <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 30, height: 20 }}>
-                      <div style={{ width: 2, height: 20, background: 'var(--border)', marginRight: 8 }} />
-                      <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                    <div className="flow-connector">
+                      <span className="text-xs text-secondary">
                         {arr[i + 1].day - step.day > 0 ? `Wait ${arr[i + 1].day - step.day} day${arr[i + 1].day - step.day > 1 ? 's' : ''}` : 'Immediately'}
                         {step.condition_next ? ` → ${step.condition_next}` : ''}
                       </span>
@@ -172,14 +179,14 @@ export default function Strategies() {
                 </div>
               ))}
               {(!selected.flow_steps || (Array.isArray(selected.flow_steps) && selected.flow_steps.length === 0)) && (
-                <div className="empty" style={{ padding: 20 }}>No flow steps defined</div>
+                <div className="empty p-20">No flow steps defined</div>
               )}
             </div>
 
             {/* Campaigns under this strategy */}
             {selected.campaigns?.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Campaigns</div>
+              <div className="mt-16">
+                <div className="text-sm text-secondary mb-8">Campaigns</div>
                 <table>
                   <thead><tr><th>Name</th><th>Channel</th><th>Status</th><th>Sent</th><th>Delivered</th></tr></thead>
                   <tbody>
@@ -198,7 +205,7 @@ export default function Strategies() {
             )}
           </div>
         )}
-      </div>
+      </motion.div>
 
       {/* Create Strategy Modal */}
       {showCreate && (
@@ -222,7 +229,7 @@ export default function Strategies() {
             </div>
             <div className="form-group">
               <label>Channels</label>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="flex gap-8">
                 {CHANNELS.map(ch => (
                   <button key={ch} className={`btn btn-sm ${form.channels.includes(ch) ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={() => setForm(f => ({ ...f, channels: f.channels.includes(ch) ? f.channels.filter(c => c !== ch) : [...f.channels, ch] }))}>
@@ -234,7 +241,7 @@ export default function Strategies() {
             <div className="form-group">
               <label>Flow Steps</label>
               {form.flowSteps.map((step, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                <div key={i} className="flex gap-8 mb-6">
                   <input type="number" placeholder="Day" value={step.day} onChange={e => {
                     const steps = [...form.flowSteps];
                     steps[i] = { ...steps[i], day: parseInt(e.target.value) || 0 };
@@ -258,6 +265,6 @@ export default function Strategies() {
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

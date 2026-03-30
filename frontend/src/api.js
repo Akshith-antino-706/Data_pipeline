@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:3001';
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -23,6 +23,7 @@ export const getTemplates = (params = {}) => {
   return request(`/api/v2/content/templates?${qs}`);
 };
 export const getTemplate = (id) => request(`/api/v2/content/templates/${id}`);
+export const previewTemplate = (id) => request(`/api/v2/content/templates/${id}/preview`);
 export const createTemplate = (data) => request('/api/v2/content/templates', { method: 'POST', body: JSON.stringify(data) });
 export const updateTemplate = (id, data) => request(`/api/v2/content/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const approveTemplate = (id) => request(`/api/v2/content/templates/${id}/approve`, { method: 'POST', body: JSON.stringify({ approvedBy: 'admin' }) });
@@ -187,6 +188,13 @@ export const getAffinityHow = (id) => request(`/api/v3/affinity/segment/${id}/ho
 export const getAffinityStats = () => request('/api/v3/affinity/stats');
 export const getAffinityMatrix = () => request('/api/v3/affinity/matrix');
 export const getDepartmentMap = () => request('/api/v3/affinity/departments');
+
+// ── Data Pipeline (Rayna Sync + MySQL Sync + Mapping) ───────
+export const getRaynaSyncStatus = () => request('/api/v3/rayna-sync/status');
+export const getMappingStats = () => request('/api/v3/rayna-sync/mapping-stats');
+export const triggerRaynaSync = () => request('/api/v3/rayna-sync/trigger', { method: 'POST' });
+export const triggerRaynaSyncEndpoint = (ep) => request(`/api/v3/rayna-sync/trigger/${ep}`, { method: 'POST' });
+export const refreshBookingMapping = () => request('/api/v3/rayna-sync/refresh-mapping', { method: 'POST' });
 
 // ── V3 Migrations ───────────────────────────────────────────
 export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'POST' });
