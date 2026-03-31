@@ -365,6 +365,94 @@ const SEGMENT_EMAIL_CONFIG = {
     cta_url: 'https://www.raynatours.com/bookings',
     cta_text: 'View My Booking',
   },
+
+  // ═══════════════════════════════════════════════
+  // SEASONAL SEGMENTS
+  // ═══════════════════════════════════════════════
+
+  'Diwali Travelers (Indian)': {
+    baseTemplate: 'product-recommendation',
+    subject: 'Celebrate Diwali in Dubai — Exclusive Family Packages!',
+    email_heading: 'Diwali Celebrations Await!',
+    email_body: `This Diwali, create unforgettable memories with your family in Dubai! From dazzling light shows to traditional celebrations, we have curated the perfect Diwali getaway packages.<br /><br />Book early and save with our festive discount!`,
+    coupon_code: 'DIWALI20',
+    coupon_discount: 'Flat 20% Diwali Discount',
+    coupon_expiry: '14 days',
+    cta_url: 'https://www.raynatours.com',
+    cta_text: 'Explore Diwali Deals',
+  },
+
+  'Christmas Travelers (European)': {
+    baseTemplate: 'product-recommendation',
+    subject: 'Christmas in Dubai — Festive Packages & Winter Deals!',
+    email_heading: 'A Warm Christmas Awaits!',
+    email_body: `Dreaming of a warm Christmas this year? Dubai is the perfect destination! From festive brunches to New Year countdown events, we have everything to make your holidays magical.<br /><br />Book now at special festive prices!`,
+    coupon_code: 'XMAS15',
+    coupon_discount: 'Flat 15% Christmas Discount',
+    coupon_expiry: '21 days',
+    cta_url: 'https://www.raynatours.com',
+    cta_text: 'Book Festive Deals',
+  },
+
+  'Eid Travelers (GCC/Arab)': {
+    baseTemplate: 'product-recommendation',
+    subject: 'Eid Mubarak — Special Family Getaway Packages!',
+    email_heading: 'Celebrate Eid in Style!',
+    email_body: `Celebrate Eid with your loved ones in style! Rayna Tours has curated exclusive family-friendly packages including staycations, theme park visits, and desert adventures.<br /><br />Make this Eid extra special!`,
+    coupon_code: 'EID20',
+    coupon_discount: 'Flat 20% Eid Discount',
+    coupon_expiry: '14 days',
+    cta_url: 'https://www.raynatours.com',
+    cta_text: 'Explore Eid Packages',
+  },
+
+  'Chinese New Year Travelers': {
+    baseTemplate: 'product-recommendation',
+    subject: 'Chinese New Year Special — Explore Dubai!',
+    email_heading: 'Ring in the New Year!',
+    email_body: `Ring in the Year of the Dragon in Dubai! From Gold Souk shopping to luxury desert safaris, we have curated the best experiences for Chinese New Year travelers.<br /><br />Group discounts available!`,
+    coupon_code: 'CNY15',
+    coupon_discount: 'Flat 15% CNY Discount',
+    coupon_expiry: '14 days',
+    cta_url: 'https://www.raynatours.com',
+    cta_text: 'View CNY Deals',
+  },
+
+  'Anniversary Customers': {
+    baseTemplate: 'welcome-back',
+    subject: 'Happy Anniversary — Celebrate with a Special Trip!',
+    email_heading: 'Happy Anniversary!',
+    email_body: `Happy anniversary of your first trip with Rayna Tours! We remember the wonderful experiences we shared, and we'd love to help you create more.<br /><br />Here's a special anniversary discount just for you!`,
+    coupon_code: 'ANNIVERSARY15',
+    coupon_discount: '15% Anniversary Discount',
+    coupon_expiry: '30 days',
+    cta_url: 'https://www.raynatours.com',
+    cta_text: 'Celebrate Now',
+  },
+
+  'B2B Travel Agents': {
+    baseTemplate: 'exclusive-coupon',
+    subject: 'Agent Update — New Packages & Commission Rates',
+    email_heading: 'Exciting News for Agents!',
+    email_body: `Great news for our valued travel agent partners! We've updated our commission structure and added exciting new packages to our portfolio.<br /><br />From luxury experiences to budget-friendly tours, give your clients more options and earn more.`,
+    coupon_code: 'AGENT15',
+    coupon_discount: '15% Agent Commission Bonus',
+    coupon_expiry: '90 days',
+    cta_url: 'https://www.raynatours.com/corporate',
+    cta_text: 'View Agent Portal',
+  },
+
+  'Summer Vacation Planners': {
+    baseTemplate: 'product-recommendation',
+    subject: 'Summer is Coming — Book Early & Save Big!',
+    email_heading: 'Beat the Summer Rush!',
+    email_body: `Planning your summer vacation? Beat the rush with our early bird summer packages! From water parks to indoor snow experiences, Dubai has the coolest summer activities.<br /><br />Book now before prices go up!`,
+    coupon_code: 'SUMMER20',
+    coupon_discount: 'Flat 20% Summer Early Bird',
+    coupon_expiry: '30 days',
+    cta_url: 'https://www.raynatours.com',
+    cta_text: 'Book Summer Deals',
+  },
 };
 
 export default SEGMENT_EMAIL_CONFIG;

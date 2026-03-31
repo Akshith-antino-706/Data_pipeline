@@ -30,6 +30,9 @@ import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
 import BigQuerySyncService from './src/services/BigQuerySyncService.js';
 import MySQLSyncService from './src/services/MySQLSyncService.js';
+import RaynaSyncService from './src/services/RaynaSyncService.js';
+import raynaSyncRouter from './src/routes/raynaSync.js';
+import dailyReportRouter from './src/routes/dailyReport.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -80,6 +83,8 @@ app.use('/api/v3/affinity', affinityRouter);
 app.use('/api/v3/base-templates', baseTemplatesRouter);
 app.use('/api/v3/sync', syncRouter);
 app.use('/api/v3/mysql-sync', mysqlSyncRouter);
+app.use('/api/v3/rayna-sync', raynaSyncRouter);
+app.use('/api/v3/daily-report', dailyReportRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
@@ -144,7 +149,7 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
-    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '016_mysql_sync_tables.sql', '017_full_segment_content_journeys_campaigns.sql']) {
+    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql']) {
       await runMigrationFile(file);
     }
     res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
@@ -164,8 +169,87 @@ app.post('/api/v3/migrate-sync', async (_, res) => {
 
 app.post('/api/v3/migrate-mysql', async (_, res) => {
   try {
-    await runMigrationFile('016_mysql_sync_tables.sql');
-    res.json({ success: true, message: 'MySQL sync tables migration (016) succeeded' });
+    await runMigrationFile('021_fresh_mysql_tables.sql');
+    res.json({ success: true, message: 'Fresh MySQL sync tables migration (021) succeeded — contacts, tickets, chats, departments' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v3/migrate-rename-columns', async (_, res) => {
+  try {
+    await runMigrationFile('022_rename_columns.sql');
+    res.json({ success: true, message: 'Column rename migration (022) succeeded — source_type→department_name, t_to→department_name, wa_id→customer_no, receiver→department_number' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v3/migrate-rayna-sync', async (_, res) => {
+  try {
+    await runMigrationFile('024_rayna_api_sync_tables.sql');
+    await runMigrationFile('025_fix_rayna_conflict_keys.sql');
+    res.json({ success: true, message: 'Rayna API sync tables migration (024+025) succeeded — tours, hotels, visas, flights with fixed conflict keys' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v3/migrate-booking-map', async (_, res) => {
+  try {
+    await runMigrationFile('026_booking_customer_mapping.sql');
+    res.json({ success: true, message: 'Booking ↔ Customer mapping migration (026) succeeded — phone + email matching' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v3/migrate-chat-columns', async (_, res) => {
+  try {
+    await runMigrationFile('027_add_chat_timestamp_columns.sql');
+    res.json({ success: true, message: 'Added last_in, last_out, last_msg columns to mysql_chats' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Email Tracking (Open Pixel + Click Redirect) ──────────
+// 1x1 pixel for open tracking
+app.get('/api/track/open/:messageId', async (req, res) => {
+  // Return pixel immediately, track async
+  const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+  res.set({ 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, no-cache' });
+  res.send(pixel);
+  try {
+    const { EmailTrackingService } = await import('./src/services/EmailTrackingService.js');
+    await EmailTrackingService.trackOpen(req.params.messageId);
+  } catch (e) { console.error('[Track] Open error:', e.message); }
+});
+
+// Click redirect for link tracking
+app.get('/api/track/click/:messageId', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send('Missing url');
+  // Redirect immediately, track async
+  res.redirect(url);
+  try {
+    const { EmailTrackingService } = await import('./src/services/EmailTrackingService.js');
+    await EmailTrackingService.trackClick(req.params.messageId, url);
+  } catch (e) { console.error('[Track] Click error:', e.message); }
+});
+
+// ── First Message Sync ────────────────────────────────────
+app.post('/api/v3/sync-first-messages', async (req, res) => {
+  try {
+    const { default: FirstMessageService } = await import('./src/services/FirstMessageService.js');
+    const limit = req.body?.limit;
+    if (limit) {
+      const result = await FirstMessageService.testRun(limit);
+      return res.json({ success: true, ...result });
+    }
+    // Fire and forget — full sync runs in background
+    FirstMessageService.syncAll().then(r => console.log('[FirstMessage] Done:', r));
+    res.json({ success: true, message: 'First message sync started in background' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -238,7 +322,7 @@ if (process.env.BQ_SYNC_ENABLED === 'true') {
   console.log(`[GA4 Sync] Cron scheduled: ${schedule} (every 30 seconds)`);
 }
 
-// ── MySQL Sync Cron (every 30 minutes) ──────────────────
+// ── MySQL Sync Cron (every 10 minutes) ──────────────────
 if (process.env.MYSQL_SYNC_ENABLED === 'true') {
   const schedule = process.env.MYSQL_SYNC_CRON || '*/30 * * * *';
   cron.schedule(schedule, async () => {
@@ -251,6 +335,25 @@ if (process.env.MYSQL_SYNC_ENABLED === 'true') {
     }
   });
   console.log(`[MySQL Sync] Cron scheduled: ${schedule}`);
+}
+
+// ── Rayna API Sync Cron (incremental, every 6 hours) ────────
+if (process.env.RAYNA_SYNC_ENABLED === 'true') {
+  const schedule = process.env.RAYNA_SYNC_CRON || '0 23 * * *'; // 3 AM Dubai (UTC+4)
+  let raynaSyncing = false;
+  cron.schedule(schedule, async () => {
+    if (raynaSyncing) return;
+    raynaSyncing = true;
+    console.log('[Rayna Sync] Incremental sync starting (day-by-day)...');
+    try {
+      const results = await RaynaSyncService.syncAll();
+      console.log('[Rayna Sync] Incremental sync completed:', JSON.stringify(results));
+    } catch (err) {
+      console.error('[Rayna Sync] Incremental sync failed:', err.message);
+    }
+    raynaSyncing = false;
+  });
+  console.log(`[Rayna Sync] Incremental cron scheduled: ${schedule}`);
 }
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
@@ -289,6 +392,7 @@ try {
 ║               /api/v3/base-templates (5 email)   ║
 ║               /api/v3/sync  (BQ pipeline)        ║
 ║               /api/v3/mysql-sync (MySQL pull)    ║
+║               /api/v3/rayna-sync (API pull)     ║
 ║  Health:      /api/health                        ║
 ║  Migrate v3:  POST /api/v3/migrate-all           ║
 ╚══════════════════════════════════════════════════╝

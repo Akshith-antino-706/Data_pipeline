@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import { Component, Suspense, lazy, useState, useEffect, createContext, useContext, useCallback } from 'react';
-import { LayoutDashboard, Zap, Target, GitBranch, Menu, X, Link2, Ticket, Shield, Code, FileText, Sun, Moon, Database } from 'lucide-react';
+import { LayoutDashboard, Zap, Target, GitBranch, Menu, X, Link2, Ticket, Shield, Code, FileText, Sun, Moon, Database, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
 
@@ -18,6 +18,7 @@ const Coupons = lazy(() => import('./pages/Coupons'));
 const Approvals = lazy(() => import('./pages/Approvals'));
 const GTMIntegration = lazy(() => import('./pages/GTMIntegration'));
 const DataPipeline = lazy(() => import('./pages/DataPipeline'));
+const DailyReport = lazy(() => import('./pages/DailyReport'));
 
 // Theme Context
 const ThemeContext = createContext();
@@ -73,6 +74,7 @@ const NAV = [
   { to: '/approvals', icon: Shield, label: 'Approvals' },
   { to: '/gtm', icon: Code, label: 'GTM & BigQuery' },
   { to: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
+  { to: '/daily-report', icon: Download, label: 'Daily Report' },
 ];
 
 const pageTransition = {
@@ -149,6 +151,7 @@ function AnimatedRoutes() {
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/gtm" element={<GTMIntegration />} />
           <Route path="/data-pipeline" element={<DataPipeline />} />
+          <Route path="/daily-report" element={<DailyReport />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </motion.div>

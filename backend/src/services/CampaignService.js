@@ -1,7 +1,9 @@
 import { query, transaction } from '../config/database.js';
 import { ContentService } from './ContentService.js';
 import { BaseTemplateService } from './BaseTemplateService.js';
+import ProductService from './ProductService.js';
 import { getSegmentProducts } from '../templates/segmentProducts.js';
+import SEGMENT_EMAIL_CONFIG from '../templates/segmentEmailConfig.js';
 
 export class CampaignService {
 
@@ -149,8 +151,27 @@ export class CampaignService {
         if (campaign.channel === 'email') {
           try {
             const firstName = (customer.full_name || '').split(' ')[0] || 'Traveler';
-            const cleanBody = body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-            const products = getSegmentProducts(campaign.segment_label);
+            const segConfig = SEGMENT_EMAIL_CONFIG[campaign.segment_label] || {};
+            // Dynamic products from API, fallback to hardcoded
+            let products;
+            try {
+              const dynamic = await ProductService.getForSegment(campaign.segment_label, 3);
+              if (dynamic.length > 0) {
+                products = dynamic.map(p => ({
+                  product_url: p.url || 'https://www.raynatours.com',
+                  product_image: p.image || '',
+                  product_category: (p.item_group_id || '').replace(/-/g, ' '),
+                  product_name: p.name || '',
+                  product_rating: p.rating || '4.8',
+                  product_reviews: String(p.reviewCount || ''),
+                  product_price: String(p.salePrice || ''),
+                  product_strike_price: String(p.normalPrice || ''),
+                }));
+              }
+            } catch { /* API down */ }
+            if (!products || products.length === 0) {
+              products = getSegmentProducts(campaign.segment_label);
+            }
 
             // Add UTM params to each product URL
             const slug = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -160,14 +181,25 @@ export class CampaignService {
               product_url: p.product_url + (p.product_url.includes('?') ? '&' : '?') + utmParams,
             }));
 
-            body = BaseTemplateService.render('product-recommendation', {
+            // Use segment config for heading, body, and subject — not internal step labels
+            const emailHeading = segConfig.email_heading || 'Special Offer from Rayna Tours';
+            const emailBody = segConfig.email_body || body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            subject = segConfig.subject || subject;
+            const hasCoupon = !!(template.coupon_code || segConfig.coupon_code);
+
+            const baseTemplate = segConfig.baseTemplate || 'product-recommendation';
+            body = BaseTemplateService.render(baseTemplate, {
               customer_name: firstName,
-              email_heading: subject || template.subject || 'Special Offer from Rayna Tours',
-              email_body: cleanBody.slice(0, 300),
-              cta_url: (trackedProducts[0]?.product_url) || 'https://www.raynatours.com/activities?' + utmParams,
-              coupon_code: template.cta_text || 'RAYNA2026',
-              coupon_discount: 'Flat 15% Off',
-              coupon_expiry: '7 days',
+              email_heading: emailHeading,
+              email_body: emailBody,
+              cta_url: segConfig.cta_url
+                ? segConfig.cta_url + (segConfig.cta_url.includes('?') ? '&' : '?') + utmParams
+                : (trackedProducts[0]?.product_url) || 'https://www.raynatours.com/activities?' + utmParams,
+              ...(hasCoupon ? {
+                coupon_code: template.coupon_code || segConfig.coupon_code,
+                coupon_discount: segConfig.coupon_discount || 'Flat 15% Off',
+                coupon_expiry: segConfig.coupon_expiry || '7 days',
+              } : {}),
               products: trackedProducts,
             });
           } catch (e) {
@@ -210,10 +242,12 @@ export class CampaignService {
 
         if (msg.channel === 'email') {
           const { EmailChannel } = await import('./channels/EmailChannel.js');
+          const { EmailTrackingService } = await import('./EmailTrackingService.js');
+          const trackedHtml = EmailTrackingService.injectTracking(msg.rendered_body, msg.id);
           sendResult = await EmailChannel.send({
             to: msg.customer_email,
             subject: msg.rendered_subject || 'Rayna Tours',
-            html: msg.rendered_body,
+            html: trackedHtml,
           });
         }
 

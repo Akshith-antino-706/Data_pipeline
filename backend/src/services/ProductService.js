@@ -5,6 +5,7 @@ let cache = { data: null, ts: 0 };
 const CACHE_TTL = 30 * 60 * 1000;
 
 const CITIES = [
+  { cityId: 13668, cityName: 'Dubai', countryName: 'United Arab Emirates' },
   { cityId: 13236, cityName: 'Abu Dhabi', countryName: 'United Arab Emirates' },
 ];
 
@@ -21,7 +22,8 @@ export default class ProductService {
       try {
         const url = `${BASE_URL}?productType=tour&cityId=${city.cityId}&cityName=${encodeURIComponent(city.cityName)}&countryName=${encodeURIComponent(city.countryName)}`;
         const res = await fetch(url, {
-          headers: { 'Accept': 'application/json', 'User-Agent': 'RaynaDataPipeline/1.0' }
+          headers: { 'Accept': 'application/json', 'User-Agent': 'RaynaDataPipeline/1.0' },
+          signal: AbortSignal.timeout(5000),
         });
         const json = await res.json();
         if (json.success && json.products) {

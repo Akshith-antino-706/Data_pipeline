@@ -33,10 +33,11 @@ router.post('/trigger', async (_req, res) => {
   }
 });
 
-// POST /api/v3/mysql-sync/trigger/:table — sync a single table
+// POST /api/v3/mysql-sync/trigger/:table — sync a single table (?full=true to force full re-sync)
 router.post('/trigger/:table', async (req, res) => {
   try {
-    const result = await MySQLSyncService.pullTable(req.params.table);
+    const forceFullSync = req.query.full === 'true';
+    const result = await MySQLSyncService.pullTable(req.params.table, { forceFullSync });
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

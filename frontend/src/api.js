@@ -201,3 +201,31 @@ export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'P
 export const runV3MigrateSchema = () => request('/api/v3/migrate-schema', { method: 'POST' });
 export const runV3MigrateSegments = () => request('/api/v3/migrate-segments', { method: 'POST' });
 export const runV3MigrateRFM = () => request('/api/v3/migrate-rfm', { method: 'POST' });
+
+// ── Daily Data Report ──────────────────────────────────────────
+export const getReportCounts = (from, to) => request(`/api/v3/daily-report/counts?from=${from}&to=${to}`);
+export const getReportPreview = (table, from, to) => request(`/api/v3/daily-report/preview/${table}?from=${from}&to=${to}`);
+
+export async function downloadReportCSV(table, from, to) {
+  const res = await fetch(`${BASE}/api/v3/daily-report/download/${table}?from=${from}&to=${to}`);
+  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${table}_${from}_to_${to}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadReportAll(from, to) {
+  const res = await fetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);
+  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rayna_daily_report_${from}_to_${to}.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

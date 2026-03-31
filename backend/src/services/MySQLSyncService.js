@@ -1,42 +1,63 @@
-import { mysqlQuery, getMySQLPool } from '../config/mysql.js';
+import { Op, literal } from 'sequelize';
+import { getSequelizeInstance, getMySQLModels } from '../config/mysqlORM.js';
 import { query, transaction } from '../config/database.js';
 
 /**
  * MySQL → PostgreSQL Incremental Sync Service
- * Pulls data from remote MySQL (read-only) and upserts into local PostgreSQL.
- * Runs every 30 minutes via cron.
+ * Pulls specific columns from remote MySQL (read-only) and upserts into local PostgreSQL.
+ * Runs every 10 minutes via cron.
  */
 class MySQLSyncService {
 
   // ── Table Mappings ────────────────────────────────────────
   static TABLE_MAPPINGS = {
-    tickets: {
-      mysqlTable: 'tickets',
-      pgTable: 'mysql_tickets',
-      conflictKey: 'id',
-      timestampColumn: 'updated_at',
-      pool: 'primary',
-    },
-    travel_data: {
-      mysqlTable: 'travel_data',
-      pgTable: 'mysql_travel_data',
-      conflictKey: 'id',
-      timestampColumn: 'added_date',  // no updated_at in this table
-      pool: 'primary',
-    },
     contacts: {
       mysqlTable: 'contacts',
       pgTable: 'mysql_contacts',
       conflictKey: 'id',
       timestampColumn: 'updated_at',
-      pool: 'primary',
+      connection: 'primary',
+      modelName: 'Contact',
+      // Only pull these columns from MySQL
+      columns: ['id', 'contact_type', 'department_name', 'name', 'company_name', 'email', 'dob', 'mobile', 'city', 'cstate', 'updated_at'],
+    },
+    tickets: {
+      mysqlTable: 'tickets',
+      pgTable: 'mysql_tickets',
+      conflictKey: 'id',
+      timestampColumn: 'updated_at',
+      connection: 'primary',
+      modelName: 'Ticket',
+      columns: ['id', 'department_name', 't_from', 'from_name', 'subject', 'time', 'updated_at'],
     },
     chats: {
       mysqlTable: 'chats',
       pgTable: 'mysql_chats',
       conflictKey: 'id',
-      timestampColumn: 'created_at',  // updated_at is NULL for most rows
-      pool: 'chats',                  // second MySQL server (5.79.64.193)
+      timestampColumn: 'created_at',
+      connection: 'chats',
+      modelName: 'Chat',
+      columns: ['id', 'customer_no', 'wa_name', 'email', 'country', 'department_number', 'tags', 'last_in', 'last_out', 'last_msg', 'created_at'],
+      // first_message is derived from created_at (earliest message timestamp)
+      columnAliases: { first_message: 'created_at' },
+      // Pull department name from the departments table via receiver (department ID)
+      derivedColumns: [
+        { name: 'department_name', sql: '(SELECT `name` FROM `departments` WHERE `departments`.`id` = `Chat`.`receiver` LIMIT 1)' },
+      ],
+      // Sequelize model aliases → actual PG column names
+      pgColumnMap: { customer_no: 'wa_id', department_number: 'receiver' },
+    },
+    departments: {
+      mysqlTable: 'departments',
+      pgTable: 'mysql_departments',
+      conflictKey: 'id',
+      timestampColumn: 'created_at',
+      connection: 'chats',  // departments is on the chats server (5.79.64.193)
+      modelName: 'Department',
+      columns: ['id', 'connection', 'name', 'description', 'created_at'],
+      // email_id doesn't exist in source — will be NULL
+      extraPgColumns: { email_id: null },
+      fullSync: true,  // small reference table — always pull all rows
     },
   };
 
@@ -53,14 +74,13 @@ class MySQLSyncService {
         `INSERT INTO sync_metadata (table_name) VALUES ($1) ON CONFLICT DO NOTHING`,
         [metaKey]
       );
-      // First sync: only pull last 6 months of data
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
       return sixMonthsAgo;
     }
-    // If last_synced_at is epoch (never synced successfully), use 6 months ago
     const lastSynced = rows[0].last_synced_at;
-    if (lastSynced.getTime() === new Date('1970-01-01T00:00:00Z').getTime()) {
+    // Check for epoch (never synced) — compare year to avoid timezone issues
+    if (!lastSynced || lastSynced.getFullYear() <= 1970) {
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
       return sixMonthsAgo;
@@ -87,11 +107,61 @@ class MySQLSyncService {
   // ── Core Sync Methods ─────────────────────────────────────
 
   /**
+   * Build Sequelize attributes array — columns plus aliases.
+   */
+  static buildAttributes(mapping) {
+    const attrs = [...mapping.columns];
+    if (mapping.columnAliases) {
+      for (const [alias, sourceCol] of Object.entries(mapping.columnAliases)) {
+        attrs.push([sourceCol, alias]);
+      }
+    }
+    if (mapping.derivedColumns) {
+      for (const dc of mapping.derivedColumns) {
+        attrs.push([literal(dc.sql), dc.name]);
+      }
+    }
+    return attrs;
+  }
+
+  /**
+   * Get the list of PostgreSQL column names for upsert.
+   */
+  static getPgColumns(mapping) {
+    const cols = [...mapping.columns];
+    if (mapping.columnAliases) {
+      cols.push(...Object.keys(mapping.columnAliases));
+    }
+    if (mapping.derivedColumns) {
+      cols.push(...mapping.derivedColumns.map(dc => dc.name));
+    }
+    if (mapping.extraPgColumns) {
+      cols.push(...Object.keys(mapping.extraPgColumns));
+    }
+    // Rename Sequelize aliases to actual PG column names
+    if (mapping.pgColumnMap) {
+      return cols.map(c => mapping.pgColumnMap[c] || c);
+    }
+    return cols;
+  }
+
+  /**
+   * Rename row keys from Sequelize aliases to PG column names.
+   */
+  static remapRowKeys(row, pgColumnMap) {
+    if (!pgColumnMap) return row;
+    const mapped = {};
+    for (const [key, val] of Object.entries(row)) {
+      mapped[pgColumnMap[key] || key] = val;
+    }
+    return mapped;
+  }
+
+  /**
    * Pull a single table from MySQL and upsert into PostgreSQL.
    * Read-only on MySQL — no writes or modifications.
-   * Uses paginated reads (LIMIT/OFFSET) to handle large tables without OOM.
    */
-  static async pullTable(tableName) {
+  static async pullTable(tableName, { forceFullSync = false } = {}) {
     const mapping = this.TABLE_MAPPINGS[tableName];
     if (!mapping) throw new Error(`No MySQL mapping for table: ${tableName}`);
 
@@ -99,21 +169,38 @@ class MySQLSyncService {
     await this.updateSyncMetadata(tableName, { status: 'running' });
 
     try {
-      const lastSync = await this.getLastSyncTime(tableName);
+      const lastSync = forceFullSync
+        ? new Date('2000-01-01T00:00:00Z')
+        : await this.getLastSyncTime(tableName);
       const batchSize = parseInt(process.env.MYSQL_SYNC_BATCH_SIZE || '500');
-      const pageSize = 5000; // rows per MySQL read page
+      const pageSize = 5000;
 
       let totalSynced = 0;
       let offset = 0;
       let hasMore = true;
 
+      const connectionName = mapping.connection || 'primary';
+      const models = getMySQLModels(connectionName);
+      const Model = models[mapping.modelName];
+      const attributes = this.buildAttributes(mapping);
+      const pgColumns = this.getPgColumns(mapping);
+
       while (hasMore) {
-        // READ-ONLY paginated query against remote MySQL
-        const rows = await mysqlQuery(
-          `SELECT * FROM \`${mapping.mysqlTable}\` WHERE \`${mapping.timestampColumn}\` > ? ORDER BY \`${mapping.timestampColumn}\` ASC LIMIT ? OFFSET ?`,
-          [lastSync, pageSize, offset],
-          mapping.pool || 'primary'
-        );
+        const findOptions = {
+          attributes,
+          limit: pageSize,
+          offset,
+          raw: true,
+        };
+
+        if (mapping.fullSync) {
+          findOptions.order = [['id', 'ASC']];
+        } else {
+          findOptions.where = { [mapping.timestampColumn]: { [Op.gt]: lastSync } };
+          findOptions.order = [[mapping.timestampColumn, 'ASC']];
+        }
+
+        const rows = await Model.findAll(findOptions);
 
         console.log(`[MySQL Sync] ${tableName}: fetched page of ${rows.length} rows (offset ${offset})`);
 
@@ -122,11 +209,18 @@ class MySQLSyncService {
           break;
         }
 
-        // Upsert this page into PostgreSQL in batches
-        for (let i = 0; i < rows.length; i += batchSize) {
-          const batch = rows.slice(i, i + batchSize);
+        // Remap Sequelize aliases to PG column names, then add extra PG columns
+        const remappedRows = mapping.pgColumnMap
+          ? rows.map(row => this.remapRowKeys(row, mapping.pgColumnMap))
+          : rows;
+        const enrichedRows = mapping.extraPgColumns
+          ? remappedRows.map(row => ({ ...row, ...mapping.extraPgColumns }))
+          : remappedRows;
+
+        for (let i = 0; i < enrichedRows.length; i += batchSize) {
+          const batch = enrichedRows.slice(i, i + batchSize);
           await transaction(async (client) => {
-            await this.upsertBatch(client, mapping.pgTable, mapping.conflictKey, batch);
+            await this.upsertBatch(client, mapping.pgTable, mapping.conflictKey, batch, pgColumns);
           });
           totalSynced += batch.length;
           console.log(`[MySQL Sync] ${tableName}: upserted ${totalSynced} rows so far`);
@@ -156,32 +250,27 @@ class MySQLSyncService {
   }
 
   /**
-   * Dynamically build and execute INSERT ... ON CONFLICT DO UPDATE.
-   * Column names are derived from the MySQL result (no hardcoding).
+   * Build and execute INSERT ... ON CONFLICT DO UPDATE for specific columns.
    */
-  static async upsertBatch(client, pgTable, conflictKey, rows) {
+  static async upsertBatch(client, pgTable, conflictKey, rows, pgColumns) {
     if (rows.length === 0) return;
 
-    const columns = Object.keys(rows[0]);
+    const columns = pgColumns || Object.keys(rows[0]);
     const updateColumns = columns.filter(c => c !== conflictKey);
     const conflictUpdate = updateColumns
       .map(c => `${c} = EXCLUDED.${c}`)
       .join(', ');
 
-    // Build multi-row parameterized VALUES
     const values = [];
     const valueClauses = rows.map((row, rowIdx) => {
       const placeholders = columns.map((col, colIdx) => {
         let val = row[col];
-        // Sanitize Invalid Date objects (from MySQL 0000-00-00 00:00:00)
         if (val instanceof Date && isNaN(val.getTime())) {
           val = null;
         }
-        // Strip null bytes from strings (PostgreSQL rejects 0x00 in UTF8)
         if (typeof val === 'string') {
           val = val.replace(/\0/g, '');
         }
-        // Handle objects/arrays → JSON string for any JSONB columns
         values.push(
           val !== null && typeof val === 'object' && !(val instanceof Date)
             ? JSON.stringify(val)
@@ -219,8 +308,44 @@ class MySQLSyncService {
       }
     }
 
+    // Map department emails from primary MySQL server
+    try {
+      await this.mapDepartmentEmails();
+    } catch (err) {
+      console.error('[MySQL Sync] Department email mapping failed:', err.message);
+    }
+
     console.log('[MySQL Sync] Full sync completed:', JSON.stringify(results));
     return results;
+  }
+
+  /**
+   * Sync department_emails from primary MySQL server and store locally.
+   * The two servers use different department ID systems, so we store
+   * the full mapping table (did → dept_name + email) from the primary server.
+   */
+  static async mapDepartmentEmails() {
+    const sequelize = getSequelizeInstance('primary');
+
+    const rows = await sequelize.query(
+      `SELECT de.id, de.did, d.name as dept_name, de.email, de.status
+       FROM department_emails de
+       JOIN departments d ON d.id = de.did
+       ORDER BY de.id`,
+      { type: sequelize.constructor.QueryTypes.SELECT }
+    );
+
+    let synced = 0;
+    for (const r of rows) {
+      await query(
+        `INSERT INTO mysql_department_emails (id, did, dept_name, email, status)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (id) DO UPDATE SET did=$2, dept_name=$3, email=$4, status=$5`,
+        [r.id, r.did, r.dept_name, r.email, r.status]
+      );
+      synced++;
+    }
+    console.log(`[MySQL Sync] Department emails synced: ${synced} records`);
   }
 
   /**
@@ -239,14 +364,18 @@ class MySQLSyncService {
   static async discoverSchema() {
     const schemas = {};
     for (const [name, mapping] of Object.entries(this.TABLE_MAPPINGS)) {
-      const poolName = mapping.pool || 'primary';
-      const columns = await mysqlQuery(`DESCRIBE \`${mapping.mysqlTable}\``, [], poolName);
-      const [countResult] = await mysqlQuery(`SELECT COUNT(*) as count FROM \`${mapping.mysqlTable}\``, [], poolName);
+      const connectionName = mapping.connection || 'primary';
+      const models = getMySQLModels(connectionName);
+      const Model = models[mapping.modelName];
+
+      const columns = await Model.describe();
+      const count = await Model.count();
       schemas[name] = {
         mysqlTable: mapping.mysqlTable,
         pgTable: mapping.pgTable,
-        server: poolName,
-        rowCount: countResult.count,
+        server: connectionName,
+        rowCount: count,
+        syncedColumns: mapping.columns,
         columns,
       };
     }

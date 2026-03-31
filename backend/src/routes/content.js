@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { ContentService } from '../services/ContentService.js';
 import { AIService } from '../services/AIService.js';
+import { BaseTemplateService } from '../services/BaseTemplateService.js';
+import { getSegmentProducts } from '../templates/segmentProducts.js';
 import ProductService from '../services/ProductService.js';
+import SEGMENT_EMAIL_CONFIG from '../templates/segmentEmailConfig.js';
 
 const router = Router();
 
@@ -24,6 +27,57 @@ router.get('/templates/:id', async (req, res, next) => {
     const data = await ContentService.getById(req.params.id);
     if (!data) return res.status(404).json({ success: false, error: 'Template not found' });
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v2/content/templates/:id/preview — Render full email preview with base template
+router.get('/templates/:id/preview', async (req, res, next) => {
+  try {
+    const template = await ContentService.getById(req.params.id);
+    if (!template) return res.status(404).json({ success: false, error: 'Template not found' });
+
+    if (template.channel !== 'email') {
+      return res.json({ success: true, data: { html: template.body } });
+    }
+
+    // Find matching segment config from template name
+    const segmentName = Object.keys(SEGMENT_EMAIL_CONFIG).find(s => template.name?.includes(s));
+    const segConfig = SEGMENT_EMAIL_CONFIG[segmentName] || {};
+    let products;
+    try {
+      const dynamic = await ProductService.getForSegment(segmentName || 'Registered Not Booked', 3);
+      if (dynamic.length > 0) {
+        products = dynamic.map(p => ({
+          product_url: p.url || 'https://www.raynatours.com',
+          product_image: p.image || '',
+          product_category: (p.item_group_id || '').replace(/-/g, ' '),
+          product_name: p.name || '',
+          product_rating: p.rating || '4.8',
+          product_reviews: String(p.reviewCount || ''),
+          product_price: String(p.salePrice || ''),
+          product_strike_price: String(p.normalPrice || ''),
+        }));
+      }
+    } catch { /* API down */ }
+    if (!products || products.length === 0) {
+      products = getSegmentProducts(segmentName || 'Registered Not Booked');
+    }
+    const baseTemplate = segConfig.baseTemplate || 'product-recommendation';
+
+    const html = BaseTemplateService.render(baseTemplate, {
+      customer_name: 'Traveler',
+      email_heading: segConfig.email_heading || 'Explore Amazing Experiences',
+      email_body: segConfig.email_body || template.body?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+      cta_url: segConfig.cta_url || 'https://www.raynatours.com/activities',
+      ...(segConfig.coupon_code ? {
+        coupon_code: template.coupon_code || segConfig.coupon_code,
+        coupon_discount: segConfig.coupon_discount || 'Flat 15% Off',
+        coupon_expiry: segConfig.coupon_expiry || '7 days',
+      } : {}),
+      products,
+    });
+
+    res.json({ success: true, data: { html } });
   } catch (err) { next(err); }
 });
 

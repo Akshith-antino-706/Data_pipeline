@@ -12,3 +12,6 @@ backend/cert.pem
 backend/key.pem
 backend/src/rayna-data-pipeline-*.json
 .claude/
+
+# Local Netlify folder
+.netlify
