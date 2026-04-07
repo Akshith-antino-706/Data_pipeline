@@ -218,6 +218,22 @@ export async function downloadReportCSV(table, from, to) {
   URL.revokeObjectURL(url);
 }
 
+// ── Customers ────────────────────────────────────────────────
+export const getCustomers = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/customers?${qs}`);
+};
+export const getCustomer = (id) => request(`/api/v3/customers/${encodeURIComponent(id)}`);
+export const getCustomerStats = () => request('/api/v3/customers/stats');
+
+// ── Unified Contacts ─────────────────────────────────────────
+export const getUnifiedContacts = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/unified-contacts?${qs}`);
+};
+export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
+export const getUnifiedStats = () => request('/api/v3/unified-contacts/stats');
+
 export async function downloadReportAll(from, to) {
   const res = await fetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);

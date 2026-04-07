@@ -16,15 +16,16 @@ const TABLE_CONFIG = [
   { key: 'rayna_hotels', label: 'Rayna Hotels', icon: Building2, color: 'var(--orange)', group: 'rayna' },
   { key: 'rayna_visas', label: 'Rayna Visas', icon: Globe, color: 'var(--green)', group: 'rayna' },
   { key: 'rayna_flights', label: 'Rayna Flights', icon: Plane, color: 'var(--red)', group: 'rayna' },
-  { key: 'mysql_contacts', label: 'CRM Contacts', icon: Users, color: 'var(--purple)', group: 'mysql' },
-  { key: 'mysql_chats', label: 'WhatsApp Chats', icon: MessageSquare, color: '#25D366', group: 'mysql' },
-  { key: 'mysql_tickets', label: 'Email Tickets', icon: Mail, color: 'var(--yellow)', group: 'mysql' },
+  { key: 'users', label: 'Users', icon: Users, color: 'var(--purple)', group: 'crm' },
+  { key: 'chats', label: 'WhatsApp Chats', icon: MessageSquare, color: '#25D366', group: 'crm' },
+  { key: 'tickets', label: 'Email Tickets', icon: Mail, color: 'var(--yellow)', group: 'crm' },
+  { key: 'travel_bookings', label: 'Travel Bookings', icon: MapPin, color: 'var(--brand-primary)', group: 'crm' },
   { key: 'ga4_events', label: 'GA4 Events', icon: Activity, color: '#FF6D01', group: 'ga4' },
 ];
 
 const GROUPS = [
   { key: 'rayna', label: 'Rayna API Bookings', icon: Database, color: 'var(--brand-primary)' },
-  { key: 'mysql', label: 'MySQL CRM Data', icon: Users, color: 'var(--green)' },
+  { key: 'crm', label: 'CRM Data', icon: Users, color: 'var(--green)' },
   { key: 'ga4', label: 'Google Analytics 4', icon: Activity, color: '#FF6D01' },
 ];
 

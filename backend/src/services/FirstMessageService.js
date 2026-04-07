@@ -2,21 +2,18 @@ import { query } from '../config/database.js';
 
 /**
  * Fetches the first message for each chat conversation from ChatHead API
- * and updates mysql_chats.first_message_text
+ * and updates chats.first_msg_text + customer_master.first_msg_text
  *
- * API: GET https://chathead.io/apis/wa/first_msg/?from={customer_no}&to={department_number}
+ * API: GET https://chathead.io/apis/wa/first_msg/?from={wa_id}&to={receiver}
  * Returns: { status: "success", msg: "..." }
  */
 class FirstMessageService {
 
   static API_BASE = 'https://chathead.io/apis/wa/first_msg';
-  static CONCURRENCY = 10;       // parallel API calls
-  static BATCH_SIZE = 500;       // rows to fetch from DB at a time
-  static DELAY_BETWEEN_BATCHES = 1000; // ms pause between batches
+  static CONCURRENCY = 10;
+  static BATCH_SIZE = 500;
+  static DELAY_BETWEEN_BATCHES = 500;
 
-  /**
-   * Fetch first message from ChatHead API for a single from/to pair
-   */
   static async fetchFirstMessage(from, to) {
     try {
       const url = `${this.API_BASE}/?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
@@ -32,35 +29,34 @@ class FirstMessageService {
     }
   }
 
-  /**
-   * Process a batch of rows with controlled concurrency
-   */
   static async processBatch(rows) {
     const results = [];
     for (let i = 0; i < rows.length; i += this.CONCURRENCY) {
       const chunk = rows.slice(i, i + this.CONCURRENCY);
       const promises = chunk.map(async (row) => {
-        const msg = await this.fetchFirstMessage(row.customer_no, row.department_number);
-        return { id: row.id, msg };
+        const msg = await this.fetchFirstMessage(row.wa_id, row.receiver);
+        return { id: row.id, wa_id: row.wa_id, msg };
       });
-      const chunkResults = await Promise.all(promises);
-      results.push(...chunkResults);
+      results.push(...(await Promise.all(promises)));
     }
     return results;
   }
 
-  /**
-   * Update the DB with fetched messages
-   */
   static async updateMessages(results) {
     let updated = 0;
     for (const r of results) {
       if (r.msg) {
-        await query(
-          'UPDATE mysql_chats SET first_message_text = $1 WHERE id = $2',
-          [r.msg, r.id]
-        );
-        updated++;
+        // Remove null bytes and invalid UTF-8 characters
+        const clean = String(r.msg).replace(/\0/g, '').replace(/[\uD800-\uDFFF]/g, '');
+        try {
+          await query(
+            'UPDATE chats SET first_msg_text = $1 WHERE id = $2',
+            [clean, r.id]
+          );
+          updated++;
+        } catch {
+          // Skip rows with encoding issues
+        }
       }
     }
     return updated;
@@ -70,75 +66,57 @@ class FirstMessageService {
    * Run the full sync — fetches first messages for all chats that don't have one yet
    */
   static async syncAll() {
-    console.log('[FirstMessage] Starting sync...');
+    console.log('[FirstMsg] Starting sync...');
     let totalProcessed = 0;
     let totalUpdated = 0;
-    let offset = 0;
     let hasMore = true;
 
     while (hasMore) {
-      // Get next batch of chats without first_message_text
       const { rows } = await query(
-        `SELECT id, customer_no, department_number
-         FROM mysql_chats
-         WHERE first_message_text IS NULL
-           AND customer_no IS NOT NULL
-           AND department_number IS NOT NULL
+        `SELECT id, wa_id, receiver
+         FROM chats
+         WHERE first_msg_text IS NULL
+           AND wa_id IS NOT NULL AND receiver IS NOT NULL
          ORDER BY id
-         LIMIT $1 OFFSET $2`,
-        [this.BATCH_SIZE, offset]
+         LIMIT $1`,
+        [this.BATCH_SIZE]
       );
 
-      if (rows.length === 0) {
-        hasMore = false;
-        break;
-      }
+      if (rows.length === 0) { hasMore = false; break; }
 
-      console.log(`[FirstMessage] Processing batch of ${rows.length} (offset ${offset})...`);
+      console.log(`[FirstMsg] Processing batch of ${rows.length} (total so far: ${totalProcessed})...`);
       const results = await this.processBatch(rows);
       const updated = await this.updateMessages(results);
 
       totalProcessed += rows.length;
       totalUpdated += updated;
-      offset += rows.length;
 
-      console.log(`[FirstMessage] Batch done: ${updated}/${rows.length} updated. Total: ${totalUpdated}/${totalProcessed}`);
+      console.log(`[FirstMsg] Batch: ${updated}/${rows.length} fetched. Total: ${totalUpdated}/${totalProcessed}`);
 
-      // Pause between batches to avoid hammering the API
-      if (hasMore) {
-        await new Promise(r => setTimeout(r, this.DELAY_BETWEEN_BATCHES));
-      }
+      if (hasMore) await new Promise(r => setTimeout(r, this.DELAY_BETWEEN_BATCHES));
     }
 
-    console.log(`[FirstMessage] Sync complete: ${totalUpdated} messages fetched out of ${totalProcessed} chats`);
+    console.log(`[FirstMsg] Done. ${totalUpdated}/${totalProcessed} messages fetched`);
     return { totalProcessed, totalUpdated };
   }
 
   /**
-   * Run a small test batch to verify the API works
+   * Test with a small batch
    */
   static async testRun(limit = 20) {
-    console.log(`[FirstMessage] Test run with ${limit} rows...`);
+    console.log(`[FirstMsg] Test run (${limit} rows)...`);
     const { rows } = await query(
-      `SELECT id, customer_no, department_number
-       FROM mysql_chats
-       WHERE first_message_text IS NULL
-         AND customer_no IS NOT NULL
-         AND department_number IS NOT NULL
-       LIMIT $1`,
-      [limit]
+      `SELECT id, wa_id, receiver FROM chats
+       WHERE first_msg_text IS NULL AND wa_id IS NOT NULL AND receiver IS NOT NULL
+       LIMIT $1`, [limit]
     );
 
     const results = await this.processBatch(rows);
     const updated = await this.updateMessages(results);
-    console.log(`[FirstMessage] Test done: ${updated}/${rows.length} updated`);
+    console.log(`[FirstMsg] Test: ${updated}/${rows.length} fetched`);
 
-    // Show sample results
     const { rows: samples } = await query(
-      `SELECT id, customer_no, department_number, first_message_text
-       FROM mysql_chats
-       WHERE first_message_text IS NOT NULL
-       LIMIT 5`
+      `SELECT id, wa_id, first_msg_text FROM chats WHERE first_msg_text IS NOT NULL LIMIT 5`
     );
     return { updated, total: rows.length, samples };
   }

@@ -18,36 +18,39 @@ router.get('/status', async (_req, res) => {
 // GET /api/v3/rayna-sync/mapping-stats — booking ↔ customer mapping stats
 router.get('/mapping-stats', async (_req, res) => {
   try {
-    // Mapping breakdown by source and match type
-    const { rows: breakdown } = await query(`
-      SELECT booking_source, match_type,
-        COUNT(*) as matched_bookings,
-        COUNT(DISTINCT customer_master_id) as unique_customers
-      FROM booking_customer_map
-      GROUP BY booking_source, match_type
-      ORDER BY booking_source, match_type
-    `);
+    // Mapping breakdown by source
+    let breakdown = [];
+    try {
+      const { rows } = await query(`
+        SELECT booking_source, match_type,
+          COUNT(*) as matched_bookings,
+          COUNT(DISTINCT customer_master_id) as unique_customers
+        FROM booking_customer_map
+        GROUP BY booking_source, match_type
+        ORDER BY booking_source, match_type
+      `);
+      breakdown = rows;
+    } catch { /* table may be empty */ }
 
     // Overall stats
     const { rows: [overall] } = await query(`
       SELECT
-        COUNT(*) as total_mapped,
-        COUNT(DISTINCT customer_master_id) as customers_with_bookings,
-        (SELECT COUNT(*) FROM customer_master) as total_customers
-      FROM booking_customer_map
+        (SELECT COUNT(*) FROM booking_customer_map) as total_mapped,
+        (SELECT COUNT(*) FROM travel_bookings) as customers_with_bookings,
+        (SELECT COUNT(*) FROM users) as total_customers
     `);
 
-    // Top customers by revenue
+    // Top customers by bookings
     const { rows: topCustomers } = await query(`
-      SELECT cm.id, cm.name, cm.email, cm.phone,
-        cm.total_tour_bookings, cm.total_hotel_bookings,
-        cm.total_flight_bookings, cm.total_visa_bookings,
-        cm.total_booking_revenue,
-        cm.first_booking_at, cm.last_booking_at,
-        cm.total_chats, cm.chat_departments
-      FROM customer_master cm
-      WHERE cm.total_booking_revenue > 0
-      ORDER BY cm.total_booking_revenue DESC
+      SELECT u.id, u.name, u.primary_email as email, u.mobile as phone,
+        u.company_name, u.country,
+        COUNT(DISTINCT tb.id) as total_bookings,
+        MIN(tb.start_date) as first_booking_at,
+        MAX(tb.start_date) as last_booking_at
+      FROM users u
+      JOIN travel_bookings tb ON tb.user_id = u.id
+      GROUP BY u.id, u.name, u.primary_email, u.mobile, u.company_name, u.country
+      ORDER BY COUNT(DISTINCT tb.id) DESC
       LIMIT 20
     `);
 
@@ -64,10 +67,12 @@ router.get('/mapping-stats', async (_req, res) => {
         (SELECT COUNT(*) FROM booking_customer_map WHERE booking_source='flights') as mapped_flights
     `);
 
-    // MySQL sync status
-    const { rows: mysqlStatus } = await query(
-      "SELECT * FROM sync_metadata WHERE table_name LIKE 'mysql_%' ORDER BY table_name"
-    );
+    // Sync status
+    let mysqlStatus = [];
+    try {
+      const { rows } = await query("SELECT * FROM sync_metadata ORDER BY table_name");
+      mysqlStatus = rows;
+    } catch { /* ignore */ }
 
     // GA4 BigQuery sync status
     const { rows: ga4Status } = await query(
@@ -76,70 +81,52 @@ router.get('/mapping-stats', async (_req, res) => {
 
     // Comprehensive data overview — all data sources
     const dataOverviewQueries = [
-      query("SELECT COUNT(*) as count FROM mysql_contacts"),
-      query("SELECT COUNT(*) as count FROM mysql_tickets"),
-      query("SELECT COUNT(*) as count FROM mysql_chats"),
-      query("SELECT COUNT(*) as count FROM mysql_departments"),
-      query("SELECT COUNT(*) as count FROM customer_master"),
-      query("SELECT COUNT(*) as count, COUNT(DISTINCT department_name) as depts FROM mysql_contacts WHERE department_name IS NOT NULL"),
-      query("SELECT COUNT(*) as count, COUNT(DISTINCT department_name) as depts FROM mysql_tickets WHERE department_name IS NOT NULL"),
-      query("SELECT COUNT(*) as count, COUNT(DISTINCT department_name) as depts FROM mysql_chats WHERE department_name IS NOT NULL"),
-      query(`SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = 'ga4_events'`),
+      query("SELECT COUNT(*) as count FROM users"),
+      query("SELECT COUNT(*) as count FROM user_emails"),
+      query("SELECT COUNT(*) as count FROM user_phones"),
+      query("SELECT COUNT(*) as count FROM departments"),
+      query("SELECT COUNT(*) as count FROM dept_emails"),
+      query("SELECT COUNT(*) as count FROM tickets"),
+      query("SELECT COUNT(*) as count FROM travel_bookings"),
+      query("SELECT COUNT(*) as count FROM chats"),
+      query("SELECT COUNT(*) as count FROM unified_data"),
+      query("SELECT COUNT(*) as count FROM rayna_tours"),
+      query("SELECT COUNT(*) as count FROM rayna_hotels"),
+      query("SELECT COUNT(*) as count FROM rayna_visas"),
+      query("SELECT COUNT(*) as count FROM rayna_flights"),
     ];
-    const [contacts, tickets, chats, departments, custMaster, contactDepts, ticketDepts, chatDepts, ga4Exists] = await Promise.all(dataOverviewQueries);
+    const [usersR, emailsR, phonesR, deptsR, deptEmailsR, ticketsR, bookingsR, chatsR, unifiedR, toursR, hotelsR, visasR, flightsR] = await Promise.all(dataOverviewQueries);
 
     let ga4Count = 0;
     let ga4Users = 0;
-    if (parseInt(ga4Exists.rows[0].count) > 0) {
-      try {
-        const { rows: [ga4] } = await query("SELECT COUNT(*) as count, COUNT(DISTINCT user_pseudo_id) as users FROM ga4_events");
-        ga4Count = parseInt(ga4.count);
-        ga4Users = parseInt(ga4.users);
-      } catch { /* table may not exist */ }
-    }
+    try {
+      const { rows: [ga4] } = await query("SELECT COUNT(*) as count, COUNT(DISTINCT user_pseudo_id) as users FROM ga4_events");
+      ga4Count = parseInt(ga4.count);
+      ga4Users = parseInt(ga4.users);
+    } catch { /* table may not exist */ }
 
-    // Department breakdown — unified across all 3 sources
-    // Chats use mysql_departments.name, tickets use email (mapped via mysql_department_emails), contacts have their own labels
+    // Department breakdown — B2B vs B2C
     let deptBreakdown = [];
     try {
       const { rows } = await query(`
-        WITH
-        chat_depts AS (
-          SELECT department_name as dept, COUNT(*) as cnt FROM mysql_chats
-          WHERE department_name IS NOT NULL AND department_name != ''
-          GROUP BY department_name
-        ),
-        ticket_depts AS (
-          SELECT COALESCE(de.dept_name, t.department_name) as dept, COUNT(*) as cnt
-          FROM mysql_tickets t
-          LEFT JOIN mysql_department_emails de ON LOWER(t.department_name) = LOWER(de.email)
-          WHERE t.department_name IS NOT NULL AND t.department_name != ''
-          GROUP BY COALESCE(de.dept_name, t.department_name)
-        ),
-        contact_depts AS (
-          SELECT department_name as dept, COUNT(*) as cnt FROM mysql_contacts
-          WHERE department_name IS NOT NULL AND department_name != ''
-          GROUP BY department_name
-        ),
-        all_depts AS (
-          SELECT dept FROM chat_depts
-          UNION SELECT dept FROM ticket_depts
-          UNION SELECT dept FROM contact_depts
-        )
         SELECT
-          ad.dept as name,
-          COALESCE(co.cnt, 0) as contacts,
-          COALESCE(tk.cnt, 0) as tickets,
-          COALESCE(ch.cnt, 0) as chats
-        FROM all_depts ad
-        LEFT JOIN contact_depts co ON co.dept = ad.dept
-        LEFT JOIN ticket_depts tk ON tk.dept = ad.dept
-        LEFT JOIN chat_depts ch ON ch.dept = ad.dept
-        ORDER BY (COALESCE(co.cnt,0) + COALESCE(tk.cnt,0) + COALESCE(ch.cnt,0)) DESC
-        LIMIT 40
+          d.category as name,
+          COUNT(DISTINCT u.id) as customers,
+          COUNT(DISTINCT c.id) as chats,
+          COUNT(DISTINCT t.id) as tickets,
+          COUNT(DISTINCT tb.id) as bookings
+        FROM dept_category_map d
+        JOIN departments dept ON TRIM(dept.name) = d.department
+        LEFT JOIN chats c ON c.department_id = dept.id
+        LEFT JOIN users u ON u.id = c.user_id
+        LEFT JOIN tickets t ON t.user_id = u.id
+        LEFT JOIN travel_bookings tb ON tb.user_id = u.id
+        WHERE d.category IS NOT NULL
+        GROUP BY d.category
+        ORDER BY COUNT(DISTINCT u.id) DESC
       `);
       deptBreakdown = rows;
-    } catch { /* ignore if table missing */ }
+    } catch { /* ignore */ }
 
     res.json({
       success: true,
@@ -159,14 +146,21 @@ router.get('/mapping-stats', async (_req, res) => {
         flights: { total: parseInt(unmatched.total_flights), mapped: parseInt(unmatched.mapped_flights) },
       },
       dataOverview: {
-        contacts: parseInt(contacts.rows[0].count),
-        tickets: parseInt(tickets.rows[0].count),
-        chats: parseInt(chats.rows[0].count),
-        departments: parseInt(departments.rows[0].count),
-        customerMaster: parseInt(custMaster.rows[0].count),
-        contactDepts: parseInt(contactDepts.rows[0].depts),
-        ticketDepts: parseInt(ticketDepts.rows[0].depts),
-        chatDepts: parseInt(chatDepts.rows[0].depts),
+        firstMsgFetched: parseInt((await query("SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NOT NULL")).rows[0].c),
+        firstMsgPending: parseInt((await query("SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NULL AND wa_id IS NOT NULL")).rows[0].c),
+        users: parseInt(usersR.rows[0].count),
+        uniqueEmails: parseInt(emailsR.rows[0].count),
+        phones: parseInt(phonesR.rows[0].count),
+        departments: parseInt(deptsR.rows[0].count),
+        deptEmails: parseInt(deptEmailsR.rows[0].count),
+        tickets: parseInt(ticketsR.rows[0].count),
+        travelBookings: parseInt(bookingsR.rows[0].count),
+        chats: parseInt(chatsR.rows[0].count),
+        unifiedData: parseInt(unifiedR.rows[0].count),
+        tours: parseInt(toursR.rows[0].count),
+        hotels: parseInt(hotelsR.rows[0].count),
+        visas: parseInt(visasR.rows[0].count),
+        flights: parseInt(flightsR.rows[0].count),
         ga4Events: ga4Count,
         ga4Users: ga4Users,
       },

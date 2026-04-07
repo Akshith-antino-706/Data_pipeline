@@ -33,6 +33,8 @@ import MySQLSyncService from './src/services/MySQLSyncService.js';
 import RaynaSyncService from './src/services/RaynaSyncService.js';
 import raynaSyncRouter from './src/routes/raynaSync.js';
 import dailyReportRouter from './src/routes/dailyReport.js';
+import customersRouter from './src/routes/customers.js';
+import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -85,6 +87,8 @@ app.use('/api/v3/sync', syncRouter);
 app.use('/api/v3/mysql-sync', mysqlSyncRouter);
 app.use('/api/v3/rayna-sync', raynaSyncRouter);
 app.use('/api/v3/daily-report', dailyReportRouter);
+app.use('/api/v3/customers', customersRouter);
+app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {

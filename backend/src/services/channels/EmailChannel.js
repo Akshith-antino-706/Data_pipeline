@@ -14,6 +14,7 @@
  */
 
 import nodemailer from 'nodemailer';
+import { query } from '../../config/database.js';
 
 let _transporter = null;
 
@@ -61,9 +62,25 @@ export class EmailChannel {
     };
   }
 
+  /** Check if email is unsubscribed or hard bounced */
+  static async isBlocked(email) {
+    if (!email) return true;
+    const { rows } = await query(
+      `SELECT 1 FROM unsubscribed WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND (unsubscribe = 1 OR hard_bounces::int > 0) LIMIT 1`,
+      [email]
+    );
+    return rows.length > 0;
+  }
+
   /** Send a single email */
   static async send({ to, subject, html, text, replyTo }) {
-    const { provider, sendgridKey, fromEmail, fromName } = this.config;
+    // Block unsubscribed / hard bounced emails
+    if (await this.isBlocked(to)) {
+      console.log(`[EMAIL] Blocked (unsubscribed/bounced) → ${to}`);
+      return { success: false, blocked: true, reason: 'unsubscribed or hard bounced', provider: 'none' };
+    }
+
+    const { provider, sendgridKey } = this.config;
 
     // SendGrid path
     if (provider === 'sendgrid' && sendgridKey) {
@@ -176,7 +193,7 @@ export class EmailChannel {
     }
   }
 
-  /** Send bulk emails (batch) */
+  /** Send bulk emails (batch) — auto-filters unsubscribed */
   static async sendBulk(messages) {
     const results = [];
     for (const msg of messages) {
@@ -184,6 +201,16 @@ export class EmailChannel {
       results.push({ to: msg.to, ...result });
     }
     return results;
+  }
+
+  /** Filter a list of emails, removing unsubscribed/bounced */
+  static async filterBlockedEmails(emails) {
+    if (!emails.length) return [];
+    const { rows } = await query(
+      `SELECT LOWER(TRIM(email)) as email FROM unsubscribed WHERE unsubscribe = 1 OR hard_bounces::int > 0`
+    );
+    const blocked = new Set(rows.map(r => r.email));
+    return emails.filter(e => !blocked.has(e.toLowerCase().trim()));
   }
 
   /** Parse SendGrid webhook event */

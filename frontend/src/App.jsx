@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import { Component, Suspense, lazy, useState, useEffect, createContext, useContext, useCallback } from 'react';
-import { LayoutDashboard, Zap, Target, GitBranch, Menu, X, Link2, Ticket, Shield, Code, FileText, Sun, Moon, Database, Download } from 'lucide-react';
+import { LayoutDashboard, Zap, Target, GitBranch, Menu, X, Link2, Ticket, Shield, Code, FileText, Sun, Moon, Database, Download, Users, UserCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
 
@@ -19,6 +19,8 @@ const Approvals = lazy(() => import('./pages/Approvals'));
 const GTMIntegration = lazy(() => import('./pages/GTMIntegration'));
 const DataPipeline = lazy(() => import('./pages/DataPipeline'));
 const DailyReport = lazy(() => import('./pages/DailyReport'));
+const Customers = lazy(() => import('./pages/Customers'));
+const UnifiedContacts = lazy(() => import('./pages/UnifiedContacts'));
 
 // Theme Context
 const ThemeContext = createContext();
@@ -73,6 +75,8 @@ const NAV = [
   { to: '/coupons', icon: Ticket, label: 'Coupons' },
   { to: '/approvals', icon: Shield, label: 'Approvals' },
   { to: '/gtm', icon: Code, label: 'GTM & BigQuery' },
+  { to: '/customers', icon: Users, label: 'Customers' },
+  { to: '/contacts', icon: UserCheck, label: 'Unified Contacts' },
   { to: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
   { to: '/daily-report', icon: Download, label: 'Daily Report' },
 ];
@@ -150,6 +154,8 @@ function AnimatedRoutes() {
           <Route path="/coupons" element={<Coupons />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/gtm" element={<GTMIntegration />} />
+          <Route path="/customers" element={<Customers />} />
+          <Route path="/contacts" element={<UnifiedContacts />} />
           <Route path="/data-pipeline" element={<DataPipeline />} />
           <Route path="/daily-report" element={<DailyReport />} />
           <Route path="*" element={<NotFound />} />

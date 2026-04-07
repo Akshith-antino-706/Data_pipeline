@@ -55,7 +55,7 @@ class RaynaSyncService {
         guest_contact: r.guestContact || null,
         country_name:  r.country_name || null,
         agent_name:    r.agentName || null,
-        hotel_name:    r.hotelName || null,
+        hotel_name:    r.hotelName || '',
         profit_center: r.profitShareCenterName || null,
         grnty_email:   r.grnty_email || null,
         no_of_rooms:   r.noOfRoom ?? 1,

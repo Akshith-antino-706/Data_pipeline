@@ -8,6 +8,7 @@ export default function defineTicket(sequelize) {
     from_name: DataTypes.STRING,
     subject: DataTypes.STRING,
     time: DataTypes.DATE,
+    contact_status: DataTypes.STRING,
     updated_at: DataTypes.DATE,
   }, { tableName: 'tickets', timestamps: false });
 }

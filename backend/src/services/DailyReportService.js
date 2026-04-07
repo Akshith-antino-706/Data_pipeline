@@ -7,7 +7,7 @@ import { query } from '../config/database.js';
  */
 class DailyReportService {
 
-  // ── Table Configuration (exact columns from migrations 021-027) ──
+  // ── Table Configuration ──
   static TABLES = {
     rayna_tours: {
       label: 'Rayna Tours',
@@ -41,23 +41,31 @@ class DailyReportService {
       billColumn: 'billno',
       columns: ['billno', 'bill_date', 'modified_date', 'guest_name', 'guest_contact', 'passenger_name', 'nationality', 'agent_name', 'airport_name', 'flight_no', 'from_datetime', 'profit_center', 'grnty_email', 'status', 'selling_price', 'synced_at'],
     },
-    mysql_contacts: {
-      label: 'CRM Contacts',
-      group: 'mysql',
+    users: {
+      label: 'Users',
+      group: 'crm',
       dateColumn: 'updated_at',
-      columns: ['id', 'contact_type', 'department_name', 'name', 'company_name', 'email', 'dob', 'mobile', 'city', 'cstate', 'updated_at'],
+      columns: ['id', 'name', 'primary_email', 'mobile', 'company_name', 'designation', 'city', 'cstate', 'country', 'contact_type', 'source', 'dob', 'created_at', 'updated_at'],
     },
-    mysql_chats: {
+    chats: {
       label: 'WhatsApp Chats',
-      group: 'mysql',
+      group: 'crm',
       dateColumn: 'created_at',
-      columns: ['id', 'customer_no', 'wa_name', 'email', 'country', 'department_number', 'department_name', 'tags', 'first_message', 'created_at', 'last_in', 'last_out', 'last_msg'],
+      columns: ['id', 'user_id', 'wa_id', 'wa_name', 'country', 'receiver', 'tags', 'last_msg_at', 'created_at', 'updated_at'],
     },
-    mysql_tickets: {
+    tickets: {
       label: 'Email Tickets',
-      group: 'mysql',
-      dateColumn: 'updated_at',
-      columns: ['id', 'department_name', 't_from', 'from_name', 'subject', 'time', 'updated_at'],
+      group: 'crm',
+      dateColumn: 'created_at',
+      columns: ['id', 'user_id', 'dept_id', 'subject', 't_from', 'from_name', 't_to', 'priority', 'status', 'created_at', 'updated_at'],
+    },
+    travel_bookings: {
+      label: 'Travel Bookings',
+      group: 'crm',
+      dateColumn: 'start_date',
+      dateType: 'date',
+      billColumn: 'bill_number',
+      columns: ['id', 'user_id', 'bill_serial', 'bill_number', 'bill_type', 'service_name', 'guest_name', 'nationality', 'contact', 'start_date', 'end_date', 'bill_made_by', 'added_at'],
     },
     ga4_events: {
       label: 'GA4 Events',
@@ -95,7 +103,6 @@ class DailyReportService {
       const dateFilter = this._dateFilter(table);
 
       if (config.billColumn && config.revenueColumn) {
-        // Rayna tables: count rows, unique bills, revenue, min/max bill numbers
         return query(
           `SELECT
              COUNT(*)                                  AS total_rows,
@@ -107,7 +114,13 @@ class DailyReportService {
           [from, to]
         );
       }
-      // Non-rayna tables: just count
+      if (config.billColumn) {
+        return query(
+          `SELECT COUNT(*) AS total_rows, COUNT(DISTINCT ${config.billColumn}) AS total_bills
+           FROM ${table} ${dateFilter}`,
+          [from, to]
+        );
+      }
       return query(`SELECT COUNT(*) AS total_rows FROM ${table} ${dateFilter}`, [from, to]);
     });
 
@@ -128,7 +141,7 @@ class DailyReportService {
     return tableStats;
   }
 
-  // ── Get Preview (50% of data, capped at 500 for performance) ─
+  // ── Get Preview (50% of data, capped at 500) ─
   static async getPreview(tableName, from, to) {
     const config = this.TABLES[tableName];
     if (!config) throw new Error(`Unknown table: ${tableName}`);
@@ -136,7 +149,6 @@ class DailyReportService {
     const { columns, dateColumn } = config;
     const dateFilter = this._dateFilter(tableName);
 
-    // First get total count
     const countResult = await query(
       `SELECT COUNT(*) AS cnt FROM ${tableName} ${dateFilter}`, [from, to]
     );

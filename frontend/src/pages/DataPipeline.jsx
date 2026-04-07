@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getRaynaSyncStatus, getMappingStats, triggerRaynaSync, triggerRaynaSyncEndpoint, refreshBookingMapping } from '../api';
-import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, TrendingUp, MessageSquare, Ticket, UserCheck, Activity, BarChart3 } from 'lucide-react';
+import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Ticket, Activity } from 'lucide-react';
 
 const SOURCE_ICONS = { tours: MapPin, hotels: Building2, visas: Globe, flights: Plane };
 const SOURCE_COLORS = { tours: 'var(--brand-primary)', hotels: 'var(--orange)', visas: 'var(--green)', flights: 'var(--red)' };
@@ -91,18 +91,15 @@ export default function DataPipeline() {
 
   if (loading) return <div className="spinner">Loading...</div>;
 
-  const counts = syncStatus?.counts || {};
   const tables = syncStatus?.tables || [];
   const overall = mappingStats?.overall || {};
   const coverage = mappingStats?.coverage || {};
   const breakdown = mappingStats?.breakdown || [];
-  const mysqlStatus = mappingStats?.mysqlStatus || [];
   const dataOverview = mappingStats?.dataOverview || {};
   const deptBreakdown = mappingStats?.deptBreakdown || [];
   const ga4Status = mappingStats?.ga4Status || [];
+  const mysqlStatus = mappingStats?.mysqlStatus || [];
 
-  const totalBookings = Object.values(counts).reduce((a, b) => a + b, 0);
-  const totalMySQLRows = mysqlStatus.reduce((a, t) => a + (parseInt(t.rows_synced) || 0), 0);
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: '0 0 40px' }}>
@@ -129,11 +126,11 @@ export default function DataPipeline() {
       {/* KPI Row */}
       <motion.div variants={fadeInUp} className="kpi-strip" style={{ marginBottom: 28 }}>
         {[
-          { label: 'Total Records', value: formatNum(totalBookings + (dataOverview.contacts || 0) + (dataOverview.tickets || 0) + (dataOverview.chats || 0) + (dataOverview.ga4Events || 0)), color: 'var(--brand-primary)', icon: Database },
-          { label: 'Customer Master', value: formatNum(overall.totalCustomers), color: 'var(--brand-primary)', icon: Users },
-          { label: 'Bookings Mapped', value: formatNum(overall.totalMapped), color: 'var(--green)', icon: ArrowRightLeft },
-          { label: 'Match Rate', value: `${overall.matchRate || 0}%`, color: 'var(--orange)', icon: TrendingUp },
-          { label: 'Data Sources', value: '6', color: 'var(--red)', icon: BarChart3 },
+          { label: 'Users', value: formatNum(dataOverview.users), color: 'var(--brand-primary)', icon: Users },
+          { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), color: 'var(--green)', icon: MapPin },
+          { label: 'Tickets', value: formatNum(dataOverview.tickets), color: 'var(--orange)', icon: Ticket },
+          { label: 'Chats', value: formatNum(dataOverview.chats), color: '#25D366', icon: MessageSquare },
+          { label: 'Unified Data', value: formatNum(dataOverview.unifiedData), color: 'var(--red)', icon: Database },
         ].map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '20px 18px' }}>
             <div style={{ width: 42, height: 42, borderRadius: 10, background: `color-mix(in srgb, ${color} 10%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -152,16 +149,19 @@ export default function DataPipeline() {
         <h3 style={{ margin: '0 0 18px', fontSize: 16 }}>Data Sources Overview</h3>
         <div className="kpi-strip">
           {[
-            { label: 'Contacts', value: formatNum(dataOverview.contacts), sub: `${dataOverview.contactDepts || 0} depts`, icon: UserCheck, color: 'var(--brand-primary)' },
-            { label: 'Tickets', value: formatNum(dataOverview.tickets), sub: `${dataOverview.ticketDepts || 0} depts`, icon: Ticket, color: 'var(--orange)' },
-            { label: 'Chats', value: formatNum(dataOverview.chats), sub: `${dataOverview.chatDepts || 0} depts`, icon: MessageSquare, color: 'var(--green)' },
+            { label: 'Users', value: formatNum(dataOverview.users), sub: 'customer profiles', icon: Users, color: 'var(--brand-primary)' },
+            { label: 'Unique Emails', value: formatNum(dataOverview.uniqueEmails), sub: 'verified', icon: Mail, color: 'var(--purple)' },
+            { label: 'Phones', value: formatNum(dataOverview.phones), sub: 'contact numbers', icon: Phone, color: '#25D366' },
             { label: 'Departments', value: formatNum(dataOverview.departments), sub: 'active', icon: Building2, color: 'var(--brand-primary)' },
-            { label: 'Customer Master', value: formatNum(dataOverview.customerMaster), sub: 'unified records', icon: Users, color: 'var(--red)' },
+            { label: 'Dept Emails', value: formatNum(dataOverview.deptEmails), sub: 'mapped', icon: Mail, color: 'var(--orange)' },
+            { label: 'Tickets', value: formatNum(dataOverview.tickets), sub: 'email tickets', icon: Ticket, color: 'var(--orange)' },
+            { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), sub: 'all sources', icon: MapPin, color: 'var(--green)' },
+            { label: 'Chats', value: formatNum(dataOverview.chats), sub: 'WhatsApp', icon: MessageSquare, color: '#25D366' },
+            { label: 'Tours', value: formatNum(dataOverview.tours), sub: 'from API', icon: MapPin, color: SOURCE_COLORS.tours },
+            { label: 'Hotels', value: formatNum(dataOverview.hotels), sub: 'from API', icon: Building2, color: SOURCE_COLORS.hotels },
+            { label: 'Visas', value: formatNum(dataOverview.visas), sub: 'from API', icon: Globe, color: SOURCE_COLORS.visas },
+            { label: 'Flights', value: formatNum(dataOverview.flights), sub: 'from API', icon: Plane, color: SOURCE_COLORS.flights },
             { label: 'GA4 Events', value: formatNum(dataOverview.ga4Events), sub: `${formatNum(dataOverview.ga4Users)} users`, icon: Activity, color: 'var(--green)' },
-            { label: 'Tour Bookings', value: formatNum(counts.tours), sub: 'from API', icon: MapPin, color: SOURCE_COLORS.tours },
-            { label: 'Hotel Bookings', value: formatNum(counts.hotels), sub: 'from API', icon: Building2, color: SOURCE_COLORS.hotels },
-            { label: 'Visa Records', value: formatNum(counts.visas), sub: 'from API', icon: Globe, color: SOURCE_COLORS.visas },
-            { label: 'Flight Tickets', value: formatNum(counts.flights), sub: 'from API', icon: Plane, color: SOURCE_COLORS.flights },
           ].map(({ label, value, sub, icon: Icon, color }) => (
             <div key={label} className="card" style={{ padding: '16px 14px', textAlign: 'center' }}>
               <Icon size={20} style={{ color, marginBottom: 6 }} />
@@ -173,45 +173,46 @@ export default function DataPipeline() {
         </div>
       </motion.div>
 
-      {/* Department Breakdown */}
+      {/* B2B vs B2C Breakdown */}
       {deptBreakdown.length > 0 && (
         <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>Department Breakdown</h3>
+          <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>B2B vs B2C Breakdown</h3>
           <div className="grid-auto">
-            {deptBreakdown.map(d => {
-              const total = (parseInt(d.contacts) || 0) + (parseInt(d.tickets) || 0) + (parseInt(d.chats) || 0);
-              return (
+            {deptBreakdown.map(d => (
                 <div key={d.name} className="card" style={{
-                  padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-                      {formatNum(total)} total interactions
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>
+                      <span className={`badge ${d.name === 'B2B' ? 'badge-blue' : d.name === 'B2C' ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: 12 }}>
+                        {d.name}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                      {formatNum(d.customers)} customers
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 12, flexShrink: 0 }}>
+                  <div style={{ display: 'flex', gap: 14, flexShrink: 0 }}>
                     <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)' }}>{formatNum(d.contacts)}</div>
-                      <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Contacts</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#25D366' }}>{formatNum(d.chats)}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Chats</div>
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--orange)' }}>{formatNum(d.tickets)}</div>
                       <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Tickets</div>
                     </div>
                     <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)' }}>{formatNum(d.chats)}</div>
-                      <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Chats</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)' }}>{formatNum(d.bookings)}</div>
+                      <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Bookings</div>
                     </div>
                   </div>
                 </div>
-              );
-            })}
+              ))}
           </div>
         </motion.div>
       )}
 
-      {/* Two-column: Rayna API Sync + MySQL Sync */}
+      {/* Sync Status: Rayna API + MySQL + GA4 */}
       <motion.div variants={fadeInUp} className="card-grid card-grid-3" style={{ marginBottom: 28 }}>
 
         {/* Rayna API Sync Status */}
@@ -225,7 +226,7 @@ export default function DataPipeline() {
               const t = tables.find(r => r.table_name === `rayna_${ep}`) || {};
               const Icon = SOURCE_ICONS[ep];
               return (
-                <div key={ep} className="card-compact" style={{
+                <div key={ep} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '12px 14px', borderRadius: 8, background: 'var(--bg-primary)',
                   border: '1px solid var(--border-color)',
@@ -235,7 +236,7 @@ export default function DataPipeline() {
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14, textTransform: 'capitalize' }}>{ep}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                        {formatNum(counts[ep] || 0)} rows  |  Last: {formatDate(t.last_synced_at)}
+                        {formatNum(dataOverview[ep] || 0)} rows  |  Last: {formatDate(t.last_synced_at)}
                       </div>
                     </div>
                   </div>
@@ -249,13 +250,6 @@ export default function DataPipeline() {
               );
             })}
           </div>
-          {tables.some(t => t.error_message) && (
-            <div className="alert alert-error" style={{ marginTop: 12, fontSize: 12 }}>
-              {tables.filter(t => t.error_message).map(t => (
-                <div key={t.table_name}><strong>{t.table_name}:</strong> {t.error_message}</div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* MySQL Sync Status */}
@@ -265,7 +259,7 @@ export default function DataPipeline() {
             <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Every 10 min</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {mysqlStatus.map(t => (
+            {mysqlStatus.filter(t => t.table_name.startsWith('mysql_')).map(t => (
               <div key={t.table_name} style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '12px 14px', borderRadius: 8, background: 'var(--bg-primary)',
@@ -274,13 +268,13 @@ export default function DataPipeline() {
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{t.table_name.replace('mysql_', '')}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                    {formatNum(t.rows_synced)} rows  |  {t.sync_duration_ms ? `${(t.sync_duration_ms / 1000).toFixed(1)}s` : '--'}  |  Last: {formatDate(t.last_synced_at)}
+                    {formatNum(t.rows_synced)} rows | {t.sync_duration_ms ? `${(t.sync_duration_ms / 1000).toFixed(1)}s` : '--'} | Last: {formatDate(t.last_synced_at)}
                   </div>
                 </div>
                 <StatusBadge status={t.sync_status} />
               </div>
             ))}
-            {mysqlStatus.length === 0 && (
+            {mysqlStatus.filter(t => t.table_name.startsWith('mysql_')).length === 0 && (
               <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
                 No MySQL sync data yet
               </div>
@@ -294,8 +288,6 @@ export default function DataPipeline() {
             <h3 style={{ margin: 0, fontSize: 16 }}>GA4 BigQuery Sync</h3>
             <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Every 30 sec</span>
           </div>
-
-          {/* GA4 summary card */}
           <div style={{
             padding: '16px 14px', borderRadius: 8, background: 'var(--bg-primary)',
             border: '1px solid var(--border-color)', marginBottom: 12, textAlign: 'center',
@@ -305,7 +297,6 @@ export default function DataPipeline() {
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>GA4 Events</div>
             <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 4 }}>{formatNum(dataOverview.ga4Users)} unique users</div>
           </div>
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {ga4Status.length > 0 ? ga4Status.map(t => (
               <div key={t.table_name} style={{
