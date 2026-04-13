@@ -243,6 +243,10 @@ class JourneyService {
 
   /**
    * Process active journey entries: advance through nodes
+   * - Skips non-active entries (converted, exited, completed)
+   * - Evaluates condition nodes using real data (UTM clicks, bookings)
+   * - Respects wait node delays
+   * - Logs action events with templateId for actual sending
    */
   static async processJourney(journeyId, batchSize = 100) {
     const { rows: [journey] } = await db.query(
@@ -254,73 +258,148 @@ class JourneyService {
     const edges = journey.edges || [];
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-    // Get active entries
+    // Get active entries joined with unified_contacts
     const { rows: entries } = await db.query(`
-      SELECT je.*, c.first_name, c.last_name, c.email, c.phone_number, c.whatsapp_number
+      SELECT je.*, uc.name, uc.email, uc.phone, uc.phone_key, uc.booking_status,
+        uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings
       FROM journey_entries je
-      JOIN customers c ON c.customer_id = je.customer_id
+      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
       WHERE je.journey_id = $1 AND je.status = 'active'
       LIMIT $2
     `, [journeyId, batchSize]);
 
     let processed = 0;
     let actioned = 0;
+    let waited = 0;
+    let conditioned = 0;
 
     for (const entry of entries) {
       const currentNode = nodeMap[entry.current_node_id];
       if (!currentNode) continue;
 
-      // Process based on node type
+      // ── WAIT node: check if enough time has elapsed ──
+      if (currentNode.type === 'wait') {
+        const waitDays = currentNode.data?.waitDays || 1;
+        const lastEventRes = await db.query(`
+          SELECT MAX(created_at) as last_event FROM journey_events WHERE entry_id = $1
+        `, [entry.entry_id]);
+        const lastEvent = lastEventRes.rows[0]?.last_event || entry.entered_at;
+        const elapsed = (Date.now() - new Date(lastEvent).getTime()) / (1000 * 60 * 60 * 24);
+
+        if (elapsed < waitDays) {
+          waited++;
+          continue; // Not enough time has passed, skip
+        }
+        // Time elapsed — fall through to advance to next node
+      }
+
+      // ── ACTION node: log event with templateId ──
       if (currentNode.type === 'action') {
-        // Log the action event
         await db.query(`
           INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
           VALUES ($1, $2, 'action_sent', $3, $4)
-        `, [entry.entry_id, currentNode.id, currentNode.data?.channel, JSON.stringify(currentNode.data)]);
+        `, [entry.entry_id, currentNode.id, currentNode.data?.channel,
+            JSON.stringify({ ...currentNode.data, templateId: currentNode.data?.templateId })]);
         actioned++;
-      } else if (currentNode.type === 'goal') {
-        // Mark as converted
-        await db.query(`
-          UPDATE journey_entries SET status = 'converted', converted_at = NOW()
-          WHERE entry_id = $1
-        `, [entry.entry_id]);
+      }
 
-        await db.query(
-          'UPDATE journey_flows SET total_conversions = total_conversions + 1 WHERE journey_id = $1',
-          [journeyId]
-        );
+      // ── CONDITION node: evaluate and choose the right branch ──
+      if (currentNode.type === 'condition') {
+        const condition = currentNode.data?.condition;
+        let result = false;
+
+        if (condition === 'booked' || condition === 'booked_activity') {
+          // Check if customer has any new booking since entering the journey
+          const { rows: [bookCheck] } = await db.query(`
+            SELECT EXISTS (
+              SELECT 1 FROM rayna_tours WHERE unified_id = $1 AND bill_date > $2
+              UNION ALL
+              SELECT 1 FROM rayna_hotels WHERE unified_id = $1 AND bill_date > $2
+              UNION ALL
+              SELECT 1 FROM rayna_visas WHERE unified_id = $1 AND bill_date > $2
+              UNION ALL
+              SELECT 1 FROM rayna_flights WHERE unified_id = $1 AND bill_date > $2
+            ) as has_booking
+          `, [entry.customer_id, entry.entered_at]);
+          result = bookCheck.has_booking;
+        } else if (condition === 'clicked_link' || condition === 'clicked') {
+          // Check if customer clicked any UTM link for this journey's campaigns
+          const { rows: [clickCheck] } = await db.query(`
+            SELECT EXISTS (
+              SELECT 1 FROM user_utm_links uul
+              JOIN utm_tracking ut ON ut.utm_id = uul.utm_id
+              JOIN campaigns c ON c.id = ut.campaign_id
+              WHERE uul.unified_id = $1 AND uul.click_count > 0
+                AND c.journey_id = $2
+            ) as has_clicked
+          `, [entry.customer_id, journeyId]);
+          result = clickCheck.has_clicked;
+        } else if (condition === 'opened_email') {
+          // Check journey_events for email open
+          const { rows: [openCheck] } = await db.query(`
+            SELECT EXISTS (
+              SELECT 1 FROM journey_events
+              WHERE entry_id = $1 AND event_type = 'email_opened'
+            ) as has_opened
+          `, [entry.entry_id]);
+          result = openCheck.has_opened;
+        }
+
+        // Log condition evaluation
+        await db.query(`
+          INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+          VALUES ($1, $2, 'condition_evaluated', NULL, $3)
+        `, [entry.entry_id, currentNode.id, JSON.stringify({ condition, result })]);
+
+        // Choose edge based on result: Yes → result=true, No → result=false
+        const outEdges = edges.filter(e => e.source === currentNode.id);
+        const yesEdge = outEdges.find(e => e.label === 'Yes');
+        const noEdge = outEdges.find(e => e.label === 'No');
+        const nextNodeId = result ? (yesEdge?.target || outEdges[0]?.target) : (noEdge?.target || outEdges[0]?.target);
+
+        if (nextNodeId) {
+          await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [nextNodeId, entry.entry_id]);
+        }
+        conditioned++;
         processed++;
         continue;
       }
 
-      // Find next node via edges
+      // ── GOAL node: mark as completed (not converted — conversion is detected by ConversionDetector) ──
+      if (currentNode.type === 'goal') {
+        await db.query(`
+          UPDATE journey_entries SET status = 'completed', completed_at = NOW()
+          WHERE entry_id = $1
+        `, [entry.entry_id]);
+        processed++;
+        continue;
+      }
+
+      // ── Advance to next node ──
       const outEdges = edges.filter(e => e.source === currentNode.id);
       if (outEdges.length > 0) {
-        const nextNodeId = outEdges[0].target;
-        await db.query(
-          'UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2',
-          [nextNodeId, entry.entry_id]
-        );
+        await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [outEdges[0].target, entry.entry_id]);
       } else {
-        // No more edges — journey complete
         await db.query(
-          'UPDATE journey_entries SET status = $1, completed_at = NOW() WHERE entry_id = $2',
-          ['completed', entry.entry_id]
+          "UPDATE journey_entries SET status = 'completed', completed_at = NOW() WHERE entry_id = $1",
+          [entry.entry_id]
         );
       }
       processed++;
     }
 
-    // Update conversion rate
+    // Update journey stats
     await db.query(`
       UPDATE journey_flows SET
+        total_conversions = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status = 'converted'),
+        total_exits = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status = 'exited'),
         conversion_rate = CASE WHEN total_entries > 0
-          THEN (total_conversions::NUMERIC / total_entries * 100)
+          THEN ((SELECT COUNT(*)::numeric FROM journey_entries WHERE journey_id = $1 AND status = 'converted') / total_entries * 100)
           ELSE 0 END
       WHERE journey_id = $1
     `, [journeyId]);
 
-    return { processed, actioned };
+    return { processed, actioned, waited, conditioned };
   }
 
   /**

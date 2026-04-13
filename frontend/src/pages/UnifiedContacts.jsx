@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getUnifiedContacts, getUnifiedContact, getUnifiedStats } from '../api';
+import { getUnifiedContacts, getUnifiedContact, getUnifiedStats, getUnifiedFilters } from '../api';
 import {
   Users, Search, Globe, MessageSquare, Mail, X, Phone, Building2,
   Calendar, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Eye,
   MapPin, Hash, Clock, Ticket, Map, DollarSign, Plane, Hotel, MessageCircle, Layers,
+  Filter, RotateCcw, ChevronDown, ChevronUp, FileText, Palmtree,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
@@ -21,9 +22,11 @@ const COLUMNS = [
   { key: 'phone', label: 'Phone', sortable: false },
   { key: 'company_name', label: 'Company', sortable: true },
   { key: 'country', label: 'Country', sortable: true },
+  { key: 'booking_status', label: 'Status', sortable: false },
+  { key: 'product_tier', label: 'Tier', sortable: false },
+  { key: 'geography', label: 'Geo', sortable: false },
   { key: 'total_chats', label: 'Chats', sortable: true },
   { key: 'total_travel_bookings', label: 'Bookings', sortable: true },
-  { key: 'sources', label: 'Sources', sortable: false },
   { key: 'last_seen_at', label: 'Last Seen', sortable: true },
 ];
 
@@ -41,25 +44,36 @@ export default function UnifiedContacts() {
   const [selected, setSelected] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterOptions, setFilterOptions] = useState(null);
+  const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' });
   const limit = 50;
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const updateFilter = (key, value) => { setFilters(f => ({ ...f, [key]: value })); setPage(1); };
+  const clearFilters = () => { setFilters({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' }); setPage(1); };
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, limit, sortBy, sortDir };
       if (search) params.search = search;
+      Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await getUnifiedContacts(params);
       setContacts(res.data || []);
       setTotal(res.total || 0);
       setTotalPages(res.totalPages || 1);
     } catch (err) { showToast(err.message); }
     finally { setLoading(false); }
-  }, [page, search, sortBy, sortDir]);
+  }, [page, search, sortBy, sortDir, filters]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
-  useEffect(() => { getUnifiedStats().then(res => setStats(res.data)).catch(() => {}); }, []);
+  useEffect(() => {
+    getUnifiedStats().then(res => setStats(res.data)).catch(() => {});
+    getUnifiedFilters().then(res => setFilterOptions(res.data)).catch(() => {});
+  }, []);
 
   const handleSearch = (e) => { e.preventDefault(); setPage(1); setSearch(searchInput); };
   const handleSort = (col) => {
@@ -118,8 +132,57 @@ export default function UnifiedContacts() {
             style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', color: 'var(--text-primary)', fontSize: 14 }} />
           <button type="submit" className="btn btn-primary btn-sm">Search</button>
           {search && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>Clear</button>}
+          <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowFilters(f => !f)}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, position: 'relative' }}>
+            <Filter size={14} /> Filters
+            {activeFilterCount > 0 && (
+              <span style={{ position: 'absolute', top: -6, right: -6, background: 'var(--brand-primary)', color: '#fff', fontSize: 10, fontWeight: 700, width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
         </form>
       </motion.div>
+
+      {/* Filters Panel */}
+      <AnimatePresence>
+        {showFilters && (
+          <motion.div variants={fadeInUp} initial="hidden" animate="visible" exit="hidden"
+            className="card" style={{ padding: '16px 20px', position: 'relative', zIndex: 20, overflow: 'visible' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>Filters</span>
+              {activeFilterCount > 0 && (
+                <button className="btn btn-ghost btn-sm" onClick={clearFilters} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                  <RotateCcw size={12} /> Reset all
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 12 }}>
+              <UCFilterSelect label="Country" value={filters.country} onChange={v => updateFilter('country', v)}
+                options={filterOptions?.countries || []} />
+              <UCFilterSelect label="Type" value={filters.contactType} onChange={v => updateFilter('contactType', v)}
+                options={filterOptions?.contactTypes || []} />
+              <UCFilterSelect label="Source" value={filters.source} onChange={v => updateFilter('source', v)}
+                options={filterOptions?.sources || []} />
+              <UCFilterSelect label="Booking Status" value={filters.bookingStatus} onChange={v => updateFilter('bookingStatus', v)}
+                options={filterOptions?.bookingStatuses || []} />
+              <UCFilterSelect label="Tier" value={filters.productTier} onChange={v => updateFilter('productTier', v)}
+                options={filterOptions?.productTiers || []} />
+              <UCFilterSelect label="Geography" value={filters.geography} onChange={v => updateFilter('geography', v)}
+                options={filterOptions?.geographies || []} />
+              <UCFilterSelect label="Has Chats" value={filters.hasChats} onChange={v => updateFilter('hasChats', v)}
+                options={['yes', 'no']} labels={['Yes', 'No']} />
+              <UCFilterSelect label="Has Bookings" value={filters.hasBookings} onChange={v => updateFilter('hasBookings', v)}
+                options={['yes', 'no']} labels={['Yes', 'No']} />
+              <UCFilterSelect label="WA Status" value={filters.waStatus} onChange={v => updateFilter('waStatus', v)}
+                options={['active', 'unsubscribed']} labels={['Active', 'Unsubscribed']} />
+              <UCFilterSelect label="Email Status" value={filters.emailStatus} onChange={v => updateFilter('emailStatus', v)}
+                options={['active', 'unsubscribed']} labels={['Active', 'Unsubscribed']} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <motion.div variants={fadeInUp} className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="table-wrap">
@@ -151,9 +214,17 @@ export default function UnifiedContacts() {
                   <td style={{ fontSize: 12 }}>{c.phone || '\u2014'}</td>
                   <td>{c.company_name || '\u2014'}</td>
                   <td>{c.country ? <span className="badge badge-blue" style={{ fontSize: 11 }}>{c.country}</span> : '\u2014'}</td>
+                  <td><span className={`badge ${
+                    c.booking_status === 'ON_TRIP' ? 'badge-green' :
+                    c.booking_status === 'FUTURE_TRAVEL' ? 'badge-blue' :
+                    c.booking_status === 'ACTIVE_ENQUIRY' ? 'badge-orange' :
+                    c.booking_status === 'PAST_BOOKING' ? 'badge-gray' :
+                    c.booking_status === 'PAST_ENQUIRY' ? 'badge-red' : 'badge-gray'
+                  }`} style={{ fontSize: 9 }}>{c.booking_status || 'PROSPECT'}</span></td>
+                  <td>{c.product_tier ? <span className={`badge ${c.product_tier === 'LUXURY' ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: 9 }}>{c.product_tier}</span> : '\u2014'}</td>
+                  <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}{c.is_indian ? ' / IN' : ''}</span> : '\u2014'}</td>
                   <td>{c.total_chats > 0 ? <span className="badge badge-green">{c.total_chats}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
                   <td>{c.total_travel_bookings > 0 ? <span className="badge badge-blue">{c.total_travel_bookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
-                  <td style={{ fontSize: 11 }}>{c.sources ? c.sources.split(', ').map(s => <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'ticket' ? 'badge-orange' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9, marginRight: 3 }}>{s}</span>) : '\u2014'}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{formatDate(c.last_seen_at)}</td>
                   <td><button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.unified_id); }}><Eye size={14} /></button></td>
                 </tr>
@@ -179,7 +250,7 @@ export default function UnifiedContacts() {
         {(selected || detailLoading) && (
           <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelected(null)}>
             <motion.div className="modal" initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              onClick={e => e.stopPropagation()} style={{ maxWidth: 680, width: '90vw', maxHeight: '85vh', overflow: 'auto' }}>
+              onClick={e => e.stopPropagation()} style={{ maxWidth: 800, width: '92vw', maxHeight: '85vh', overflow: 'auto' }}>
               {detailLoading && !selected ? (
                 <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} /></div>
               ) : selected && (
@@ -192,6 +263,18 @@ export default function UnifiedContacts() {
                     </div>
                     <button className="btn btn-ghost btn-icon btn-sm" onClick={() => setSelected(null)}><X size={16} /></button>
                   </div>
+
+                  {/* Segment */}
+                  <Section title="Segment">
+                    <DetailRow icon={Hash} label="Status" value={selected.booking_status} color={
+                      selected.booking_status === 'ON_TRIP' ? 'var(--green)' :
+                      selected.booking_status === 'FUTURE_TRAVEL' ? 'var(--brand-primary)' :
+                      selected.booking_status === 'ACTIVE_ENQUIRY' ? 'var(--orange)' : 'var(--text-secondary)'} />
+                    <DetailRow icon={Hash} label="Product Tier" value={selected.product_tier || 'N/A'} color={selected.product_tier === 'LUXURY' ? 'var(--orange)' : undefined} />
+                    <DetailRow icon={Globe} label="Geography" value={selected.geography || 'Unknown'} />
+                    <DetailRow icon={Hash} label="Indian" value={selected.is_indian ? 'Yes (WhatsApp channel)' : 'No'} color={selected.is_indian ? '#25D366' : undefined} />
+                    <DetailRow icon={Layers} label="Full Segment" value={selected.segment_label} />
+                  </Section>
 
                   {/* Contact Info */}
                   <Section title="Contact Information">
@@ -243,18 +326,26 @@ export default function UnifiedContacts() {
                     <DetailRow icon={Clock} label="Last Booking" value={formatDate(selected.last_travel_at)} />
                   </Section>
 
-                  {/* Rayna API Bookings */}
+                  {/* Rayna Booking Summary + Detail Tables */}
                   {(selected.total_tour_bookings > 0 || selected.total_hotel_bookings > 0 || selected.total_visa_bookings > 0 || selected.total_flight_bookings > 0) && (
-                    <Section title="Rayna API Bookings">
-                      <DetailRow icon={Map} label="Tours" value={selected.total_tour_bookings || 0} color="var(--brand-primary)" />
-                      <DetailRow icon={Hotel} label="Hotels" value={selected.total_hotel_bookings || 0} color="var(--purple)" />
-                      <DetailRow icon={Globe} label="Visas" value={selected.total_visa_bookings || 0} color="var(--green)" />
-                      <DetailRow icon={Plane} label="Flights" value={selected.total_flight_bookings || 0} color="var(--red)" />
-                      <DetailRow icon={DollarSign} label="Revenue" value={formatAED(selected.total_booking_revenue)} color="var(--yellow)" />
-                      <DetailRow icon={Calendar} label="First" value={formatDateTime(selected.first_booking_at)} />
-                      <DetailRow icon={Clock} label="Last" value={formatDateTime(selected.last_booking_at)} />
-                    </Section>
+                    <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+                      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>Booking Summary</div>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                        {selected.total_tour_bookings > 0 && <MiniStat icon={Palmtree} label="Tours" value={selected.total_tour_bookings} color="#10b981" />}
+                        {selected.total_hotel_bookings > 0 && <MiniStat icon={Hotel} label="Hotels" value={selected.total_hotel_bookings} color="#6366f1" />}
+                        {selected.total_visa_bookings > 0 && <MiniStat icon={FileText} label="Visas" value={selected.total_visa_bookings} color="#f59e0b" />}
+                        {selected.total_flight_bookings > 0 && <MiniStat icon={Plane} label="Flights" value={selected.total_flight_bookings} color="#3b82f6" />}
+                        <MiniStat icon={DollarSign} label="Revenue" value={formatAED(selected.total_booking_revenue)} color="var(--primary)" />
+                      </div>
+                    </div>
                   )}
+
+                  {/* Expandable Booking Tables */}
+                  <BookingTable icon={Palmtree} title="Tour Bookings" color="#10b981" rows={selected.rayna_tours} columns={tourColumns} />
+                  <BookingTable icon={Hotel} title="Hotel Bookings" color="#6366f1" rows={selected.rayna_hotels} columns={hotelColumns} />
+                  <BookingTable icon={FileText} title="Visa Bookings" color="#f59e0b" rows={selected.rayna_visas} columns={visaColumns} />
+                  <BookingTable icon={Plane} title="Flight Bookings" color="#3b82f6" rows={selected.rayna_flights} columns={flightColumns} />
+                  <BookingTable icon={MessageSquare} title="Chats" color="#25D366" rows={selected.chats_list} columns={chatTableColumns} />
 
                   {/* Timeline */}
                   <Section title="Timeline">
@@ -300,3 +391,169 @@ function DetailRow({ icon: Icon, label, value, color, truncate }) {
     </div>
   );
 }
+
+function UCFilterSelect({ label, value, onChange, options, labels }) {
+  const [open, setOpen] = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const ref = useRef(null);
+  const showSearch = options.length > 10;
+  const filtered = filterText
+    ? options.filter((o, i) => (labels ? labels[i] : o).toLowerCase().includes(filterText.toLowerCase()))
+    : options;
+  const displayValue = value ? (labels ? labels[options.indexOf(value)] || value : value) : 'All';
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <label style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, display: 'block', marginBottom: 4 }}>{label}</label>
+      <button type="button" onClick={() => { setOpen(o => !o); setFilterText(''); }}
+        style={{ width: '100%', padding: '7px 10px', fontSize: 13, borderRadius: 6, textAlign: 'left',
+          border: '1px solid var(--border)', background: 'var(--card-bg)', color: value ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayValue}</span>
+        <ChevronDown size={13} style={{ flexShrink: 0, opacity: 0.5 }} />
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 50,
+          background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 220, display: 'flex', flexDirection: 'column' }}>
+          {showSearch && (
+            <input autoFocus type="text" placeholder="Search..." value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+              style={{ padding: '8px 10px', fontSize: 12, border: 'none', borderBottom: '1px solid var(--border)', outline: 'none', background: 'transparent', color: 'var(--text-primary)' }} />
+          )}
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            <div onClick={() => { onChange(''); setOpen(false); }}
+              style={{ padding: '7px 10px', fontSize: 12, cursor: 'pointer', color: !value ? 'var(--brand-primary)' : 'var(--text-primary)', fontWeight: !value ? 600 : 400 }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--hover-bg)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>All</div>
+            {filtered.map((o) => {
+              const display = labels ? labels[options.indexOf(o)] || o : o;
+              const isSelected = value === o;
+              return (
+                <div key={o} onClick={() => { onChange(o); setOpen(false); }}
+                  style={{ padding: '7px 10px', fontSize: 12, cursor: 'pointer', color: isSelected ? 'var(--brand-primary)' : 'var(--text-primary)', fontWeight: isSelected ? 600 : 400 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--hover-bg)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>{display}</div>
+              );
+            })}
+            {filtered.length === 0 && <div style={{ padding: '12px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>No matches</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Booking Detail Components ───────────────────────────────
+
+function MiniStat({ icon: Icon, label, value, color }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <Icon size={14} style={{ color }} />
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{label}:</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color }}>{value}</span>
+    </div>
+  );
+}
+
+function BookingTable({ icon: Icon, title, color, rows, columns }) {
+  const [expanded, setExpanded] = useState(false);
+  const count = rows?.length || 0;
+  if (count === 0) return null;
+
+  return (
+    <div className="card" style={{ padding: 0, marginBottom: 12, overflow: 'hidden' }}>
+      <div onClick={() => setExpanded(e => !e)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', userSelect: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 6, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Icon size={14} style={{ color }} />
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{title}</span>
+          <span className="badge" style={{ background: `${color}20`, color, fontSize: 11 }}>{count}</span>
+        </div>
+        {expanded ? <ChevronUp size={16} style={{ color: 'var(--text-tertiary)' }} /> : <ChevronDown size={16} style={{ color: 'var(--text-tertiary)' }} />}
+      </div>
+      {expanded && (
+        <div className="table-wrap" style={{ maxHeight: 300, overflow: 'auto' }}>
+          <table style={{ fontSize: 12 }}>
+            <thead>
+              <tr>{columns.map(c => <th key={c.key} style={{ whiteSpace: 'nowrap', fontSize: 11, padding: '8px 10px' }}>{c.label}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  {columns.map(c => (
+                    <td key={c.key} style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                      {c.render ? c.render(r[c.key], r) : (r[c.key] ?? '\u2014')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatCurrency(v) {
+  if (v == null) return '\u2014';
+  return `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+const tourColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'tours_name', label: 'Tour', render: (v) => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'tour_date', label: 'Tour Date', render: v => formatDate(v) },
+  { key: 'guest_name', label: 'Guest' },
+  { key: 'adult', label: 'Pax', render: (_v, r) => `${r.adult || 0}A ${r.child || 0}C ${r.infant || 0}I` },
+  { key: 'total_sell', label: 'Amount', render: v => formatCurrency(v) },
+  { key: 'status', label: 'Status' },
+];
+
+const hotelColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'hotel_name', label: 'Hotel', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'check_in_date', label: 'Check-in', render: v => formatDate(v) },
+  { key: 'guest_name', label: 'Guest' },
+  { key: 'no_of_rooms', label: 'Rooms' },
+  { key: 'total_sell', label: 'Amount', render: v => formatCurrency(v) },
+];
+
+const visaColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'visa_type', label: 'Visa Type' },
+  { key: 'applicant_name', label: 'Applicant' },
+  { key: 'passport_number', label: 'Passport' },
+  { key: 'apply_date', label: 'Applied', render: v => formatDate(v) },
+  { key: 'status', label: 'Status' },
+  { key: 'total_sell', label: 'Amount', render: v => formatCurrency(v) },
+];
+
+const flightColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'flight_no', label: 'Flight' },
+  { key: 'airport_name', label: 'Airport', render: v => v ? (v.length > 25 ? v.slice(0, 25) + '...' : v) : '\u2014' },
+  { key: 'from_datetime', label: 'Departure', render: v => formatDateTime(v) },
+  { key: 'passenger_name', label: 'Passenger' },
+  { key: 'status', label: 'Status' },
+  { key: 'selling_price', label: 'Amount', render: v => formatCurrency(v) },
+];
+
+const chatTableColumns = [
+  { key: 'wa_name', label: 'WA Name' },
+  { key: 'wa_id', label: 'WA ID' },
+  { key: 'country', label: 'Country' },
+  { key: 'status', label: 'Status', render: v => v === 0 ? 'Open' : v === 1 ? 'Resolved' : v },
+  { key: 'last_short', label: 'Last Msg', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'last_msg_at', label: 'Last Msg At', render: v => formatDateTime(v) },
+];

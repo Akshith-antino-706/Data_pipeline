@@ -68,19 +68,22 @@ class RaynaSyncService {
       pgTable: 'rayna_visas',
       conflictKeys: ['billno', 'guest_name', 'visa_type'],
       mapRow: (r) => ({
-        billno:        r.billNo || r.billno,
-        bill_date:     RaynaSyncService.parseDate(r.billDate || r.billdate),
-        modified_date: RaynaSyncService.parseDate(r.modified_date),
-        guest_name:    r.guestName || null,
-        guest_contact: r.guestContact || null,
-        nationality:   r.nationality || null,
-        country_name:  r.country_name || null,
-        agent_name:    r.agentName || null,
-        visa_type:     r.visaType || r.visa_type || 'UNKNOWN',
-        profit_center: r.profitShareCenterName || null,
-        grnty_email:   r.grnty_email || null,
-        status:        r.status || null,
-        total_sell:    parseFloat(r.total_sell || r.sellingPrice) || 0,
+        billno:          r.billNo || r.billno,
+        bill_date:       RaynaSyncService.parseDate(r.billDate || r.billdate),
+        modified_date:   RaynaSyncService.parseDate(r.modified_date),
+        guest_name:      r.guestName || null,
+        guest_contact:   r.guestContact || null,
+        nationality:     r.nationality || null,
+        country_name:    r.country_name || null,
+        agent_name:      r.agentName || null,
+        visa_type:       r.typeName || r.visaType || r.visa_type || 'UNKNOWN',
+        profit_center:   r.profitShareCenterName || null,
+        grnty_email:     r.grnty_email || null,
+        status:          r.current_status || r.status || null,
+        total_sell:      parseFloat(r.total_sell || r.sellingPrice) || 0,
+        apply_date:      RaynaSyncService.parseDate(r.applydate),
+        applicant_name:  r.name || null,
+        passport_number: r.passportnumber || null,
       }),
     },
     flights: {
@@ -413,6 +416,46 @@ class RaynaSyncService {
     const totalRows = results.reduce((sum, r) => sum + (r.rowsSynced || 0), 0);
     console.log(`[Rayna Sync] ${name} historical sync done — ${totalRows} total rows across ${months} months`);
     return { endpoint: name, months, totalRows, chunks: results };
+  }
+
+  // ── Catch-up Sync (re-fetch last N days to pick up modified records) ──
+  static async syncCatchUp(days = 90) {
+    console.log(`[Rayna Sync] Catch-up sync starting — re-fetching last ${days} days to pick up modifications...`);
+    const results = [];
+
+    for (const name of Object.keys(this.ENDPOINTS)) {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const current = new Date(startDate);
+      current.setHours(0, 0, 0, 0);
+      const endDate = new Date();
+      let totalRows = 0;
+
+      // Sync week-by-week to avoid overwhelming the API
+      while (current <= endDate) {
+        const weekEnd = new Date(current);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        if (weekEnd > endDate) weekEnd.setTime(endDate.getTime());
+
+        const dateFrom = this.formatDateParam(current);
+        const dateTo = this.formatDateParam(weekEnd);
+
+        try {
+          const result = await this.syncEndpoint(name, { dateFrom, dateTo });
+          totalRows += result.rowsSynced || 0;
+        } catch (err) {
+          console.error(`[Rayna Sync] ${name} catch-up ${dateFrom}→${dateTo} failed:`, err.message);
+        }
+
+        current.setDate(current.getDate() + 7);
+      }
+
+      console.log(`[Rayna Sync] ${name} catch-up done — ${totalRows} rows re-synced`);
+      results.push({ endpoint: name, totalRows });
+    }
+
+    console.log('[Rayna Sync] Catch-up sync completed:', JSON.stringify(results));
+    return results;
   }
 
   // ── Status ─────────────────────────────────────────────────

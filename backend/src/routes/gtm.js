@@ -57,6 +57,22 @@ router.get('/analytics', async (req, res) => {
   }
 });
 
+// GET /api/v3/gtm/events/:eventName — Event detail rows
+router.get('/events/:eventName', async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT event_id, event_name, customer_id, session_id, page_url, page_title,
+        event_category, event_action, event_label, event_value,
+        utm_source, utm_medium, utm_campaign, device_type, browser, country, city, created_at
+      FROM gtm_events WHERE event_name = $1
+      ORDER BY created_at DESC LIMIT 100
+    `, [req.params.eventName]);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/v3/gtm/export — BigQuery-compatible export
 router.get('/export', async (req, res) => {
   try {

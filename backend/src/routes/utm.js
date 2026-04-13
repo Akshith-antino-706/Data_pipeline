@@ -84,4 +84,50 @@ router.post('/:id/conversion', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// PER-USER UTM LINKS — Unique trackable URL per contact
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/v3/utm/track/:token — Click redirect (this URL goes in emails)
+// User clicks → we record click → redirect to Rayna website with rid param
+router.get('/track/:token', async (req, res) => {
+  try {
+    const link = await UTMService.trackClick(req.params.token);
+    if (!link) return res.status(404).send('Link not found');
+    res.redirect(302, link.destination_url);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v3/utm/user-links/:campaignId — Generate per-user links for a campaign
+router.post('/user-links/:campaignId', async (req, res) => {
+  try {
+    const result = await UTMService.generateUserLinks(req.params.campaignId, req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v3/utm/user-links — List user links with filters
+router.get('/user-links', async (req, res) => {
+  try {
+    const data = await UTMService.getUserLinks(req.query);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v3/utm/user-links-stats — Per-campaign user link stats
+router.get('/user-links-stats', async (req, res) => {
+  try {
+    const data = await UTMService.getUserLinkStats();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

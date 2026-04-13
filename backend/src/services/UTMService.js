@@ -1,13 +1,20 @@
+import crypto from 'crypto';
 import db from '../config/database.js';
 
 /**
- * UTM Tracking Service — Campaign-Centric
+ * UTM Tracking Service — Campaign-Centric + Per-User Links
  * Every campaign gets a UTM link. Templates feed into campaigns.
- * Format: ?utm_source=AI_marketer&utm_medium=[channel]&utm_campaign=[campaign_name]_[segment]&utm_content=[channel]_[campaign_id]
+ * Per-user links add a unique token per contact so we know exactly WHO clicked.
+ * Format: ?utm_source=AI_marketer&utm_medium=[channel]&utm_campaign=[campaign_name]_[segment]&utm_content=[channel]_[campaign_id]&rid=[unified_id]
  */
 class UTMService {
 
   static BASE_URL = 'https://www.raynatours.com/activities';
+
+  /** Generate a short unique token (URL-safe, 10 chars) */
+  static generateToken() {
+    return crypto.randomBytes(15).toString('base64url').slice(0, 10);
+  }
 
   /**
    * Build a UTM URL
@@ -217,6 +224,186 @@ class UTMService {
       'UPDATE utm_tracking SET conversions = conversions + 1, revenue = revenue + $2 WHERE utm_id = $1',
       [utmId, revenue]
     );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // PER-USER UTM LINKS — Unique trackable URL for each contact
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Generate unique links for all users in a campaign's segment.
+   * Each user gets their own token → tracking URL → redirect with rid param.
+   */
+  static async generateUserLinks(campaignId, { baseUrl: overrideBaseUrl } = {}) {
+    // Get campaign + its UTM link
+    const { rows: [campaign] } = await db.query(`
+      SELECT c.*, ct.cta_url AS template_cta_url,
+        ut.utm_id, ut.full_url AS utm_full_url, ut.utm_source, ut.utm_medium, ut.utm_campaign, ut.utm_content
+      FROM campaigns c
+      LEFT JOIN content_templates ct ON ct.id = c.template_id
+      LEFT JOIN utm_tracking ut ON ut.campaign_id = c.id
+      WHERE c.id = $1
+    `, [campaignId]);
+    if (!campaign) throw new Error('Campaign not found');
+
+    // If no UTM link exists for this campaign, generate one first
+    let utmId = campaign.utm_id;
+    if (!utmId) {
+      const result = await this.generateForCampaign(campaignId);
+      utmId = result.utm_id;
+    }
+
+    // Get all active customers in this segment
+    const { rows: customers } = await db.query(`
+      SELECT uc.unified_id, uc.name, uc.email
+      FROM unified_contacts uc
+      WHERE uc.segment_label = $1
+        AND uc.email IS NOT NULL
+        AND uc.email_unsubscribed = false
+      ORDER BY uc.unified_id
+    `, [campaign.segment_label]);
+
+    if (customers.length === 0) {
+      return { campaign_id: campaignId, segment: campaign.segment_label, links_generated: 0, message: 'No eligible contacts in segment' };
+    }
+
+    const baseUrl = overrideBaseUrl || campaign.template_cta_url || this.BASE_URL;
+    const generated = [];
+
+    for (const cust of customers) {
+      const token = this.generateToken();
+
+      // Build personalized destination URL with rid (Rayna ID) for GTM
+      const destParams = new URLSearchParams({
+        utm_source: 'AI_marketer',
+        utm_medium: campaign.channel || 'email',
+        utm_campaign: `${(campaign.name || 'campaign').replace(/[^a-zA-Z0-9_-]/g, '_')}_${(campaign.segment_label || 'all').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+        utm_content: `${campaign.channel || 'email'}_camp${campaign.id}`,
+        rid: cust.unified_id  // Rayna ID — GTM reads this to identify the user
+      });
+      const destinationUrl = `${baseUrl}?${destParams.toString()}`;
+
+      await db.query(`
+        INSERT INTO user_utm_links (utm_id, campaign_id, unified_id, customer_email, customer_name, token, destination_url)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (token) DO NOTHING
+      `, [utmId, campaignId, cust.unified_id, cust.email, cust.name, token, destinationUrl]);
+
+      generated.push({
+        unified_id: cust.unified_id,
+        name: cust.name,
+        email: cust.email,
+        token,
+        tracking_url: `/api/v3/utm/track/${token}`,
+        destination_url: destinationUrl
+      });
+    }
+
+    return {
+      campaign_id: campaignId,
+      campaign_name: campaign.name,
+      segment: campaign.segment_label,
+      links_generated: generated.length,
+      links: generated
+    };
+  }
+
+  /**
+   * Handle a click on a user tracking link.
+   * Records click → returns destination URL for redirect.
+   */
+  static async trackClick(token) {
+    const { rows: [link] } = await db.query(`
+      UPDATE user_utm_links
+      SET click_count = click_count + 1,
+          first_clicked_at = COALESCE(first_clicked_at, NOW()),
+          last_clicked_at = NOW()
+      WHERE token = $1
+      RETURNING *
+    `, [token]);
+
+    if (!link) return null;
+
+    // Also increment the parent UTM tracking clicks
+    if (link.utm_id) {
+      await db.query('UPDATE utm_tracking SET clicks = clicks + 1 WHERE utm_id = $1', [link.utm_id]);
+    }
+
+    return link;
+  }
+
+  /**
+   * Get user links for a campaign with click stats
+   */
+  static async getUserLinks({ campaignId, segment, clicked, search, limit = 200, offset = 0 } = {}) {
+    let where = '1=1';
+    const params = [];
+
+    if (campaignId) { params.push(campaignId); where += ` AND ul.campaign_id = $${params.length}`; }
+    if (segment) { params.push(segment); where += ` AND c.segment_label = $${params.length}`; }
+    if (clicked === 'true') { where += ' AND ul.click_count > 0'; }
+    if (clicked === 'false') { where += ' AND ul.click_count = 0'; }
+    if (search) { params.push(`%${search}%`); where += ` AND (ul.customer_name ILIKE $${params.length} OR ul.customer_email ILIKE $${params.length})`; }
+
+    params.push(limit, offset);
+
+    const { rows } = await db.query(`
+      SELECT ul.*,
+        c.name AS campaign_name, c.segment_label, c.channel
+      FROM user_utm_links ul
+      LEFT JOIN campaigns c ON c.id = ul.campaign_id
+      WHERE ${where}
+      ORDER BY ul.click_count DESC, ul.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params);
+
+    // Summary stats
+    const { rows: [stats] } = await db.query(`
+      SELECT
+        COUNT(*) AS total_links,
+        COUNT(*) FILTER (WHERE ul.click_count > 0) AS clicked_links,
+        SUM(ul.click_count) AS total_clicks,
+        COUNT(DISTINCT ul.campaign_id) AS campaigns
+      FROM user_utm_links ul
+      LEFT JOIN campaigns c ON c.id = ul.campaign_id
+      WHERE ${where.replace(` LIMIT $${params.length - 1} OFFSET $${params.length}`, '')}
+    `, params.slice(0, -2));
+
+    return { links: rows, stats };
+  }
+
+  /**
+   * Get per-campaign user link stats (for the overview)
+   */
+  static async getUserLinkStats() {
+    const { rows } = await db.query(`
+      SELECT
+        ul.campaign_id,
+        c.name AS campaign_name,
+        c.segment_label,
+        c.channel,
+        COUNT(*) AS total_links,
+        COUNT(*) FILTER (WHERE ul.click_count > 0) AS clicked,
+        SUM(ul.click_count) AS total_clicks,
+        MIN(ul.first_clicked_at) AS first_click,
+        MAX(ul.last_clicked_at) AS last_click
+      FROM user_utm_links ul
+      JOIN campaigns c ON c.id = ul.campaign_id
+      GROUP BY ul.campaign_id, c.name, c.segment_label, c.channel
+      ORDER BY total_clicks DESC
+    `);
+
+    const { rows: [totals] } = await db.query(`
+      SELECT
+        COUNT(*) AS total_links,
+        COUNT(*) FILTER (WHERE click_count > 0) AS total_clicked,
+        SUM(click_count) AS total_clicks,
+        COUNT(DISTINCT campaign_id) AS campaigns,
+        COUNT(DISTINCT unified_id) AS unique_users
+      FROM user_utm_links
+    `);
+
+    return { campaigns: rows, totals };
   }
 }
 

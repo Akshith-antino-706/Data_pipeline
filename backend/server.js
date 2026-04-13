@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import https from 'https';
 import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
@@ -15,12 +17,8 @@ import campaignsRouter from './src/routes/campaigns.js';
 import enrichmentRouter from './src/routes/enrichment.js';
 import segmentsV3Router from './src/routes/segmentsV3.js';
 import journeysRouter from './src/routes/journeys.js';
-import funnelRouter from './src/routes/funnel.js';
 import agentsRouter from './src/routes/agents.js';
-import rfmRouter from './src/routes/rfm.js';
 import utmRouter from './src/routes/utm.js';
-import couponsRouter from './src/routes/coupons.js';
-import approvalsRouter from './src/routes/approvals.js';
 import gtmRouter from './src/routes/gtm.js';
 import productsRouter from './src/routes/products.js';
 import affinityRouter from './src/routes/productAffinity.js';
@@ -33,18 +31,36 @@ import MySQLSyncService from './src/services/MySQLSyncService.js';
 import RaynaSyncService from './src/services/RaynaSyncService.js';
 import raynaSyncRouter from './src/routes/raynaSync.js';
 import dailyReportRouter from './src/routes/dailyReport.js';
-import customersRouter from './src/routes/customers.js';
 import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ── Middleware ───────────────────────────────────────────────
-app.use(cors({
-  origin: true,  // Allow all origins (GTM tags fire from raynatours.com via HTTPS)
-  credentials: true
+// ── Security Middleware ──────────────────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false,  // API server, not serving HTML
 }));
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com').split(',').map(s => s.trim());
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow requests with no origin (curl, server-to-server, mobile)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+// Rate limiting — general: 200 req/min, mutations: 30 req/min
+const generalLimiter = rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many requests, slow down' } });
+const mutationLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many write requests, slow down' } });
+app.use('/api', generalLimiter);
+app.use('/api', (req, _res, next) => { if (['POST','PUT','DELETE','PATCH'].includes(req.method)) return mutationLimiter(req, _res, next); next(); });
+
 app.use(express.json({ limit: '2mb' }));
 
 // Request logging
@@ -70,15 +86,11 @@ app.use('/api/v2/content', contentRouter);
 app.use('/api/v2/campaigns', campaignsRouter);
 app.use('/api/v2/enrichment', enrichmentRouter);
 
-// New API v3 (28-segment engine + journeys + funnel + AI agents)
+// API v3
 app.use('/api/v3/segments', segmentsV3Router);
 app.use('/api/v3/journeys', journeysRouter);
-app.use('/api/v3/funnel', funnelRouter);
 app.use('/api/v3/agents', agentsRouter);
-app.use('/api/v3/rfm', rfmRouter);
 app.use('/api/v3/utm', utmRouter);
-app.use('/api/v3/coupons', couponsRouter);
-app.use('/api/v3/approvals', approvalsRouter);
 app.use('/api/v3/gtm', gtmRouter);
 app.use('/api/v3/products', productsRouter);
 app.use('/api/v3/affinity', affinityRouter);
@@ -87,7 +99,6 @@ app.use('/api/v3/sync', syncRouter);
 app.use('/api/v3/mysql-sync', mysqlSyncRouter);
 app.use('/api/v3/rayna-sync', raynaSyncRouter);
 app.use('/api/v3/daily-report', dailyReportRouter);
-app.use('/api/v3/customers', customersRouter);
 app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 
 // ── Health check ────────────────────────────────────────────
@@ -290,10 +301,10 @@ app.post('/api/v2/email/test', async (req, res) => {
 // ── Error handler ───────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Error:', err.stack || err.message);
-  res.status(err.status || 500).json({
-    success: false,
-    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
-  });
+  const status = err.status || 500;
+  // Never leak SQL errors, stack traces, or internal paths to clients
+  const safeMsg = status < 500 ? err.message : 'Internal server error';
+  res.status(status).json({ success: false, error: safeMsg });
 });
 
 // ── Graceful shutdown ───────────────────────────────────────
@@ -358,7 +369,97 @@ if (process.env.RAYNA_SYNC_ENABLED === 'true') {
     raynaSyncing = false;
   });
   console.log(`[Rayna Sync] Incremental cron scheduled: ${schedule}`);
+
+  // Daily catch-up: re-fetch last 30 days at 4 AM Dubai (UTC 00:00) to pick up cancellations/modifications
+  cron.schedule('0 0 * * *', async () => {
+    console.log('[Rayna Sync] Daily catch-up starting — re-fetching last 30 days for modifications...');
+    try {
+      const results = await RaynaSyncService.syncCatchUp(30);
+      console.log('[Rayna Sync] Daily catch-up completed:', JSON.stringify(results));
+    } catch (err) {
+      console.error('[Rayna Sync] Daily catch-up failed:', err.message);
+    }
+  });
+  console.log('[Rayna Sync] Daily catch-up cron scheduled: 0 0 * * * (4 AM Dubai daily)');
 }
+
+// ── Full Data Pipeline Cron ──────────────────────────────────
+// 3:00 AM Dubai — Rayna API sync (already above)
+// 3:15 AM Dubai — Pull new data from MySQL servers
+// 3:30 AM Dubai — Unified contacts incremental sync + GA4/GTM linking
+import UnifiedContactSync from './src/services/UnifiedContactSync.js';
+
+// 3:15 AM — MySQL server pull (contacts + chats)
+cron.schedule('15 23 * * *', async () => {
+  console.log('[Server Pull] Pulling new data from MySQL servers...');
+  try {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+    const scriptPath = join(__dirname, '..', 'incremental_sync.py');
+    const { stdout } = await execFileAsync('python3', [scriptPath, 'contacts', 'chats'], { timeout: 600000 });
+    console.log('[Server Pull] Completed:', stdout.slice(-200));
+  } catch (err) {
+    console.error('[Server Pull] Failed:', err.message);
+  }
+});
+console.log('[Server Pull] Cron scheduled: 15 23 * * * (3:15 AM Dubai daily)');
+
+// 3:30 AM — Unified contacts sync + GA4/GTM linking
+cron.schedule('30 23 * * *', async () => {
+  console.log('[Unified Sync] Starting incremental sync...');
+  try {
+    const result = await UnifiedContactSync.run();
+    console.log('[Unified Sync] Completed:', JSON.stringify(result));
+  } catch (err) {
+    console.error('[Unified Sync] Failed:', err.message);
+  }
+});
+console.log('[Unified Sync] Cron scheduled: 30 23 * * * (3:30 AM Dubai daily)');
+
+// 4:00 AM — Refresh cached counts on users table
+cron.schedule('0 0 * * *', async () => {
+  console.log('[Cache Refresh] Updating cached_chats/tickets/bookings on users...');
+  try {
+    await pool.query(`
+      UPDATE users u SET
+        cached_chats = COALESCE(ch.cnt, 0),
+        cached_tickets = COALESCE(tk.cnt, 0),
+        cached_bookings = COALESCE(tb.cnt, 0)
+      FROM (SELECT id FROM users) base
+      LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM chats GROUP BY user_id) ch ON ch.user_id = base.id
+      LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM tickets GROUP BY user_id) tk ON tk.user_id = base.id
+      LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM travel_bookings GROUP BY user_id) tb ON tb.user_id = base.id
+      WHERE u.id = base.id
+    `);
+    console.log('[Cache Refresh] Done.');
+  } catch (err) {
+    console.error('[Cache Refresh] Failed:', err.message);
+  }
+});
+console.log('[Cache Refresh] Cron scheduled: 0 0 * * * (4 AM Dubai daily)');
+
+// 5:00 AM Dubai — Journey processing: advance customers through nodes
+import ConversionDetector from './src/services/ConversionDetector.js';
+cron.schedule('0 1 * * *', async () => {
+  console.log('[Journey Engine] Starting daily journey processing...');
+  try {
+    // Step 1: Detect conversions (UTM + GTM + bookings)
+    const conversions = await ConversionDetector.runAll();
+    console.log('[Journey Engine] Conversions:', JSON.stringify(conversions));
+
+    // Step 2: Process all active journeys (advance nodes)
+    const { rows: journeys } = await pool.query("SELECT journey_id FROM journey_flows WHERE status = 'active'");
+    for (const j of journeys) {
+      const result = await (await import('./src/services/JourneyService.js')).default.processJourney(j.journey_id);
+      console.log(`[Journey Engine] Journey ${j.journey_id}: ${JSON.stringify(result)}`);
+    }
+    console.log('[Journey Engine] Done.');
+  } catch (err) {
+    console.error('[Journey Engine] Failed:', err.message);
+  }
+});
+console.log('[Journey Engine] Cron scheduled: 0 1 * * * (5 AM Dubai daily)');
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
 const HTTPS_PORT = 3443;

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { getUTMAnalytics, getUTMSegments, buildUTM, generateSegmentUTM, generateAllUTM } from '../api';
+import { getUTMAnalytics, getUTMSegments, buildUTM, generateSegmentUTM, generateAllUTM, generateUserLinks, getUserLinks, getUserLinkStats, getCampaigns } from '../api';
 // recharts available for future UTM analytics charts
-import { Link2, Copy, Zap, RefreshCw, Target, MousePointer, TrendingUp, ExternalLink, Check, Globe, Mail, MessageSquare, Phone, Bell, Hash } from 'lucide-react';
+import { Link2, Copy, Zap, RefreshCw, Target, MousePointer, TrendingUp, ExternalLink, Check, Globe, Mail, MessageSquare, Phone, Bell, Hash, Users, User, Search, ChevronDown, Eye } from 'lucide-react';
 
 const CHANNEL_COLORS = { email: 'var(--brand-primary)', whatsapp: 'var(--green)', sms: 'var(--orange)', push: 'var(--red)', rcs: 'var(--brand-primary)', web: 'var(--purple)' };
 const CHANNEL_ICONS = { email: Mail, whatsapp: MessageSquare, sms: Phone, push: Bell, rcs: Hash, web: Globe };
@@ -24,6 +24,15 @@ export default function UTMTracking() {
   // Builder
   const [builder, setBuilder] = useState({ baseUrl: 'https://www.raynatours.com/activities', channel: 'email', campaignName: '', segmentLabel: '', contentNumber: 1 });
   const [generatedUrl, setGeneratedUrl] = useState('');
+
+  // User Links tab
+  const [userLinkStats, setUserLinkStats] = useState({ campaigns: [], totals: {} });
+  const [userLinks, setUserLinks] = useState({ links: [], stats: {} });
+  const [userLinkFilter, setUserLinkFilter] = useState({ campaignId: '', clicked: '', search: '' });
+  const [campaigns, setCampaigns] = useState([]);
+  const [generatingUserLinks, setGeneratingUserLinks] = useState(null);
+  const [selectedCampaignForGen, setSelectedCampaignForGen] = useState('');
+  const [userLinksLoading, setUserLinksLoading] = useState(false);
 
   useEffect(() => { loadAll(); }, []);
 
@@ -77,6 +86,54 @@ export default function UTMTracking() {
       setGeneratedUrl(result.utm_url);
     } catch (err) { console.error(err); }
   }
+
+  // User Links functions
+  async function loadUserLinkData() {
+    setUserLinksLoading(true);
+    try {
+      const [stats, camps] = await Promise.all([
+        getUserLinkStats(),
+        getCampaigns()
+      ]);
+      setUserLinkStats(stats || { campaigns: [], totals: {} });
+      setCampaigns(Array.isArray(camps) ? camps : (camps.data || camps.campaigns || []));
+    } catch (err) { console.error(err); }
+    setUserLinksLoading(false);
+  }
+
+  async function loadUserLinks() {
+    try {
+      const params = {};
+      if (userLinkFilter.campaignId) params.campaignId = userLinkFilter.campaignId;
+      if (userLinkFilter.clicked) params.clicked = userLinkFilter.clicked;
+      if (userLinkFilter.search) params.search = userLinkFilter.search;
+      const data = await getUserLinks(params);
+      setUserLinks(data || { links: [], stats: {} });
+    } catch (err) { console.error(err); }
+  }
+
+  async function handleGenerateUserLinks(campId) {
+    setGeneratingUserLinks(campId);
+    try {
+      const result = await generateUserLinks(campId);
+      showToast(`Generated ${result.links_generated} personalized links for "${result.campaign_name}"`, 'success');
+      await loadUserLinkData();
+      await loadUserLinks();
+    } catch (err) { showToast(err.message, 'error'); }
+    setGeneratingUserLinks(null);
+  }
+
+  // Load user link data when switching to that tab
+  useEffect(() => {
+    if (activeTab === 'userlinks') {
+      loadUserLinkData();
+      loadUserLinks();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'userlinks') loadUserLinks();
+  }, [userLinkFilter.campaignId, userLinkFilter.clicked]);
 
   function copyUrl(url, id) {
     navigator.clipboard.writeText(url);
@@ -198,6 +255,7 @@ export default function UTMTracking() {
       <motion.div variants={fadeInUp} className="flex gap-4 mb-16" style={{ borderBottom: '2px solid var(--border-color)', paddingBottom: 0 }}>
         {[
           { key: 'campaigns', label: 'Campaign Links', count: analytics.links?.length || 0 },
+          { key: 'userlinks', label: 'User Links', count: parseInt(userLinkStats.totals?.total_links || 0) || null },
           { key: 'segments', label: 'Segment Overview', count: segments.length },
           { key: 'builder', label: 'UTM Builder', count: null },
         ].map(tab => (
@@ -337,6 +395,250 @@ export default function UTMTracking() {
               </div>
             );
           })}
+        </motion.div>
+      )}
+
+      {/* Tab: User Links — Per-user personalized tracking URLs */}
+      {activeTab === 'userlinks' && (
+        <motion.div variants={fadeInUp} className="flex flex-col gap-16">
+          {/* User Links KPI Strip */}
+          <div className="grid-5 mb-8">
+            {[
+              { label: 'Total User Links', value: parseInt(userLinkStats.totals?.total_links || 0).toLocaleString(), color: 'var(--brand-primary)', icon: Users },
+              { label: 'Unique Users', value: parseInt(userLinkStats.totals?.unique_users || 0).toLocaleString(), color: 'var(--purple)', icon: User },
+              { label: 'Links Clicked', value: parseInt(userLinkStats.totals?.total_clicked || 0).toLocaleString(), color: 'var(--green)', icon: MousePointer },
+              { label: 'Total Clicks', value: parseInt(userLinkStats.totals?.total_clicks || 0).toLocaleString(), color: 'var(--orange)', icon: Eye },
+              { label: 'Campaigns', value: parseInt(userLinkStats.totals?.campaigns || 0).toLocaleString(), color: 'var(--red)', icon: Target },
+            ].map(({ label, value, color, icon: Icon }) => (
+              <div key={label} className="card" style={{ padding: '14px 18px', borderTop: `3px solid ${color}` }}>
+                <div className="flex justify-between" style={{ alignItems: 'flex-start' }}>
+                  <div>
+                    <div className="text-xs text-secondary uppercase tracking-wide mb-4">{label}</div>
+                    <div className="font-bold" style={{ fontSize: 20, color }}>{value}</div>
+                  </div>
+                  <div className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${color} 7%, transparent)` }}>
+                    <Icon size={16} color={color} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Generate + Filter Row */}
+          <div className="card p-20" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 16, alignItems: 'end' }}>
+            {/* Generate for campaign */}
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-6">Generate User Links for Campaign</div>
+              <div className="flex gap-8">
+                <select value={selectedCampaignForGen} onChange={e => setSelectedCampaignForGen(e.target.value)}
+                  style={{ flex: 1, padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 13, background: 'var(--bg-secondary)' }}>
+                  <option value="">Select campaign...</option>
+                  {campaigns.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} — {c.segment_label} ({c.channel})
+                    </option>
+                  ))}
+                </select>
+                <button className="btn btn-primary flex items-center gap-4"
+                  onClick={() => selectedCampaignForGen && handleGenerateUserLinks(selectedCampaignForGen)}
+                  disabled={!selectedCampaignForGen || generatingUserLinks}>
+                  <Users size={14} /> {generatingUserLinks ? 'Generating...' : 'Generate'}
+                </button>
+              </div>
+            </div>
+
+            {/* Filter by campaign + clicked */}
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-6">Filter Links</div>
+              <div className="flex gap-8">
+                <select value={userLinkFilter.campaignId} onChange={e => setUserLinkFilter({...userLinkFilter, campaignId: e.target.value})}
+                  style={{ flex: 1, padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 13, background: 'var(--bg-secondary)' }}>
+                  <option value="">All Campaigns</option>
+                  {(userLinkStats.campaigns || []).map(c => (
+                    <option key={c.campaign_id} value={c.campaign_id}>
+                      {c.campaign_name} ({c.clicked}/{c.total_links} clicked)
+                    </option>
+                  ))}
+                </select>
+                <select value={userLinkFilter.clicked} onChange={e => setUserLinkFilter({...userLinkFilter, clicked: e.target.value})}
+                  style={{ width: 120, padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 13, background: 'var(--bg-secondary)' }}>
+                  <option value="">All</option>
+                  <option value="true">Clicked</option>
+                  <option value="false">Not Clicked</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Search */}
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-6">Search</div>
+              <div className="flex gap-8">
+                <div style={{ position: 'relative' }}>
+                  <Search size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--text-tertiary)' }} />
+                  <input
+                    value={userLinkFilter.search}
+                    onChange={e => setUserLinkFilter({...userLinkFilter, search: e.target.value})}
+                    onKeyDown={e => e.key === 'Enter' && loadUserLinks()}
+                    placeholder="Name or email..."
+                    style={{ padding: '9px 12px 9px 30px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 13, width: 180 }}
+                  />
+                </div>
+                <button className="btn btn-secondary" onClick={loadUserLinks}><Search size={14} /></button>
+              </div>
+            </div>
+          </div>
+
+          {/* Campaign-level stats */}
+          {(userLinkStats.campaigns || []).length > 0 && (
+            <div className="flex flex-col gap-6">
+              <div className="text-sm font-semibold text-secondary">Campaign Breakdown</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 }}>
+                {(userLinkStats.campaigns || []).map(c => {
+                  const clickRate = c.total_links > 0 ? ((c.clicked / c.total_links) * 100).toFixed(1) : 0;
+                  const Icon = CHANNEL_ICONS[c.channel] || Globe;
+                  const color = CHANNEL_COLORS[c.channel] || 'var(--text-tertiary)';
+                  return (
+                    <div key={c.campaign_id} className="card" style={{ padding: '14px 16px', borderLeft: `4px solid ${color}` }}>
+                      <div className="flex justify-between mb-6" style={{ alignItems: 'flex-start' }}>
+                        <div className="flex gap-8 items-center">
+                          <Icon size={16} color={color} />
+                          <div>
+                            <div className="font-semibold text-sm">{c.campaign_name}</div>
+                            <div className="text-xs text-tertiary">{c.segment_label}</div>
+                          </div>
+                        </div>
+                        <span className={`badge ${parseFloat(clickRate) > 0 ? 'badge-green' : 'badge-gray'}`} style={{ fontSize: 10 }}>
+                          {clickRate}% CTR
+                        </span>
+                      </div>
+                      {/* Progress bar */}
+                      <div style={{ background: 'var(--bg-secondary)', borderRadius: 4, height: 6, marginBottom: 8 }}>
+                        <div style={{ width: `${Math.min(clickRate, 100)}%`, background: 'var(--green)', borderRadius: 4, height: '100%', transition: 'width 0.3s' }} />
+                      </div>
+                      <div className="flex gap-16 text-xs text-secondary">
+                        <span><b>{parseInt(c.total_links).toLocaleString()}</b> links</span>
+                        <span style={{ color: 'var(--green)' }}><b>{parseInt(c.clicked).toLocaleString()}</b> clicked</span>
+                        <span style={{ color: 'var(--orange)' }}><b>{parseInt(c.total_clicks).toLocaleString()}</b> total clicks</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Individual user links table */}
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div className="flex justify-between items-center" style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-color)' }}>
+              <div className="font-semibold text-sm flex items-center gap-6">
+                <Users size={16} color="var(--brand-primary)" />
+                User Tracking Links
+                <span className="badge badge-blue" style={{ fontSize: 10 }}>{parseInt(userLinks.stats?.total_links || 0).toLocaleString()}</span>
+              </div>
+              <div className="text-xs text-secondary">
+                {parseInt(userLinks.stats?.clicked_links || 0).toLocaleString()} clicked of {parseInt(userLinks.stats?.total_links || 0).toLocaleString()}
+              </div>
+            </div>
+
+            {(userLinks.links || []).length > 0 ? (
+              <div style={{ maxHeight: 500, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg-secondary)', position: 'sticky', top: 0, zIndex: 1 }}>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>User</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>Campaign</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>Tracking URL</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 600, color: 'var(--text-secondary)' }}>Clicks</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>Last Click</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 600, color: 'var(--text-secondary)' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(userLinks.links || []).map(l => {
+                      const hasClicked = l.click_count > 0;
+                      const isCopied = copiedId === `ul-${l.link_id}`;
+                      const trackingUrl = `${window.location.origin}/api/v3/utm/track/${l.token}`;
+                      return (
+                        <tr key={l.link_id} style={{ borderBottom: '1px solid var(--border-color)', background: hasClicked ? 'color-mix(in srgb, var(--green) 3%, transparent)' : 'transparent' }}>
+                          <td style={{ padding: '10px 14px' }}>
+                            <div className="font-semibold">{l.customer_name || 'Unknown'}</div>
+                            <div className="text-xs text-tertiary">{l.customer_email}</div>
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <div className="text-sm">{l.campaign_name}</div>
+                            <div className="text-xs text-tertiary">{l.segment_label} / {l.channel}</div>
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <code style={{ fontSize: 10, color: 'var(--brand-primary)', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: 4 }}>
+                              /track/{l.token}
+                            </code>
+                          </td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                            <span className="font-bold" style={{ fontSize: 15, color: hasClicked ? 'var(--green)' : 'var(--text-tertiary)' }}>
+                              {l.click_count}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            {l.last_clicked_at ? (
+                              <div className="text-xs">{new Date(l.last_clicked_at).toLocaleString()}</div>
+                            ) : (
+                              <span className="text-xs text-tertiary">—</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                            <button
+                              onClick={() => copyUrl(trackingUrl, `ul-${l.link_id}`)}
+                              className={`btn btn-sm ${isCopied ? 'btn-primary' : 'btn-secondary'} flex items-center gap-4`}
+                              style={{ fontSize: 10 }}>
+                              {isCopied ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-24 text-center">
+                <Users size={40} color="var(--text-tertiary)" style={{ opacity: 0.3 }} className="mb-8" />
+                <div className="font-semibold mb-4" style={{ fontSize: 15 }}>No user links generated yet</div>
+                <div className="text-sm text-secondary mb-4">
+                  Select a campaign above and click "Generate" to create personalized tracking URLs for each user
+                </div>
+                <div className="text-xs text-tertiary">
+                  Each user gets a unique link. When they click, we know exactly who visited and GTM tracks their full journey.
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* How it works info card */}
+          <div className="card p-20" style={{ borderTop: '3px solid var(--purple)' }}>
+            <div className="flex items-center gap-8 mb-12">
+              <div className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 8, background: 'color-mix(in srgb, var(--purple) 10%, transparent)' }}>
+                <TrendingUp size={16} color="var(--purple)" />
+              </div>
+              <div className="font-bold" style={{ fontSize: 14 }}>How Per-User Tracking Works</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+              {[
+                { step: '1', title: 'Generate', desc: 'Create unique link per user in a campaign segment' },
+                { step: '2', title: 'Send Email', desc: 'Put each user\'s tracking URL in their personalized email' },
+                { step: '3', title: 'User Clicks', desc: 'Click is recorded with who + when. Click count increments.' },
+                { step: '4', title: 'Redirect', desc: 'User lands on Rayna website with rid param identifying them' },
+                { step: '5', title: 'GTM Tracks', desc: 'GTM reads rid, ties all page views & events to this user' },
+              ].map(s => (
+                <div key={s.step} className="text-center" style={{ padding: '12px 8px' }}>
+                  <div className="flex items-center justify-center mb-8" style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--purple)', color: '#fff', fontSize: 13, fontWeight: 700, margin: '0 auto' }}>
+                    {s.step}
+                  </div>
+                  <div className="font-semibold text-sm mb-4">{s.title}</div>
+                  <div className="text-xs text-secondary">{s.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </motion.div>
       )}
 

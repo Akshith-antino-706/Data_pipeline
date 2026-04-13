@@ -26,17 +26,61 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   }
 
   /**
+   * Generate the user identity script that reads rid from UTM links.
+   * Place this BEFORE all other dataLayer scripts on the Rayna website.
+   * When a user arrives via a personalized UTM link, rid identifies them.
+   * GTM stores it in a cookie/session so all subsequent events are tied to that user.
+   */
+  static getUserIdentityScript() {
+    return `// ═══ Rayna User Identity from Personalized UTM Links ═══
+// Reads 'rid' (Rayna ID) from URL and persists it for the session.
+// All dataLayer events will include this user's identity.
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var rid = params.get('rid');
+
+  // If rid is in the URL, store it for this session
+  if (rid) {
+    try { sessionStorage.setItem('rayna_rid', rid); } catch(e) {}
+    try { localStorage.setItem('rayna_rid', rid); } catch(e) {}
+  } else {
+    // Check if we already have it from a previous page
+    rid = sessionStorage.getItem('rayna_rid') || localStorage.getItem('rayna_rid') || null;
+  }
+
+  // Push user identity to dataLayer
+  window.dataLayer = window.dataLayer || [];
+  if (rid) {
+    window.dataLayer.push({
+      'event': 'user_identified',
+      'rayna_user_id': rid,
+      'user_source': 'utm_campaign',
+      'utm_source': params.get('utm_source'),
+      'utm_medium': params.get('utm_medium'),
+      'utm_campaign': params.get('utm_campaign'),
+      'utm_content': params.get('utm_content')
+    });
+  }
+
+  // Expose globally so other scripts can use it
+  window.__rayna_rid = rid;
+})();`;
+  }
+
+  /**
    * Generate dataLayer push scripts for various events
    */
   static getDataLayerScripts() {
     return {
+      user_identity: this.getUserIdentityScript(),
+
       page_view: `window.dataLayer = window.dataLayer || [];
 window.dataLayer.push({
   'event': 'page_view',
   'page_title': document.title,
   'page_location': window.location.href,
   'page_path': window.location.pathname,
-  'user_id': '{{customer_id}}'
+  'user_id': window.__rayna_rid || '{{customer_id}}'
 });`,
 
       add_to_cart: `window.dataLayer.push({
@@ -82,6 +126,7 @@ window.dataLayer.push({
   'lead_type': '{{lead_type}}',
   'source': '{{source}}',
   'product_interest': '{{product_name}}',
+  'rayna_user_id': window.__rayna_rid || null,
   'utm_source': '{{utm_source}}',
   'utm_medium': '{{utm_medium}}',
   'utm_campaign': '{{utm_campaign}}'

@@ -1,26 +1,20 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import { Component, Suspense, lazy, useState, useEffect, createContext, useContext, useCallback } from 'react';
-import { LayoutDashboard, Zap, Target, GitBranch, Menu, X, Link2, Ticket, Shield, Code, FileText, Sun, Moon, Database, Download, Users, UserCheck } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
 
 // Lazy-loaded pages for code splitting
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const SegmentsV2 = lazy(() => import('./pages/SegmentsV2'));
-const Strategies = lazy(() => import('./pages/Strategies'));
 const Content = lazy(() => import('./pages/Content'));
 const Campaigns = lazy(() => import('./pages/Campaigns'));
 const Journeys = lazy(() => import('./pages/Journeys'));
-const Funnel = lazy(() => import('./pages/Funnel'));
-const RFMAnalysis = lazy(() => import('./pages/RFMAnalysis'));
 const UTMTracking = lazy(() => import('./pages/UTMTracking'));
-const Coupons = lazy(() => import('./pages/Coupons'));
-const Approvals = lazy(() => import('./pages/Approvals'));
 const GTMIntegration = lazy(() => import('./pages/GTMIntegration'));
 const DataPipeline = lazy(() => import('./pages/DataPipeline'));
 const DailyReport = lazy(() => import('./pages/DailyReport'));
-const Customers = lazy(() => import('./pages/Customers'));
 const UnifiedContacts = lazy(() => import('./pages/UnifiedContacts'));
+const CustomerSegmentation = lazy(() => import('./pages/CustomerSegmentation'));
 
 // Theme Context
 const ThemeContext = createContext();
@@ -67,16 +61,13 @@ function ThemeProvider({ children }) {
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/segments', icon: Target, label: 'Segments' },
+  { to: '/segmentation', icon: Target, label: 'Segmentation' },
+  { to: '/contacts', icon: UserCheck, label: 'Contacts' },
   { to: '/journeys', icon: GitBranch, label: 'Journeys' },
-  { to: '/strategies', icon: Zap, label: 'Strategies' },
+  { to: '/campaigns', icon: Megaphone, label: 'Campaigns' },
   { to: '/content', icon: FileText, label: 'Content' },
   { to: '/utm', icon: Link2, label: 'UTM Tracking' },
-  { to: '/coupons', icon: Ticket, label: 'Coupons' },
-  { to: '/approvals', icon: Shield, label: 'Approvals' },
   { to: '/gtm', icon: Code, label: 'GTM & BigQuery' },
-  { to: '/customers', icon: Users, label: 'Customers' },
-  { to: '/contacts', icon: UserCheck, label: 'Unified Contacts' },
   { to: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
   { to: '/daily-report', icon: Download, label: 'Daily Report' },
 ];
@@ -143,19 +134,13 @@ function AnimatedRoutes() {
       <motion.div key={location.pathname} {...pageTransition}>
         <Routes location={location}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/segments" element={<SegmentsV2 />} />
+          <Route path="/segmentation" element={<CustomerSegmentation />} />
+          <Route path="/contacts" element={<UnifiedContacts />} />
           <Route path="/journeys" element={<Journeys />} />
-          <Route path="/funnel" element={<Funnel />} />
-          <Route path="/strategies" element={<Strategies />} />
           <Route path="/content" element={<Content />} />
           <Route path="/campaigns" element={<Campaigns />} />
-          <Route path="/rfm" element={<RFMAnalysis />} />
           <Route path="/utm" element={<UTMTracking />} />
-          <Route path="/coupons" element={<Coupons />} />
-          <Route path="/approvals" element={<Approvals />} />
           <Route path="/gtm" element={<GTMIntegration />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/contacts" element={<UnifiedContacts />} />
           <Route path="/data-pipeline" element={<DataPipeline />} />
           <Route path="/daily-report" element={<DailyReport />} />
           <Route path="*" element={<NotFound />} />

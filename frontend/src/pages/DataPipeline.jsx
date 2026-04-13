@@ -130,7 +130,7 @@ export default function DataPipeline() {
           { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), color: 'var(--green)', icon: MapPin },
           { label: 'Tickets', value: formatNum(dataOverview.tickets), color: 'var(--orange)', icon: Ticket },
           { label: 'Chats', value: formatNum(dataOverview.chats), color: '#25D366', icon: MessageSquare },
-          { label: 'Unified Data', value: formatNum(dataOverview.unifiedData), color: 'var(--red)', icon: Database },
+          { label: 'Unified Contacts', value: formatNum(dataOverview.unifiedContacts), color: 'var(--red)', icon: Database },
         ].map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '20px 18px' }}>
             <div style={{ width: 42, height: 42, borderRadius: 10, background: `color-mix(in srgb, ${color} 10%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

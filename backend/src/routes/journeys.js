@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import JourneyService from '../services/JourneyService.js';
+import ConversionDetector from '../services/ConversionDetector.js';
 const router = Router();
 
 // List journeys
@@ -97,6 +98,29 @@ router.get('/:id/enrollments', async (req, res, next) => {
   try {
     const data = await JourneyService.getEnrollments(parseInt(req.params.id));
     res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Run conversion detection + auto-enrollment across all journeys
+router.post('/detect-conversions', async (_req, res, next) => {
+  try {
+    const data = await ConversionDetector.runAll();
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+// Process all active journeys at once
+router.post('/process-all', async (_req, res, next) => {
+  try {
+    const { rows: journeys } = await (await import('../config/database.js')).default.query(
+      "SELECT journey_id FROM journey_flows WHERE status = 'active'"
+    );
+    const results = [];
+    for (const j of journeys) {
+      const r = await JourneyService.processJourney(j.journey_id);
+      results.push({ journey_id: j.journey_id, ...r });
+    }
+    res.json({ success: true, results });
   } catch (err) { next(err); }
 });
 

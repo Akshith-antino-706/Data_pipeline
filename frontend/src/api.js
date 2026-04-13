@@ -120,6 +120,14 @@ export const getUTMAnalytics = (params = {}) => {
 export const recordUTMClick = (id) => request(`/api/v3/utm/${id}/click`, { method: 'POST' });
 export const recordUTMConversion = (id, revenue) => request(`/api/v3/utm/${id}/conversion`, { method: 'POST', body: JSON.stringify({ revenue }) });
 
+// ── Per-User UTM Links ──────────────────────────────────────────
+export const generateUserLinks = (campaignId, data = {}) => request(`/api/v3/utm/user-links/${campaignId}`, { method: 'POST', body: JSON.stringify(data) });
+export const getUserLinks = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/utm/user-links?${qs}`);
+};
+export const getUserLinkStats = () => request('/api/v3/utm/user-links-stats');
+
 // ── Coupons ───────────────────────────────────────────────────
 export const getCoupons = () => request('/api/v3/coupons');
 export const getCoupon = (id) => request(`/api/v3/coupons/${id}`);
@@ -150,6 +158,7 @@ export const getGTMAnalytics = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/gtm/analytics?${qs}`);
 };
+export const getGTMEventDetail = (eventName) => request(`/api/v3/gtm/events/${encodeURIComponent(eventName)}`);
 export const getGTMExport = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/gtm/export?${qs}`);
@@ -218,14 +227,6 @@ export async function downloadReportCSV(table, from, to) {
   URL.revokeObjectURL(url);
 }
 
-// ── Customers ────────────────────────────────────────────────
-export const getCustomers = (params = {}) => {
-  const qs = new URLSearchParams(params).toString();
-  return request(`/api/v3/customers?${qs}`);
-};
-export const getCustomer = (id) => request(`/api/v3/customers/${encodeURIComponent(id)}`);
-export const getCustomerStats = () => request('/api/v3/customers/stats');
-
 // ── Unified Contacts ─────────────────────────────────────────
 export const getUnifiedContacts = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
@@ -233,6 +234,12 @@ export const getUnifiedContacts = (params = {}) => {
 };
 export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
 export const getUnifiedStats = () => request('/api/v3/unified-contacts/stats');
+export const getUnifiedFilters = () => request('/api/v3/unified-contacts/filters');
+export const getSegmentationTree = () => request('/api/v3/unified-contacts/segmentation-tree');
+export const getSegmentCustomers = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/unified-contacts/segment-customers?${qs}`);
+};
 
 export async function downloadReportAll(from, to) {
   const res = await fetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);

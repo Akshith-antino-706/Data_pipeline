@@ -18,53 +18,37 @@ router.get('/status', async (_req, res) => {
 // GET /api/v3/rayna-sync/mapping-stats — booking ↔ customer mapping stats
 router.get('/mapping-stats', async (_req, res) => {
   try {
-    // Mapping breakdown by source
-    let breakdown = [];
-    try {
-      const { rows } = await query(`
-        SELECT booking_source, match_type,
-          COUNT(*) as matched_bookings,
-          COUNT(DISTINCT customer_master_id) as unique_customers
-        FROM booking_customer_map
-        GROUP BY booking_source, match_type
-        ORDER BY booking_source, match_type
-      `);
-      breakdown = rows;
-    } catch { /* table may be empty */ }
-
-    // Overall stats
+    // Overall stats from unified_contacts
     const { rows: [overall] } = await query(`
       SELECT
-        (SELECT COUNT(*) FROM booking_customer_map) as total_mapped,
-        (SELECT COUNT(*) FROM travel_bookings) as customers_with_bookings,
-        (SELECT COUNT(*) FROM users) as total_customers
+        (SELECT COUNT(*) FROM unified_contacts WHERE total_travel_bookings > 0 OR total_tour_bookings > 0) as total_mapped,
+        (SELECT COUNT(*) FROM unified_contacts WHERE total_travel_bookings > 0) as customers_with_bookings,
+        (SELECT COUNT(*) FROM unified_contacts) as total_customers
     `);
 
-    // Top customers by bookings
+    // Top customers by bookings from unified_contacts
     const { rows: topCustomers } = await query(`
-      SELECT u.id, u.name, u.primary_email as email, u.mobile as phone,
-        u.company_name, u.country,
-        COUNT(DISTINCT tb.id) as total_bookings,
-        MIN(tb.start_date) as first_booking_at,
-        MAX(tb.start_date) as last_booking_at
-      FROM users u
-      JOIN travel_bookings tb ON tb.user_id = u.id
-      GROUP BY u.id, u.name, u.primary_email, u.mobile, u.company_name, u.country
-      ORDER BY COUNT(DISTINCT tb.id) DESC
+      SELECT unified_id as id, name, email, phone, company_name, country,
+        total_travel_bookings as total_bookings, total_booking_revenue,
+        first_travel_at as first_booking_at, last_travel_at as last_booking_at,
+        total_chats, total_tour_bookings, total_hotel_bookings, total_visa_bookings, total_flight_bookings
+      FROM unified_contacts
+      WHERE total_travel_bookings > 0 OR total_tour_bookings > 0
+      ORDER BY total_travel_bookings DESC, total_booking_revenue DESC
       LIMIT 20
     `);
 
-    // Unmatched booking counts
+    // Coverage counts
     const { rows: [unmatched] } = await query(`
       SELECT
         (SELECT COUNT(*) FROM rayna_tours) as total_tours,
         (SELECT COUNT(*) FROM rayna_hotels) as total_hotels,
         (SELECT COUNT(*) FROM rayna_visas) as total_visas,
         (SELECT COUNT(*) FROM rayna_flights) as total_flights,
-        (SELECT COUNT(*) FROM booking_customer_map WHERE booking_source='tours') as mapped_tours,
-        (SELECT COUNT(*) FROM booking_customer_map WHERE booking_source='hotels') as mapped_hotels,
-        (SELECT COUNT(*) FROM booking_customer_map WHERE booking_source='visas') as mapped_visas,
-        (SELECT COUNT(*) FROM booking_customer_map WHERE booking_source='flights') as mapped_flights
+        (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL) as mapped_tours,
+        (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL) as mapped_hotels,
+        (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL) as mapped_visas,
+        (SELECT COUNT(*) FROM rayna_flights WHERE unified_id IS NOT NULL) as mapped_flights
     `);
 
     // Sync status
@@ -89,13 +73,13 @@ router.get('/mapping-stats', async (_req, res) => {
       query("SELECT COUNT(*) as count FROM tickets"),
       query("SELECT COUNT(*) as count FROM travel_bookings"),
       query("SELECT COUNT(*) as count FROM chats"),
-      query("SELECT COUNT(*) as count FROM unified_data"),
+      query("SELECT COUNT(*) as count FROM unified_contacts"),
       query("SELECT COUNT(*) as count FROM rayna_tours"),
       query("SELECT COUNT(*) as count FROM rayna_hotels"),
       query("SELECT COUNT(*) as count FROM rayna_visas"),
       query("SELECT COUNT(*) as count FROM rayna_flights"),
     ];
-    const [usersR, emailsR, phonesR, deptsR, deptEmailsR, ticketsR, bookingsR, chatsR, unifiedR, toursR, hotelsR, visasR, flightsR] = await Promise.all(dataOverviewQueries);
+    const [usersR, emailsR, phonesR, deptsR, deptEmailsR, ticketsR, bookingsR, chatsR, unifiedContactsR, toursR, hotelsR, visasR, flightsR] = await Promise.all(dataOverviewQueries);
 
     let ga4Count = 0;
     let ga4Users = 0;
@@ -105,32 +89,29 @@ router.get('/mapping-stats', async (_req, res) => {
       ga4Users = parseInt(ga4.users);
     } catch { /* table may not exist */ }
 
-    // Department breakdown — B2B vs B2C
+    // Department breakdown — B2B vs B2C from unified_contacts
     let deptBreakdown = [];
     try {
       const { rows } = await query(`
         SELECT
-          d.category as name,
-          COUNT(DISTINCT u.id) as customers,
-          COUNT(DISTINCT c.id) as chats,
-          COUNT(DISTINCT t.id) as tickets,
-          COUNT(DISTINCT tb.id) as bookings
-        FROM dept_category_map d
-        JOIN departments dept ON TRIM(dept.name) = d.department
-        LEFT JOIN chats c ON c.department_id = dept.id
-        LEFT JOIN users u ON u.id = c.user_id
-        LEFT JOIN tickets t ON t.user_id = u.id
-        LEFT JOIN travel_bookings tb ON tb.user_id = u.id
-        WHERE d.category IS NOT NULL
-        GROUP BY d.category
-        ORDER BY COUNT(DISTINCT u.id) DESC
+          CASE WHEN chat_departments LIKE '%B2B%' AND chat_departments LIKE '%B2C%' THEN 'B2B, B2C'
+               WHEN chat_departments LIKE '%B2B%' THEN 'B2B'
+               WHEN chat_departments LIKE '%B2C%' THEN 'B2C'
+               ELSE 'Unknown' END as name,
+          COUNT(*) as customers,
+          SUM(total_chats) as chats,
+          SUM(total_travel_bookings) as bookings
+        FROM unified_contacts
+        WHERE chat_departments IS NOT NULL
+        GROUP BY 1
+        ORDER BY COUNT(*) DESC
       `);
       deptBreakdown = rows;
     } catch { /* ignore */ }
 
     res.json({
       success: true,
-      breakdown,
+      breakdown: [],
       overall: {
         totalMapped: parseInt(overall.total_mapped),
         customersWithBookings: parseInt(overall.customers_with_bookings),
@@ -156,7 +137,7 @@ router.get('/mapping-stats', async (_req, res) => {
         tickets: parseInt(ticketsR.rows[0].count),
         travelBookings: parseInt(bookingsR.rows[0].count),
         chats: parseInt(chatsR.rows[0].count),
-        unifiedData: parseInt(unifiedR.rows[0].count),
+        unifiedContacts: parseInt(unifiedContactsR.rows[0].count),
         tours: parseInt(toursR.rows[0].count),
         hotels: parseInt(hotelsR.rows[0].count),
         visas: parseInt(visasR.rows[0].count),
@@ -206,6 +187,19 @@ router.post('/trigger/:endpoint', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/rayna-sync/catch-up — re-fetch last N days to pick up modified records (default 90 days)
+// Body: { "days": 90 }
+router.post('/catch-up', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.body.days) || 90, 365);
+    const results = await RaynaSyncService.syncCatchUp(days);
+    res.json({ success: true, results });
+  } catch (err) {
+    console.error('[rayna-sync] catch-up error:', err.message);
+    res.status(500).json({ success: false, error: 'Catch-up sync failed' });
   }
 });
 
