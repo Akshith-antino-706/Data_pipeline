@@ -167,7 +167,7 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
-    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql']) {
+    for (const file of ['044_unified_contacts.sql', '039_segment_daily_log.sql', '003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql']) {
       await runMigrationFile(file);
     }
     res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
@@ -480,6 +480,18 @@ cron.schedule('0 2 * * *', async () => {
   }
 });
 console.log('[Product Affinity] Cron scheduled: 0 2 * * * (6 AM Dubai daily)');
+
+// ── Auto-migrate critical tables on startup ──────────────────
+(async () => {
+  try {
+    for (const file of ['044_unified_contacts.sql', '039_segment_daily_log.sql']) {
+      await runMigrationFile(file);
+    }
+    console.log('  DB tables verified (unified_contacts, segment_daily_log)');
+  } catch (err) {
+    console.error('  DB auto-migrate warning:', err.message);
+  }
+})();
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
 const HTTPS_PORT = 3443;
