@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useBusinessType } from '../App';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
@@ -75,6 +76,7 @@ const getJourneyChannels = (nodes) => {
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════
 export default function Journeys() {
+  const { businessType } = useBusinessType();
   // ── State ─────────────────────────────────────────────────────
   const [journeys, setJourneys] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -317,6 +319,13 @@ export default function Journeys() {
   // ── Filtered Journeys ─────────────────────────────────────────
   const filteredJourneys = useMemo(() => {
     let filtered = journeys;
+    // B2B/B2C filter
+    filtered = filtered.filter(j => {
+      const name = (j.name || '').toUpperCase();
+      const seg = (j.segment_name || '').toUpperCase();
+      if (businessType === 'B2B') return name.includes('B2B') || seg.startsWith('B2B');
+      return !name.includes('B2B') && !seg.startsWith('B2B');
+    });
     if (statusFilter !== 'all') {
       filtered = filtered.filter(j => j.status === statusFilter);
     }
@@ -328,7 +337,7 @@ export default function Journeys() {
       );
     }
     return filtered;
-  }, [journeys, statusFilter, searchQuery]);
+  }, [journeys, statusFilter, searchQuery, businessType]);
 
   // ── Summary Stats ─────────────────────────────────────────────
   const summaryStats = useMemo(() => {

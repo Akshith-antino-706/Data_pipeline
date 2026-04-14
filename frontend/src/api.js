@@ -30,6 +30,11 @@ export const approveTemplate = (id) => request(`/api/v2/content/templates/${id}/
 export const rejectTemplate = (id) => request(`/api/v2/content/templates/${id}/reject`, { method: 'POST' });
 export const generateContent = (data) => request('/api/v2/content/generate', { method: 'POST', body: JSON.stringify(data) });
 
+// HTML email templates
+export const getHtmlTemplates = () => request('/api/v2/content/html-templates');
+export const previewHtmlEmail = (id) => request(`/api/v2/content/preview-html/${id}`);
+export const renderEmailForUser = (id, data) => request(`/api/v2/content/render/${id}`, { method: 'POST', body: JSON.stringify(data) });
+
 // ── Campaigns ───────────────────────────────────────────────
 export const getCampaigns = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
@@ -235,7 +240,39 @@ export const getUnifiedContacts = (params = {}) => {
 export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
 export const getUnifiedStats = () => request('/api/v3/unified-contacts/stats');
 export const getUnifiedFilters = () => request('/api/v3/unified-contacts/filters');
-export const getSegmentationTree = () => request('/api/v3/unified-contacts/segmentation-tree');
+export const getSegmentationTree = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/unified-contacts/segmentation-tree?${qs}`);
+};
+export const getSegmentActivity = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/unified-contacts/segment-activity?${qs}`);
+};
+export const snapshotDailySegments = () => request('/api/v3/unified-contacts/snapshot-daily', { method: 'POST' });
+export const downloadSegmentActivity = async (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${BASE}/api/v3/unified-contacts/segment-activity/download?${qs}`);
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `segment_activity_${params.days || 30}d.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+export const downloadSegmentCustomers = async (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`${BASE}/api/v3/unified-contacts/segment-customers/download?${qs}`);
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `segment_${params.bookingStatus || 'all'}_customers.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
 export const getSegmentCustomers = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/segment-customers?${qs}`);

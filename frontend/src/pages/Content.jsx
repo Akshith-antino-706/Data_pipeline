@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { getTemplates, createTemplate, approveTemplate, rejectTemplate, generateContent, getSegments, generateContentWithProducts, getSegmentProducts, getBaseTemplates, previewBaseTemplate, useBaseTemplate, getSegmentEmailTemplates, previewSegmentEmail, useSegmentEmail, createCampaign, executeCampaign, previewTemplate } from '../api';
+import { getTemplates, createTemplate, approveTemplate, rejectTemplate, generateContent, getSegments, generateContentWithProducts, getSegmentProducts, getBaseTemplates, previewBaseTemplate, useBaseTemplate, getSegmentEmailTemplates, previewSegmentEmail, useSegmentEmail, createCampaign, executeCampaign, previewTemplate, previewHtmlEmail } from '../api';
+import { useBusinessType } from '../App';
 import { Plus, Sparkles, Check, X, Image, Eye, Package, Send, Layout, ShoppingCart, Tag, Heart, UserCheck, Mail, Users, Play, Loader, CheckCircle, AlertCircle } from 'lucide-react';
 
 const CHANNELS = ['whatsapp', 'email', 'sms', 'push'];
@@ -13,6 +14,7 @@ const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren:
 // Colors now come from CSS custom properties (dark-mode-first design system)
 
 export default function Content() {
+  const { businessType } = useBusinessType();
   const [templates, setTemplates] = useState([]);
   const [segments, setSegments] = useState([]);
   const [total, setTotal] = useState(0);
@@ -207,7 +209,11 @@ export default function Content() {
 
       {/* ── Template Grid ─────────────────────────────── */}
       <motion.div variants={fadeInUp} className="grid-auto">
-        {templates.map(t => (
+        {templates.filter(t => {
+          const seg = (t.segment_label || '').toUpperCase();
+          if (businessType === 'B2B') return seg.startsWith('B2B');
+          return !seg.startsWith('B2B');
+        }).map(t => (
           <div key={t.id} className="card card-flush" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {t.media_url && (
               <div style={{ height: 140, overflow: 'hidden', position: 'relative' }}>
@@ -242,8 +248,11 @@ export default function Content() {
                   if (t.channel === 'email') {
                     setShowPreview({ ...t, _previewHtml: null });
                     try {
-                      const res = await previewTemplate(t.id);
-                      setShowPreview({ ...t, _previewHtml: res.data?.html || t.body });
+                      // Try HTML template preview first, fallback to old preview
+                      const res = t.html_template_id
+                        ? await previewHtmlEmail(t.id)
+                        : await previewTemplate(t.id);
+                      setShowPreview({ ...t, _previewHtml: res.html || res.data?.html || t.body });
                     } catch {
                       setShowPreview({ ...t, _previewHtml: t.body });
                     }

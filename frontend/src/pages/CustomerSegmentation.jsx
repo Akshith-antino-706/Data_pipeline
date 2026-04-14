@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getSegmentationTree, getSegmentCustomers } from '../api';
+import { useBusinessType } from '../App';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
   Loader2, Globe, MapPin, MessageCircle, DollarSign, Gem, Eye, RefreshCw,
@@ -38,15 +39,16 @@ export default function CustomerSegmentation() {
   const [custPage, setCustPage] = useState(1);
   const [custSearch, setCustSearch] = useState('');
   const [expandedStatus, setExpandedStatus] = useState(null);
+  const { businessType } = useBusinessType();
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getSegmentationTree();
+      const res = await getSegmentationTree({ businessType });
       setData(res);
     } catch (err) { console.error('Failed to load segmentation:', err); }
     setLoading(false);
-  }, []);
+  }, [businessType]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

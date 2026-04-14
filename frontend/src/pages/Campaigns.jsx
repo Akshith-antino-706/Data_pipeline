@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getCampaigns, getCampaign, createCampaign, executeCampaign, getSegments, getTemplates, getStrategies } from '../api';
+import { useBusinessType } from '../App';
 import { Plus, Play, Eye } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -10,6 +11,7 @@ const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, t
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 export default function Campaigns() {
+  const { businessType } = useBusinessType();
   const [campaigns, setCampaigns] = useState([]);
   const [segments, setSegments] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -81,7 +83,11 @@ export default function Campaigns() {
                 <tr><th>Campaign</th><th>Channel</th><th>Segment</th><th>Status</th><th>Sent</th><th>Delivered</th><th>Actions</th></tr>
               </thead>
               <tbody>
-                {campaigns.map(c => (
+                {campaigns.filter(c => {
+                  const seg = (c.segment_label || '').toUpperCase();
+                  if (businessType === 'B2B') return seg.startsWith('B2B');
+                  return !seg.startsWith('B2B');
+                }).map(c => (
                   <tr key={c.id}>
                     <td className="font-medium">{c.name}</td>
                     <td className={`channel-${c.channel}`}>{c.channel}</td>

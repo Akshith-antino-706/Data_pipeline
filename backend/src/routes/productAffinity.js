@@ -3,71 +3,51 @@ import ProductAffinityService from '../services/ProductAffinityService.js';
 
 const router = Router();
 
-// GET /api/v3/affinity — full affinity data for all 28 segments
-router.get('/', async (_req, res, next) => {
+// POST /api/v3/affinity/sync — sync products + refresh affinity
+router.post('/sync', async (_req, res, next) => {
   try {
-    const data = await ProductAffinityService.getAll();
+    const data = await ProductAffinityService.runAll();
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v3/affinity/sync-products — sync product catalog only
+router.post('/sync-products', async (_req, res, next) => {
+  try {
+    const data = await ProductAffinityService.syncProducts();
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v3/affinity/refresh — refresh affinity scores from GTM/GA4
+router.post('/refresh', async (_req, res, next) => {
+  try {
+    const data = await ProductAffinityService.refreshAffinity();
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v3/affinity/user/:id — get user's product affinity
+router.get('/user/:id', async (req, res, next) => {
+  try {
+    const data = await ProductAffinityService.getUserAffinity(parseInt(req.params.id), parseInt(req.query.limit) || 10);
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
 
-// GET /api/v3/affinity/segment/:id — full recommendation for a segment
-router.get('/segment/:id', async (req, res, next) => {
+// GET /api/v3/affinity/user/:id/recommendations — get personalized product recommendations
+router.get('/user/:id/recommendations', async (req, res, next) => {
   try {
-    const data = await ProductAffinityService.getRecommendation(parseInt(req.params.id));
-    if (!data) return res.status(404).json({ success: false, error: 'Segment not found' });
-    res.json({ success: true, data });
+    const data = await ProductAffinityService.getRecommendations(parseInt(req.params.id), parseInt(req.query.limit) || 6);
+    res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
 
-// GET /api/v3/affinity/segment/:id/what — WHAT to sell
-router.get('/segment/:id/what', async (req, res, next) => {
+// GET /api/v3/affinity/user/:id/template-products — get products formatted for email/WA templates
+router.get('/user/:id/template-products', async (req, res, next) => {
   try {
-    const data = await ProductAffinityService.getWhatToSell(parseInt(req.params.id));
-    if (!data) return res.status(404).json({ success: false, error: 'Segment not found' });
-    res.json({ success: true, data });
-  } catch (err) { next(err); }
-});
-
-// GET /api/v3/affinity/segment/:id/when — WHEN to sell
-router.get('/segment/:id/when', async (req, res, next) => {
-  try {
-    const data = await ProductAffinityService.getWhenToSell(parseInt(req.params.id));
-    if (!data) return res.status(404).json({ success: false, error: 'Segment not found' });
-    res.json({ success: true, data });
-  } catch (err) { next(err); }
-});
-
-// GET /api/v3/affinity/segment/:id/how — HOW to sell
-router.get('/segment/:id/how', async (req, res, next) => {
-  try {
-    const data = await ProductAffinityService.getHowToSell(parseInt(req.params.id));
-    if (!data) return res.status(404).json({ success: false, error: 'Segment not found' });
-    res.json({ success: true, data });
-  } catch (err) { next(err); }
-});
-
-// GET /api/v3/affinity/departments — department → product mapping
-router.get('/departments', async (_req, res, next) => {
-  try {
-    const data = await ProductAffinityService.getDepartmentMap();
-    res.json({ success: true, data });
-  } catch (err) { next(err); }
-});
-
-// GET /api/v3/affinity/stats — customer affinity distribution
-router.get('/stats', async (_req, res, next) => {
-  try {
-    const data = await ProductAffinityService.getCustomerAffinityStats();
-    res.json({ success: true, data });
-  } catch (err) { next(err); }
-});
-
-// GET /api/v3/affinity/matrix — segment affinity overlap matrix
-router.get('/matrix', async (_req, res, next) => {
-  try {
-    const data = await ProductAffinityService.getAffinityMatrix();
-    res.json({ success: true, data });
+    const data = await ProductAffinityService.getTemplateProducts(parseInt(req.params.id));
+    res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
 

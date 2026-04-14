@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getUnifiedContacts, getUnifiedContact, getUnifiedStats, getUnifiedFilters } from '../api';
+import { useBusinessType } from '../App';
 import {
   Users, Search, Globe, MessageSquare, Mail, X, Phone, Building2,
   Calendar, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Eye,
@@ -25,6 +26,7 @@ const COLUMNS = [
   { key: 'booking_status', label: 'Status', sortable: false },
   { key: 'product_tier', label: 'Tier', sortable: false },
   { key: 'geography', label: 'Geo', sortable: false },
+  { key: 'chat_departments', label: 'Dept', sortable: false },
   { key: 'total_chats', label: 'Chats', sortable: true },
   { key: 'total_travel_bookings', label: 'Bookings', sortable: true },
   { key: 'last_seen_at', label: 'Last Seen', sortable: true },
@@ -46,19 +48,20 @@ export default function UnifiedContacts() {
   const [toast, setToast] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filterOptions, setFilterOptions] = useState(null);
-  const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' });
+  const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' });
   const limit = 50;
+  const { businessType } = useBusinessType();
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
   const updateFilter = (key, value) => { setFilters(f => ({ ...f, [key]: value })); setPage(1); };
-  const clearFilters = () => { setFilters({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' }); setPage(1); };
+  const clearFilters = () => { setFilters({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' }); setPage(1); };
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit, sortBy, sortDir };
+      const params = { page, limit, sortBy, sortDir, contactType: businessType };
       if (search) params.search = search;
       Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await getUnifiedContacts(params);
@@ -171,6 +174,8 @@ export default function UnifiedContacts() {
                 options={filterOptions?.productTiers || []} />
               <UCFilterSelect label="Geography" value={filters.geography} onChange={v => updateFilter('geography', v)}
                 options={filterOptions?.geographies || []} />
+              <UCFilterSelect label="Chat Dept" value={filters.chatDepartment} onChange={v => updateFilter('chatDepartment', v)}
+                options={['B2B', 'B2C']} />
               <UCFilterSelect label="Has Chats" value={filters.hasChats} onChange={v => updateFilter('hasChats', v)}
                 options={['yes', 'no']} labels={['Yes', 'No']} />
               <UCFilterSelect label="Has Bookings" value={filters.hasBookings} onChange={v => updateFilter('hasBookings', v)}
@@ -222,7 +227,8 @@ export default function UnifiedContacts() {
                     c.booking_status === 'PAST_ENQUIRY' ? 'badge-red' : 'badge-gray'
                   }`} style={{ fontSize: 9 }}>{c.booking_status || 'PROSPECT'}</span></td>
                   <td>{c.product_tier ? <span className={`badge ${c.product_tier === 'LUXURY' ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: 9 }}>{c.product_tier}</span> : '\u2014'}</td>
-                  <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}{c.is_indian ? ' / IN' : ''}</span> : '\u2014'}</td>
+                  <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}</span> : '\u2014'}</td>
+                  <td>{c.chat_departments ? c.chat_departments.split(', ').map(d => <span key={d} className={`badge ${d === 'B2B' ? 'badge-orange' : d === 'B2C' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9, marginRight: 2 }}>{d}</span>) : '\u2014'}</td>
                   <td>{c.total_chats > 0 ? <span className="badge badge-green">{c.total_chats}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
                   <td>{c.total_travel_bookings > 0 ? <span className="badge badge-blue">{c.total_travel_bookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{formatDate(c.last_seen_at)}</td>
@@ -272,7 +278,6 @@ export default function UnifiedContacts() {
                       selected.booking_status === 'ACTIVE_ENQUIRY' ? 'var(--orange)' : 'var(--text-secondary)'} />
                     <DetailRow icon={Hash} label="Product Tier" value={selected.product_tier || 'N/A'} color={selected.product_tier === 'LUXURY' ? 'var(--orange)' : undefined} />
                     <DetailRow icon={Globe} label="Geography" value={selected.geography || 'Unknown'} />
-                    <DetailRow icon={Hash} label="Indian" value={selected.is_indian ? 'Yes (WhatsApp channel)' : 'No'} color={selected.is_indian ? '#25D366' : undefined} />
                     <DetailRow icon={Layers} label="Full Segment" value={selected.segment_label} />
                   </Section>
 

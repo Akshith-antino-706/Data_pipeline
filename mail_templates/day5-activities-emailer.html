@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rayna Tours — Activities & Experiences</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  img { max-width: 100%; height: auto; }
+  body { background: #EDEBE6; font-family: 'Inter', sans-serif; color: #1A1A1A; -webkit-font-smoothing: antialiased; }
+  .email-wrapper { max-width: 680px; margin: 0 auto; background: #FFFFFF; }
+
+  /* TOP BAR */
+  .top-bar {
+    background: #1A1A1A;
+    padding: 10px 24px;
+    display: flex; align-items: center; justify-content: center; gap: 20px;
+  }
+  .top-bar span {
+    font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;
+    letter-spacing: 0.12em; text-transform: uppercase; color: #FFFFFF;
+  }
+
+  /* HEADER */
+  .header {
+    background: #FFFFFF; padding: 18px 40px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #F0ECE4;
+  }
+  .header img.logo { height: 38px; width: auto; }
+  .header-nav { display: flex; gap: 28px; }
+  .header-nav a {
+    font-family: 'Inter', sans-serif; font-size: 11.5px; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase; color: #4A4A4A; text-decoration: none;
+  }
+
+  /* HERO */
+  .hero { position: relative; height: 500px; overflow: hidden; }
+  .hero-bg {
+    position: absolute; inset: 0;
+    background-image: url('https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/ManualPackageGalleryImages/Final/Dubai-Sky-High-Thrills-Holiday-558/1761553496187_S.jpg');
+    background-size: cover; background-position: center 40%;
+  }
+  .hero-overlay {
+    position: absolute; inset: 0;
+    background: linear-gradient(to bottom, rgba(10,10,10,0.15) 0%, rgba(10,10,10,0.52) 55%, rgba(10,10,10,0.82) 100%);
+  }
+  .hero-content {
+    position: relative; z-index: 2; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 0 48px;
+  }
+  .hero-eyebrow {
+    font-family: 'Inter', sans-serif; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.22em; text-transform: uppercase; color: #FFFFFF;
+    margin-bottom: 18px; display: flex; align-items: center; gap: 10px;
+  }
+  .hero-eyebrow::before, .hero-eyebrow::after {
+    content: ''; display: inline-block; width: 32px; height: 1px; background: #FFFFFF; opacity: 0.6;
+  }
+  .hero-title {
+    font-family: 'Cormorant Garamond', serif; font-size: 68px; font-weight: 300;
+    line-height: 1.05; color: #FFFFFF; letter-spacing: -0.01em; margin-bottom: 18px;
+  }
+  .hero-title em { font-style: italic; color: #FFFFFF; }
+  .hero-subtitle {
+    font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 300;
+    color: rgba(255,255,255,0.8); line-height: 1.75; max-width: 420px; margin-bottom: 32px;
+  }
+  .hero-ctas { display: flex; gap: 12px; }
+  .btn-gold {
+    background: #1A1A1A; color: #FFFFFF; font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    text-decoration: none; padding: 13px 28px; display: inline-block;
+  }
+  .btn-outline-white {
+    background: transparent; color: #FFFFFF; font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    text-decoration: none; padding: 13px 28px; border: 1px solid rgba(255,255,255,0.45);
+    display: inline-block;
+  }
+
+  /* SECTION LABEL */
+  .section-label { padding: 56px 40px 8px; text-align: center; }
+  .sec-eyebrow {
+    font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.22em; text-transform: uppercase; color: #1A1A1A;
+    margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 10px;
+  }
+  .sec-eyebrow::before, .sec-eyebrow::after {
+    content: ''; width: 28px; height: 1px; background: #1A1A1A; opacity: 0.5;
+  }
+  .sec-title {
+    font-family: 'Cormorant Garamond', serif; font-size: 36px; font-weight: 400;
+    color: #1A1A1A; line-height: 1.2; margin-bottom: 10px;
+  }
+  .sec-subtitle {
+    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 300;
+    color: #7A7570; line-height: 1.65; max-width: 460px; margin: 0 auto;
+  }
+
+  /* 2×2 CARDS */
+  .dest-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 10px; padding: 0 40px; margin: 28px 0 0;
+  }
+  .dest-card { position: relative; height: 260px; overflow: hidden; border-radius: 3px; }
+  .dest-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dest-overlay {
+    position: absolute; inset: 0;
+    background: linear-gradient(to top, rgba(10,10,10,0.88) 0%, rgba(10,10,10,0.25) 55%, transparent 100%);
+  }
+  .dest-content { position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 22px; }
+  .dest-country {
+    font-family: 'Inter', sans-serif; font-size: 9.5px; font-weight: 600;
+    letter-spacing: 0.18em; text-transform: uppercase; color: #FFFFFF; margin-bottom: 5px; display: block;
+  }
+  .dest-city {
+    font-family: 'Cormorant Garamond', serif; font-size: 24px; font-weight: 500;
+    color: #FFFFFF; line-height: 1.15; margin-bottom: 8px;
+  }
+  .dest-meta { display: flex; align-items: center; justify-content: space-between; }
+  .dest-nights {
+    font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 400;
+    color: rgba(255,255,255,0.7);
+  }
+  .dest-price {
+    font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600; color: #FFFFFF;
+  }
+  .dest-cta {
+    font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.65);
+    text-decoration: none; display: block; margin-top: 6px;
+  }
+  .dest-cta::after { content: ' →'; }
+
+  /* OFFER STRIP */
+  .offer-strip {
+    background: #1A1A1A; margin: 52px 0 0; padding: 30px 40px;
+    display: flex; align-items: center; justify-content: space-between; gap: 32px;
+    border-top: 3px solid #FFFFFF;
+  }
+  .offer-eyebrow {
+    font-family: 'Inter', sans-serif; font-size: 9.5px; font-weight: 600;
+    letter-spacing: 0.2em; text-transform: uppercase; color: #FFFFFF; margin-bottom: 6px;
+  }
+  .offer-title {
+    font-family: 'Cormorant Garamond', serif; font-size: 28px; font-weight: 400;
+    color: #FFFFFF; line-height: 1.2; margin-bottom: 5px;
+  }
+  .offer-sub {
+    font-family: 'Inter', sans-serif; font-size: 11.5px; font-weight: 300;
+    color: rgba(255,255,255,0.55); line-height: 1.5;
+  }
+  .offer-code-block {
+    background: #FFFFFF; padding: 18px 28px; text-align: center; flex-shrink: 0;
+  }
+  .offer-code-label {
+    font-family: 'Inter', sans-serif; font-size: 9px; font-weight: 600;
+    letter-spacing: 0.2em; text-transform: uppercase; color: rgba(26,26,26,0.65); margin-bottom: 4px;
+  }
+  .offer-code {
+    font-family: 'Cormorant Garamond', serif; font-size: 30px; font-weight: 700;
+    color: #1A1A1A; letter-spacing: 0.04em;
+  }
+
+  /* PERKS STRIP */
+  .perks-strip {
+    background: #F4F1EC; padding: 32px 40px; margin-top: 52px;
+    display: flex; align-items: center; justify-content: space-around;
+    border-top: 1px solid #E8E3D8; border-bottom: 1px solid #E8E3D8;
+  }
+  .perk { display: flex; flex-direction: column; align-items: center; gap: 7px; flex: 1; text-align: center; }
+  .perk-icon { font-size: 20px; }
+  .perk-text {
+    font-family: 'Inter', sans-serif; font-size: 10.5px; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase; color: #4A4A4A;
+  }
+  .perk-div { width: 1px; height: 36px; background: #D8D2C4; }
+
+  /* FINAL CTA */
+  .final-cta {
+    background: #1A1A1A;
+    padding: 52px 48px; text-align: center;
+  }
+  .final-cta-eye {
+    font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 12px;
+  }
+  .final-cta-title {
+    font-family: 'Cormorant Garamond', serif; font-size: 42px; font-weight: 400;
+    color: #FFFFFF; line-height: 1.15; margin-bottom: 12px;
+  }
+  .final-cta-sub {
+    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 300;
+    color: rgba(255,255,255,0.7); line-height: 1.65; margin-bottom: 28px;
+    max-width: 380px; margin-left: auto; margin-right: auto;
+  }
+  .btn-dark-cta {
+    background: #FFFFFF; color: #1A1A1A; font-family: 'Inter', sans-serif;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    text-decoration: none; padding: 14px 34px; display: inline-block;
+  }
+
+  /* FOOTER */
+  .footer { background: #111111; padding: 44px 40px 28px; text-align: center; }
+  .footer-links {
+    display: flex; justify-content: center; gap: 22px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .footer-links a {
+    font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 400;
+    letter-spacing: 0.08em; color: #888; text-decoration: none; text-transform: uppercase;
+  }
+  .footer-contact {
+    font-family: 'Inter', sans-serif; font-size: 12px; color: #666; line-height: 1.7; margin-bottom: 18px;
+  }
+  .footer-contact a { color: #FFFFFF; text-decoration: none; }
+  .footer-social { display: flex; justify-content: center; gap: 14px; margin-bottom: 26px; }
+  .soc-btn {
+    width: 32px; height: 32px; border: 1px solid #2D2D2D;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #888; text-decoration: none;
+  }
+  .footer-bottom {
+    border-top: 1px solid #1E1E1E; padding-top: 18px;
+    font-family: 'Inter', sans-serif; font-size: 10.5px; color: #444; line-height: 1.6;
+  }
+  .footer-bottom a { color: #555; text-decoration: underline; }
+
+  /* ══════════════════════════════
+     RESPONSIVE — max-width 600px
+  ══════════════════════════════ */
+  @media only screen and (max-width: 600px) {
+
+    /* WRAPPER */
+    .email-wrapper { width: 100% !important; max-width: 100% !important; border-radius: 0 !important; }
+
+    /* HEADER */
+    .header { padding: 12px 16px !important; flex-wrap: wrap; gap: 10px; justify-content: center !important; }
+    .header-nav { display: none !important; }
+
+    /* CTA BUTTONS */
+    .btn-gold { display: block !important; width: 100% !important; text-align: center !important; box-sizing: border-box !important; }
+    .btn-dark-cta { display: block !important; width: 100% !important; text-align: center !important; box-sizing: border-box !important; }
+
+    /* HERO */
+    .hero { height: auto !important; min-height: 380px; }
+    .hero-content { height: auto !important; padding: 60px 20px !important; }
+    .hero-title { font-size: 38px !important; line-height: 1.1 !important; }
+    .hero-subtitle { font-size: 12.5px !important; max-width: 100% !important; }
+    .hero-ctas { flex-wrap: wrap; gap: 8px !important; }
+
+    /* COMMITMENT → 1 COL */
+    .commit-wrap { padding: 28px 16px 24px !important; }
+    .commit-cell { display: block !important; width: 100% !important; padding: 0 0 12px 0 !important; box-sizing: border-box !important; }
+    .commit-cell:last-child { padding-bottom: 0 !important; }
+
+    /* STATS TABLE → 2×2 */
+    .stats-wrap { padding: 16px 20px !important; }
+    .stats-table td { display: inline-block !important; width: 50% !important; padding: 8px 4px !important; border-right: none !important; margin-bottom: 8px !important; box-sizing: border-box !important; vertical-align: top !important; }
+
+    /* SECTION LABEL */
+    .section-label { padding: 28px 20px 8px !important; }
+
+    /* DEST GRID → 1 COL */
+    .dest-grid { grid-template-columns: 1fr !important; padding: 0 16px !important; }
+
+    /* OFFER STRIP → STACK */
+    .offer-strip { flex-direction: column !important; padding: 24px 20px !important; gap: 20px !important; align-items: flex-start !important; }
+    .offer-code-block { width: 100% !important; }
+
+    /* PERKS STRIP */
+    .perks-strip { flex-wrap: wrap !important; padding: 24px 20px !important; gap: 16px !important; }
+    .perk-div { display: none !important; }
+
+    /* FINAL CTA */
+    .final-cta { padding: 36px 20px !important; }
+    .final-cta-title { font-size: 28px !important; }
+
+    /* FOOTER */
+    .footer { padding: 28px 20px 20px !important; }
+  }
+</style>
+</head>
+<body>
+<div class="email-wrapper">
+
+  <!-- TOP BAR -->
+  <div class="top-bar">
+    <span>🎯 World-Class Activities &amp; Experiences</span>
+  </div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <img class="logo" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours">
+    <nav class="header-nav">
+      <a href="#">Activities</a>
+      <a href="#">Holidays</a>
+      <a href="#">Visas</a>
+      <a href="#">Cruises</a>
+    </nav>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-overlay"></div>
+    <div class="hero-content">
+      <div class="hero-eyebrow">Skip the Queue, Live the Moment</div>
+      <h1 class="hero-title">World-Class Activities,<br><em>Instantly Booked.</em></h1>
+      <p class="hero-subtitle">From desert thrills to city icons — discover, book and go. Instant confirmation on every experience.</p>
+      <div class="hero-ctas">
+        <a href="#" class="btn-gold">Browse Activities</a>
+        <a href="#" class="btn-outline-white">Get Recommendations</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- SOCIAL PROOF STATS STRIP -->
+  <div class="stats-wrap" style="background:#1A1A1A; padding:20px 40px;">
+    <table class="stats-table" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid #2E2E2E; vertical-align:top;">
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25M+</div>
+          <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Guests served<br>and counting</div>
+        </td>
+        <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid #2E2E2E; vertical-align:top;">
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,500+</div>
+          <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Professionals<br>across regions</div>
+        </td>
+        <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid #2E2E2E; vertical-align:top;">
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,000+</div>
+          <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Experiences<br>to choose from</div>
+        </td>
+        <td width="25%" style="text-align:center; padding:0 8px; vertical-align:top;">
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25+</div>
+          <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Operating<br>companies</div>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── SECTION 1: TOP CITIES TO VISIT ── -->
+  <div class="section-label">
+    <div class="sec-eyebrow">Where to Go</div>
+    <h2 class="sec-title">Top Cities To Visit</h2>
+    <p class="sec-subtitle">Four world-class cities, thousands of experiences — pick your destination and start exploring.</p>
+  </div>
+  <div class="dest-grid">
+
+    <div class="dest-card">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Dubai%20Visa%20New_294/burj-alrab.jpg" alt="Dubai">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">UAE</span>
+        <div class="dest-city">Dubai</div>
+        <div class="dest-meta">
+          <span class="dest-nights">100+ Activities</span>
+          <span class="dest-price">From AED 49</span>
+        </div>
+        <a href="#" class="dest-cta">Explore</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/City-Images/23726/singapore-city.png" alt="Singapore">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Singapore</span>
+        <div class="dest-city">Singapore</div>
+        <div class="dest-meta">
+          <span class="dest-nights">80+ Activities</span>
+          <span class="dest-price">From AED 77</span>
+        </div>
+        <a href="#" class="dest-cta">Explore</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/City-Images/16424/bangkok-city.jpg" alt="Bangkok">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Thailand</span>
+        <div class="dest-city">Bangkok</div>
+        <div class="dest-meta">
+          <span class="dest-nights">60+ Activities</span>
+          <span class="dest-price">From AED 55</span>
+        </div>
+        <a href="#" class="dest-cta">Explore</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/City-Images/20097/kuala-lumpur-city.png" alt="Kuala Lumpur">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Malaysia</span>
+        <div class="dest-city">Kuala Lumpur</div>
+        <div class="dest-meta">
+          <span class="dest-nights">50+ Activities</span>
+          <span class="dest-price">From AED 65</span>
+        </div>
+        <a href="#" class="dest-cta">Explore</a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── SECTION 2: THRILL & ADVENTURE ── -->
+  <div class="section-label">
+    <div class="sec-eyebrow">For the Bold</div>
+    <h2 class="sec-title">Thrill &amp; Adventure Picks</h2>
+    <p class="sec-subtitle">Heart-pounding activities for those who seek the extraordinary — ziplines, dunes, and freefall await.</p>
+  </div>
+  <div class="dest-grid">
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/227/800/500.jpg?hmac=WyaLV0E7oQY0bkM-l8I2pRPT76n4vMYMPpMHR9n8FWs" alt="Jebel Jais Zipline">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Adventure · Ras Al Khaimah</span>
+        <div class="dest-city">Jebel Jais Zipline</div>
+        <div class="dest-meta">
+          <span class="dest-nights">3–4 Hours</span>
+          <span class="dest-price">From AED 299</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Evening-Desert-Safari-508805/1759836916383_S.jpg" alt="Desert Buggy">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Adventure · Dubai</span>
+        <div class="dest-city">Desert Buggy Drive</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 199</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/667/800/500.jpg?hmac=e4ZHBcLJBrJJFzQEGv4y4nPLzqpYiokWv18_gX8Xjfs" alt="iFly Singapore">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Skydiving · Singapore</span>
+        <div class="dest-city">iFly Singapore</div>
+        <div class="dest-meta">
+          <span class="dest-nights">1–2 Hours</span>
+          <span class="dest-price">From AED 249</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/287/800/500.jpg?hmac=5PG_LJ-MxXnNcN8TF3vKknLbkD3EGWJkTR7B6GQKXFU" alt="AJ Hackett Sentosa">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Bungee · Singapore</span>
+        <div class="dest-city">AJ Hackett Sentosa</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 279</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── SECTION 3: FAMILY FUN ── -->
+  <div class="section-label">
+    <div class="sec-eyebrow">For the Whole Family</div>
+    <h2 class="sec-title">Family Fun Favorites</h2>
+    <p class="sec-subtitle">Create unforgettable memories together — world-famous theme parks and safari adventures for all ages.</p>
+  </div>
+  <div class="dest-grid">
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/137/800/500.jpg?hmac=8byP0ZtZBUQgHQCDDFMmCHhFuWkqeleMJ7iRBPuJl8k" alt="IMG Worlds">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Theme Park · Dubai</span>
+        <div class="dest-city">IMG Worlds of Adventure</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 225</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/111/800/500.jpg?hmac=3YUTPfFhFCcqYCVVvZCRFPCUxoHq_7VDh5VFQLj9Yd4" alt="Ferrari World">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Theme Park · Abu Dhabi</span>
+        <div class="dest-city">Ferrari World Abu Dhabi</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 295</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/152/800/500.jpg?hmac=_oTCwCOyIHPCl29pCT3Fy-0U5Yd2uiVzIV7QYWFqRE" alt="Universal Studios">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Theme Park · Singapore</span>
+        <div class="dest-city">Universal Studios Singapore</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 238</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/582/800/500.jpg?hmac=DaUFqBRoOGNZpX9iJH_1kz9gKmopjL3GJZ19dF4BhXo" alt="Safari World">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Safari · Bangkok</span>
+        <div class="dest-city">Safari World Bangkok</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 125</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- OFFER STRIP -->
+  <div class="offer-strip">
+    <div>
+      <div class="offer-eyebrow">Limited Time Offer</div>
+      <div class="offer-title">Book Activities &amp; Get Up to 20% OFF</div>
+      <div class="offer-sub">Valid on all activities &nbsp;·&nbsp; Instant confirmation &nbsp;·&nbsp; No hidden charges</div>
+    </div>
+    <div class="offer-code-block">
+      <div class="offer-code-label">Use Code</div>
+      <div class="offer-code">RAYNOW</div>
+    </div>
+  </div>
+
+  <!-- ── SECTION 4: MUST-VISIT ICONS ── -->
+  <div class="section-label">
+    <div class="sec-eyebrow">Bucket List</div>
+    <h2 class="sec-title">Must-Visit Icons</h2>
+    <p class="sec-subtitle">The world's most iconic landmarks — experiences you'll talk about for years to come.</p>
+  </div>
+  <div class="dest-grid">
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/218/800/500.jpg?hmac=7Fn5_JjEcikUbP8gCpDWmGmEZWM9I_o8wQ9FMTw7XMU" alt="Burj Khalifa">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Iconic · Dubai</span>
+        <div class="dest-city">Burj Khalifa At The Top</div>
+        <div class="dest-meta">
+          <span class="dest-nights">1–2 Hours</span>
+          <span class="dest-price">From AED 149</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/338/800/500.jpg?hmac=q4XdYgRl6sNcQOvT3GDJfQWzRq9j5Xo0Yq1tHTFpBo" alt="Museum of the Future">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Iconic · Dubai</span>
+        <div class="dest-city">Museum of the Future</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 149</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/28/800/500.jpg?hmac=bkUTMNRJX1W9FGxzVs6kX-GOD9l7LRmLkFHRFzb2e8I" alt="Gardens by the Bay">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Iconic · Singapore</span>
+        <div class="dest-city">Gardens by the Bay</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 77</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/417/800/500.jpg?hmac=NvqwZkbV4I-b-rWVjCyIBqQPKvBo9x9I_3WJaBkFVRk" alt="Marina Bay Sands">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Iconic · Singapore</span>
+        <div class="dest-city">Marina Bay Sands Sky Park</div>
+        <div class="dest-meta">
+          <span class="dest-nights">1–2 Hours</span>
+          <span class="dest-price">From AED 77</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── SECTION 5: CRUISES, WATERPARKS & ISLANDS ── -->
+  <div class="section-label">
+    <div class="sec-eyebrow">On the Water</div>
+    <h2 class="sec-title">Cruises, Waterparks &amp; Islands</h2>
+    <p class="sec-subtitle">Set sail, make a splash, or island-hop your way to paradise — aquatic adventures await.</p>
+  </div>
+  <div class="dest-grid">
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/429/800/500.jpg?hmac=hhEbFwq65TA9yB9Vu3dJI8HgEOPAJkE3Dp5P4M9Io1Y" alt="Dhow Cruise">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Cruise · Dubai</span>
+        <div class="dest-city">Dhow Cruise Dinner — Marina</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 99</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/534/800/500.jpg?hmac=WG4eAY4e-P_sM5lZ6O-GGvBbcgWi5MbSyEPqYiTHe5A" alt="Adventure Cove">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Waterpark · Singapore</span>
+        <div class="dest-city">Adventure Cove Water Park</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 120</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/473/800/500.jpg?hmac=9gXiJcSJXm4g7dq9vq_E_yH0aHl7KwMpXfF9i8jNVY8" alt="Phi Phi Island">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Island · Thailand</span>
+        <div class="dest-city">Phi Phi Island Speedboat</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 189</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/485/800/500.jpg?hmac=5K1MqN7d6JzT8XSrM3T5xkqTLbO3FJ8m4o1jHPu0iBQ" alt="James Bond Island">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Island · Thailand</span>
+        <div class="dest-city">James Bond Island Speedboat</div>
+        <div class="dest-meta">
+          <span class="dest-nights">Full Day</span>
+          <span class="dest-price">From AED 159</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── SECTION 6: WILDLIFE WONDERS ── -->
+  <div class="section-label">
+    <div class="sec-eyebrow">Nature &amp; Wildlife</div>
+    <h2 class="sec-title">Wildlife Wonders</h2>
+    <p class="sec-subtitle">Get up close with nature's most extraordinary creatures — aquariums, safaris, and wildlife sanctuaries.</p>
+  </div>
+  <div class="dest-grid">
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/396/800/500.jpg?hmac=M5Gi0C8Sly1uBRv0L07Nwy1kgBuSm_3aZ4kCRVv5Yag" alt="Dubai Aquarium">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Aquarium · Dubai</span>
+        <div class="dest-city">Dubai Aquarium &amp; Underwater Zoo</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 135</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/433/800/500.jpg?hmac=a29Y2m_Wbk0aGe83Pw4VdINE2vVRbxAstlRwPFfJpEA" alt="National Aquarium Abu Dhabi">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Aquarium · Abu Dhabi</span>
+        <div class="dest-city">National Aquarium Abu Dhabi</div>
+        <div class="dest-meta">
+          <span class="dest-nights">2–3 Hours</span>
+          <span class="dest-price">From AED 159</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/593/800/500.jpg?hmac=cPp3o2C5pFblCLzRGiRsUhbQVb9LX3-0Zt3kE5r-CvU" alt="Night Safari">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Safari · Singapore</span>
+        <div class="dest-city">Night Safari Singapore</div>
+        <div class="dest-meta">
+          <span class="dest-nights">3–4 Hours</span>
+          <span class="dest-price">From AED 153</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+    <div class="dest-card">
+      <img src="https://fastly.picsum.photos/id/582/800/500.jpg?hmac=DaUFqBRoOGNZpX9iJH_1kz9gKmopjL3GJZ19dF4BhXo" alt="Tiger Kingdom">
+      <div class="dest-overlay"></div>
+      <div class="dest-content">
+        <span class="dest-country">Wildlife · Phuket</span>
+        <div class="dest-city">Phuket Tiger Kingdom</div>
+        <div class="dest-meta">
+          <span class="dest-nights">1–2 Hours</span>
+          <span class="dest-price">From AED 55</span>
+        </div>
+        <a href="#" class="dest-cta">Book Now</a>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- PERKS STRIP -->
+  <div class="perks-strip">
+    <div class="perk"><span class="perk-icon">⚡</span><span class="perk-text">Instant Confirmation</span></div>
+    <div class="perk-div"></div>
+    <div class="perk"><span class="perk-icon">🎟️</span><span class="perk-text">Skip the Queue</span></div>
+    <div class="perk-div"></div>
+    <div class="perk"><span class="perk-icon">💰</span><span class="perk-text">Best Price</span></div>
+    <div class="perk-div"></div>
+    <div class="perk"><span class="perk-icon">🛡️</span><span class="perk-text">Secure Booking</span></div>
+  </div>
+
+  <!-- ── YOUR JOURNEY, OUR COMMITMENT ── -->
+  <div class="commit-wrap" style="padding:44px 48px 36px; background:#ffffff; border-top:1px solid #F0EDE8;">
+    <div style="font-family:'Inter',sans-serif; font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#1A1A1A; font-weight:600; margin-bottom:8px; text-align:center;">Our Promise</div>
+    <div style="font-family:'Cormorant Garamond',serif; font-size:30px; font-weight:400; color:#1A1A1A; text-align:center; margin-bottom:8px; line-height:1.2;">Your Journey, Our Commitment</div>
+    <div style="font-family:'Inter',sans-serif; font-size:13px; color:#AAAAAA; text-align:center; line-height:1.65; margin-bottom:30px; max-width:400px; margin-left:auto; margin-right:auto;">From booking to the experience, we're here to make every step smooth, safe, and memorable.</div>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td class="commit-cell" width="33.33%" style="padding:0 8px 0 0; vertical-align:top;">
+          <div style="border:1px solid #EEEAE4; border-radius:4px; padding:22px 18px; background:#FAFAF8;">
+            <div style="width:48px; height:48px; background:#FFF8E6; border-radius:8px; font-size:22px; line-height:48px; text-align:center; margin-bottom:14px;">💰</div>
+            <div style="font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#1A1A1A; margin-bottom:8px; line-height:1.3;">Best Price Guarantee</div>
+            <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; line-height:1.7;">Find a lower price? We'll refund 110% of the difference. Our price match guarantee ensures you always get the best deal.</div>
+          </div>
+        </td>
+        <td class="commit-cell" width="33.33%" style="padding:0 4px; vertical-align:top;">
+          <div style="border:1px solid #EEEAE4; border-radius:4px; padding:22px 18px; background:#FAFAF8;">
+            <div style="width:48px; height:48px; background:#EEF7F1; border-radius:8px; font-size:22px; line-height:48px; text-align:center; margin-bottom:14px;">🔒</div>
+            <div style="font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#1A1A1A; margin-bottom:8px; line-height:1.3;">Secure &amp; Safe Booking</div>
+            <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; line-height:1.7;">Your data is protected with 256-bit SSL encryption. We never share your personal information with third parties.</div>
+          </div>
+        </td>
+        <td class="commit-cell" width="33.33%" style="padding:0 0 0 8px; vertical-align:top;">
+          <div style="border:1px solid #EEEAE4; border-radius:4px; padding:22px 18px; background:#FAFAF8;">
+            <div style="width:48px; height:48px; background:#FFF1EB; border-radius:8px; font-size:22px; line-height:48px; text-align:center; margin-bottom:14px;">⚡</div>
+            <div style="font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#1A1A1A; margin-bottom:8px; line-height:1.3;">Instant Confirmation</div>
+            <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; line-height:1.7;">Get your tickets delivered instantly via email. No waiting, no hassle — just book and go!</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- SOCIAL PROOF — VERIFIED BY PLATFORMS -->
+  <div style="background:#F4F1EC; padding:36px 40px 40px; border-top:1px solid #E8E4DE; border-bottom:1px solid #E8E4DE;">
+    <div style="font-family:'Inter',sans-serif; font-size:10px; letter-spacing:2.5px; text-transform:uppercase; color:#AAAAAA; font-weight:600; margin-bottom:8px; text-align:center;">Don't just take our word for it</div>
+    <div style="font-family:'Cormorant Garamond',serif; font-size:28px; font-weight:400; color:#1A1A1A; text-align:center; margin-bottom:8px; line-height:1.2;">Verified by the Platforms You Already Trust</div>
+    <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; text-align:center; line-height:1.65; margin-bottom:26px; max-width:420px; margin-left:auto; margin-right:auto;">Our ratings are earned — not curated. Check us on any major review platform and see what real travellers say.</div>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="50%" style="padding:0 5px 8px 0; vertical-align:top;">
+          <div style="background:#FFFDF4; border:1px solid #F0E5C0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#1A1A1A; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Rayna Tours</div>
+            <div style="font-size:15px; color:#F5A623; margin-bottom:6px; line-height:1;">★★★★<span style="color:#ddd;">★</span></div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.5</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">3,450 Reviews</div>
+          </div>
+        </td>
+        <td width="50%" style="padding:0 0 8px 5px; vertical-align:top;">
+          <div style="background:#F4FCF8; border:1px solid #B8E8D0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#00B67A; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Trustpilot</div>
+            <div style="font-size:15px; color:#00B67A; margin-bottom:6px; line-height:1;">★★★★<span style="color:#ddd;">★</span></div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.3</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">52,641 Reviews</div>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td width="50%" style="padding:0 5px 0 0; vertical-align:top;">
+          <div style="background:#F4FCF8; border:1px solid #B8E8D0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#00AA6C; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Tripadvisor</div>
+            <div style="font-size:15px; color:#00AA6C; margin-bottom:6px; line-height:1;">●●●●◐</div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.6</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">12,861 Reviews</div>
+          </div>
+        </td>
+        <td width="50%" style="padding:0 0 0 5px; vertical-align:top;">
+          <div style="background:#FFF8F6; border:1px solid #F5CFC8; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#4285F4; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Google</div>
+            <div style="font-size:15px; color:#FBBC04; margin-bottom:6px; line-height:1;">★★★★★</div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.4</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">1,517 Reviews</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- FINAL CTA -->
+  <div class="final-cta">
+    <div class="final-cta-eye">Your Next Adventure Is One Click Away</div>
+    <h2 class="final-cta-title">Book Your Experience Today</h2>
+    <p class="final-cta-sub">Use code <strong>RAYNOW</strong> at checkout and save up to 20% on all activities — instant confirmation, no hidden fees.</p>
+    <a href="#" class="btn-dark-cta">Browse All Activities</a>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-links">
+      <a href="#">Activities</a>
+      <a href="#">Holidays</a>
+      <a href="#">Visa</a>
+      <a href="#">Tours</a>
+      <a href="#">About Us</a>
+      <a href="#">Contact</a>
+    </div>
+    <div class="footer-contact">
+      📍 Abu Dhabi &amp; Dubai, UAE &nbsp;|&nbsp;
+      📞 <a href="tel:+97125503559">+971 2 550 3559</a> &nbsp;|&nbsp;
+      ✉ <a href="mailto:info@raynatours.com">info@raynatours.com</a>
+    </div>
+    <div class="footer-social">
+      <a href="#" class="soc-btn">f</a>
+      <a href="#" class="soc-btn">in</a>
+      <a href="#" class="soc-btn">tw</a>
+      <a href="#" class="soc-btn">ig</a>
+    </div>
+    <div class="footer-bottom">
+      © 2025 Rayna Tours. All rights reserved.<br>
+      <a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a> · <a href="#">Unsubscribe</a>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -231,6 +231,145 @@ export default class UnifiedContactSync {
   }
 
   /**
+   * Add new contacts from GTM/GA4 events that don't exist in unified_contacts
+   * Checks both email and phone from event payloads.
+   */
+  static async syncNewGTMContacts() {
+    let totalByEmail = 0;
+    let totalByPhone = 0;
+
+    // From GTM events — email in raw_payload->>'emailId'
+    try {
+      const { rowCount } = await query(`
+        INSERT INTO unified_contacts (email_key, email, phone, phone_key, name, country, city, sources, first_seen_at)
+        SELECT DISTINCT ON (ek)
+          ek, email, phone,
+          CASE WHEN phone IS NOT NULL AND LENGTH(REGEXP_REPLACE(phone,'[^0-9]','','g')) >= 7
+               AND RIGHT(REGEXP_REPLACE(phone,'[^0-9]','','g'), 10) !~ '^0+$'
+               THEN RIGHT(REGEXP_REPLACE(phone,'[^0-9]','','g'), 10) END,
+          name, country, city, 'gtm', first_seen
+        FROM (
+          SELECT
+            LOWER(TRIM(ge.raw_payload->>'emailId')) as ek,
+            ge.raw_payload->>'emailId' as email,
+            ge.raw_payload->>'contactNumber' as phone,
+            ge.raw_payload->>'name' as name,
+            ge.country, ge.city,
+            MIN(ge.created_at) as first_seen
+          FROM gtm_events ge
+          WHERE ge.unified_id IS NULL
+            AND ge.raw_payload->>'emailId' IS NOT NULL
+            AND TRIM(ge.raw_payload->>'emailId') != ''
+          GROUP BY LOWER(TRIM(ge.raw_payload->>'emailId')), ge.raw_payload->>'emailId',
+            ge.raw_payload->>'contactNumber', ge.raw_payload->>'name', ge.country, ge.city
+        ) sub
+        WHERE ek NOT IN (SELECT email_key FROM unified_contacts WHERE email_key IS NOT NULL)
+        ORDER BY ek, name IS NOT NULL DESC
+        ON CONFLICT DO NOTHING
+      `);
+      totalByEmail += rowCount;
+      if (rowCount > 0) console.log(`[UnifiedSync] New GTM contacts by email: ${rowCount}`);
+    } catch (err) {
+      console.error(`[UnifiedSync] GTM email contacts failed:`, err.message);
+    }
+
+    // From GTM events — phone in raw_payload->>'contactNumber' (no email)
+    try {
+      const { rowCount } = await query(`
+        INSERT INTO unified_contacts (phone_key, phone, name, country, city, sources, first_seen_at)
+        SELECT DISTINCT ON (pk)
+          pk, phone, name, country, city, 'gtm', first_seen
+        FROM (
+          SELECT
+            RIGHT(REGEXP_REPLACE(ge.raw_payload->>'contactNumber','[^0-9]','','g'), 10) as pk,
+            ge.raw_payload->>'contactNumber' as phone,
+            ge.raw_payload->>'name' as name,
+            ge.country, ge.city,
+            MIN(ge.created_at) as first_seen
+          FROM gtm_events ge
+          WHERE ge.unified_id IS NULL
+            AND (ge.raw_payload->>'emailId' IS NULL OR TRIM(ge.raw_payload->>'emailId') = '')
+            AND ge.raw_payload->>'contactNumber' IS NOT NULL
+            AND LENGTH(REGEXP_REPLACE(ge.raw_payload->>'contactNumber','[^0-9]','','g')) >= 7
+          GROUP BY RIGHT(REGEXP_REPLACE(ge.raw_payload->>'contactNumber','[^0-9]','','g'), 10),
+            ge.raw_payload->>'contactNumber', ge.raw_payload->>'name', ge.country, ge.city
+        ) sub
+        WHERE pk NOT IN (SELECT phone_key FROM unified_contacts WHERE phone_key IS NOT NULL)
+          AND pk !~ '^0+$'
+        ORDER BY pk, name IS NOT NULL DESC
+        ON CONFLICT DO NOTHING
+      `);
+      totalByPhone += rowCount;
+      if (rowCount > 0) console.log(`[UnifiedSync] New GTM contacts by phone: ${rowCount}`);
+    } catch (err) {
+      console.error(`[UnifiedSync] GTM phone contacts failed:`, err.message);
+    }
+
+    // From GA4 events — email in email_any
+    try {
+      const { rowCount } = await query(`
+        INSERT INTO unified_contacts (email_key, email, phone, phone_key, sources, first_seen_at)
+        SELECT DISTINCT ON (ek)
+          ek, email, phone,
+          CASE WHEN phone IS NOT NULL AND LENGTH(REGEXP_REPLACE(phone,'[^0-9]','','g')) >= 7
+               AND RIGHT(REGEXP_REPLACE(phone,'[^0-9]','','g'), 10) !~ '^0+$'
+               THEN RIGHT(REGEXP_REPLACE(phone,'[^0-9]','','g'), 10) END,
+          'ga4', first_seen
+        FROM (
+          SELECT
+            LOWER(TRIM(ge.email_any)) as ek,
+            ge.email_any as email,
+            ge.contact_number_any as phone,
+            MIN(ge.event_ts) as first_seen
+          FROM ga4_events ge
+          WHERE ge.unified_id IS NULL
+            AND ge.email_any IS NOT NULL AND TRIM(ge.email_any) != ''
+          GROUP BY LOWER(TRIM(ge.email_any)), ge.email_any, ge.contact_number_any
+        ) sub
+        WHERE ek NOT IN (SELECT email_key FROM unified_contacts WHERE email_key IS NOT NULL)
+        ORDER BY ek
+        ON CONFLICT DO NOTHING
+      `);
+      totalByEmail += rowCount;
+      if (rowCount > 0) console.log(`[UnifiedSync] New GA4 contacts by email: ${rowCount}`);
+    } catch (err) {
+      console.error(`[UnifiedSync] GA4 email contacts failed:`, err.message);
+    }
+
+    // From GA4 events — phone only (no email)
+    try {
+      const { rowCount } = await query(`
+        INSERT INTO unified_contacts (phone_key, phone, sources, first_seen_at)
+        SELECT DISTINCT ON (pk)
+          pk, phone, 'ga4', first_seen
+        FROM (
+          SELECT
+            RIGHT(REGEXP_REPLACE(ge.contact_number_any,'[^0-9]','','g'), 10) as pk,
+            ge.contact_number_any as phone,
+            MIN(ge.event_ts) as first_seen
+          FROM ga4_events ge
+          WHERE ge.unified_id IS NULL
+            AND (ge.email_any IS NULL OR TRIM(ge.email_any) = '')
+            AND ge.contact_number_any IS NOT NULL
+            AND LENGTH(REGEXP_REPLACE(ge.contact_number_any,'[^0-9]','','g')) >= 7
+          GROUP BY RIGHT(REGEXP_REPLACE(ge.contact_number_any,'[^0-9]','','g'), 10), ge.contact_number_any
+        ) sub
+        WHERE pk NOT IN (SELECT phone_key FROM unified_contacts WHERE phone_key IS NOT NULL)
+          AND pk !~ '^0+$'
+        ORDER BY pk
+        ON CONFLICT DO NOTHING
+      `);
+      totalByPhone += rowCount;
+      if (rowCount > 0) console.log(`[UnifiedSync] New GA4 contacts by phone: ${rowCount}`);
+    } catch (err) {
+      console.error(`[UnifiedSync] GA4 phone contacts failed:`, err.message);
+    }
+
+    console.log(`[UnifiedSync] Total new GTM/GA4 contacts: ${totalByEmail} by email, ${totalByPhone} by phone`);
+    return { byEmail: totalByEmail, byPhone: totalByPhone };
+  }
+
+  /**
    * Sync unsubscribe flags
    */
   static async syncUnsubscribed() {
@@ -497,6 +636,83 @@ export default class UnifiedContactSync {
   }
 
   /**
+   * Compute occasion segments — auto-enter users 14 days before their local holiday, auto-exit after
+   */
+  static async computeOccasions() {
+    console.log('[UnifiedSync] Computing occasion segments...');
+
+    // Step 1: Auto-enter — find upcoming holidays (within entry_days) and assign matching users
+    const { rowCount: entered } = await query(`
+      INSERT INTO user_occasions (unified_id, holiday_id)
+      SELECT uc.unified_id, hc.id
+      FROM unified_contacts uc
+      JOIN holidays_calendar hc ON (
+        uc.country = hc.country
+        OR (uc.is_indian = true AND hc.country = 'India')
+        OR (uc.geography = 'LOCAL' AND hc.country = 'United Arab Emirates')
+      )
+      WHERE hc.is_active = true
+        AND hc.holiday_date >= CURRENT_DATE
+        AND hc.holiday_date <= CURRENT_DATE + (hc.entry_days || ' days')::interval
+        AND NOT EXISTS (
+          SELECT 1 FROM user_occasions uo
+          WHERE uo.unified_id = uc.unified_id AND uo.holiday_id = hc.id
+        )
+      ON CONFLICT (unified_id, holiday_id) DO NOTHING
+    `);
+    if (entered > 0) console.log(`[UnifiedSync] Occasion entries: ${entered}`);
+
+    // Step 2: Auto-exit — mark occasions where the holiday has passed
+    const { rowCount: exited } = await query(`
+      UPDATE user_occasions uo SET
+        status = 'exited',
+        exited_at = NOW()
+      FROM holidays_calendar hc
+      WHERE uo.holiday_id = hc.id
+        AND uo.status = 'active'
+        AND hc.holiday_date < CURRENT_DATE
+    `);
+    if (exited > 0) console.log(`[UnifiedSync] Occasion exits: ${exited}`);
+
+    // Step 3: Update unified_contacts with active occasion info
+    // Set current_occasion on contacts who have an active occasion
+    await query(`
+      UPDATE unified_contacts uc SET
+        current_occasion = sub.holiday_name,
+        occasion_date = sub.holiday_date,
+        occasion_offer_tag = sub.offer_tag
+      FROM (
+        SELECT DISTINCT ON (uo.unified_id)
+          uo.unified_id, hc.holiday_name, hc.holiday_date, hc.offer_tag
+        FROM user_occasions uo
+        JOIN holidays_calendar hc ON hc.id = uo.holiday_id
+        WHERE uo.status = 'active'
+        ORDER BY uo.unified_id, hc.holiday_date ASC
+      ) sub
+      WHERE uc.unified_id = sub.unified_id
+    `);
+
+    // Clear occasion for contacts with no active occasion
+    await query(`
+      UPDATE unified_contacts SET
+        current_occasion = NULL, occasion_date = NULL, occasion_offer_tag = NULL
+      WHERE current_occasion IS NOT NULL
+        AND unified_id NOT IN (
+          SELECT unified_id FROM user_occasions WHERE status = 'active'
+        )
+    `);
+
+    const { rows: [stats] } = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'active')::int as active,
+        COUNT(*) FILTER (WHERE status = 'exited')::int as exited
+      FROM user_occasions
+    `);
+    console.log(`[UnifiedSync] Occasions: ${stats.active} active, ${stats.exited} exited`);
+    return { entered, exited, active: stats.active };
+  }
+
+  /**
    * Run full incremental sync
    */
   static async run() {
@@ -511,12 +727,14 @@ export default class UnifiedContactSync {
     const newRayna = await this.syncNewRaynaContacts();
     const unsub = await this.syncUnsubscribed();
     const ga4gtm = await this.syncGA4GTM();
+    const newGTM = await this.syncNewGTMContacts();
     const relinked = await this.relinkRawTables();
     const segments = await this.computeSegments();
+    const occasions = await this.computeOccasions();
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[UnifiedSync] Done in ${duration}s`);
 
-    return { chatContacts, contacts, chats, travel, rayna, newRayna, unsub, ga4gtm, relinked, segments, duration };
+    return { chatContacts, contacts, chats, travel, rayna, newRayna, unsub, ga4gtm, newGTM, relinked, segments, occasions, duration };
   }
 }

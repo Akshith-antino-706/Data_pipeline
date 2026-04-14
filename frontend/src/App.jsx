@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
 import { Component, Suspense, lazy, useState, useEffect, createContext, useContext, useCallback } from 'react';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import './App.css';
 
@@ -15,12 +15,29 @@ const DataPipeline = lazy(() => import('./pages/DataPipeline'));
 const DailyReport = lazy(() => import('./pages/DailyReport'));
 const UnifiedContacts = lazy(() => import('./pages/UnifiedContacts'));
 const CustomerSegmentation = lazy(() => import('./pages/CustomerSegmentation'));
+const SegmentActivity = lazy(() => import('./pages/SegmentActivity'));
+const SystemArchitecture = lazy(() => import('./pages/SystemArchitecture'));
 
 // Theme Context
 const ThemeContext = createContext();
+export function useTheme() { return useContext(ThemeContext); }
 
-export function useTheme() {
-  return useContext(ThemeContext);
+// Business Type Context (B2B / B2C global switcher)
+const BusinessTypeContext = createContext();
+export function useBusinessType() { return useContext(BusinessTypeContext); }
+
+function BusinessTypeProvider({ children }) {
+  const [businessType, setBusinessType] = useState(() => {
+    try { return localStorage.getItem('business-type') || 'B2C'; } catch { return 'B2C'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('business-type', businessType); } catch {}
+  }, [businessType]);
+  return (
+    <BusinessTypeContext.Provider value={{ businessType, setBusinessType }}>
+      {children}
+    </BusinessTypeContext.Provider>
+  );
 }
 
 function ThemeProvider({ children }) {
@@ -62,6 +79,7 @@ function ThemeProvider({ children }) {
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/segmentation', icon: Target, label: 'Segmentation' },
+  { to: '/segment-activity', icon: Activity, label: 'Segment Activity' },
   { to: '/contacts', icon: UserCheck, label: 'Contacts' },
   { to: '/journeys', icon: GitBranch, label: 'Journeys' },
   { to: '/campaigns', icon: Megaphone, label: 'Campaigns' },
@@ -70,6 +88,7 @@ const NAV = [
   { to: '/gtm', icon: Code, label: 'GTM & BigQuery' },
   { to: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
   { to: '/daily-report', icon: Download, label: 'Daily Report' },
+  { to: '/system', icon: FileText, label: 'System Docs' },
 ];
 
 const pageTransition = {
@@ -135,6 +154,7 @@ function AnimatedRoutes() {
         <Routes location={location}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/segmentation" element={<CustomerSegmentation />} />
+          <Route path="/segment-activity" element={<SegmentActivity />} />
           <Route path="/contacts" element={<UnifiedContacts />} />
           <Route path="/journeys" element={<Journeys />} />
           <Route path="/content" element={<Content />} />
@@ -143,10 +163,36 @@ function AnimatedRoutes() {
           <Route path="/gtm" element={<GTMIntegration />} />
           <Route path="/data-pipeline" element={<DataPipeline />} />
           <Route path="/daily-report" element={<DailyReport />} />
+          <Route path="/system" element={<SystemArchitecture />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+function BusinessTypeSwitcher() {
+  const { businessType, setBusinessType } = useBusinessType();
+  return (
+    <div style={{ padding: '8px 16px', marginBottom: 4 }}>
+      <div style={{ display: 'flex', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
+        {['B2C', 'B2B'].map(type => (
+          <button
+            key={type}
+            onClick={() => setBusinessType(type)}
+            style={{
+              flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
+              background: businessType === type ? (type === 'B2C' ? 'var(--green)' : 'var(--primary)') : 'transparent',
+              color: businessType === type ? '#fff' : 'var(--text-secondary)',
+              transition: 'all 0.2s',
+              letterSpacing: '0.05em',
+            }}
+          >
+            {type}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -188,6 +234,7 @@ function AppShell() {
             </NavLink>
           ))}
         </nav>
+        <BusinessTypeSwitcher />
         <ThemeToggle />
       </motion.aside>
 
@@ -205,9 +252,11 @@ function AppShell() {
 export default function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <AppShell />
-      </BrowserRouter>
+      <BusinessTypeProvider>
+        <BrowserRouter>
+          <AppShell />
+        </BrowserRouter>
+      </BusinessTypeProvider>
     </ThemeProvider>
   );
 }

@@ -3,7 +3,7 @@ import pool from '../config/database.js';
 export default class UnifiedContactService {
 
   static async getAll({ page = 1, limit = 50, search, sortBy, sortDir, source, country,
-    contactType, bookingStatus, productTier, geography, hasChats, hasBookings, waStatus, emailStatus } = {}) {
+    contactType, bookingStatus, productTier, geography, chatDepartment, hasChats, hasBookings, waStatus, emailStatus } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -43,6 +43,11 @@ export default class UnifiedContactService {
       conditions.push(`geography = $${idx}`);
       idx++;
     }
+    if (chatDepartment) {
+      params.push(`%${chatDepartment}%`);
+      conditions.push(`chat_departments LIKE $${idx}`);
+      idx++;
+    }
     if (hasChats === 'yes') conditions.push(`total_chats > 0`);
     else if (hasChats === 'no') conditions.push(`(total_chats = 0 OR total_chats IS NULL)`);
     if (hasBookings === 'yes') conditions.push(`total_travel_bookings > 0`);
@@ -67,7 +72,7 @@ export default class UnifiedContactService {
         `SELECT unified_id, phone_key, email_key, name, email, phone, company_name, city, country, contact_type,
                 total_chats, total_travel_bookings,
                 total_tour_bookings, total_hotel_bookings, total_visa_bookings, total_flight_bookings,
-                total_booking_revenue, sources,
+                total_booking_revenue, sources, chat_departments,
                 booking_status, product_tier, geography, is_indian, segment_label,
                 wa_unsubscribed, email_unsubscribed,
                 last_seen_at, created_at
@@ -171,7 +176,10 @@ export default class UnifiedContactService {
   /**
    * Segmentation dashboard: 3-step decision tree overview
    */
-  static async getSegmentationTree() {
+  static async getSegmentationTree({ businessType } = {}) {
+    // Business type filter
+    const btFilter = businessType ? `AND (contact_type = '${businessType}' OR chat_departments LIKE '%${businessType}%')` : '';
+
     // Step 1: Booking status counts
     const { rows: statusCounts } = await pool.query(`
       SELECT booking_status, COUNT(*)::int AS count,
@@ -179,7 +187,7 @@ export default class UnifiedContactService {
         COUNT(*) FILTER (WHERE total_chats > 0)::int AS with_chats,
         COUNT(*) FILTER (WHERE is_indian)::int AS indian_count
       FROM unified_contacts
-      WHERE booking_status IS NOT NULL
+      WHERE booking_status IS NOT NULL ${btFilter}
       GROUP BY booking_status
       ORDER BY CASE booking_status
         WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2 WHEN 'ACTIVE_ENQUIRY' THEN 3
@@ -199,7 +207,7 @@ export default class UnifiedContactService {
         COALESCE(SUM(total_visa_bookings), 0)::int AS total_visas,
         COALESCE(SUM(total_flight_bookings), 0)::int AS total_flights
       FROM unified_contacts
-      WHERE booking_status IS NOT NULL
+      WHERE booking_status IS NOT NULL ${btFilter}
       GROUP BY booking_status, product_tier, geography
       ORDER BY booking_status, product_tier NULLS LAST, geography NULLS LAST
     `);
@@ -211,6 +219,7 @@ export default class UnifiedContactService {
         COUNT(DISTINCT segment_label) FILTER (WHERE segment_label IS NOT NULL)::int AS segment_count,
         COALESCE(SUM(total_booking_revenue), 0)::numeric AS total_revenue
       FROM unified_contacts
+      WHERE 1=1 ${btFilter}
     `);
 
     return { totals, statusCounts, breakdown };
@@ -219,6 +228,111 @@ export default class UnifiedContactService {
   /**
    * Get customers for a specific segment combination
    */
+  /**
+   * Snapshot daily segment counts into segment_daily_log
+   * Called by cron after computeSegments() completes
+   */
+  static async snapshotDailySegments() {
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Current segment counts
+    const { rows: segments } = await pool.query(`
+      SELECT booking_status as segment_label, COUNT(*)::int as total_count,
+        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
+      FROM unified_contacts
+      WHERE booking_status IS NOT NULL
+      GROUP BY booking_status
+    `);
+
+    // Journey entries/exits/conversions today
+    const { rows: journeyStats } = await pool.query(`
+      SELECT
+        jf.nodes->0->'data'->>'segmentLabel' as segment_label,
+        COUNT(*) FILTER (WHERE je.entered_at::date = $1)::int as entered,
+        COUNT(*) FILTER (WHERE je.completed_at::date = $1 AND je.status = 'exited')::int as exited,
+        COUNT(*) FILTER (WHERE je.converted_at::date = $1)::int as converted,
+        COUNT(*) FILTER (WHERE je.status = 'active')::int as journey_active,
+        COUNT(*) FILTER (WHERE je.status = 'completed' OR je.status = 'converted')::int as journey_completed
+      FROM journey_entries je
+      JOIN journey_flows jf ON jf.journey_id = je.journey_id
+      GROUP BY jf.nodes->0->'data'->>'segmentLabel'
+    `, [today]);
+
+    // Messages sent today
+    const { rows: msgStats } = await pool.query(`
+      SELECT segment_label,
+        SUM(CASE WHEN channel = 'email' THEN sent_count ELSE 0 END)::int as emails_sent,
+        SUM(CASE WHEN channel = 'whatsapp' THEN sent_count ELSE 0 END)::int as whatsapp_sent,
+        SUM(CASE WHEN channel = 'push' THEN sent_count ELSE 0 END)::int as push_sent
+      FROM campaigns
+      GROUP BY segment_label
+    `);
+
+    const journeyMap = Object.fromEntries(journeyStats.map(r => [r.segment_label, r]));
+    const msgMap = Object.fromEntries(msgStats.map(r => [r.segment_label, r]));
+
+    for (const seg of segments) {
+      const js = journeyMap[seg.segment_label] || {};
+      const ms = msgMap[seg.segment_label] || {};
+      const emailsSent = ms.emails_sent || 0;
+      const whatsappSent = ms.whatsapp_sent || 0;
+      const pushSent = ms.push_sent || 0;
+
+      await pool.query(`
+        INSERT INTO segment_daily_log (log_date, segment_label, total_count, entered, exited, converted,
+          emails_sent, whatsapp_sent, push_sent, total_reached, journey_active, journey_completed, revenue)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (log_date, segment_label) DO UPDATE SET
+          total_count = EXCLUDED.total_count, entered = EXCLUDED.entered, exited = EXCLUDED.exited,
+          converted = EXCLUDED.converted, emails_sent = EXCLUDED.emails_sent, whatsapp_sent = EXCLUDED.whatsapp_sent,
+          push_sent = EXCLUDED.push_sent, total_reached = EXCLUDED.total_reached,
+          journey_active = EXCLUDED.journey_active, journey_completed = EXCLUDED.journey_completed,
+          revenue = EXCLUDED.revenue
+      `, [today, seg.segment_label, seg.total_count,
+          js.entered || 0, js.exited || 0, js.converted || 0,
+          emailsSent, whatsappSent, pushSent,
+          emailsSent + whatsappSent + pushSent,
+          js.journey_active || 0, js.journey_completed || 0,
+          seg.revenue]);
+    }
+
+    console.log(`[SegmentLog] Snapshot for ${today}: ${segments.length} segments logged`);
+    return { date: today, segments: segments.length };
+  }
+
+  /**
+   * Get segment daily activity log
+   */
+  static async getSegmentDailyLog({ days = 30, segment } = {}) {
+    const conditions = ['log_date >= CURRENT_DATE - $1::int'];
+    const params = [days];
+
+    if (segment) {
+      params.push(segment);
+      conditions.push(`segment_label = $${params.length}`);
+    }
+
+    const { rows } = await pool.query(`
+      SELECT * FROM segment_daily_log
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY log_date DESC, segment_label
+    `, params);
+
+    // Also get today's live counts if no snapshot yet
+    const { rows: liveToday } = await pool.query(`
+      SELECT booking_status as segment_label, COUNT(*)::int as total_count,
+        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
+      FROM unified_contacts
+      WHERE booking_status IS NOT NULL
+      GROUP BY booking_status
+      ORDER BY CASE booking_status
+        WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2 WHEN 'ACTIVE_ENQUIRY' THEN 3
+        WHEN 'PAST_BOOKING' THEN 4 WHEN 'PAST_ENQUIRY' THEN 5 WHEN 'PROSPECT' THEN 6 END
+    `);
+
+    return { logs: rows, liveToday };
+  }
+
   static async getSegmentCustomers({ bookingStatus, productTier, geography, page = 1, limit = 25, search } = {}) {
     const conditions = [];
     const params = [];

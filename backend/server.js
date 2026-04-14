@@ -43,7 +43,7 @@ app.use(helmet({
   contentSecurityPolicy: false,  // API server, not serving HTML
 }));
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com,https://raynadata.netlify.app,https://qh6hjtm8-3001.inc1.devtunnels.ms').split(',').map(s => s.trim());
 app.use(cors({
   origin: (origin, cb) => {
     // Allow requests with no origin (curl, server-to-server, mobile)
@@ -411,6 +411,10 @@ cron.schedule('30 23 * * *', async () => {
   try {
     const result = await UnifiedContactSync.run();
     console.log('[Unified Sync] Completed:', JSON.stringify(result));
+
+    // Snapshot daily segment counts after sync
+    const { default: UnifiedContactService } = await import('./src/services/UnifiedContactService.js');
+    await UnifiedContactService.snapshotDailySegments();
   } catch (err) {
     console.error('[Unified Sync] Failed:', err.message);
   }
@@ -460,6 +464,19 @@ cron.schedule('0 1 * * *', async () => {
   }
 });
 console.log('[Journey Engine] Cron scheduled: 0 1 * * * (5 AM Dubai daily)');
+
+// 6:00 AM Dubai — Product sync + affinity refresh
+import ProductAffinityService from './src/services/ProductAffinityService.js';
+cron.schedule('0 2 * * *', async () => {
+  console.log('[Product Affinity] Starting product sync + affinity refresh...');
+  try {
+    const result = await ProductAffinityService.runAll();
+    console.log('[Product Affinity] Done:', JSON.stringify(result));
+  } catch (err) {
+    console.error('[Product Affinity] Failed:', err.message);
+  }
+});
+console.log('[Product Affinity] Cron scheduled: 0 2 * * * (6 AM Dubai daily)');
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
 const HTTPS_PORT = 3443;

@@ -180,4 +180,36 @@ router.post('/generate-with-products', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /api/v2/content/html-templates — list all HTML email templates
+router.get('/html-templates', async (_req, res, next) => {
+  try {
+    const { default: pool } = await import('../config/database.js');
+    const { rows } = await pool.query(`
+      SELECT id, name, type, category, preview_text, length(html_body) as size_bytes,
+        array_length(placeholders, 1) as placeholder_count, placeholders, created_at
+      FROM email_html_templates ORDER BY id
+    `);
+    res.json({ success: true, data: rows });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v2/content/preview-html/:id — preview an email template with sample data
+router.get('/preview-html/:id', async (req, res, next) => {
+  try {
+    const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
+    const result = await EmailRenderer.renderPreview(parseInt(req.params.id));
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v2/content/render/:id — render template for a specific user
+router.post('/render/:id', async (req, res, next) => {
+  try {
+    const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
+    const { unifiedId, ...extraVars } = req.body;
+    const result = await EmailRenderer.render(parseInt(req.params.id), unifiedId, extraVars);
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+});
+
 export default router;

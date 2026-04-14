@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Visa Made Easy — Rayna Tours</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background-color: #F4F1EC;
+      font-family: 'Inter', sans-serif;
+      color: #1A1A1A;
+    }
+
+    .email-wrapper {
+      max-width: 640px;
+      margin: 40px auto;
+      background: #FFFFFF;
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 4px 40px rgba(0,0,0,0.08);
+    }
+
+    /* ── TOP BAR ── */
+    .top-bar {
+      background: #1A1A1A;
+      text-align: center;
+      padding: 12px 24px;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #C9A96E;
+      font-weight: 500;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      padding: 32px 48px 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #F0EDE8;
+    }
+
+    .logo {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 26px;
+      font-weight: 700;
+      color: #1A1A1A;
+      letter-spacing: 1px;
+    }
+
+    .logo span { color: #C9A96E; }
+
+    .header-nav {
+      display: flex;
+      gap: 24px;
+    }
+
+    .header-nav a {
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #888;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      position: relative;
+      height: 560px;
+      overflow: hidden;
+    }
+
+    .hero-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        to bottom,
+        rgba(10,18,40,0.10) 0%,
+        rgba(10,18,40,0.50) 50%,
+        rgba(10,18,40,0.88) 100%
+      );
+    }
+
+    .hero-content {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 40px 48px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #C9A96E;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 2px;
+      margin-bottom: 16px;
+    }
+
+    .hero-headline {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 50px;
+      font-weight: 300;
+      color: #FFFFFF;
+      line-height: 1.1;
+      margin-bottom: 12px;
+    }
+
+    .hero-headline strong { font-weight: 700; }
+
+    .hero-sub {
+      font-size: 14px;
+      color: rgba(255,255,255,0.78);
+      line-height: 1.65;
+      max-width: 420px;
+      margin-bottom: 28px;
+    }
+
+    .cta-primary {
+      display: inline-block;
+      background: #C9A96E;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 16px 36px;
+      border-radius: 2px;
+      text-decoration: none;
+    }
+
+    .cta-ghost {
+      display: inline-block;
+      border: 1px solid rgba(255,255,255,0.45);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 15px 28px;
+      border-radius: 2px;
+      text-decoration: none;
+      margin-left: 12px;
+    }
+
+    /* ── SECTIONS ── */
+    .section { padding: 48px 48px 0; }
+    .section-label {
+      font-size: 10px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #C9A96E;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 32px;
+      font-weight: 400;
+      color: #1A1A1A;
+      line-height: 1.2;
+      margin-bottom: 6px;
+    }
+
+    .section-sub {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    .divider { height: 1px; background: #F0EDE8; margin: 0 48px; }
+
+    /* ── ABROAD VISA CARDS (2×2 grid) ── */
+    .visa-grid-2x2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .visa-card {
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+      text-decoration: none;
+      display: block;
+    }
+
+    .visa-card-img {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.3s;
+    }
+
+    .visa-card-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        to bottom,
+        transparent 30%,
+        rgba(10,18,40,0.80) 100%
+      );
+    }
+
+    .visa-card-body {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 18px 20px;
+    }
+
+    .visa-card-flag {
+      font-size: 18px;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    .visa-card-country {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 22px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    .visa-card-tag {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #C9A96E;
+      margin-bottom: 10px;
+    }
+
+    .visa-card-btn {
+      display: inline-block;
+      background: #C9A96E;
+      color: #fff;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      border-radius: 2px;
+    }
+
+    /* ── EVISA CARDS (horizontal list) ── */
+    .evisa-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .evisa-card {
+      display: grid;
+      grid-template-columns: 140px 1fr auto;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid #EEEAE4;
+      background: #FAFAF8;
+      align-items: stretch;
+      text-decoration: none;
+    }
+
+    .evisa-img {
+      width: 140px;
+      height: 110px;
+      object-fit: cover;
+      display: block;
+    }
+
+    .evisa-body {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .evisa-tag {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #C9A96E;
+      margin-bottom: 5px;
+    }
+
+    .evisa-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 20px;
+      font-weight: 600;
+      color: #1A1A1A;
+      margin-bottom: 5px;
+    }
+
+    .evisa-meta {
+      font-size: 11px;
+      color: #999;
+      line-height: 1.5;
+    }
+
+    .evisa-right {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: center;
+      border-left: 1px solid #EEEAE4;
+      min-width: 110px;
+    }
+
+    .evisa-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #4CAF50;
+      background: #F0FFF0;
+      border: 1px solid #C8E6C9;
+      padding: 3px 8px;
+      border-radius: 20px;
+      margin-bottom: 10px;
+    }
+
+    .evisa-btn {
+      display: inline-block;
+      background: #1A1A1A;
+      color: #fff;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      border-radius: 2px;
+      white-space: nowrap;
+    }
+
+    /* ── PROCESS STEPS ── */
+    .process-strip {
+      background: #FAF8F5;
+      margin: 32px 48px 0;
+      border-radius: 4px;
+      padding: 28px 32px;
+    }
+
+    .process-label {
+      font-size: 10px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #C9A96E;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .process-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 26px;
+      font-weight: 600;
+      color: #1A1A1A;
+      margin-bottom: 24px;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 12px;
+      text-align: center;
+    }
+
+    .step {}
+
+    .step-num {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #C9A96E;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 10px;
+    }
+
+    .step-icon { font-size: 24px; margin-bottom: 8px; }
+
+    .step-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #1A1A1A;
+      margin-bottom: 4px;
+    }
+
+    .step-desc {
+      font-size: 10px;
+      color: #AAAAAA;
+      line-height: 1.5;
+    }
+
+    /* ── PERKS STRIP ── */
+    .perks {
+      display: flex;
+      justify-content: space-between;
+      margin: 0 48px;
+      padding: 28px 0;
+      border-top: 1px solid #F0EDE8;
+      border-bottom: 1px solid #F0EDE8;
+    }
+
+    .perk { text-align: center; flex: 1; }
+    .perk-icon { font-size: 24px; margin-bottom: 8px; }
+    .perk-label { font-size: 11px; font-weight: 600; color: #1A1A1A; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .perk-sub { font-size: 10px; color: #AAAAAA; line-height: 1.4; }
+
+    /* ── POPULAR DESTINATIONS QUICK STRIP ── */
+    .popular-strip {
+      padding: 32px 48px 0;
+    }
+
+    .pop-label {
+      font-size: 10px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #C9A96E;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .pop-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 28px;
+      font-weight: 400;
+      color: #1A1A1A;
+      margin-bottom: 20px;
+    }
+
+    .pop-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    .pop-item {
+      position: relative;
+      border-radius: 4px;
+      overflow: hidden;
+      text-decoration: none;
+    }
+
+    .pop-img {
+      width: 100%;
+      height: 100px;
+      object-fit: cover;
+      display: block;
+      filter: brightness(0.78);
+    }
+
+    .pop-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 60%);
+    }
+
+    .pop-name {
+      position: absolute;
+      bottom: 8px;
+      left: 10px;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    /* ── FINAL CTA ── */
+    .final-cta {
+      margin: 32px 48px 0;
+      background: linear-gradient(135deg, #C9A96E 0%, #B8935A 100%);
+      border-radius: 4px;
+      padding: 44px;
+      text-align: center;
+    }
+
+    .final-cta .eyebrow {
+      font-size: 10px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.75);
+      font-weight: 500;
+      margin-bottom: 12px;
+    }
+
+    .final-cta h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 38px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.15;
+      margin-bottom: 12px;
+    }
+
+    .final-cta p {
+      font-size: 13px;
+      color: rgba(255,255,255,0.80);
+      line-height: 1.6;
+      max-width: 340px;
+      margin: 0 auto 28px;
+    }
+
+    .final-cta .btn-white {
+      display: inline-block;
+      background: #fff;
+      color: #C9A96E;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 16px 40px;
+      border-radius: 2px;
+      text-decoration: none;
+    }
+
+    /* ── FOOTER ── */
+    .footer {
+      padding: 40px 48px 36px;
+      text-align: center;
+    }
+
+    .footer-logo {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1A1A1A;
+      letter-spacing: 1px;
+      margin-bottom: 16px;
+    }
+
+    .footer-logo span { color: #C9A96E; }
+
+    .social-row {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .social-icon {
+      width: 34px;
+      height: 34px;
+      border: 1px solid #E0DDD8;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      text-decoration: none;
+      color: #888;
+    }
+
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    .footer-links a {
+      font-size: 11px;
+      color: #999;
+      text-decoration: none;
+      letter-spacing: 0.5px;
+    }
+
+    .footer-address {
+      font-size: 11px;
+      color: #BBBBBB;
+      line-height: 1.7;
+      margin-bottom: 16px;
+    }
+
+    .unsubscribe {
+      font-size: 10px;
+      color: #CCCCCC;
+      letter-spacing: 0.5px;
+    }
+
+    .unsubscribe a { color: #C9A96E; text-decoration: none; }
+
+    /* ══════════════════════════════
+       RESPONSIVE — max-width 600px
+    ══════════════════════════════ */
+    @media only screen and (max-width: 600px) {
+
+      /* WRAPPER */
+      .email-wrapper { width: 100% !important; max-width: 100% !important; margin: 0 !important; }
+
+      /* HEADER */
+      .header { padding: 16px 20px !important; flex-wrap: wrap; gap: 10px; }
+      .header-nav { gap: 14px; }
+
+      /* HERO */
+      .hero { height: 360px !important; }
+      .hero-content { padding: 24px 20px !important; }
+      .hero-headline { font-size: 34px !important; }
+      .hero-sub { font-size: 13px !important; max-width: 100% !important; }
+      .cta-ghost { margin-left: 0 !important; margin-top: 10px !important; display: block !important; }
+
+      /* SECTIONS */
+      .section { padding: 32px 20px 0 !important; }
+      .divider { margin: 0 20px !important; }
+
+      /* VISA 2×2 → 1 COL */
+      .visa-grid-2x2 { grid-template-columns: 1fr !important; }
+
+      /* EVISA CARDS → STACK */
+      .evisa-card { grid-template-columns: 1fr !important; }
+      .evisa-img { width: 100% !important; height: 140px !important; }
+      .evisa-right { border-left: none !important; border-top: 1px solid #EEEAE4 !important; align-items: flex-start !important; min-width: unset !important; }
+
+      /* PROCESS STRIP */
+      .process-strip { margin: 20px 16px 0 !important; padding: 22px 20px !important; }
+      .steps { grid-template-columns: 1fr 1fr !important; }
+
+      /* PERKS */
+      .perks { margin: 0 20px !important; flex-wrap: wrap; gap: 16px !important; padding: 24px 0 !important; }
+
+      /* POPULAR DESTINATIONS 4-COL → 2-COL */
+      .pop-grid { grid-template-columns: 1fr 1fr !important; }
+
+      /* FINAL CTA */
+      .final-cta { margin: 20px 16px 0 !important; padding: 32px 20px !important; }
+      .final-cta h2 { font-size: 26px !important; }
+
+      /* FOOTER */
+      .footer { padding: 28px 20px 24px !important; }
+      .footer-links { flex-wrap: wrap; gap: 12px !important; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="email-wrapper">
+
+  <!-- TOP BAR -->
+  <div class="top-bar">
+    🌍 &nbsp; Day 3 — Visa Made Easy: Your Gateway to the World &nbsp; 🌍
+  </div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <svg width="140" height="54" viewBox="0 0 208 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M207.241 78.3819H161.048L153.594 60.5938H207.255L207.241 78.3819Z" fill="#F48020"/>
+<path d="M164.149 66.798H161.484V65.2031H168.74V66.798H166.076V73.6467H164.149V66.798Z" fill="white"/>
+<path d="M171.36 73.228C170.679 72.8664 170.11 72.3195 169.718 71.6488C169.327 70.978 169.127 70.2099 169.141 69.4305C169.131 68.6454 169.335 67.8727 169.73 67.1976C170.121 66.5351 170.686 65.9949 171.36 65.6362C172.084 65.2642 172.883 65.0703 173.695 65.0703C174.506 65.0703 175.306 65.2642 176.029 65.6362C176.708 66.0038 177.275 66.5513 177.67 67.2201C178.066 67.8889 178.275 68.654 178.275 69.4337C178.275 70.2134 178.066 70.9785 177.67 71.6473C177.275 72.3161 176.708 72.8635 176.029 73.2312C175.306 73.604 174.506 73.7984 173.695 73.7984C172.883 73.7984 172.083 73.604 171.36 73.2312V73.228ZM175.03 71.7926C175.424 71.5677 175.748 71.2364 175.966 70.8356C176.189 70.4039 176.305 69.924 176.305 69.4369C176.305 68.9497 176.189 68.4699 175.966 68.0381C175.748 67.6373 175.424 67.306 175.03 67.0812C174.621 66.856 174.163 66.738 173.698 66.738C173.233 66.738 172.775 66.856 172.366 67.0812C171.973 67.3058 171.65 67.6373 171.433 68.0381C171.21 68.4699 171.094 68.9497 171.094 69.4369C171.094 69.924 171.21 70.4039 171.433 70.8356C171.65 71.2362 171.973 71.5676 172.366 71.7926C172.775 72.0177 173.233 72.1357 173.698 72.1357C174.163 72.1357 174.621 72.0177 175.03 71.7926Z" fill="white"/>
+<path d="M180.626 72.787C180.279 72.4036 180.012 71.9528 179.841 71.4618C179.67 70.9709 179.6 70.4499 179.633 69.9305V65.2031H181.561V69.8571C181.561 71.3691 182.179 72.1246 183.416 72.1235C183.672 72.1408 183.928 72.1006 184.167 72.0057C184.405 71.9109 184.62 71.7637 184.796 71.5748C185.151 71.0779 185.319 70.4685 185.268 69.8571V65.2031H187.172V69.9305C187.15 70.6887 186.914 71.4245 186.493 72.0516C186.072 72.6788 185.483 73.1712 184.796 73.4711C184.108 73.771 183.351 73.8659 182.612 73.7447C181.873 73.6236 181.185 73.2913 180.626 72.787Z" fill="white"/>
+<path d="M194.367 73.6447L192.762 71.2938H190.989V73.6447H189.062V65.2044H192.666C193.326 65.1889 193.981 65.3167 194.588 65.5792C195.107 65.802 195.551 66.1756 195.862 66.6529C196.173 67.1303 196.338 67.6901 196.336 68.2621C196.334 68.8341 196.165 69.3929 195.851 69.8681C195.537 70.3434 195.091 70.714 194.57 70.9334L196.438 73.6447H194.367ZM193.878 67.1741C193.495 66.8953 193.028 66.7611 192.558 66.7945H190.984V69.7372H192.558C193.029 69.7707 193.497 69.6333 193.878 69.3496C194.021 69.2081 194.135 69.039 194.213 68.8522C194.291 68.6653 194.331 68.4646 194.331 68.2619C194.331 68.0591 194.291 67.8584 194.213 67.6715C194.135 67.4847 194.021 67.3156 193.878 67.1741Z" fill="white"/>
+<path d="M198.67 73.5192C198.137 73.3783 197.634 73.1388 197.188 72.8126L197.842 71.3421C198.23 71.6224 198.659 71.8378 199.114 71.9801C199.59 72.1381 200.088 72.2193 200.59 72.2209C201.009 72.2496 201.429 72.1643 201.805 71.9737C201.922 71.9101 202.021 71.8155 202.09 71.6998C202.159 71.5842 202.196 71.4517 202.196 71.3166C202.197 71.2207 202.177 71.1259 202.136 71.0392C202.096 70.9525 202.037 70.8762 201.964 70.8158C201.788 70.6714 201.585 70.563 201.369 70.4968C201.128 70.417 200.799 70.3277 200.388 70.232C199.86 70.1115 199.339 69.9581 198.829 69.7727C198.426 69.6222 198.067 69.369 197.789 69.0374C197.483 68.6573 197.328 68.176 197.353 67.6865C197.347 67.2121 197.484 66.7472 197.745 66.3532C198.04 65.928 198.451 65.5988 198.928 65.4058C199.542 65.1571 200.201 65.0383 200.862 65.0565C201.387 65.0557 201.91 65.1205 202.42 65.2495C202.89 65.3621 203.34 65.5494 203.753 65.8045L203.158 67.2878C202.459 66.8653 201.663 66.6365 200.849 66.6243C200.434 66.5945 200.018 66.687 199.653 66.8907C199.535 66.9631 199.437 67.0656 199.369 67.1881C199.301 67.3105 199.266 67.4488 199.266 67.5892C199.267 67.7292 199.311 67.8655 199.391 67.9796C199.471 68.0937 199.583 68.1801 199.713 68.2272C200.152 68.4123 200.608 68.5518 201.074 68.6435C201.603 68.7646 202.124 68.918 202.634 69.1028C203.035 69.2521 203.393 69.5011 203.674 69.8269C203.98 70.2017 204.136 70.6794 204.11 71.1651C204.112 71.6362 203.973 72.0968 203.71 72.4857C203.409 72.9118 202.994 73.2408 202.513 73.433C201.897 73.6822 201.238 73.8016 200.576 73.7839C199.931 73.7856 199.29 73.6965 198.67 73.5192Z" fill="white"/>
+<path d="M135.387 40.1608C134.615 40.1608 133.861 39.9289 133.219 39.4943C132.577 39.0598 132.077 38.4421 131.782 37.7195C131.486 36.9968 131.409 36.2016 131.559 35.4343C131.71 34.6671 132.081 33.9623 132.627 33.4091C133.173 32.8558 133.868 32.479 134.625 32.3262C135.382 32.1734 136.166 32.2515 136.879 32.5506C137.593 32.8498 138.202 33.3565 138.631 34.0067C139.06 34.657 139.289 35.4216 139.29 36.2038C139.289 37.2529 138.878 38.2589 138.146 39.0008C137.414 39.7428 136.422 40.16 135.387 40.1608ZM135.387 32.8736C134.737 32.8727 134.1 33.0673 133.559 33.4329C133.018 33.7985 132.596 34.3186 132.346 34.9274C132.097 35.5363 132.031 36.2064 132.158 36.8531C132.284 37.4997 132.597 38.0938 133.057 38.5602C133.516 39.0266 134.102 39.3443 134.74 39.473C135.378 39.6018 136.039 39.5359 136.64 39.2836C137.241 39.0313 137.755 38.604 138.116 38.0558C138.477 37.5076 138.67 36.8631 138.67 36.2038C138.668 35.3215 138.322 34.4757 137.707 33.8515C137.092 33.2274 136.258 32.8757 135.387 32.8736Z" fill="#2F2F2F"/>
+<path d="M133.422 38.6539V33.7527H135.378C135.682 33.7382 135.986 33.782 136.273 33.8819C136.487 33.9795 136.662 34.1484 136.767 34.3604C136.891 34.5861 136.955 34.8406 136.952 35.0988C136.961 35.4203 136.852 35.7338 136.645 35.9776C136.394 36.2395 136.059 36.4005 135.701 36.4306C135.83 36.4939 135.949 36.5761 136.055 36.6746C136.243 36.869 136.406 37.0872 136.539 37.3238L137.306 38.6587H136.572L135.987 37.6412C135.815 37.3477 135.672 37.1212 135.567 36.9633C135.485 36.8391 135.384 36.7283 135.269 36.6348C135.186 36.5757 135.093 36.531 134.996 36.5024C134.891 36.4865 134.786 36.479 134.681 36.4801H134.006V38.6571H133.422V38.6539ZM134.006 35.917H135.265C135.478 35.9254 135.691 35.8946 135.894 35.8261C136.037 35.7683 136.157 35.6654 136.237 35.5327C136.317 35.4001 136.359 35.2477 136.358 35.0925C136.361 34.9864 136.342 34.881 136.302 34.7828C136.262 34.6845 136.203 34.5956 136.129 34.5215C135.928 34.3541 135.67 34.2728 135.411 34.295H134.014L134.006 35.917Z" fill="#2F2F2F"/>
+<path d="M69.9021 64.9379H61.4359L57.069 75.9715C56.8583 76.4384 56.7045 76.9295 56.6111 77.4341C56.6111 77.8679 56.9337 78.0896 57.5867 78.0896V78.3783H53.2812V78.0896C53.797 78.1076 54.3045 77.9554 54.7274 77.6558C55.3282 77.0376 55.7725 76.2814 56.0225 75.4516L66.4794 48.7031H67.005L77.2857 74.5265C77.4947 75.1756 77.7607 75.8044 78.0803 76.4054C78.2661 76.9038 78.5981 77.3325 79.0318 77.6336C79.4654 77.9348 79.9797 78.0939 80.5053 78.0896V78.3783H73.7575V78.0896C74.3634 78.0896 74.664 77.8312 74.664 77.3543C74.6113 76.8035 74.4604 76.2668 74.2186 75.7706C74.1577 75.6908 74.1114 75.6006 74.0817 75.5042C74.0777 75.4347 74.0595 75.3668 74.0282 75.3049L69.9021 64.9379ZM61.7018 64.1085H69.5134L65.6171 54.1402L61.7018 64.1085Z" fill="#2F2F2F"/>
+<path d="M96.0834 49.1562H100.416V49.4609C99.941 49.4728 99.4765 49.6037 99.0639 49.8421C98.5746 50.2297 98.1601 50.7055 97.8412 51.2456L90.7928 62.0656V75.4629C90.7141 76.1971 90.8597 76.9381 91.2099 77.5858C91.4587 77.7881 91.7454 77.9372 92.0526 78.0241C92.3599 78.111 92.6813 78.1339 92.9975 78.0914V78.38H85.2945V78.0914C86.7722 78.1871 87.5102 77.5922 87.5102 76.337L87.4693 75.4948V63.1358L80.3879 51.2727C79.6483 50.0175 78.8142 49.4146 77.9062 49.4593V49.1562H84.7201V49.4609C84.0702 49.4609 83.7634 49.6969 83.7634 50.185C83.83 50.6095 83.9974 51.0113 84.2512 51.3556L90.0737 61.0847L96.4265 51.2823C96.5849 51.1118 96.7189 50.9196 96.8246 50.7113C96.9295 50.528 96.9989 50.3261 97.0292 50.1164C97.0292 49.6778 96.746 49.4689 96.1857 49.4689H96.0724V49.1562H96.0834Z" fill="#2F2F2F"/>
+<path d="M125.896 49.1562H131.471V49.4609C130.84 49.4136 130.214 49.6039 129.713 49.9952C129.305 50.6255 129.13 51.3821 129.219 52.1308V78.7453L106.204 53.9139V75.5347C106.191 76.0478 106.243 76.5604 106.362 77.0594C106.428 77.3358 106.59 77.5788 106.818 77.7437C107.289 77.9264 107.782 78.0454 108.283 78.0977V78.3864H102.744V78.0977C103.732 78.0977 104.357 77.9127 104.582 77.5555C104.921 76.7517 105.051 75.8728 104.958 75.0036V55.2265C105.012 53.7763 104.769 52.3305 104.242 50.9808C103.761 49.8915 102.661 49.3763 100.938 49.4641V49.1562H106.357L127.984 72.49V51.8501C127.984 50.7432 127.796 50.0638 127.398 49.8229C126.94 49.5598 126.418 49.4342 125.892 49.4609V49.1562H125.896Z" fill="#2F2F2F"/>
+<path d="M148.629 64.9379H140.15L135.797 75.9715C135.586 76.4372 135.437 76.9289 135.352 77.4341C135.352 77.8679 135.667 78.0896 136.305 78.0896V78.3783H132V78.0896C132.518 78.1117 133.028 77.9591 133.451 77.6558C134.054 77.0403 134.497 76.283 134.741 75.4516L145.209 48.7031H145.711L156.004 74.5265C156.21 75.1769 156.476 75.806 156.799 76.4054C156.983 76.9019 157.312 77.3294 157.743 77.6305C158.174 77.9316 158.685 78.0918 159.208 78.0896V78.3783H152.478V78.0896C153.087 78.0896 153.392 77.8312 153.392 77.3543C153.338 76.8027 153.185 76.2659 152.939 75.7706C152.875 75.6922 152.828 75.6016 152.8 75.5042C152.791 75.437 152.778 75.3704 152.761 75.3049L148.629 64.9379ZM140.446 64.1085H148.242L144.33 54.1402L140.446 64.1085Z" fill="#2F2F2F"/>
+<path d="M0 28.5168V28H14.4178C18.0938 28 20.7359 28.0686 22.3489 28.2329C24.1156 28.4354 25.8262 28.9858 27.3846 29.8533C29.011 30.6973 30.3603 32.0023 31.2684 33.6093C32.19 35.3925 32.641 37.3869 32.5776 39.3989C32.5638 42.0687 31.7524 44.6716 30.2502 46.8648C28.555 49.3603 26.303 51.4154 23.6771 52.8633L27.2603 58.4567C28.0492 59.8559 30.1269 62.9198 33.4935 67.6482C36.8643 72.3803 39.4576 75.2528 41.3035 76.2895C42.925 77.2664 44.768 77.802 46.6539 77.8446C48.7472 77.7158 50.7698 77.0292 52.5173 75.8541L52.7313 76.5447C49.6555 78.9381 45.8447 80.1542 41.9707 79.9786C39.2122 80.043 36.5221 79.1044 34.3873 77.3326C32.2608 75.5686 28.5806 70.7264 23.3466 62.806C23.3046 62.7696 23.2781 62.7182 23.2727 62.6625L18.1646 54.7086L13.6451 54.833H9.52214V74.5367C9.45097 75.7067 9.65877 76.8768 10.128 77.9482C10.5434 78.6309 11.5443 78.9722 13.1179 78.9722V79.4873H0V78.9722C1.63659 78.9036 2.65632 78.5543 3.05288 77.9259C3.56188 76.7141 3.76938 75.3942 3.65716 74.0821V33.1628C3.69429 32.0338 3.52132 30.9078 3.14729 29.8437C2.80267 28.992 1.75462 28.5359 0 28.5184M9.52371 29.3429V53.5076H14.8505C19.049 53.5076 22.1459 52.514 24.1964 50.4884C25.2126 49.4585 26.0065 48.2256 26.5277 46.8682C27.0489 45.5108 27.2861 44.0584 27.2241 42.6031C27.1979 39.3546 26.1505 36.1991 24.2342 33.595C22.2409 30.7656 18.7316 29.3477 13.7065 29.3413L9.52371 29.3429Z" fill="#2F2F2F"/>
+    </svg>
+    <div class="header-nav">
+      <a href="#">Visas</a>
+      <a href="#">Packages</a>
+      <a href="#">Contact</a>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <img
+      class="hero-img"
+      src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Dubai%20Visa%20New_294/burj-alrab.jpg"
+      alt="Dubai Visa"
+    />
+    <div class="hero-overlay"></div>
+    <div class="hero-content">
+      <span class="badge">Visa Made Easy</span>
+      <h1 class="hero-headline">
+        Your Passport<br>to Every<br><strong>Destination.</strong>
+      </h1>
+      <p class="hero-sub">
+        Fast approvals, expert guidance, and zero stress.
+        Rayna Tours handles your visa — you focus on packing.
+      </p>
+      <a href="#" class="cta-primary">Apply Now</a>
+      <a href="#" class="cta-ghost">View All Visas</a>
+
+      <!-- Stats bar -->
+      <div style="margin-top:28px; padding-top:22px; border-top:1px solid rgba(255,255,255,0.18);">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid rgba(255,255,255,0.15); vertical-align:top;">
+              <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#C9A96E; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25M+</div>
+              <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Guests served<br/>and counting</div>
+            </td>
+            <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid rgba(255,255,255,0.15); vertical-align:top;">
+              <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#C9A96E; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,500+</div>
+              <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Professionals<br/>across regions</div>
+            </td>
+            <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid rgba(255,255,255,0.15); vertical-align:top;">
+              <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#C9A96E; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1000+</div>
+              <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Experiences<br/>to choose from</div>
+            </td>
+            <td width="25%" style="text-align:center; padding:0 8px; vertical-align:top;">
+              <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#C9A96E; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25+</div>
+              <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Operating<br/>companies</div>
+            </td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SECTION 1: TRAVELING ABROAD ── -->
+  <div class="section">
+    <div class="section-label">International Travel</div>
+    <div class="section-title">Traveling Abroad?<br>Apply For Your Visa Today</div>
+    <div class="section-sub">Expert visa processing for top destinations — fast, reliable, hassle-free.</div>
+
+    <div class="visa-grid-2x2">
+
+      <!-- USA -->
+      <a href="#" class="visa-card">
+        <img class="visa-card-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/USA%20VISA%20NEW_296/United%20States.jpg" alt="USA Visa"/>
+        <div class="visa-card-overlay"></div>
+        <div class="visa-card-body">
+          <span class="visa-card-flag">🇺🇸</span>
+          <div class="visa-card-country">USA Visa</div>
+          <div class="visa-card-tag">Tourist · Business · Transit</div>
+          <span class="visa-card-btn">Apply Now →</span>
+        </div>
+      </a>
+
+      <!-- UK -->
+      <a href="#" class="visa-card">
+        <img class="visa-card-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/UK%20Visa%20New_311/United-Kingdom.jpg" alt="UK Visa"/>
+        <div class="visa-card-overlay"></div>
+        <div class="visa-card-body">
+          <span class="visa-card-flag">🇬🇧</span>
+          <div class="visa-card-country">UK Visa</div>
+          <div class="visa-card-tag">Tourist · Student · Work</div>
+          <span class="visa-card-btn">Apply Now →</span>
+        </div>
+      </a>
+
+      <!-- Canada -->
+      <a href="#" class="visa-card">
+        <img class="visa-card-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Canada%20Visa%20New_305/cnda-min.jpg" alt="Canada Visa"/>
+        <div class="visa-card-overlay"></div>
+        <div class="visa-card-body">
+          <span class="visa-card-flag">🇨🇦</span>
+          <div class="visa-card-country">Canada Visa</div>
+          <div class="visa-card-tag">Tourist · Business · eTA</div>
+          <span class="visa-card-btn">Apply Now →</span>
+        </div>
+      </a>
+
+      <!-- Schengen -->
+      <a href="#" class="visa-card">
+        <img class="visa-card-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Schengen%20New%20Visa_337/Schengen.jpg" alt="Schengen Visa"/>
+        <div class="visa-card-overlay"></div>
+        <div class="visa-card-body">
+          <span class="visa-card-flag">🇪🇺</span>
+          <div class="visa-card-country">Schengen Visa</div>
+          <div class="visa-card-tag">26 Countries · Single Entry</div>
+          <span class="visa-card-btn">Apply Now →</span>
+        </div>
+      </a>
+
+    </div>
+  </div>
+
+  <div style="height:48px;"></div>
+  <div class="divider"></div>
+
+  <!-- ── SECTION 2: E-VISA ── -->
+  <div class="section" style="padding-top:40px;">
+    <div class="section-label">Instant Online Processing</div>
+    <div class="section-title">Apply for Your E-Visa<br>Hassle-Free</div>
+    <div class="section-sub">Skip long queues — apply for your eVisa online, effortlessly from anywhere.</div>
+
+    <div class="evisa-grid">
+
+      <!-- Dubai -->
+      <a href="#" class="evisa-card">
+        <img class="evisa-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Dubai%20Visa%20New_294/burj-alrab.jpg" alt="Dubai Visa"/>
+        <div class="evisa-body">
+          <div class="evisa-tag">🇦🇪 eVisa · UAE</div>
+          <div class="evisa-title">Dubai Visa</div>
+          <div class="evisa-meta">Tourist Visa · 30 / 60 / 90 Days<br>Ready within 24–48 hours</div>
+        </div>
+        <div class="evisa-right">
+          <span class="evisa-badge">✓ Instant</span>
+          <span class="evisa-btn">Apply →</span>
+        </div>
+      </a>
+
+      <!-- Saudi Arabia -->
+      <a href="#" class="evisa-card">
+        <img class="evisa-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Saudi%20Arabia%20Visa%20New_309/Saudi-Arabia.jpg" alt="Saudi Arabia Visa"/>
+        <div class="evisa-body">
+          <div class="evisa-tag">🇸🇦 eVisa · Saudi Arabia</div>
+          <div class="evisa-title">Saudi Arabia Visa</div>
+          <div class="evisa-meta">Tourist eVisa · Multiple Entry<br>Valid for 1 Year</div>
+        </div>
+        <div class="evisa-right">
+          <span class="evisa-badge">✓ Online</span>
+          <span class="evisa-btn">Apply →</span>
+        </div>
+      </a>
+
+      <!-- Turkey -->
+      <a href="#" class="evisa-card">
+        <img class="evisa-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Turkey%20New%20Visa_336/Turkey.jpg" alt="Turkey Visa"/>
+        <div class="evisa-body">
+          <div class="evisa-tag">🇹🇷 eVisa · Turkey</div>
+          <div class="evisa-title">Turkey Visa</div>
+          <div class="evisa-meta">Single / Multiple Entry<br>Processed in 24 Hours</div>
+        </div>
+        <div class="evisa-right">
+          <span class="evisa-badge">✓ Fast</span>
+          <span class="evisa-btn">Apply →</span>
+        </div>
+      </a>
+
+      <!-- Singapore -->
+      <a href="#" class="evisa-card">
+        <img class="evisa-img" src="https://d2cazmkfw8kdtj.cloudfront.net/City-Images/23726/singapore-city.png" alt="Singapore Visa"/>
+        <div class="evisa-body">
+          <div class="evisa-tag">🇸🇬 eVisa · Singapore</div>
+          <div class="evisa-title">Singapore Visa</div>
+          <div class="evisa-meta">Tourist Pass · Single Entry<br>Processed within 3 Days</div>
+        </div>
+        <div class="evisa-right">
+          <span class="evisa-badge">✓ Online</span>
+          <span class="evisa-btn">Apply →</span>
+        </div>
+      </a>
+
+    </div>
+  </div>
+
+  <div style="height:32px;"></div>
+
+  <!-- ── MORE POPULAR VISAS ── -->
+  <div class="popular-strip">
+    <div class="pop-label">Also Popular</div>
+    <div class="pop-title">More Destinations, More Adventures</div>
+    <div class="pop-grid">
+
+      <a href="#" class="pop-item">
+        <img class="pop-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Australia%20Visa%20New_295/Sydney.jpg" alt="Australia"/>
+        <div class="pop-overlay"></div>
+        <div class="pop-name">Australia</div>
+      </a>
+
+      <a href="#" class="pop-item">
+        <img class="pop-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/Malaysia%20New%20Visa_335/Malaysia.jpg" alt="Malaysia"/>
+        <div class="pop-overlay"></div>
+        <div class="pop-name">Malaysia</div>
+      </a>
+
+      <a href="#" class="pop-item">
+        <img class="pop-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/India%20E%20visa_316/India.jpg" alt="India"/>
+        <div class="pop-overlay"></div>
+        <div class="pop-name">India</div>
+      </a>
+
+      <a href="#" class="pop-item">
+        <img class="pop-img" src="https://d2cazmkfw8kdtj.cloudfront.net/Visa-Images/China%20New%20Visa_332/China.jpg" alt="China"/>
+        <div class="pop-overlay"></div>
+        <div class="pop-name">China</div>
+      </a>
+
+    </div>
+  </div>
+
+  <div style="height:32px;"></div>
+
+  <!-- PERKS -->
+  <div class="perks">
+    <div class="perk">
+      <div class="perk-icon">⚡</div>
+      <div class="perk-label">Fast Approvals</div>
+      <div class="perk-sub">eVisas processed<br>in as fast as 24 hrs</div>
+    </div>
+    <div class="perk">
+      <div class="perk-icon">🛡️</div>
+      <div class="perk-label">100% Secure</div>
+      <div class="perk-sub">Your data is fully<br>encrypted &amp; safe</div>
+    </div>
+    <div class="perk">
+      <div class="perk-icon">🎯</div>
+      <div class="perk-label">Expert Guidance</div>
+      <div class="perk-sub">Dedicated visa<br>specialists on call</div>
+    </div>
+    <div class="perk">
+      <div class="perk-icon">💬</div>
+      <div class="perk-label">24/7 Support</div>
+      <div class="perk-sub">Always here for<br>your queries</div>
+    </div>
+  </div>
+
+  <!-- ── YOUR JOURNEY, OUR COMMITMENT ── -->
+  <div style="padding:44px 48px 36px; background:#ffffff; border-top:1px solid #F0EDE8;">
+    <div style="font-family:'Inter',sans-serif; font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#C9A96E; font-weight:600; margin-bottom:8px; text-align:center;">Our Promise</div>
+    <div style="font-family:'Cormorant Garamond',serif; font-size:30px; font-weight:400; color:#1A1A1A; text-align:center; margin-bottom:8px; line-height:1.2;">Your Journey, Our Commitment</div>
+    <div style="font-family:'Inter',sans-serif; font-size:13px; color:#AAAAAA; text-align:center; line-height:1.65; margin-bottom:30px; max-width:400px; margin-left:auto; margin-right:auto;">From booking to the experience, we're here to make every step smooth, safe, and memorable.</div>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="33.33%" style="padding:0 8px 0 0; vertical-align:top;">
+          <div style="border:1px solid #EEEAE4; border-radius:4px; padding:22px 18px; background:#FAFAF8;">
+            <div style="width:48px; height:48px; background:#FFF8E6; border-radius:8px; font-size:22px; line-height:48px; text-align:center; margin-bottom:14px;">💰</div>
+            <div style="font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#1A1A1A; margin-bottom:8px; line-height:1.3;">Best Price Guarantee</div>
+            <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; line-height:1.7;">Find a lower price? We'll refund 110% of the difference. Our price match guarantee ensures you always get the best deal.</div>
+          </div>
+        </td>
+        <td width="33.33%" style="padding:0 4px; vertical-align:top;">
+          <div style="border:1px solid #EEEAE4; border-radius:4px; padding:22px 18px; background:#FAFAF8;">
+            <div style="width:48px; height:48px; background:#EEF7F1; border-radius:8px; font-size:22px; line-height:48px; text-align:center; margin-bottom:14px;">🔒</div>
+            <div style="font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#1A1A1A; margin-bottom:8px; line-height:1.3;">Secure &amp; Safe Booking</div>
+            <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; line-height:1.7;">Your data is protected with 256-bit SSL encryption. We never share your personal information with third parties.</div>
+          </div>
+        </td>
+        <td width="33.33%" style="padding:0 0 0 8px; vertical-align:top;">
+          <div style="border:1px solid #EEEAE4; border-radius:4px; padding:22px 18px; background:#FAFAF8;">
+            <div style="width:48px; height:48px; background:#FFF1EB; border-radius:8px; font-size:22px; line-height:48px; text-align:center; margin-bottom:14px;">⚡</div>
+            <div style="font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#1A1A1A; margin-bottom:8px; line-height:1.3;">Instant Confirmation</div>
+            <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; line-height:1.7;">Get your tickets delivered instantly via email. No waiting, no hassle – just book and go!</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ── VERIFIED BY PLATFORMS ── -->
+  <div style="background:#F4F1EC; padding:36px 48px 40px; border-top:1px solid #E8E4DE; border-bottom:1px solid #E8E4DE;">
+    <div style="font-family:'Inter',sans-serif; font-size:10px; letter-spacing:2.5px; text-transform:uppercase; color:#AAAAAA; font-weight:600; margin-bottom:8px; text-align:center;">Don't just take our word for it</div>
+    <div style="font-family:'Cormorant Garamond',serif; font-size:28px; font-weight:400; color:#1A1A1A; text-align:center; margin-bottom:8px; line-height:1.2;">Verified by the Platforms You Already Trust</div>
+    <div style="font-family:'Inter',sans-serif; font-size:12px; color:#AAAAAA; text-align:center; line-height:1.65; margin-bottom:26px; max-width:420px; margin-left:auto; margin-right:auto;">Our ratings are earned — not curated. Check us on any major review platform and see what real travellers say.</div>
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="25%" style="padding:0 5px 0 0; vertical-align:top;">
+          <div style="background:#FFFDF4; border:1px solid #F0E5C0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#C9A96E; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Rayna Tours</div>
+            <div style="font-size:15px; color:#F5A623; margin-bottom:6px; line-height:1;">★★★★<span style="color:#ddd;">★</span></div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.5</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">3,450 Reviews</div>
+          </div>
+        </td>
+        <td width="25%" style="padding:0 3px; vertical-align:top;">
+          <div style="background:#F4FCF8; border:1px solid #B8E8D0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#00B67A; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Trustpilot</div>
+            <div style="font-size:15px; color:#00B67A; margin-bottom:6px; line-height:1;">★★★★<span style="color:#ddd;">★</span></div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.3</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">52,641 Reviews</div>
+          </div>
+        </td>
+        <td width="25%" style="padding:0 3px; vertical-align:top;">
+          <div style="background:#F4FCF8; border:1px solid #B8E8D0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#00AA6C; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Tripadvisor</div>
+            <div style="font-size:15px; color:#00AA6C; margin-bottom:6px; line-height:1;">●●●●◐</div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.6</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">12,861 Reviews</div>
+          </div>
+        </td>
+        <td width="25%" style="padding:0 0 0 5px; vertical-align:top;">
+          <div style="background:#FFF8F6; border:1px solid #F5CFC8; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#4285F4; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Google</div>
+            <div style="font-size:15px; color:#FBBC04; margin-bottom:6px; line-height:1;">★★★★★</div>
+            <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.4</div>
+            <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">1,517 Reviews</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- FINAL CTA -->
+  <div class="final-cta">
+    <div class="eyebrow">Your Journey Starts With a Single Click</div>
+    <h2>Apply for Your<br>Visa Today</h2>
+    <p>
+      Let Rayna Tours take the stress out of visa applications.
+      Fast, simple, and trusted by thousands of travellers.
+    </p>
+    <a href="#" class="btn-white">Start Your Application →</a>
+  </div>
+
+  <div style="height:32px;"></div>
+  <div class="divider"></div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="social-row">
+      <a href="#" class="social-icon">f</a>
+      <a href="#" class="social-icon">in</a>
+      <a href="#" class="social-icon">ig</a>
+      <a href="#" class="social-icon">yt</a>
+    </div>
+    <div class="footer-links">
+      <a href="#">Privacy Policy</a>
+      <a href="#">Terms of Service</a>
+      <a href="#">Help Center</a>
+      <a href="#">Our Blog</a>
+    </div>
+    <div class="footer-address">
+      Rayna Tours &amp; Travels · Dubai, UAE<br>
+      info@raynatours.com · +971 4 000 0000
+    </div>
+    <div class="unsubscribe">
+      You received this because you're subscribed to Rayna Tours offers.<br>
+      <a href="#">Unsubscribe</a> · <a href="#">Manage Preferences</a>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
