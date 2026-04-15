@@ -129,9 +129,10 @@
     font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600; color: #FFFFFF;
   }
   .dest-cta {
-    font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 600;
-    letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.65);
-    text-decoration: none; display: block; margin-top: 6px;
+    font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase; color: #1A1A1A;
+    background: #FFFFFF; text-decoration: none; display: inline-block;
+    margin-top: 8px; padding: 7px 14px;
   }
   .dest-cta::after { content: ' →'; }
 
@@ -216,12 +217,10 @@
     font-family: 'Inter', sans-serif; font-size: 12px; color: #666; line-height: 1.7; margin-bottom: 18px;
   }
   .footer-contact a { color: #FFFFFF; text-decoration: none; }
-  .footer-social { display: flex; justify-content: center; gap: 14px; margin-bottom: 26px; }
-  .soc-btn {
-    width: 32px; height: 32px; border: 1px solid #2D2D2D;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12px; color: #888; text-decoration: none;
-  }
+  .footer-social { text-align: center; margin-bottom: 24px; }
+  .social-label-footer { font-size: 14px; font-weight: 700; color: #888; letter-spacing: 0.5px; margin-bottom: 16px; font-family: 'Inter', sans-serif; }
+  .soc-btn { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; background: #2d2d2d !important; border-radius: 50%; margin: 0 7px; text-decoration: none; vertical-align: middle; }
+  .soc-btn svg { display: block; }
   .footer-bottom {
     border-top: 1px solid #1E1E1E; padding-top: 18px;
     font-family: 'Inter', sans-serif; font-size: 10.5px; color: #444; line-height: 1.6;
@@ -263,8 +262,11 @@
     /* SECTION LABEL */
     .section-label { padding: 28px 20px 8px !important; }
 
-    /* DEST GRID → 1 COL */
-    .dest-grid { grid-template-columns: 1fr !important; padding: 0 16px !important; }
+    /* DEST GRID → 2×2 on mobile (same as desktop) */
+    .dest-grid { grid-template-columns: repeat(2, 1fr) !important; padding: 0 12px !important; gap: 8px !important; }
+    .dest-card { height: 200px !important; }
+    .dest-city { font-size: 18px !important; }
+    .dest-content { padding: 14px 14px !important; }
 
     /* OFFER STRIP → STACK */
     .offer-strip { flex-direction: column !important; padding: 24px 20px !important; gap: 20px !important; align-items: flex-start !important; }
@@ -295,10 +297,10 @@
   <div class="header">
     <img class="logo" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours">
     <nav class="header-nav">
-      <a href="#">Activities</a>
-      <a href="#">Holidays</a>
-      <a href="#">Visas</a>
-      <a href="#">Cruises</a>
+      <a href="https://www.raynatours.com/activities">Activities</a>
+      <a href="https://www.raynatours.com/cruises">Cruises</a>
+      <a href="https://www.raynatours.com/visas">Visas</a>
+      <a href="https://www.raynatours.com/holidays">Holidays</a>
     </nav>
   </div>
 
@@ -311,8 +313,7 @@
       <h1 class="hero-title">World-Class Activities,<br><em>Instantly Booked.</em></h1>
       <p class="hero-subtitle">From desert thrills to city icons — discover, book and go. Instant confirmation on every experience.</p>
       <div class="hero-ctas">
-        <a href="#" class="btn-gold">Browse Activities</a>
-        <a href="#" class="btn-outline-white">Get Recommendations</a>
+        <a href="https://www.raynatours.com/activities" class="btn-gold">Browse Activities</a>
       </div>
     </div>
   </div>
@@ -322,19 +323,19 @@
     <table class="stats-table" width="100%" cellpadding="0" cellspacing="0">
       <tr>
         <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid #2E2E2E; vertical-align:top;">
-          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25M+</div>
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#FFFFFF; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25M+</div>
           <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Guests served<br>and counting</div>
         </td>
         <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid #2E2E2E; vertical-align:top;">
-          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,500+</div>
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#FFFFFF; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,500+</div>
           <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Professionals<br>across regions</div>
         </td>
         <td width="25%" style="text-align:center; padding:0 8px; border-right:1px solid #2E2E2E; vertical-align:top;">
-          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,000+</div>
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#FFFFFF; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">1,000+</div>
           <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Experiences<br>to choose from</div>
         </td>
         <td width="25%" style="text-align:center; padding:0 8px; vertical-align:top;">
-          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#1A1A1A; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25+</div>
+          <div style="font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; color:#FFFFFF; line-height:1; margin-bottom:5px; letter-spacing:-0.5px;">25+</div>
           <div style="font-family:'Inter',sans-serif; font-size:10px; color:rgba(255,255,255,0.65); line-height:1.5; letter-spacing:0.5px;">Operating<br>companies</div>
         </td>
       </tr>
@@ -357,9 +358,8 @@
         <div class="dest-city">Dubai</div>
         <div class="dest-meta">
           <span class="dest-nights">100+ Activities</span>
-          <span class="dest-price">From AED 49</span>
         </div>
-        <a href="#" class="dest-cta">Explore</a>
+        <a href="https://www.raynatours.com/dubai-activities" class="dest-cta">Explore</a>
       </div>
     </div>
 
@@ -371,9 +371,8 @@
         <div class="dest-city">Singapore</div>
         <div class="dest-meta">
           <span class="dest-nights">80+ Activities</span>
-          <span class="dest-price">From AED 77</span>
         </div>
-        <a href="#" class="dest-cta">Explore</a>
+        <a href="https://www.raynatours.com/singapore-activities" class="dest-cta">Explore</a>
       </div>
     </div>
 
@@ -385,9 +384,8 @@
         <div class="dest-city">Bangkok</div>
         <div class="dest-meta">
           <span class="dest-nights">60+ Activities</span>
-          <span class="dest-price">From AED 55</span>
         </div>
-        <a href="#" class="dest-cta">Explore</a>
+        <a href="https://www.raynatours.com/bangkok-activities" class="dest-cta">Explore</a>
       </div>
     </div>
 
@@ -399,9 +397,8 @@
         <div class="dest-city">Kuala Lumpur</div>
         <div class="dest-meta">
           <span class="dest-nights">50+ Activities</span>
-          <span class="dest-price">From AED 65</span>
         </div>
-        <a href="#" class="dest-cta">Explore</a>
+        <a href="https://www.raynatours.com/kuala-lumpur-activities" class="dest-cta">Explore</a>
       </div>
     </div>
 
@@ -416,58 +413,58 @@
   <div class="dest-grid">
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/227/800/500.jpg?hmac=WyaLV0E7oQY0bkM-l8I2pRPT76n4vMYMPpMHR9n8FWs" alt="Jebel Jais Zipline">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Jebel-Jais-Zipline-8937/1760337317788_3_2.jpg" alt="Jebel Jais Zipline">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Adventure · Ras Al Khaimah</span>
         <div class="dest-city">Jebel Jais Zipline</div>
         <div class="dest-meta">
           <span class="dest-nights">3–4 Hours</span>
-          <span class="dest-price">From AED 299</span>
+          <span class="dest-price">From AED 370</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/ras-al-khaimah/adventures-tours/jebel-jais-zipline-e-8937" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Evening-Desert-Safari-508805/1759836916383_S.jpg" alt="Desert Buggy">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Dune-Buggy-Dubai-508239/1760004762625_3_2.jpg" alt="Desert Buggy">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Adventure · Dubai</span>
         <div class="dest-city">Desert Buggy Drive</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 199</span>
+          <span class="dest-price">From AED 1,500</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/desert-safari-tours/dune-buggy-dubai-e-508239" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/667/800/500.jpg?hmac=e4ZHBcLJBrJJFzQEGv4y4nPLzqpYiokWv18_gX8Xjfs" alt="iFly Singapore">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/iFly-Singapore-6329/1760693733077_3_2.jpg" alt="iFly Singapore">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Skydiving · Singapore</span>
         <div class="dest-city">iFly Singapore</div>
         <div class="dest-meta">
           <span class="dest-nights">1–2 Hours</span>
-          <span class="dest-price">From AED 249</span>
+          <span class="dest-price">From AED 253</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/sentosa-island-tours/ifly-singapore-e-6329" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/287/800/500.jpg?hmac=5PG_LJ-MxXnNcN8TF3vKknLbkD3EGWJkTR7B6GQKXFU" alt="AJ Hackett Sentosa">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/AJ-Hackett-Sentosa-6328/1760955102124_3_2.jpg" alt="AJ Hackett Sentosa">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Bungee · Singapore</span>
         <div class="dest-city">AJ Hackett Sentosa</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 279</span>
+          <span class="dest-price">From AED 156</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/sentosa-island-tours/aj-hackett-sentosa-e-6328" class="dest-cta">Book Now</a>
       </div>
     </div>
 
@@ -482,58 +479,58 @@
   <div class="dest-grid">
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/137/800/500.jpg?hmac=8byP0ZtZBUQgHQCDDFMmCHhFuWkqeleMJ7iRBPuJl8k" alt="IMG Worlds">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/IMG-Worlds-of-Adventure-4753/1760008208926_3_2.jpg" alt="IMG Worlds">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Theme Park · Dubai</span>
         <div class="dest-city">IMG Worlds of Adventure</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 225</span>
+          <span class="dest-price">From AED 180</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/theme-parks/img-worlds-of-adventure-e-4753" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/111/800/500.jpg?hmac=3YUTPfFhFCcqYCVVvZCRFPCUxoHq_7VDh5VFQLj9Yd4" alt="Ferrari World">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Ferrari-World-Theme-Park-57/1760007059152_3_2.jpg" alt="Ferrari World">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Theme Park · Abu Dhabi</span>
         <div class="dest-city">Ferrari World Abu Dhabi</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 295</span>
+          <span class="dest-price">From AED 75</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/theme-parks/ferrari-world-theme-park-e-57" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/152/800/500.jpg?hmac=_oTCwCOyIHPCl29pCT3Fy-0U5Yd2uiVzIV7QYWFqRE" alt="Universal Studios">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Universal-Studios-Singapore-4686/1760778918864_3_2.jpg" alt="Universal Studios">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Theme Park · Singapore</span>
         <div class="dest-city">Universal Studios Singapore</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 238</span>
+          <span class="dest-price">From AED 58</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/theme-parks/universal-studios-singapore-e-4686" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/582/800/500.jpg?hmac=DaUFqBRoOGNZpX9iJH_1kz9gKmopjL3GJZ19dF4BhXo" alt="Safari World">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Safari-World-Bangkok-510002/1767956469411_3_2.jpg" alt="Safari World">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Safari · Bangkok</span>
         <div class="dest-city">Safari World Bangkok</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 125</span>
+          <span class="dest-price">From AED 33</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/bangkok/nature-and-wildlife/safari-world-bangkok-e-510002" class="dest-cta">Book Now</a>
       </div>
     </div>
 
@@ -561,58 +558,58 @@
   <div class="dest-grid">
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/218/800/500.jpg?hmac=7Fn5_JjEcikUbP8gCpDWmGmEZWM9I_o8wQ9FMTw7XMU" alt="Burj Khalifa">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Burj-Khalifa-At-The-Top-Tickets-18/1759833985818_3_2.jpg" alt="Burj Khalifa">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Iconic · Dubai</span>
         <div class="dest-city">Burj Khalifa At The Top</div>
         <div class="dest-meta">
           <span class="dest-nights">1–2 Hours</span>
-          <span class="dest-price">From AED 149</span>
+          <span class="dest-price">From AED 145</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/burj-khalifa-tickets/burj-khalifa-at-the-top-tickets-e-18" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/338/800/500.jpg?hmac=q4XdYgRl6sNcQOvT3GDJfQWzRq9j5Xo0Yq1tHTFpBo" alt="Museum of the Future">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Museum-of-the-Future-5116/1760437357981_3_2.jpg" alt="Museum of the Future">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Iconic · Dubai</span>
         <div class="dest-city">Museum of the Future</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 149</span>
+          <span class="dest-price">From AED 169</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/culture-and-attractions/museum-of-the-future-e-5116" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/28/800/500.jpg?hmac=bkUTMNRJX1W9FGxzVs6kX-GOD9l7LRmLkFHRFzb2e8I" alt="Gardens by the Bay">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Gardens-by-the-Bay-4684/1760687052897_3_2.jpg" alt="Gardens by the Bay">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Iconic · Singapore</span>
         <div class="dest-city">Gardens by the Bay</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 77</span>
+          <span class="dest-price">From AED 41</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/nature-and-wildlife/gardens-by-the-bay-e-4684" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/417/800/500.jpg?hmac=NvqwZkbV4I-b-rWVjCyIBqQPKvBo9x9I_3WJaBkFVRk" alt="Marina Bay Sands">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Marina-Bay-Sands-Sky-Park-5354/1760695468917_3_2.jpg" alt="Marina Bay Sands">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Iconic · Singapore</span>
         <div class="dest-city">Marina Bay Sands Sky Park</div>
         <div class="dest-meta">
           <span class="dest-nights">1–2 Hours</span>
-          <span class="dest-price">From AED 77</span>
+          <span class="dest-price">From AED 102</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/city-tours/marina-bay-sands-sky-park-e-5354" class="dest-cta">Book Now</a>
       </div>
     </div>
 
@@ -627,58 +624,58 @@
   <div class="dest-grid">
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/429/800/500.jpg?hmac=hhEbFwq65TA9yB9Vu3dJI8HgEOPAJkE3Dp5P4M9Io1Y" alt="Dhow Cruise">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Dhow-Cruise-Dinner---Marina-87/1767782326362_3_2.jpg" alt="Dhow Cruise">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Cruise · Dubai</span>
         <div class="dest-city">Dhow Cruise Dinner — Marina</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 99</span>
+          <span class="dest-price">From AED 65</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/dhow-cruise/dhow-cruise-dinner---marina-e-87" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/534/800/500.jpg?hmac=WG4eAY4e-P_sM5lZ6O-GGvBbcgWi5MbSyEPqYiTHe5A" alt="Adventure Cove">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Adventure-Cove-Water-Park-5353/1760692038977_3_2.jpg" alt="Adventure Cove">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Waterpark · Singapore</span>
         <div class="dest-city">Adventure Cove Water Park</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 120</span>
+          <span class="dest-price">From AED 77</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/sentosa-island-tours/adventure-cove-water-park-e-5353" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/473/800/500.jpg?hmac=9gXiJcSJXm4g7dq9vq_E_yH0aHl7KwMpXfF9i8jNVY8" alt="Phi Phi Island">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Phi-Phi-Island-on-Speed-Boat-509762/1768630073293_3_2.jpg" alt="Phi Phi Island">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Island · Thailand</span>
         <div class="dest-city">Phi Phi Island Speedboat</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 189</span>
+          <span class="dest-price">From AED 112</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/phuket/island-tours/phi-phi-island-on-speed-boat-e-509762" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/485/800/500.jpg?hmac=5K1MqN7d6JzT8XSrM3T5xkqTLbO3FJ8m4o1jHPu0iBQ" alt="James Bond Island">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/James-Bond-Island-on-Speed-Boat-509779/1768644313676_3_2.jpg" alt="James Bond Island">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Island · Thailand</span>
         <div class="dest-city">James Bond Island Speedboat</div>
         <div class="dest-meta">
           <span class="dest-nights">Full Day</span>
-          <span class="dest-price">From AED 159</span>
+          <span class="dest-price">From AED 125</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/phuket/island-tours/james-bond-island-on-speed-boat-e-509779" class="dest-cta">Book Now</a>
       </div>
     </div>
 
@@ -693,58 +690,58 @@
   <div class="dest-grid">
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/396/800/500.jpg?hmac=M5Gi0C8Sly1uBRv0L07Nwy1kgBuSm_3aZ4kCRVv5Yag" alt="Dubai Aquarium">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Dubai-Aquarium-and-Underwater-Zoo-3636/1759917679577_3_2.jpg" alt="Dubai Aquarium">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Aquarium · Dubai</span>
         <div class="dest-city">Dubai Aquarium &amp; Underwater Zoo</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 135</span>
+          <span class="dest-price">From AED 145</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/dubai/theme-parks/dubai-aquarium-and-underwater-zoo-e-3636" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/433/800/500.jpg?hmac=a29Y2m_Wbk0aGe83Pw4VdINE2vVRbxAstlRwPFfJpEA" alt="National Aquarium Abu Dhabi">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/false-5901/Aquarium-Abu-Dhabi-01.jpg" alt="National Aquarium Abu Dhabi">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Aquarium · Abu Dhabi</span>
         <div class="dest-city">National Aquarium Abu Dhabi</div>
         <div class="dest-meta">
           <span class="dest-nights">2–3 Hours</span>
-          <span class="dest-price">From AED 159</span>
+          <span class="dest-price">From AED 104</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/abu-dhabi/theme-parks/the-national-aquarium-abu-dhabi-e-5901" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/593/800/500.jpg?hmac=cPp3o2C5pFblCLzRGiRsUhbQVb9LX3-0Zt3kE5r-CvU" alt="Night Safari">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Night-Safari-Singapore-4683/1760696168117_3_2.jpg" alt="Night Safari">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Safari · Singapore</span>
         <div class="dest-city">Night Safari Singapore</div>
         <div class="dest-meta">
           <span class="dest-nights">3–4 Hours</span>
-          <span class="dest-price">From AED 153</span>
+          <span class="dest-price">From AED 28</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/singapore/nature-and-wildlife/night-safari-singapore-e-4683" class="dest-cta">Book Now</a>
       </div>
     </div>
 
     <div class="dest-card">
-      <img src="https://fastly.picsum.photos/id/582/800/500.jpg?hmac=DaUFqBRoOGNZpX9iJH_1kz9gKmopjL3GJZ19dF4BhXo" alt="Tiger Kingdom">
+      <img src="https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/Final/Phuket-Tiger-Kingdom-510010/1768305251219_3_2.jpg" alt="Tiger Kingdom">
       <div class="dest-overlay"></div>
       <div class="dest-content">
         <span class="dest-country">Wildlife · Phuket</span>
         <div class="dest-city">Phuket Tiger Kingdom</div>
         <div class="dest-meta">
           <span class="dest-nights">1–2 Hours</span>
-          <span class="dest-price">From AED 55</span>
+          <span class="dest-price">From AED 173</span>
         </div>
-        <a href="#" class="dest-cta">Book Now</a>
+        <a href="https://www.raynatours.com/phuket/nature-and-wildlife/phuket-tiger-kingdom-e-510010" class="dest-cta">Book Now</a>
       </div>
     </div>
 
@@ -802,7 +799,7 @@
       <tr>
         <td width="50%" style="padding:0 5px 8px 0; vertical-align:top;">
           <div style="background:#FFFDF4; border:1px solid #F0E5C0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
-            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#1A1A1A; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Rayna Tours</div>
+            <img src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours" style="height:28px; width:auto; display:block; margin:0 auto 10px;">
             <div style="font-size:15px; color:#F5A623; margin-bottom:6px; line-height:1;">★★★★<span style="color:#ddd;">★</span></div>
             <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.5</div>
             <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">3,450 Reviews</div>
@@ -810,7 +807,7 @@
         </td>
         <td width="50%" style="padding:0 0 8px 5px; vertical-align:top;">
           <div style="background:#F4FCF8; border:1px solid #B8E8D0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
-            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#00B67A; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Trustpilot</div>
+            <img src="https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg" alt="Trustpilot" style="height:24px; width:auto; display:block; margin:0 auto 10px;">
             <div style="font-size:15px; color:#00B67A; margin-bottom:6px; line-height:1;">★★★★<span style="color:#ddd;">★</span></div>
             <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.3</div>
             <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">52,641 Reviews</div>
@@ -820,7 +817,7 @@
       <tr>
         <td width="50%" style="padding:0 5px 0 0; vertical-align:top;">
           <div style="background:#F4FCF8; border:1px solid #B8E8D0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
-            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#00AA6C; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Tripadvisor</div>
+            <img src="https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg" alt="Tripadvisor" style="height:28px; width:auto; display:block; margin:0 auto 10px;">
             <div style="font-size:15px; color:#00AA6C; margin-bottom:6px; line-height:1;">●●●●◐</div>
             <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.6</div>
             <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">12,861 Reviews</div>
@@ -828,7 +825,7 @@
         </td>
         <td width="50%" style="padding:0 0 0 5px; vertical-align:top;">
           <div style="background:#FFF8F6; border:1px solid #F5CFC8; border-radius:6px; padding:18px 10px 16px; text-align:center;">
-            <div style="font-family:'Inter',sans-serif; font-size:10px; font-weight:700; color:#4285F4; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px;">Google</div>
+            <img src="https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png" alt="Google" style="height:24px; width:auto; display:block; margin:0 auto 10px;">
             <div style="font-size:15px; color:#FBBC04; margin-bottom:6px; line-height:1;">★★★★★</div>
             <div style="font-family:'Inter',sans-serif; font-size:15px; font-weight:700; color:#1A1A1A;">4.4</div>
             <div style="font-family:'Inter',sans-serif; font-size:10px; color:#AAAAAA; margin-top:3px;">1,517 Reviews</div>
@@ -843,29 +840,37 @@
     <div class="final-cta-eye">Your Next Adventure Is One Click Away</div>
     <h2 class="final-cta-title">Book Your Experience Today</h2>
     <p class="final-cta-sub">Use code <strong>RAYNOW</strong> at checkout and save up to 20% on all activities — instant confirmation, no hidden fees.</p>
-    <a href="#" class="btn-dark-cta">Browse All Activities</a>
+    <a href="https://www.raynatours.com/activities" class="btn-dark-cta">Browse All Activities</a>
   </div>
 
   <!-- FOOTER -->
   <div class="footer">
+    <img src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours" style="height:36px; width:auto; margin-bottom:20px; display:block; margin-left:auto; margin-right:auto; filter:brightness(0) invert(1);">
+    <div class="footer-social">
+      <div class="social-label-footer">Follow Us on</div>
+      <a href="https://www.facebook.com/raynagroup" class="soc-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 2H15C13.6739 2 12.4021 2.52678 11.4645 3.46447C10.5268 4.40215 10 5.67392 10 7V10H7V14H10V22H14V14H17L18 10H14V7C14 6.73478 14.1054 6.48043 14.2929 6.29289C14.4804 6.10536 14.7348 6 15 6H18V2Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="https://instagram.com/raynatours_" class="soc-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="20" height="20" rx="5" ry="5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="https://www.linkedin.com/company/raynatours" class="soc-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 8C17.5913 8 19.1174 8.63214 20.2426 9.75736C21.3679 10.8826 22 12.4087 22 14V21H18V14C18 13.4696 17.7893 12.9609 17.4142 12.5858C17.0391 12.2107 16.5304 12 16 12C15.4696 12 14.9609 12.2107 14.5858 12.5858C14.2107 12.9609 14 13.4696 14 14V21H10V14C10 12.4087 10.6321 10.8826 11.7574 9.75736C12.8826 8.63214 14.4087 8 16 8Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="2" y="9" width="4" height="12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4" cy="4" r="2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a href="https://www.youtube.com/raynatours" class="soc-btn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22.54 6.42C22.4212 5.94541 22.1793 5.51057 21.8387 5.15941C21.498 4.80824 21.0708 4.55318 20.6 4.42C18.88 4 12 4 12 4C12 4 5.12 4 3.4 4.46C2.92925 4.59318 2.50198 4.84824 2.16135 5.19941C1.82072 5.55057 1.57879 5.98541 1.46 6.46C1.14521 8.20556 0.991235 9.97631 1 11.75C0.988787 13.537 1.14277 15.3213 1.46 17.08C1.59096 17.5398 1.83831 17.9581 2.17814 18.2945C2.51798 18.6308 2.93882 18.8738 3.4 19C5.12 19.46 12 19.46 12 19.46C12 19.46 18.88 19.46 20.6 19C21.0708 18.8668 21.498 18.6118 21.8387 18.2606C22.1793 17.9094 22.4212 17.4746 22.54 17C22.8524 15.2676 23.0063 13.5103 23 11.75C23.0112 9.96295 22.8573 8.1787 22.54 6.42Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.75 15.02L15.5 11.75L9.75 8.48V15.02Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+    </div>
     <div class="footer-links">
-      <a href="#">Activities</a>
-      <a href="#">Holidays</a>
-      <a href="#">Visa</a>
-      <a href="#">Tours</a>
-      <a href="#">About Us</a>
-      <a href="#">Contact</a>
+      <a href="https://www.raynatours.com/activities">Activities</a>
+      <a href="https://www.raynatours.com/holidays">Holidays</a>
+      <a href="https://www.raynatours.com/visas">Visas</a>
+      <a href="https://www.raynatours.com/cruises">Cruises</a>
     </div>
     <div class="footer-contact">
       📍 Abu Dhabi &amp; Dubai, UAE &nbsp;|&nbsp;
       📞 <a href="tel:+97125503559">+971 2 550 3559</a> &nbsp;|&nbsp;
       ✉ <a href="mailto:info@raynatours.com">info@raynatours.com</a>
-    </div>
-    <div class="footer-social">
-      <a href="#" class="soc-btn">f</a>
-      <a href="#" class="soc-btn">in</a>
-      <a href="#" class="soc-btn">tw</a>
-      <a href="#" class="soc-btn">ig</a>
     </div>
     <div class="footer-bottom">
       © 2025 Rayna Tours. All rights reserved.<br>

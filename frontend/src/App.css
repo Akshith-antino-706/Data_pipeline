@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════
-   Rayna Tours — Sky Blue + Orange Component Styles
+   Rayna Tours — Black & Gold Component Styles
    Uses CSS variables from index.css design system
    ══════════════════════════════════════════════════════════════ */
 
@@ -46,20 +46,17 @@
   padding: 4px 14px;
 }
 .logo h1 {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.5px;
-  background: linear-gradient(135deg, #0EA5E9 0%, #38BDF8 60%, #F97316 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
 }
 .logo-sub {
-  font-size: 10px;
-  color: var(--text-tertiary);
+  font-size: 9px;
+  color: #C9A96E;
   text-transform: uppercase;
-  letter-spacing: 2px;
-  font-weight: 500;
+  letter-spacing: 2.5px;
+  font-weight: 600;
 }
 
 /* ── Nav ─────────────────────────────────────────────────── */
@@ -83,20 +80,22 @@ nav {
   position: relative;
 }
 .nav-item:hover {
-  background: rgba(14, 165, 233, 0.08);
+  background: rgba(201, 169, 110, 0.06);
   color: var(--text-primary);
 }
 .light .nav-item:hover {
-  background: rgba(2, 132, 199, 0.08);
+  background: rgba(26, 26, 26, 0.04);
 }
 .nav-item.active {
-  background: var(--brand-primary);
-  color: #ffffff;
-  box-shadow: 0 2px 12px rgba(14, 165, 233, 0.3);
+  background: #C9A96E;
+  color: #0D0D0D;
+  font-weight: 600;
+  box-shadow: 0 2px 12px rgba(201, 169, 110, 0.25);
 }
 .light .nav-item.active {
-  background: var(--brand-accent);
-  box-shadow: 0 2px 12px rgba(2, 132, 199, 0.25);
+  background: #1A1A1A;
+  color: #FFFFFF;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
 }
 .nav-item.active::after {
   content: '';
@@ -104,7 +103,7 @@ nav {
   right: 10px;
   width: 6px;
   height: 6px;
-  background: #F97316;
+  background: #C9A96E;
   border-radius: 50%;
 }
 
@@ -282,20 +281,30 @@ tr:last-child td {
   font-family: inherit;
 }
 .btn-primary {
-  background: var(--brand-primary);
-  color: #ffffff;
+  background: #C9A96E;
+  color: #0D0D0D;
+  font-weight: 600;
 }
 .btn-primary:hover {
-  background: #0284C7;
-  box-shadow: 0 2px 12px rgba(14, 165, 233, 0.3);
+  background: #B8963E;
+  box-shadow: 0 2px 12px rgba(201, 169, 110, 0.25);
+}
+.light .btn-primary {
+  background: #1A1A1A;
+  color: #FFFFFF;
+}
+.light .btn-primary:hover {
+  background: #333333;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
 }
 .btn-cta {
-  background: var(--brand-cta);
-  color: #ffffff;
+  background: #C9A96E;
+  color: #0D0D0D;
+  font-weight: 600;
 }
 .btn-cta:hover {
-  background: var(--brand-cta-hover);
-  box-shadow: 0 2px 12px rgba(249, 115, 22, 0.3);
+  background: #B8963E;
+  box-shadow: 0 2px 12px rgba(201, 169, 110, 0.25);
 }
 .btn-secondary {
   background: var(--bg-card);
@@ -325,8 +334,12 @@ tr:last-child td {
   color: var(--text-secondary);
 }
 .btn-ghost:hover {
-  color: var(--brand-primary);
-  background: rgba(14, 165, 233, 0.08);
+  color: #C9A96E;
+  background: rgba(201, 169, 110, 0.06);
+}
+.light .btn-ghost:hover {
+  color: #1A1A1A;
+  background: rgba(26, 26, 26, 0.04);
 }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 .btn-lg { padding: 10px 24px; font-size: 14px; }
@@ -347,7 +360,7 @@ tr:last-child td {
 .badge-green { background: var(--green-dim); color: var(--green); }
 .badge-red { background: var(--red-dim); color: var(--red); }
 .badge-orange { background: var(--orange-dim); color: var(--orange); }
-.badge-blue { background: var(--blue-dim); color: var(--brand-primary); }
+.badge-blue { background: var(--blue-dim); color: var(--blue); }
 .badge-purple { background: var(--purple-dim); color: var(--purple); }
 .badge-gray { background: var(--bg-card); color: var(--text-secondary); }
 
@@ -373,8 +386,12 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--brand-primary);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+  border-color: #C9A96E;
+  box-shadow: 0 0 0 3px rgba(201, 169, 110, 0.12);
+}
+.light input:focus, .light select:focus, .light textarea:focus {
+  border-color: #1A1A1A;
+  box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.08);
 }
 textarea { min-height: 100px; resize: vertical; }
 input.input-sm { width: auto; max-width: 240px; }

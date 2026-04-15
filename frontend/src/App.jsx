@@ -182,7 +182,7 @@ function BusinessTypeSwitcher() {
             onClick={() => setBusinessType(type)}
             style={{
               flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer',
-              background: businessType === type ? (type === 'B2C' ? 'var(--green)' : 'var(--primary)') : 'transparent',
+              background: businessType === type ? '#C9A96E' : 'transparent',
               color: businessType === type ? '#fff' : 'var(--text-secondary)',
               transition: 'all 0.2s',
               letterSpacing: '0.05em',

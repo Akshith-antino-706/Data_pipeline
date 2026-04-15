@@ -215,7 +215,7 @@ export default class UnifiedContactSync {
         WHERE ek NOT IN (SELECT email_key FROM unified_contacts WHERE email_key IS NOT NULL)
           AND (guest_contact IS NULL
                OR LENGTH(REGEXP_REPLACE(guest_contact,'[^0-9]','','g')) < 7
-               OR RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) IN ('^0+$')
+               OR RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) ~ '^0+$'
                OR RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) NOT IN (SELECT phone_key FROM unified_contacts WHERE phone_key IS NOT NULL))
         GROUP BY ek, grnty_email, guest_contact, guest_name, country_name
         ORDER BY ek, guest_name IS NOT NULL DESC

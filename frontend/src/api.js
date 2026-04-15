@@ -88,13 +88,6 @@ export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${i
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
 
-// ── Conversion Funnel ───────────────────────────────────────
-export const getFunnelData = () => request('/api/v3/funnel/overview');
-export const getSegmentFunnel = (id) => request(`/api/v3/funnel/segment/${id}`);
-export const recordConversion = (data) => request('/api/v3/funnel/convert', { method: 'POST', body: JSON.stringify(data) });
-export const getChannelEffectiveness = () => request('/api/v3/funnel/channels');
-export const getKeyMetrics = () => request('/api/v3/funnel/metrics');
-
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });
 export const aiSegmentAnalysis = () => request('/api/v3/agents/segment-assist/analyze');
@@ -106,11 +99,6 @@ export const getAgentLogs = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/agents/logs?${qs}`);
 };
-
-// ── RFM Analysis ──────────────────────────────────────────────
-export const getRFMOverview = () => request('/api/v3/rfm');
-export const getSegmentRFM = (id) => request(`/api/v3/rfm/segment/${id}`);
-export const recalculateRFM = () => request('/api/v3/rfm/recalculate', { method: 'POST' });
 
 // ── UTM Tracking ──────────────────────────────────────────────
 export const buildUTM = (data) => request('/api/v3/utm/build', { method: 'POST', body: JSON.stringify(data) });
@@ -132,28 +120,6 @@ export const getUserLinks = (params = {}) => {
   return request(`/api/v3/utm/user-links?${qs}`);
 };
 export const getUserLinkStats = () => request('/api/v3/utm/user-links-stats');
-
-// ── Coupons ───────────────────────────────────────────────────
-export const getCoupons = () => request('/api/v3/coupons');
-export const getCoupon = (id) => request(`/api/v3/coupons/${id}`);
-export const createCoupon = (data) => request('/api/v3/coupons', { method: 'POST', body: JSON.stringify(data) });
-export const validateCoupon = (data) => request('/api/v3/coupons/validate', { method: 'POST', body: JSON.stringify(data) });
-export const updateCoupon = (id, data) => request(`/api/v3/coupons/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteCoupon = (id) => request(`/api/v3/coupons/${id}`, { method: 'DELETE' });
-export const applyCoupon = (data) => request('/api/v3/coupons/apply', { method: 'POST', body: JSON.stringify(data) });
-export const getSegmentCoupons = (label) => request(`/api/v3/coupons/segment/${encodeURIComponent(label)}`);
-
-// ── Human Approvals ──────────────────────────────────────────
-export const getApprovalQueue = (params = {}) => {
-  const qs = new URLSearchParams(params).toString();
-  return request(`/api/v3/approvals?${qs}`);
-};
-export const getApprovalStats = () => request('/api/v3/approvals/stats');
-export const getApproval = (id) => request(`/api/v3/approvals/${id}`);
-export const requestApproval = (data) => request('/api/v3/approvals', { method: 'POST', body: JSON.stringify(data) });
-export const approveItem = (id, reviewedBy) => request(`/api/v3/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify({ reviewedBy }) });
-export const rejectItem = (id, reviewedBy) => request(`/api/v3/approvals/${id}/reject`, { method: 'POST', body: JSON.stringify({ reviewedBy }) });
-export const aiAnalyzeStrategies = () => request('/api/v3/approvals/ai-analyze', { method: 'POST' });
 
 // ── GTM & BigQuery ────────────────────────────────────────────
 export const getGTMSnippet = (containerId) => request(`/api/v3/gtm/snippet?containerId=${containerId || ''}`);
@@ -212,9 +178,6 @@ export const refreshBookingMapping = () => request('/api/v3/rayna-sync/refresh-m
 
 // ── V3 Migrations ───────────────────────────────────────────
 export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'POST' });
-export const runV3MigrateSchema = () => request('/api/v3/migrate-schema', { method: 'POST' });
-export const runV3MigrateSegments = () => request('/api/v3/migrate-segments', { method: 'POST' });
-export const runV3MigrateRFM = () => request('/api/v3/migrate-rfm', { method: 'POST' });
 
 // ── Daily Data Report ──────────────────────────────────────────
 export const getReportCounts = (from, to) => request(`/api/v3/daily-report/counts?from=${from}&to=${to}`);
