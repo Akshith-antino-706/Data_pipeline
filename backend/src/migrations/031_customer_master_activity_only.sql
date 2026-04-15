@@ -301,14 +301,18 @@ UPDATE customer_master cm SET total_chats = ca.cnt, first_chat_at = ca.first_at,
     last_chat_at = ca.last_at, chat_departments = ca.depts, first_message = ca.first_msg
 FROM chat_agg ca WHERE cm.phone_key = ca.phone_key;
 
--- 5b) First message text (from ongoing sync)
-UPDATE customer_master cm SET first_msg_text = sub.msg
-FROM (
-    SELECT DISTINCT ON (RIGHT(customer_no, 10))
-        RIGHT(customer_no, 10) as phone_key, first_msg_text as msg
-    FROM mysql_chats WHERE first_msg_text IS NOT NULL AND customer_no IS NOT NULL
-    ORDER BY RIGHT(customer_no, 10), created_at ASC
-) sub WHERE cm.phone_key = sub.phone_key;
+-- 5b) First message text (from chat_contacts if available)
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='chat_contacts' AND table_schema='public') THEN
+    UPDATE customer_master cm SET first_msg_text = sub.msg
+    FROM (
+        SELECT DISTINCT ON (RIGHT(wa_id, 10))
+            RIGHT(wa_id, 10) as phone_key, first_msg_text as msg
+        FROM chat_contacts WHERE first_msg_text IS NOT NULL AND wa_id IS NOT NULL
+        ORDER BY RIGHT(wa_id, 10), created_at ASC
+    ) sub WHERE cm.phone_key = sub.phone_key;
+  END IF;
+END $$;
 
 -- 5c) Tickets: phone for phone-customers, email for email-only
 WITH ticket_phone AS (

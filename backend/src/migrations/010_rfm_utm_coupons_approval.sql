@@ -156,7 +156,7 @@ VALUES (
   10000,
   ARRAY['S1','S2','S3','S4','S5','S6','S7','S8','S9','S10','S11','S12','S13','S14','S15','S16','S17','S18','S19','S20','S21','S22','S23','S24','S25','S26','S27','S28'],
   ARRAY['email','whatsapp','sms','push','web']::channel_type[]
-);
+) ON CONFLICT (code) DO NOTHING;
 
 -- Additional segment-specific coupons
 INSERT INTO coupons (code, description, discount_type, discount_value, min_order_value, valid_until, segment_labels) VALUES
@@ -167,7 +167,8 @@ INSERT INTO coupons (code, description, discount_type, discount_value, min_order
 ('CART20', 'Cart recovery 20% off', 'percentage', 20.00, 150.00, '2026-12-31', ARRAY['S3']),
 ('BIRTHDAY25', 'Birthday month 25% off', 'percentage', 25.00, 300.00, '2026-12-31', ARRAY['S23']),
 ('FESTIVAL15', 'Festival special 15% off', 'percentage', 15.00, 200.00, '2026-12-31', ARRAY['S24']),
-('REFER10', 'Referral reward 10% off', 'percentage', 10.00, 100.00, '2026-12-31', ARRAY['S20','S21','S22']);
+('REFER10', 'Referral reward 10% off', 'percentage', 10.00, 100.00, '2026-12-31', ARRAY['S20','S21','S22'])
+ON CONFLICT (code) DO NOTHING;
 
 
 -- ══════════════════════════════════════════════════════════════

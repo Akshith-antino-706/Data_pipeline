@@ -1,5 +1,8 @@
 -- 041: Occasion strategy, journey, and content templates
 
+-- Ensure segment_label column exists (may be missing if 001 was cached)
+ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS segment_label TEXT;
+
 -- ── Strategy ───────────────────────────────────────────────────
 INSERT INTO omnichannel_strategies (name, description, segment_label, channels, status, flow_steps) VALUES
 ('Holiday Occasion — Festive Offers',

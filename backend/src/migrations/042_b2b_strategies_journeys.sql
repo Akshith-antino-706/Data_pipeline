@@ -1,6 +1,9 @@
 -- 042: B2B strategies, journeys, and content templates
 -- Separate from B2C — focuses on partnerships, volume deals, commission structures
 
+-- Ensure segment_label column exists (may be missing if 001 was cached)
+ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS segment_label TEXT;
+
 -- ── B2B Segment Definitions ────────────────────────────────────
 INSERT INTO segment_definitions (segment_number, stage_id, segment_name, segment_description, customer_type, priority, sql_criteria, key_points) VALUES
 (7, (SELECT stage_id FROM funnel_stages WHERE stage_number = 2),

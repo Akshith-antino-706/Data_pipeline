@@ -1,6 +1,9 @@
 -- 035: Fresh content templates for 6-segment decision tree model
 -- Clears old templates and creates email + WhatsApp templates per segment per strategy step
 
+-- Ensure segment_label column exists (may be missing if 001 was cached)
+ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS segment_label TEXT;
+
 TRUNCATE content_templates CASCADE;
 
 -- ═══════════════════════════════════════════════════════════════

@@ -8,9 +8,12 @@ CREATE OR REPLACE FUNCTION set_node_template(
 DECLARE
   i INT;
   node JSONB;
+  cur_nodes JSONB;
 BEGIN
-  FOR i IN 0..jsonb_array_length((SELECT nodes FROM journey_flows WHERE name = p_journey_name)) - 1 LOOP
-    node := (SELECT nodes->i FROM journey_flows WHERE name = p_journey_name);
+  SELECT nodes INTO cur_nodes FROM journey_flows WHERE name = p_journey_name;
+  IF cur_nodes IS NULL THEN RETURN; END IF;
+  FOR i IN 0..jsonb_array_length(cur_nodes) - 1 LOOP
+    node := cur_nodes->i;
     IF node->>'id' = p_node_id THEN
       UPDATE journey_flows
         SET nodes = jsonb_set(nodes, ARRAY[i::text, 'data', 'templateId'], to_jsonb(p_template_id))
