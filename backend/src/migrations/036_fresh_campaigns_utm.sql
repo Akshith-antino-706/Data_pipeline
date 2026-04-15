@@ -1,9 +1,11 @@
 -- 036: Fresh campaigns + UTM tracking for 6-segment decision tree
 -- Each segment gets campaigns (one per channel used), each campaign gets a UTM link
 
-TRUNCATE campaigns CASCADE;
-TRUNCATE utm_tracking CASCADE;
-TRUNCATE user_utm_links CASCADE;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='campaigns' AND table_schema='public') THEN TRUNCATE campaigns CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='utm_tracking' AND table_schema='public') THEN TRUNCATE utm_tracking CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='user_utm_links' AND table_schema='public') THEN TRUNCATE user_utm_links CASCADE; END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════
 -- CAMPAIGNS — one per segment per channel

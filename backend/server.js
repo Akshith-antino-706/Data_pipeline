@@ -166,19 +166,23 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 });
 
 app.post('/api/v3/migrate-all', async (_, res) => {
+  // Phase 1: Core schema (ENUMs, base tables, marketing tables)
+  // Phase 2: MySQL sync + renames
+  // Phase 3: Rayna API + booking mapping
+  // Phase 4: Customer master rebuilds
+  // Phase 5: Strategy/journey/campaign rebuilds (supersede 009/017/018)
+  // Phase 6: Analytics & unified contacts
+  // NOTE: 016 removed (superseded by 021)
+  //       013 removed (just updates content_template rows - no DDL)
   const migrations = [
     '001_omnichannel_schema.sql',
     '002_channels.sql',
     '003_complete_data_schema.sql',
-    '009_rebuild_segmentation.sql',
     '010_rfm_utm_coupons_approval.sql',
+    '009_rebuild_segmentation.sql',
     '012_lifecycle_winback_segmentation.sql',
-    '013_product_images_in_templates.sql',
     '014_product_affinity_engine.sql',
     '015_sync_metadata.sql',
-    '016_mysql_sync_tables.sql',
-    '017_full_segment_content_journeys_campaigns.sql',
-    '018_enhanced_strategies_journeys.sql',
     '019_ga4_bigquery_sync.sql',
     '020_sync_call_enhancements.sql',
     '021_fresh_mysql_tables.sql',

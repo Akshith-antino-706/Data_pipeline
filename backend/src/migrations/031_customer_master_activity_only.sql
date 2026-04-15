@@ -77,23 +77,29 @@ SELECT
     NULLIF(TRIM(country), '')
 FROM mysql_chats WHERE customer_no IS NOT NULL;
 
--- 2) Tickets (contact_status JSON — extracted columns)
+-- 2) Tickets (contact_status JSON → extract contact fields)
 INSERT INTO all_ids (phone_key, email_key, raw_phone, source, name, email, company, city, state, country, designation)
 SELECT
-    CASE WHEN LENGTH(REGEXP_REPLACE(contact_mobile,'[^0-9]','','g')) >= 7
-         AND COALESCE(contact_mobile,'') NOT IN (SELECT val FROM junk_vals)
-         THEN RIGHT(REGEXP_REPLACE(contact_mobile,'[^0-9]','','g'), 10) END,
-    CASE WHEN TRIM(COALESCE(contact_email,'')) != '' THEN LOWER(TRIM(contact_email)) END,
-    contact_mobile, 'tickets',
-    NULLIF(TRIM(contact_name), ''),
-    NULLIF(TRIM(contact_email), ''),
-    NULLIF(TRIM(contact_company), ''),
-    NULLIF(TRIM(contact_city), ''),
-    NULLIF(TRIM(contact_state), ''),
-    NULLIF(TRIM(contact_country), ''),
-    NULLIF(TRIM(contact_designation), '')
-FROM mysql_tickets
-WHERE contact_name IS NOT NULL;
+    CASE WHEN LENGTH(REGEXP_REPLACE(c->>'mobile','[^0-9]','','g')) >= 7
+         AND COALESCE(c->>'mobile','') NOT IN (SELECT val FROM junk_vals)
+         THEN RIGHT(REGEXP_REPLACE(c->>'mobile','[^0-9]','','g'), 10) END,
+    CASE WHEN TRIM(COALESCE(c->>'email','')) != '' THEN LOWER(TRIM(c->>'email')) END,
+    c->>'mobile', 'tickets',
+    NULLIF(TRIM(c->>'name'), ''),
+    NULLIF(TRIM(c->>'email'), ''),
+    NULLIF(TRIM(c->>'company_name'), ''),
+    NULLIF(TRIM(c->>'city'), ''),
+    NULLIF(TRIM(c->>'cstate'), ''),
+    NULLIF(TRIM(c->>'country_name'), ''),
+    NULLIF(TRIM(c->>'designation'), '')
+FROM (
+    SELECT translate(contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0 as c
+    FROM mysql_tickets
+    WHERE contact_status ~ '^\{"contacts"'
+      AND contact_status NOT LIKE '%\u0000%'
+      AND octet_length(contact_status) = length(contact_status)
+) t
+WHERE c->>'name' IS NOT NULL;
 
 -- 3) Tickets (t_from fallback — no contact_status, exclude Rayna internal emails)
 INSERT INTO all_ids (email_key, source, email)
@@ -307,19 +313,40 @@ FROM (
 WITH ticket_phone AS (
     SELECT cm.id as cid, t.id as tid, t.updated_at, t.department_name
     FROM mysql_tickets t
-    JOIN customer_master cm ON cm.phone_key = RIGHT(REGEXP_REPLACE(COALESCE(t.contact_mobile,''),'[^0-9]','','g'), 10)
-    WHERE cm.phone_key IS NOT NULL AND t.contact_mobile IS NOT NULL
-      AND LENGTH(REGEXP_REPLACE(t.contact_mobile,'[^0-9]','','g')) >= 7
+    CROSS JOIN LATERAL (
+      SELECT translate(t.contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0->>'mobile' as mobile
+    ) cs
+    JOIN customer_master cm ON cm.phone_key = RIGHT(REGEXP_REPLACE(COALESCE(cs.mobile,''),'[^0-9]','','g'), 10)
+    WHERE cm.phone_key IS NOT NULL AND cs.mobile IS NOT NULL
+      AND LENGTH(REGEXP_REPLACE(cs.mobile,'[^0-9]','','g')) >= 7
+      AND t.contact_status ~ '^\{"contacts"'
+      AND t.contact_status NOT LIKE '%\u0000%'
+      AND octet_length(t.contact_status) = length(t.contact_status)
 ),
 ticket_email AS (
     SELECT cm.id as cid, t.id as tid, t.updated_at, t.department_name
     FROM mysql_tickets t
-    JOIN customer_master cm ON cm.email_key = LOWER(TRIM(COALESCE(t.contact_email, t.t_from)))
+    JOIN customer_master cm ON cm.email_key = LOWER(TRIM(COALESCE(
+      CASE WHEN t.contact_status ~ '^\{"contacts"' AND t.contact_status NOT LIKE '%\u0000%' AND octet_length(t.contact_status) = length(t.contact_status)
+           THEN translate(t.contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0->>'email' END,
+      t.t_from)))
     WHERE cm.phone_key IS NULL
-      AND COALESCE(t.contact_email, t.t_from) IS NOT NULL
-      AND TRIM(COALESCE(t.contact_email, t.t_from)) != ''
-      AND COALESCE(t.contact_email, t.t_from) NOT LIKE '%raynatours.com%'
-      AND COALESCE(t.contact_email, t.t_from) NOT LIKE '%raynab2b.com%'
+      AND COALESCE(
+        CASE WHEN t.contact_status ~ '^\{"contacts"' AND t.contact_status NOT LIKE '%\u0000%' AND octet_length(t.contact_status) = length(t.contact_status)
+             THEN translate(t.contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0->>'email' END,
+        t.t_from) IS NOT NULL
+      AND TRIM(COALESCE(
+        CASE WHEN t.contact_status ~ '^\{"contacts"' AND t.contact_status NOT LIKE '%\u0000%' AND octet_length(t.contact_status) = length(t.contact_status)
+             THEN translate(t.contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0->>'email' END,
+        t.t_from)) != ''
+      AND COALESCE(
+        CASE WHEN t.contact_status ~ '^\{"contacts"' AND t.contact_status NOT LIKE '%\u0000%' AND octet_length(t.contact_status) = length(t.contact_status)
+             THEN translate(t.contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0->>'email' END,
+        t.t_from) NOT LIKE '%raynatours.com%'
+      AND COALESCE(
+        CASE WHEN t.contact_status ~ '^\{"contacts"' AND t.contact_status NOT LIKE '%\u0000%' AND octet_length(t.contact_status) = length(t.contact_status)
+             THEN translate(t.contact_status, E'\r\n\t', '   ')::jsonb->'contacts'->0->>'email' END,
+        t.t_from) NOT LIKE '%raynab2b.com%'
 ),
 ticket_agg AS (
     SELECT cid, COUNT(DISTINCT tid) as cnt, MIN(updated_at) as first_at, MAX(updated_at) as last_at,

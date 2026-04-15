@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS content_templates (
     ai_prompt       TEXT,                               -- Prompt used to generate
     ai_model        TEXT,                               -- Model used
 
+    -- Segment targeting
+    segment_label   TEXT,
+
     -- Versioning
     version         INTEGER             NOT NULL DEFAULT 1,
     parent_id       BIGINT              REFERENCES content_templates(id),
@@ -114,6 +117,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
     channel         channel_type        NOT NULL,
     template_id     BIGINT              REFERENCES content_templates(id),
     status          campaign_status     NOT NULL DEFAULT 'draft',
+
+    -- Journey link
+    journey_id      BIGINT,
+    journey_node_id TEXT,
 
     -- Targeting
     target_count    INTEGER             DEFAULT 0,      -- How many recipients
@@ -245,7 +252,23 @@ CREATE TABLE IF NOT EXISTS ai_optimization_log (
 
 CREATE INDEX IF NOT EXISTS idx_ai_log_strategy ON ai_optimization_log (strategy_id);
 
--- ── 8. ADD ENRICHMENT COLUMNS TO CUSTOMER_SEGMENTS (if table exists) ─
+-- ── 8. USER UTM LINKS (per-user tracked links) ──────────────────
+CREATE TABLE IF NOT EXISTS user_utm_links (
+  id              BIGSERIAL PRIMARY KEY,
+  utm_id          BIGINT,
+  customer_email  TEXT,
+  unique_code     TEXT UNIQUE,
+  full_url        TEXT NOT NULL,
+  clicked         BOOLEAN DEFAULT false,
+  clicked_at      TIMESTAMPTZ,
+  converted       BOOLEAN DEFAULT false,
+  converted_at    TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_uutm_code ON user_utm_links(unique_code);
+
+-- ── 9. ADD ENRICHMENT COLUMNS TO CUSTOMER_SEGMENTS (if table exists) ─
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'customer_segments') THEN
     ALTER TABLE customer_segments ADD COLUMN IF NOT EXISTS gender TEXT;

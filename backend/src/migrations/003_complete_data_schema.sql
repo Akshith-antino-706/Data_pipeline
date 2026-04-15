@@ -449,54 +449,40 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- ══════════════════════════════════════════════════════════════
--- DATA MIGRATION: Seed from existing customer_segments table
+-- DATA MIGRATION: Seed from existing customer_segments table (if exists)
 -- ══════════════════════════════════════════════════════════════
-INSERT INTO customers (
-    email, first_name, last_name, phone_number, whatsapp_number,
-    gender, nationality, residence_country, customer_type,
-    total_bookings, phone_clean, phone_country_code, enrichment_score,
-    registration_date, lead_status,
-    created_at
-)
-SELECT
-    cs.email,
-    SPLIT_PART(cs.full_name, ' ', 1) AS first_name,
-    CASE WHEN POSITION(' ' IN COALESCE(cs.full_name, '')) > 0
-         THEN SUBSTRING(cs.full_name FROM POSITION(' ' IN cs.full_name) + 1)
-         ELSE NULL END AS last_name,
-    cs.phone,
-    cs.whatsapp_id,
-    cs.gender,
-    cs.nationality,
-    cs.country,
-    COALESCE(cs.customer_type, cs.identifier_type, 'B2C'),
-    COALESCE(cs.total_bookings, 0),
-    cs.phone_clean,
-    cs.phone_country_code,
-    COALESCE(cs.enrichment_score, 0),
-    NOW() - (COALESCE(cs.recency_days, 0) || ' days')::INTERVAL,
-    CASE WHEN cs.total_bookings > 0 THEN 'converted' ELSE 'new' END,
-    NOW()
-FROM customer_segments cs
-WHERE cs.email IS NOT NULL
-ON CONFLICT (email) DO NOTHING;
-
--- Update computed fields from travel_data
-UPDATE customers c SET
-    total_revenue = sub.total_rev,
-    first_booking_date = sub.first_book,
-    last_booking_date = sub.last_book,
-    days_since_last_booking = EXTRACT(DAY FROM NOW() - sub.last_book)::INTEGER
-FROM (
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'customer_segments' AND table_schema = 'public') THEN
+    INSERT INTO customers (
+        email, first_name, last_name, phone_number, whatsapp_number,
+        gender, nationality, residence_country, customer_type,
+        total_bookings, phone_clean, phone_country_code, enrichment_score,
+        registration_date, lead_status, created_at
+    )
     SELECT
-        td.email,
-        0 AS total_rev,
-        MIN(td.added_date) AS first_book,
-        MAX(td.added_date) AS last_book
-    FROM travel_data td
-    WHERE td.email IS NOT NULL
-    GROUP BY td.email
-) sub
-WHERE c.email = sub.email;
+        cs.email,
+        SPLIT_PART(cs.full_name, ' ', 1),
+        CASE WHEN POSITION(' ' IN COALESCE(cs.full_name, '')) > 0
+             THEN SUBSTRING(cs.full_name FROM POSITION(' ' IN cs.full_name) + 1) END,
+        cs.phone, cs.whatsapp_id, cs.gender, cs.nationality, cs.country,
+        COALESCE(cs.customer_type, cs.identifier_type, 'B2C'),
+        COALESCE(cs.total_bookings, 0), cs.phone_clean, cs.phone_country_code,
+        COALESCE(cs.enrichment_score, 0),
+        NOW() - (COALESCE(cs.recency_days, 0) || ' days')::INTERVAL,
+        CASE WHEN cs.total_bookings > 0 THEN 'converted' ELSE 'new' END, NOW()
+    FROM customer_segments cs WHERE cs.email IS NOT NULL
+    ON CONFLICT (email) DO NOTHING;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'travel_data' AND table_schema = 'public') THEN
+    UPDATE customers c SET
+        total_revenue = sub.total_rev, first_booking_date = sub.first_book,
+        last_booking_date = sub.last_book,
+        days_since_last_booking = EXTRACT(DAY FROM NOW() - sub.last_book)::INTEGER
+    FROM (SELECT td.email, 0 AS total_rev, MIN(td.added_date) AS first_book, MAX(td.added_date) AS last_book
+          FROM travel_data td WHERE td.email IS NOT NULL GROUP BY td.email) sub
+    WHERE c.email = sub.email;
+  END IF;
+END $$;
 
 COMMIT;
