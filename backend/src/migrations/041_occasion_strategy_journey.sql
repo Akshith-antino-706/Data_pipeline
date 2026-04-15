@@ -1,7 +1,8 @@
 -- 041: Occasion strategy, journey, and content templates
 
--- Ensure segment_label column exists (may be missing if 001 was cached)
+-- Ensure columns exist (may be missing if 001 was cached or 036 rolled back)
 ALTER TABLE content_templates ADD COLUMN IF NOT EXISTS segment_label TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS journey_id BIGINT;
 
 -- ── Strategy ───────────────────────────────────────────────────
 INSERT INTO omnichannel_strategies (name, description, segment_label, channels, status, flow_steps) VALUES

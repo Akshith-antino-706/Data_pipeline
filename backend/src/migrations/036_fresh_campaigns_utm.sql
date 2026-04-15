@@ -4,6 +4,9 @@
 -- Ensure columns exist (may be missing if 001 was cached)
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS journey_id BIGINT;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS journey_node_id TEXT;
+ALTER TABLE utm_tracking ADD COLUMN IF NOT EXISTS campaign_name TEXT;
+ALTER TABLE utm_tracking ADD COLUMN IF NOT EXISTS content_name TEXT;
+ALTER TABLE utm_tracking ADD COLUMN IF NOT EXISTS auto_generated BOOLEAN DEFAULT false;
 
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='campaigns' AND table_schema='public') THEN TRUNCATE campaigns CASCADE; END IF;
