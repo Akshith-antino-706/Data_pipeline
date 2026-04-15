@@ -75,17 +75,17 @@ CREATE TEMP TABLE all_phones (
     contact_id  INTEGER
 );
 
--- 1a) Chats (wa_id = phone number)
+-- 1a) Chats (customer_no = phone number)
 INSERT INTO all_phones (phone_key, raw_phone, source, name, email, country)
 SELECT
-    RIGHT(wa_id, 10),
-    wa_id,
+    RIGHT(customer_no, 10),
+    customer_no,
     'chats',
     NULLIF(TRIM(wa_name), ''),
     NULLIF(TRIM(email), ''),
     NULLIF(TRIM(country), '')
 FROM mysql_chats
-WHERE wa_id IS NOT NULL AND LENGTH(wa_id) >= 7;
+WHERE customer_no IS NOT NULL AND LENGTH(customer_no) >= 7;
 
 -- 1b) Contacts (by mobile)
 INSERT INTO all_phones (phone_key, raw_phone, source, name, email, company, city, state, dob, contact_type, contact_id)
@@ -300,14 +300,14 @@ CREATE INDEX idx_cm_email ON customer_master(LOWER(email));
 -- 3a) Chat activity
 WITH chat_agg AS (
     SELECT
-        RIGHT(wa_id, 10) as phone_key,
+        RIGHT(customer_no, 10) as phone_key,
         COUNT(*) as total_chats,
         MIN(created_at) as first_chat_at,
         MAX(GREATEST(last_msg, last_in, last_out, created_at)) as last_chat_at,
         STRING_AGG(DISTINCT department_name, ', ' ORDER BY department_name) as chat_departments
     FROM mysql_chats
-    WHERE wa_id IS NOT NULL AND LENGTH(wa_id) >= 7
-    GROUP BY RIGHT(wa_id, 10)
+    WHERE customer_no IS NOT NULL AND LENGTH(customer_no) >= 7
+    GROUP BY RIGHT(customer_no, 10)
 )
 UPDATE customer_master cm SET
     total_chats = ca.total_chats,

@@ -8,23 +8,18 @@ BEGIN;
 -- ══════════════════════════════════════════════════════════════
 -- STEP 1: CLEAN SLATE — Remove all existing segment data
 -- ══════════════════════════════════════════════════════════════
-DELETE FROM segment_customers;
-DELETE FROM conversion_tracking;
-DELETE FROM journey_entries;
-
--- Remove journey_flows FK to segment_definitions
-DELETE FROM journey_events;
-DELETE FROM journey_entries;
-DELETE FROM journey_flows;
-
--- Remove campaigns FK to strategies
-UPDATE campaigns SET strategy_id = NULL;
-DELETE FROM ai_optimization_log;
-DELETE FROM omnichannel_strategies;
-
--- Now drop segment definitions
-DELETE FROM segment_definitions;
-DELETE FROM funnel_stages;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segment_customers' AND table_schema='public') THEN DELETE FROM segment_customers; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='conversion_tracking' AND table_schema='public') THEN DELETE FROM conversion_tracking; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='journey_events' AND table_schema='public') THEN DELETE FROM journey_events; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='journey_entries' AND table_schema='public') THEN DELETE FROM journey_entries; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='journey_flows' AND table_schema='public') THEN DELETE FROM journey_flows; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='campaigns' AND table_schema='public') THEN UPDATE campaigns SET strategy_id = NULL; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='ai_optimization_log' AND table_schema='public') THEN DELETE FROM ai_optimization_log; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='omnichannel_strategies' AND table_schema='public') THEN DELETE FROM omnichannel_strategies; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segment_definitions' AND table_schema='public') THEN DELETE FROM segment_definitions; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='funnel_stages' AND table_schema='public') THEN DELETE FROM funnel_stages; END IF;
+END $$;
 
 -- ══════════════════════════════════════════════════════════════
 -- STEP 2: Recreate funnel stages (7 stages exactly per HTML)

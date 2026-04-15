@@ -245,26 +245,14 @@ CREATE TABLE IF NOT EXISTS ai_optimization_log (
 
 CREATE INDEX IF NOT EXISTS idx_ai_log_strategy ON ai_optimization_log (strategy_id);
 
--- ── 8. ADD ENRICHMENT COLUMNS TO CUSTOMER_SEGMENTS ──────────
--- Gender and cleaned phone (idempotent)
+-- ── 8. ADD ENRICHMENT COLUMNS TO CUSTOMER_SEGMENTS (if table exists) ─
 DO $$ BEGIN
-  ALTER TABLE customer_segments ADD COLUMN gender TEXT;
-EXCEPTION WHEN duplicate_column THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  ALTER TABLE customer_segments ADD COLUMN phone_clean TEXT;
-EXCEPTION WHEN duplicate_column THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  ALTER TABLE customer_segments ADD COLUMN phone_country_code TEXT;
-EXCEPTION WHEN duplicate_column THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  ALTER TABLE customer_segments ADD COLUMN enrichment_score NUMERIC(3,2) DEFAULT 0;
-EXCEPTION WHEN duplicate_column THEN NULL;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'customer_segments') THEN
+    ALTER TABLE customer_segments ADD COLUMN IF NOT EXISTS gender TEXT;
+    ALTER TABLE customer_segments ADD COLUMN IF NOT EXISTS phone_clean TEXT;
+    ALTER TABLE customer_segments ADD COLUMN IF NOT EXISTS phone_country_code TEXT;
+    ALTER TABLE customer_segments ADD COLUMN IF NOT EXISTS enrichment_score NUMERIC(3,2) DEFAULT 0;
+  END IF;
 END $$;
 
 -- ── TRIGGER: auto-update updated_at ─────────────────────────

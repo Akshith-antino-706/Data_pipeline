@@ -63,10 +63,10 @@ CREATE TEMP TABLE all_ids (
 -- Chats
 INSERT INTO all_ids (phone_key, email_key, raw_phone, source, name, email, country)
 SELECT
-    CASE WHEN LENGTH(wa_id) >= 7 THEN RIGHT(wa_id, 10) END,
+    CASE WHEN LENGTH(customer_no) >= 7 THEN RIGHT(customer_no, 10) END,
     CASE WHEN TRIM(COALESCE(email,'')) != '' THEN LOWER(TRIM(email)) END,
-    wa_id, 'chats', NULLIF(TRIM(wa_name),''), NULLIF(TRIM(email),''), NULLIF(TRIM(country),'')
-FROM mysql_chats WHERE wa_id IS NOT NULL;
+    customer_no, 'chats', NULLIF(TRIM(wa_name),''), NULLIF(TRIM(email),''), NULLIF(TRIM(country),'')
+FROM mysql_chats WHERE customer_no IS NOT NULL;
 
 -- Contacts
 INSERT INTO all_ids (phone_key, email_key, raw_phone, source, name, email, company, city, state, dob, contact_type, contact_id)
@@ -288,12 +288,12 @@ CREATE INDEX idx_cm_email_key ON customer_master(email_key);
 
 -- 5a) Chats
 WITH chat_agg AS (
-    SELECT RIGHT(wa_id, 10) as phone_key,
+    SELECT RIGHT(customer_no, 10) as phone_key,
         COUNT(*) as total_chats, MIN(created_at) as first_chat_at,
         MAX(GREATEST(last_msg, last_in, last_out, created_at)) as last_chat_at,
         STRING_AGG(DISTINCT department_name, ', ' ORDER BY department_name) as chat_departments
-    FROM mysql_chats WHERE wa_id IS NOT NULL AND LENGTH(wa_id) >= 7
-    GROUP BY RIGHT(wa_id, 10)
+    FROM mysql_chats WHERE customer_no IS NOT NULL AND LENGTH(customer_no) >= 7
+    GROUP BY RIGHT(customer_no, 10)
 )
 UPDATE customer_master cm SET total_chats = ca.total_chats, first_chat_at = ca.first_chat_at,
     last_chat_at = ca.last_chat_at, chat_departments = ca.chat_departments

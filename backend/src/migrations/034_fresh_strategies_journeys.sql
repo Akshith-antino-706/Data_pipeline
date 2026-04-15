@@ -2,13 +2,15 @@
 -- Clears old 28-segment model and replaces with 6 booking-status segments
 
 -- ── Step 1: Clean old data ─────────────────────────────────────
-TRUNCATE journey_events CASCADE;
-TRUNCATE journey_entries CASCADE;
-TRUNCATE journey_flows CASCADE;
-TRUNCATE omnichannel_strategies CASCADE;
-TRUNCATE segment_customers CASCADE;
-TRUNCATE segment_definitions CASCADE;
-TRUNCATE funnel_stages CASCADE;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='journey_events' AND table_schema='public') THEN TRUNCATE journey_events CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='journey_entries' AND table_schema='public') THEN TRUNCATE journey_entries CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='journey_flows' AND table_schema='public') THEN TRUNCATE journey_flows CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='omnichannel_strategies' AND table_schema='public') THEN TRUNCATE omnichannel_strategies CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segment_customers' AND table_schema='public') THEN TRUNCATE segment_customers CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='segment_definitions' AND table_schema='public') THEN TRUNCATE segment_definitions CASCADE; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='funnel_stages' AND table_schema='public') THEN TRUNCATE funnel_stages CASCADE; END IF;
+END $$;
 
 -- ── Step 2: Fresh funnel stages (maps to booking lifecycle) ────
 INSERT INTO funnel_stages (stage_number, stage_name, stage_description, stage_color) VALUES
