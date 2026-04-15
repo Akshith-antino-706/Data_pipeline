@@ -174,17 +174,17 @@ app.post('/api/v3/migrate-all', async (_, res) => {
   // Phase 6: Analytics & unified contacts
   // NOTE: 016 removed (superseded by 021)
   //       013 removed (just updates content_template rows - no DDL)
+  //       009 removed (superseded by 034/035 - rebuilds old segment model)
+  //       012 removed (superseded by 034/035 - old lifecycle segmentation)
+  //       020 removed (sync_call columns - superseded by 021 fresh mysql tables)
   const migrations = [
     '001_omnichannel_schema.sql',
     '002_channels.sql',
     '003_complete_data_schema.sql',
     '010_rfm_utm_coupons_approval.sql',
-    '009_rebuild_segmentation.sql',
-    '012_lifecycle_winback_segmentation.sql',
     '014_product_affinity_engine.sql',
     '015_sync_metadata.sql',
     '019_ga4_bigquery_sync.sql',
-    '020_sync_call_enhancements.sql',
     '021_fresh_mysql_tables.sql',
     '022_rename_columns.sql',
     '023_customer_master.sql',

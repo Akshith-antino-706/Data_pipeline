@@ -105,7 +105,8 @@ WHERE c->>'name' IS NOT NULL;
 INSERT INTO all_ids (email_key, source, email)
 SELECT LOWER(TRIM(t_from)), 'tickets', TRIM(t_from)
 FROM mysql_tickets
-WHERE t_from IS NOT NULL AND TRIM(t_from) != '' AND contact_name IS NULL
+WHERE t_from IS NOT NULL AND TRIM(t_from) != ''
+  AND (contact_status IS NULL OR contact_status !~ '^\{"contacts"')
   AND t_from NOT LIKE '%raynatours.com%' AND t_from NOT LIKE '%raynab2b.com%';
 
 -- 4) Tours
