@@ -166,14 +166,56 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 });
 
 app.post('/api/v3/migrate-all', async (_, res) => {
-  try {
-    for (const file of ['044_unified_contacts.sql', '039_segment_daily_log.sql', '003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql']) {
+  const migrations = [
+    '001_omnichannel_schema.sql',
+    '002_channels.sql',
+    '003_complete_data_schema.sql',
+    '009_rebuild_segmentation.sql',
+    '010_rfm_utm_coupons_approval.sql',
+    '012_lifecycle_winback_segmentation.sql',
+    '013_product_images_in_templates.sql',
+    '014_product_affinity_engine.sql',
+    '015_sync_metadata.sql',
+    '016_mysql_sync_tables.sql',
+    '017_full_segment_content_journeys_campaigns.sql',
+    '018_enhanced_strategies_journeys.sql',
+    '019_ga4_bigquery_sync.sql',
+    '020_sync_call_enhancements.sql',
+    '021_fresh_mysql_tables.sql',
+    '022_rename_columns.sql',
+    '023_customer_master.sql',
+    '024_rayna_api_sync_tables.sql',
+    '025_fix_rayna_conflict_keys.sql',
+    '026_booking_customer_mapping.sql',
+    '027_add_chat_timestamp_columns.sql',
+    '028_add_ticket_contact_status.sql',
+    '029_fresh_customer_master.sql',
+    '030_customer_master_phone_email.sql',
+    '031_customer_master_activity_only.sql',
+    '033_add_visa_missing_fields.sql',
+    '034_fresh_strategies_journeys.sql',
+    '035_fresh_content_templates.sql',
+    '036_fresh_campaigns_utm.sql',
+    '037_link_journey_nodes_to_templates.sql',
+    '038_product_affinity.sql',
+    '039_segment_daily_log.sql',
+    '040_holidays_calendar.sql',
+    '041_occasion_strategy_journey.sql',
+    '042_b2b_strategies_journeys.sql',
+    '043_email_html_templates.sql',
+    '044_unified_contacts.sql',
+  ];
+  const results = [];
+  for (const file of migrations) {
+    try {
       await runMigrationFile(file);
+      results.push({ file, status: 'ok' });
+    } catch (err) {
+      results.push({ file, status: 'error', error: err.message });
     }
-    res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
   }
+  const failed = results.filter(r => r.status === 'error');
+  res.json({ success: failed.length === 0, ran: results.length, failed: failed.length, results });
 });
 
 app.post('/api/v3/migrate-sync', async (_, res) => {
