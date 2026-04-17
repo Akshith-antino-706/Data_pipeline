@@ -28,7 +28,7 @@ const COLUMNS = [
   { key: 'geography', label: 'Geo', sortable: false },
   { key: 'chat_departments', label: 'Dept', sortable: false },
   { key: 'total_chats', label: 'Chats', sortable: true },
-  { key: 'total_travel_bookings', label: 'Bookings', sortable: true },
+  { key: 'total_bookings', label: 'Bookings', sortable: false },
   { key: 'last_seen_at', label: 'Last Seen', sortable: true },
 ];
 
@@ -61,7 +61,7 @@ export default function UnifiedContacts() {
   const loadContacts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit, sortBy, sortDir, contactType: businessType };
+      const params = { page, limit, sortBy, sortDir, businessType };
       if (search) params.search = search;
       Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await getUnifiedContacts(params);
@@ -230,7 +230,7 @@ export default function UnifiedContacts() {
                   <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}</span> : '\u2014'}</td>
                   <td>{c.chat_departments ? c.chat_departments.split(', ').map(d => <span key={d} className={`badge ${d === 'B2B' ? 'badge-orange' : d === 'B2C' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9, marginRight: 2 }}>{d}</span>) : '\u2014'}</td>
                   <td>{c.total_chats > 0 ? <span className="badge badge-green">{c.total_chats}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
-                  <td>{c.total_travel_bookings > 0 ? <span className="badge badge-blue">{c.total_travel_bookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
+                  <td>{(() => { const b = (c.total_tour_bookings||0)+(c.total_hotel_bookings||0)+(c.total_visa_bookings||0)+(c.total_flight_bookings||0); return b > 0 ? <span className="badge badge-blue">{b}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>; })()}</td>
                   <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{formatDate(c.last_seen_at)}</td>
                   <td><button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.unified_id); }}><Eye size={14} /></button></td>
                 </tr>
@@ -322,16 +322,7 @@ export default function UnifiedContacts() {
                     <DetailRow icon={Clock} label="Last Chat" value={formatDateTime(selected.last_chat_at)} />
                   </Section>
 
-                  {/* Travel Bookings */}
-                  <Section title="Travel Bookings">
-                    <DetailRow icon={Map} label="Total Bookings" value={selected.total_travel_bookings || 0} color="var(--brand-primary)" />
-                    <DetailRow icon={Hash} label="Types" value={selected.travel_types} />
-                    <DetailRow icon={Hash} label="Services" value={selected.travel_services} truncate />
-                    <DetailRow icon={Calendar} label="First Booking" value={formatDate(selected.first_travel_at)} />
-                    <DetailRow icon={Clock} label="Last Booking" value={formatDate(selected.last_travel_at)} />
-                  </Section>
-
-                  {/* Rayna Booking Summary + Detail Tables */}
+                  {/* Booking Summary + Detail Tables */}
                   {(selected.total_tour_bookings > 0 || selected.total_hotel_bookings > 0 || selected.total_visa_bookings > 0 || selected.total_flight_bookings > 0) && (
                     <div className="card" style={{ padding: 16, marginBottom: 12 }}>
                       <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>Booking Summary</div>
@@ -342,6 +333,12 @@ export default function UnifiedContacts() {
                         {selected.total_flight_bookings > 0 && <MiniStat icon={Plane} label="Flights" value={selected.total_flight_bookings} color="#3b82f6" />}
                         <MiniStat icon={DollarSign} label="Revenue" value={formatAED(selected.total_booking_revenue)} color="var(--primary)" />
                       </div>
+                      {(selected.first_booking_at || selected.last_booking_at) && (
+                        <div style={{ display: 'flex', gap: 24, marginTop: 10, fontSize: 12, color: 'var(--text-tertiary)' }}>
+                          {selected.first_booking_at && <span>First: {formatDate(selected.first_booking_at)}</span>}
+                          {selected.last_booking_at && <span>Last: {formatDate(selected.last_booking_at)}</span>}
+                        </div>
+                      )}
                     </div>
                   )}
 

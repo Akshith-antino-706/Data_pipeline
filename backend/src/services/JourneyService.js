@@ -1,4 +1,6 @@
 import db from '../config/database.js';
+import EmailRenderer from './EmailRenderer.js';
+import { EmailChannel } from './channels/EmailChannel.js';
 
 /**
  * JourneyService — Journey Flow Builder & Execution Engine
@@ -248,7 +250,7 @@ class JourneyService {
    * - Respects wait node delays
    * - Logs action events with templateId for actual sending
    */
-  static async processJourney(journeyId, batchSize = 100) {
+  static async processJourney(journeyId) {
     const { rows: [journey] } = await db.query(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
@@ -258,15 +260,14 @@ class JourneyService {
     const edges = journey.edges || [];
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-    // Get active entries joined with unified_contacts
+    // Get all active entries joined with unified_contacts
     const { rows: entries } = await db.query(`
       SELECT je.*, uc.name, uc.email, uc.phone, uc.phone_key, uc.booking_status,
         uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings
       FROM journey_entries je
       JOIN unified_contacts uc ON uc.unified_id = je.customer_id
       WHERE je.journey_id = $1 AND je.status = 'active'
-      LIMIT $2
-    `, [journeyId, batchSize]);
+    `, [journeyId]);
 
     let processed = 0;
     let actioned = 0;
@@ -293,13 +294,34 @@ class JourneyService {
         // Time elapsed — fall through to advance to next node
       }
 
-      // ── ACTION node: log event with templateId ──
+      // ── ACTION node: send message + log event ──
       if (currentNode.type === 'action') {
+        const channel = currentNode.data?.channel;
+        const templateId = currentNode.data?.templateId;
+        let sendResult = null;
+
+        // Email channel — render template + send via SMTP
+        if (channel === 'email' && templateId && entry.email) {
+          try {
+            const rendered = await EmailRenderer.render(parseInt(templateId), entry.customer_id);
+            sendResult = await EmailChannel.send({
+              to: entry.email,
+              subject: rendered.subject,
+              html: rendered.html,
+              text: rendered.plainText,
+            });
+            console.log(`[Journey] Email sent → ${entry.email} | template=${templateId} | success=${sendResult.success}`);
+          } catch (err) {
+            console.error(`[Journey] Email failed → ${entry.email}: ${err.message}`);
+            sendResult = { success: false, error: err.message };
+          }
+        }
+
         await db.query(`
           INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
           VALUES ($1, $2, 'action_sent', $3, $4)
-        `, [entry.entry_id, currentNode.id, currentNode.data?.channel,
-            JSON.stringify({ ...currentNode.data, templateId: currentNode.data?.templateId })]);
+        `, [entry.entry_id, currentNode.id, channel,
+            JSON.stringify({ templateId, channel, sendResult: sendResult ? { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated } : null })]);
         actioned++;
       }
 
@@ -564,24 +586,25 @@ class JourneyService {
 
   static async getEnrollments(journeyId) {
     const { rows } = await db.query(`
-      SELECT je.*,
-        c.first_name, c.last_name, c.email, c.phone_number,
-        c.enquiry_department, c.enquiry_product_line
-      FROM journey_enrollments je
-      JOIN customers c ON c.customer_id = je.customer_id
+      SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id, je.status,
+        je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
+        uc.name, uc.email, uc.phone, uc.company_name, uc.country,
+        uc.booking_status, uc.segment_label
+      FROM journey_entries je
+      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
       WHERE je.journey_id = $1
-      ORDER BY je.enrolled_at DESC
+      ORDER BY je.entered_at DESC
       LIMIT 100
     `, [journeyId]);
 
     const { rows: [stats] } = await db.query(`
       SELECT
-        COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE status = 'active') AS active,
-        COUNT(*) FILTER (WHERE status = 'converted') AS converted,
-        COUNT(*) FILTER (WHERE status = 'exited') AS exited,
-        COUNT(*) FILTER (WHERE status = 'paused') AS paused
-      FROM journey_enrollments WHERE journey_id = $1
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+        COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+        COUNT(*) FILTER (WHERE status = 'converted')::int AS converted,
+        COUNT(*) FILTER (WHERE status = 'exited')::int AS exited
+      FROM journey_entries WHERE journey_id = $1
     `, [journeyId]);
 
     return { enrollments: rows, stats };

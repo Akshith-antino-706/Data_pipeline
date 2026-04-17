@@ -59,14 +59,6 @@ class DailyReportService {
       dateColumn: 'created_at',
       columns: ['id', 'user_id', 'dept_id', 'subject', 't_from', 'from_name', 't_to', 'priority', 'status', 'created_at', 'updated_at'],
     },
-    travel_bookings: {
-      label: 'Travel Bookings',
-      group: 'crm',
-      dateColumn: 'start_date',
-      dateType: 'date',
-      billColumn: 'bill_number',
-      columns: ['id', 'user_id', 'bill_serial', 'bill_number', 'bill_type', 'service_name', 'guest_name', 'nationality', 'contact', 'start_date', 'end_date', 'bill_made_by', 'added_at'],
-    },
     ga4_events: {
       label: 'GA4 Events',
       group: 'ga4',

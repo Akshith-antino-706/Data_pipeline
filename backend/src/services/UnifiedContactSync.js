@@ -72,32 +72,8 @@ export default class UnifiedContactSync {
     return { newChats, updated };
   }
 
-  /**
-   * Sync travel booking counts
-   */
-  static async syncTravelBookings() {
-    // By phone
-    const { rowCount: byPhone } = await query(`
-      UPDATE unified_contacts uc SET
-        total_travel_bookings = tb.cnt,
-        travel_types = tb.types,
-        first_travel_at = tb.first_at,
-        last_travel_at = tb.last_at,
-        sources = CASE WHEN uc.sources LIKE '%travel%' THEN uc.sources ELSE uc.sources || ', travel' END,
-        last_seen_at = GREATEST(uc.last_seen_at, tb.last_at::timestamptz),
-        updated_at = NOW()
-      FROM (
-        SELECT RIGHT(REGEXP_REPLACE(contact,'[^0-9]','','g'), 10) as pk,
-          COUNT(*) as cnt, STRING_AGG(DISTINCT bill_type, ', ') as types,
-          MIN(start_date) as first_at, MAX(start_date) as last_at
-        FROM travel_bookings WHERE contact IS NOT NULL AND LENGTH(REGEXP_REPLACE(contact,'[^0-9]','','g')) >= 7
-          AND RIGHT(REGEXP_REPLACE(contact,'[^0-9]','','g'), 10) !~ '^0+$'
-        GROUP BY RIGHT(REGEXP_REPLACE(contact,'[^0-9]','','g'), 10)
-      ) tb WHERE uc.phone_key = tb.pk AND (uc.total_travel_bookings != tb.cnt OR uc.total_travel_bookings = 0)
-    `);
-    console.log(`[UnifiedSync] Travel bookings updated (phone): ${byPhone}`);
-    return byPhone;
-  }
+  // syncTravelBookings removed — legacy travel_bookings table dropped.
+  // All booking data comes from Rayna API tables: rayna_tours, rayna_hotels, rayna_visas, rayna_flights.
 
   /**
    * Sync Rayna API booking counts
@@ -506,11 +482,13 @@ export default class UnifiedContactSync {
     // ── Step 1: Booking Status (priority order) ─────────────────
 
     // 1a. ON_TRIP — currently travelling (travel date to travel date + 7 days)
+    //     Only CONFIRMED bookings count — cancelled bookings are excluded
     //     Tours: tour_date <= today <= tour_date + 7
     await query(`
       UPDATE unified_contacts uc SET booking_status = 'ON_TRIP'
       FROM (SELECT DISTINCT unified_id FROM rayna_tours
             WHERE unified_id IS NOT NULL
+              AND (status IS NULL OR status != 'Cancelled')
               AND tour_date::date <= CURRENT_DATE
               AND (tour_date::date + INTERVAL '7 days') >= CURRENT_DATE) rt
       WHERE uc.unified_id = rt.unified_id`);
@@ -529,26 +507,18 @@ export default class UnifiedContactSync {
       UPDATE unified_contacts uc SET booking_status = 'ON_TRIP'
       FROM (SELECT DISTINCT unified_id FROM rayna_flights
             WHERE unified_id IS NOT NULL
+              AND (status IS NULL OR status != 'Cancelled')
               AND from_datetime::date <= CURRENT_DATE
               AND (from_datetime::date + INTERVAL '7 days') >= CURRENT_DATE) rf
       WHERE uc.unified_id = rf.unified_id AND uc.booking_status IS NULL`);
 
-    //     Legacy travel_bookings with explicit start/end dates
-    await query(`
-      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP'
-      FROM (SELECT DISTINCT unified_id FROM travel_bookings
-            WHERE unified_id IS NOT NULL
-              AND start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE) tb
-      WHERE uc.unified_id = tb.unified_id AND uc.booking_status IS NULL`);
-
-    // 1b. FUTURE_TRAVEL — booked, travel date is ahead
+    // 1b. FUTURE_TRAVEL — booked, travel date is ahead (exclude cancelled)
     await query(`
       UPDATE unified_contacts uc SET booking_status = 'FUTURE_TRAVEL'
       WHERE uc.booking_status IS NULL AND uc.unified_id IN (
-        SELECT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL AND tour_date::date > CURRENT_DATE
+        SELECT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL AND tour_date::date > CURRENT_DATE AND (status IS NULL OR status != 'Cancelled')
         UNION SELECT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date > CURRENT_DATE
-        UNION SELECT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL AND from_datetime::date > CURRENT_DATE
-        UNION SELECT unified_id FROM travel_bookings WHERE unified_id IS NOT NULL AND start_date > CURRENT_DATE
+        UNION SELECT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL AND from_datetime::date > CURRENT_DATE AND (status IS NULL OR status != 'Cancelled')
       )`);
 
     // 1c. ACTIVE_ENQUIRY — chatted on WhatsApp in last 30 days, not yet booked
@@ -557,7 +527,6 @@ export default class UnifiedContactSync {
       WHERE booking_status IS NULL
         AND total_chats > 0
         AND last_chat_at >= NOW() - INTERVAL '30 days'
-        AND COALESCE(total_travel_bookings, 0) = 0
         AND COALESCE(total_tour_bookings, 0) = 0
         AND COALESCE(total_hotel_bookings, 0) = 0
         AND COALESCE(total_visa_bookings, 0) = 0
@@ -567,8 +536,7 @@ export default class UnifiedContactSync {
     await query(`
       UPDATE unified_contacts SET booking_status = 'PAST_BOOKING'
       WHERE booking_status IS NULL
-        AND (COALESCE(total_travel_bookings, 0) > 0
-          OR COALESCE(total_tour_bookings, 0) > 0
+        AND (COALESCE(total_tour_bookings, 0) > 0
           OR COALESCE(total_hotel_bookings, 0) > 0
           OR COALESCE(total_visa_bookings, 0) > 0
           OR COALESCE(total_flight_bookings, 0) > 0)`);
@@ -593,23 +561,11 @@ export default class UnifiedContactSync {
             WHERE unified_id IS NOT NULL AND (${luxuryKeywords})) rt
       WHERE uc.unified_id = rt.unified_id`);
 
-    // Also check legacy travel_bookings for luxury
-    await query(`
-      UPDATE unified_contacts uc SET product_tier = 'LUXURY'
-      FROM (SELECT DISTINCT unified_id FROM travel_bookings
-            WHERE unified_id IS NOT NULL
-              AND (service_name ILIKE '%premium%' OR service_name ILIKE '%private%' OR service_name ILIKE '%vip%'
-                OR service_name ILIKE '%yacht%' OR service_name ILIKE '%helicopter%' OR service_name ILIKE '%limousine%'
-                OR service_name ILIKE '%luxury%' OR service_name ILIKE '%megayacht%' OR service_name ILIKE '%falcon%'
-                OR service_name ILIKE '%chauffeur%')) tb
-      WHERE uc.unified_id = tb.unified_id AND uc.product_tier IS NULL`);
-
     // STANDARD = has bookings but none are luxury
     await query(`
       UPDATE unified_contacts SET product_tier = 'STANDARD'
       WHERE product_tier IS NULL
-        AND (COALESCE(total_travel_bookings, 0) > 0
-          OR COALESCE(total_tour_bookings, 0) > 0
+        AND (COALESCE(total_tour_bookings, 0) > 0
           OR COALESCE(total_hotel_bookings, 0) > 0
           OR COALESCE(total_visa_bookings, 0) > 0
           OR COALESCE(total_flight_bookings, 0) > 0)`);
@@ -627,8 +583,9 @@ export default class UnifiedContactSync {
       UPDATE unified_contacts SET is_indian = true
       WHERE phone LIKE '91%' OR phone LIKE '+91%' OR country = 'India' OR nationality = 'India'`);
 
-    // ── Combined segment label ──────────────────────────────────
+    // ── Combined segment label + business_type ──────────────────
     await query(`UPDATE unified_contacts SET segment_label = CONCAT_WS(' / ', booking_status, product_tier, geography, CASE WHEN is_indian THEN 'INDIAN' END)`);
+    await query(`UPDATE unified_contacts SET business_type = CASE WHEN contact_type IN ('B2B', 'b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END WHERE business_type IS DISTINCT FROM (CASE WHEN contact_type IN ('B2B', 'b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END)`);
 
     const { rows } = await query(`SELECT booking_status, COUNT(*) as cnt FROM unified_contacts GROUP BY booking_status ORDER BY cnt DESC`);
     console.log('[UnifiedSync] Segments computed:', rows.map(r => `${r.booking_status}: ${r.cnt}`).join(', '));
@@ -722,7 +679,6 @@ export default class UnifiedContactSync {
     const chatContacts = await this.refreshChatContacts();
     const contacts = await this.syncNewContacts();
     const chats = await this.syncChats();
-    const travel = await this.syncTravelBookings();
     const rayna = await this.syncRaynaBookings();
     const newRayna = await this.syncNewRaynaContacts();
     const unsub = await this.syncUnsubscribed();
@@ -735,6 +691,6 @@ export default class UnifiedContactSync {
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[UnifiedSync] Done in ${duration}s`);
 
-    return { chatContacts, contacts, chats, travel, rayna, newRayna, unsub, ga4gtm, newGTM, relinked, segments, occasions, duration };
+    return { chatContacts, contacts, chats, rayna, newRayna, unsub, ga4gtm, newGTM, relinked, segments, occasions, duration };
   }
 }

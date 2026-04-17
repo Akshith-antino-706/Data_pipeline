@@ -15,3 +15,14 @@ backend/src/rayna-data-pipeline-*.json
 
 # Local Netlify folder
 .netlify
+
+# Data backups and backup SQL files
+backend/data_backups/
+backend/dropped_tables_backup.sql
+
+# Personal / planning files
+categorize_tours.py
+luxury_categorization_prompt.md
+Email_Templates_Integration_Plan.md
+*.xlsx
+merge_sql/

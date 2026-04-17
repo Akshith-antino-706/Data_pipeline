@@ -21,20 +21,21 @@ router.get('/mapping-stats', async (_req, res) => {
     // Overall stats from unified_contacts
     const { rows: [overall] } = await query(`
       SELECT
-        (SELECT COUNT(*) FROM unified_contacts WHERE total_travel_bookings > 0 OR total_tour_bookings > 0) as total_mapped,
-        (SELECT COUNT(*) FROM unified_contacts WHERE total_travel_bookings > 0) as customers_with_bookings,
+        (SELECT COUNT(*) FROM unified_contacts WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) as total_mapped,
+        (SELECT COUNT(*) FROM unified_contacts WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) as customers_with_bookings,
         (SELECT COUNT(*) FROM unified_contacts) as total_customers
     `);
 
     // Top customers by bookings from unified_contacts
     const { rows: topCustomers } = await query(`
       SELECT unified_id as id, name, email, phone, company_name, country,
-        total_travel_bookings as total_bookings, total_booking_revenue,
-        first_travel_at as first_booking_at, last_travel_at as last_booking_at,
+        (COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0)) as total_bookings,
+        total_booking_revenue,
+        first_booking_at, last_booking_at,
         total_chats, total_tour_bookings, total_hotel_bookings, total_visa_bookings, total_flight_bookings
       FROM unified_contacts
-      WHERE total_travel_bookings > 0 OR total_tour_bookings > 0
-      ORDER BY total_travel_bookings DESC, total_booking_revenue DESC
+      WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0
+      ORDER BY total_booking_revenue DESC NULLS LAST
       LIMIT 20
     `);
 
@@ -71,7 +72,7 @@ router.get('/mapping-stats', async (_req, res) => {
       query("SELECT COUNT(*) as count FROM departments"),
       query("SELECT COUNT(*) as count FROM dept_emails"),
       query("SELECT COUNT(*) as count FROM tickets"),
-      query("SELECT COUNT(*) as count FROM travel_bookings"),
+      query("SELECT 0 as count"),
       query("SELECT COUNT(*) as count FROM chats"),
       query("SELECT COUNT(*) as count FROM unified_contacts"),
       query("SELECT COUNT(*) as count FROM rayna_tours"),
@@ -100,7 +101,7 @@ router.get('/mapping-stats', async (_req, res) => {
                ELSE 'Unknown' END as name,
           COUNT(*) as customers,
           SUM(total_chats) as chats,
-          SUM(total_travel_bookings) as bookings
+          SUM(COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0)) as bookings
         FROM unified_contacts
         WHERE chat_departments IS NOT NULL
         GROUP BY 1

@@ -32,6 +32,7 @@ import RaynaSyncService from './src/services/RaynaSyncService.js';
 import raynaSyncRouter from './src/routes/raynaSync.js';
 import dailyReportRouter from './src/routes/dailyReport.js';
 import unifiedContactsRouter from './src/routes/unifiedContacts.js';
+import testE2ERouter from './src/routes/testE2E.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -100,6 +101,7 @@ app.use('/api/v3/mysql-sync', mysqlSyncRouter);
 app.use('/api/v3/rayna-sync', raynaSyncRouter);
 app.use('/api/v3/daily-report', dailyReportRouter);
 app.use('/api/v3/unified-contacts', unifiedContactsRouter);
+app.use('/api/v3/test', testE2ERouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
@@ -415,6 +417,10 @@ cron.schedule('30 23 * * *', async () => {
     // Snapshot daily segment counts after sync
     const { default: UnifiedContactService } = await import('./src/services/UnifiedContactService.js');
     await UnifiedContactService.snapshotDailySegments();
+
+    // Refresh materialized view for fast dashboard queries
+    await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
+    console.log('[Unified Sync] Materialized view refreshed');
   } catch (err) {
     console.error('[Unified Sync] Failed:', err.message);
   }

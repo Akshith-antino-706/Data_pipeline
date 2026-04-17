@@ -3,14 +3,23 @@ import pool from '../config/database.js';
 export default class UnifiedContactService {
 
   static async getAll({ page = 1, limit = 50, search, sortBy, sortDir, source, country,
-    contactType, bookingStatus, productTier, geography, chatDepartment, hasChats, hasBookings, waStatus, emailStatus } = {}) {
+    contactType, businessType, bookingStatus, productTier, geography, chatDepartment, hasChats, hasBookings, waStatus, emailStatus } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
 
     if (search) {
       params.push(`%${search}%`);
-      conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx} OR phone ILIKE $${idx} OR phone_key ILIKE $${idx} OR company_name ILIKE $${idx})`);
+      // Detect search type for optimal index usage (trigram GIN indexes)
+      const isPhone = /^\+?\d[\d\s\-]{5,}$/.test(search.trim());
+      const isEmail = search.includes('@');
+      if (isPhone) {
+        conditions.push(`(phone ILIKE $${idx} OR phone_key ILIKE $${idx})`);
+      } else if (isEmail) {
+        conditions.push(`email ILIKE $${idx}`);
+      } else {
+        conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx} OR company_name ILIKE $${idx})`);
+      }
       idx++;
     }
     if (source) {
@@ -26,6 +35,11 @@ export default class UnifiedContactService {
     if (contactType) {
       params.push(contactType);
       conditions.push(`contact_type = $${idx}`);
+      idx++;
+    }
+    if (businessType) {
+      params.push(businessType);
+      conditions.push(`business_type = $${idx}`);
       idx++;
     }
     if (bookingStatus) {
@@ -50,8 +64,8 @@ export default class UnifiedContactService {
     }
     if (hasChats === 'yes') conditions.push(`total_chats > 0`);
     else if (hasChats === 'no') conditions.push(`(total_chats = 0 OR total_chats IS NULL)`);
-    if (hasBookings === 'yes') conditions.push(`total_travel_bookings > 0`);
-    else if (hasBookings === 'no') conditions.push(`(total_travel_bookings = 0 OR total_travel_bookings IS NULL)`);
+    if (hasBookings === 'yes') conditions.push(`(total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0)`);
+    else if (hasBookings === 'no') conditions.push(`(COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0) = 0)`);
     if (waStatus === 'unsubscribed') conditions.push(`wa_unsubscribed = 'Yes'`);
     else if (waStatus === 'active') conditions.push(`(wa_unsubscribed IS NULL OR wa_unsubscribed = 'No')`);
     if (emailStatus === 'unsubscribed') conditions.push(`email_unsubscribed = 'Yes'`);
@@ -60,7 +74,7 @@ export default class UnifiedContactService {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const allowedSort = ['name', 'email', 'company_name', 'country', 'total_chats', 'total_tickets',
-      'total_travel_bookings', 'total_tour_bookings', 'total_booking_revenue', 'last_seen_at', 'created_at'];
+      'total_tour_bookings', 'total_booking_revenue', 'last_seen_at', 'created_at'];
     const col = allowedSort.includes(sortBy) ? sortBy : 'last_seen_at';
     const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
 
@@ -70,7 +84,7 @@ export default class UnifiedContactService {
       pool.query(`SELECT COUNT(*) AS total FROM unified_contacts ${where}`, params),
       pool.query(
         `SELECT unified_id, phone_key, email_key, name, email, phone, company_name, city, country, contact_type,
-                total_chats, total_travel_bookings,
+                total_chats,
                 total_tour_bookings, total_hotel_bookings, total_visa_bookings, total_flight_bookings,
                 total_booking_revenue, sources, chat_departments,
                 booking_status, product_tier, geography, is_indian, segment_label,
@@ -154,7 +168,7 @@ export default class UnifiedContactService {
       bookingStatuses: statuses.rows.map(r => r.booking_status),
       productTiers: tiers.rows.map(r => r.product_tier),
       geographies: geos.rows.map(r => r.geography),
-      sources: ['chat', 'ticket', 'travel', 'rayna'],
+      sources: ['chat', 'contacts', 'rayna', 'ga4'],
     };
   }
 
@@ -163,8 +177,7 @@ export default class UnifiedContactService {
       SELECT
         COUNT(*)::int AS total_contacts,
         COUNT(*) FILTER (WHERE total_chats > 0)::int AS with_chats,
-        COUNT(*) FILTER (WHERE total_travel_bookings > 0)::int AS with_travel,
-        COUNT(*) FILTER (WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0)::int AS with_rayna,
+        COUNT(*) FILTER (WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0)::int AS with_travel,
         COUNT(*) FILTER (WHERE sources LIKE '%,%')::int AS multi_source,
         COUNT(DISTINCT country)::int AS countries,
         COALESCE(SUM(total_booking_revenue), 0)::numeric AS total_revenue
@@ -177,49 +190,45 @@ export default class UnifiedContactService {
    * Segmentation dashboard: 3-step decision tree overview
    */
   static async getSegmentationTree({ businessType } = {}) {
-    // Business type filter
-    const btFilter = businessType ? `AND (contact_type = '${businessType}' OR chat_departments LIKE '%${businessType}%')` : '';
+    // Business type filter — uses precomputed indexed column for fast queries
+    // btFilter removed — now uses materialized view with btWhere
 
-    // Step 1: Booking status counts
+    // Uses materialized view for fast queries (refreshed after each sync)
+    const btWhere = businessType ? `WHERE business_type = '${businessType}'` : 'WHERE 1=1';
+
+    // Step 1: Booking status counts (from materialized view — <1ms)
     const { rows: statusCounts } = await pool.query(`
-      SELECT booking_status, COUNT(*)::int AS count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric AS revenue,
-        COUNT(*) FILTER (WHERE total_chats > 0)::int AS with_chats,
-        COUNT(*) FILTER (WHERE is_indian)::int AS indian_count
-      FROM unified_contacts
-      WHERE booking_status IS NOT NULL ${btFilter}
+      SELECT booking_status,
+        SUM(count)::int AS count,
+        SUM(revenue)::numeric AS revenue,
+        SUM(with_chats)::int AS with_chats,
+        SUM(indian_count)::int AS indian_count
+      FROM mv_segmentation_tree
+      ${btWhere}
       GROUP BY booking_status
       ORDER BY CASE booking_status
         WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2 WHEN 'ACTIVE_ENQUIRY' THEN 3
         WHEN 'PAST_BOOKING' THEN 4 WHEN 'PAST_ENQUIRY' THEN 5 WHEN 'PROSPECT' THEN 6 END
     `);
 
-    // Step 2+3: Full breakdown (booking_status x product_tier x geography)
+    // Step 2+3: Full breakdown (already pre-aggregated in materialized view)
     const { rows: breakdown } = await pool.query(`
       SELECT booking_status, product_tier, geography,
-        COUNT(*)::int AS count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric AS revenue,
-        COALESCE(AVG(total_booking_revenue) FILTER (WHERE total_booking_revenue > 0), 0)::numeric AS avg_revenue,
-        COUNT(*) FILTER (WHERE is_indian)::int AS indian_count,
-        COUNT(*) FILTER (WHERE total_chats > 0)::int AS with_chats,
-        COALESCE(SUM(total_tour_bookings), 0)::int AS total_tours,
-        COALESCE(SUM(total_hotel_bookings), 0)::int AS total_hotels,
-        COALESCE(SUM(total_visa_bookings), 0)::int AS total_visas,
-        COALESCE(SUM(total_flight_bookings), 0)::int AS total_flights
-      FROM unified_contacts
-      WHERE booking_status IS NOT NULL ${btFilter}
-      GROUP BY booking_status, product_tier, geography
+        count, revenue, avg_revenue, indian_count, with_chats,
+        total_tours, total_hotels, total_visas, total_flights
+      FROM mv_segmentation_tree
+      ${btWhere}
       ORDER BY booking_status, product_tier NULLS LAST, geography NULLS LAST
     `);
 
     // Totals
     const { rows: [totals] } = await pool.query(`
-      SELECT COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE booking_status IS NOT NULL)::int AS segmented,
-        COUNT(DISTINCT segment_label) FILTER (WHERE segment_label IS NOT NULL)::int AS segment_count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric AS total_revenue
-      FROM unified_contacts
-      WHERE 1=1 ${btFilter}
+      SELECT SUM(count)::int AS total,
+        SUM(count)::int AS segmented,
+        COUNT(DISTINCT booking_status || COALESCE(product_tier,'') || COALESCE(geography,''))::int AS segment_count,
+        SUM(revenue)::numeric AS total_revenue
+      FROM mv_segmentation_tree
+      ${btWhere}
     `);
 
     return { totals, statusCounts, breakdown };
@@ -303,7 +312,7 @@ export default class UnifiedContactService {
   /**
    * Get segment daily activity log
    */
-  static async getSegmentDailyLog({ days = 30, segment } = {}) {
+  static async getSegmentDailyLog({ days = 30, segment, businessType } = {}) {
     const conditions = ['log_date >= CURRENT_DATE - $1::int'];
     const params = [days];
 
@@ -318,26 +327,34 @@ export default class UnifiedContactService {
       ORDER BY log_date DESC, segment_label
     `, params);
 
-    // Also get today's live counts if no snapshot yet
+    // Live counts filtered by business_type
+    const liveConds = ['booking_status IS NOT NULL'];
+    const liveParams = [];
+    if (businessType) {
+      liveParams.push(businessType);
+      liveConds.push(`business_type = $${liveParams.length}`);
+    }
+
     const { rows: liveToday } = await pool.query(`
       SELECT booking_status as segment_label, COUNT(*)::int as total_count,
         COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
       FROM unified_contacts
-      WHERE booking_status IS NOT NULL
+      WHERE ${liveConds.join(' AND ')}
       GROUP BY booking_status
       ORDER BY CASE booking_status
         WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2 WHEN 'ACTIVE_ENQUIRY' THEN 3
         WHEN 'PAST_BOOKING' THEN 4 WHEN 'PAST_ENQUIRY' THEN 5 WHEN 'PROSPECT' THEN 6 END
-    `);
+    `, liveParams);
 
     return { logs: rows, liveToday };
   }
 
-  static async getSegmentCustomers({ bookingStatus, productTier, geography, page = 1, limit = 25, search } = {}) {
+  static async getSegmentCustomers({ bookingStatus, productTier, geography, businessType, page = 1, limit = 25, search } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
 
+    if (businessType) { params.push(businessType); conditions.push(`business_type = $${idx++}`); }
     if (bookingStatus) { params.push(bookingStatus); conditions.push(`booking_status = $${idx++}`); }
     if (productTier) { params.push(productTier); conditions.push(`product_tier = $${idx++}`); }
     if (geography) { params.push(geography); conditions.push(`geography = $${idx++}`); }
@@ -350,7 +367,7 @@ export default class UnifiedContactService {
       pool.query(`SELECT COUNT(*)::int AS total FROM unified_contacts ${where}`, params),
       pool.query(
         `SELECT unified_id, name, email, phone, company_name, country, contact_type,
-                total_chats, total_travel_bookings, total_tour_bookings, total_hotel_bookings,
+                total_chats, total_tour_bookings, total_hotel_bookings,
                 total_visa_bookings, total_flight_bookings, total_booking_revenue,
                 booking_status, product_tier, geography, is_indian, segment_label,
                 last_seen_at

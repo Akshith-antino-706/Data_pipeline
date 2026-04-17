@@ -19,7 +19,7 @@ export class StrategyService {
     const { rows } = await query(`
       SELECT
         s.*,
-        (SELECT COUNT(*) FROM customer_segments cs WHERE cs.segment_label = s.segment_label) AS segment_size,
+        (SELECT COUNT(*) FROM unified_contacts uc WHERE uc.booking_status = s.segment_label) AS segment_size,
         (SELECT COUNT(*) FROM campaigns c WHERE c.strategy_id = s.id) AS campaign_count,
         (SELECT COUNT(*) FROM campaigns c WHERE c.strategy_id = s.id AND c.status = 'running') AS active_campaigns
       FROM omnichannel_strategies s
@@ -32,7 +32,7 @@ export class StrategyService {
   static async getById(id) {
     const { rows } = await query(`
       SELECT s.*,
-        (SELECT COUNT(*) FROM customer_segments cs WHERE cs.segment_label = s.segment_label) AS segment_size
+        (SELECT COUNT(*) FROM unified_contacts uc WHERE uc.booking_status = s.segment_label) AS segment_size
       FROM omnichannel_strategies s
       WHERE s.id = $1
     `, [id]);

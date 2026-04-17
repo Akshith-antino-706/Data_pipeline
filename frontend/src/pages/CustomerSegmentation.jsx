@@ -55,7 +55,7 @@ export default function CustomerSegmentation() {
   const loadCustomers = useCallback(async (combo, page = 1, search = '') => {
     setCustLoading(true);
     try {
-      const params = { page, limit: 25 };
+      const params = { page, limit: 25, businessType };
       if (combo.bookingStatus) params.bookingStatus = combo.bookingStatus;
       if (combo.productTier) params.productTier = combo.productTier;
       if (combo.geography) params.geography = combo.geography;
@@ -64,7 +64,7 @@ export default function CustomerSegmentation() {
       setCustomers(res);
     } catch (err) { console.error(err); }
     setCustLoading(false);
-  }, []);
+  }, [businessType]);
 
   const openCombo = (combo) => {
     setSelectedCombo(combo);

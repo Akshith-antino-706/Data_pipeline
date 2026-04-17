@@ -22,14 +22,13 @@ export default function Campaigns() {
   const [form, setForm] = useState({ name: '', segmentLabel: '', channel: 'email', templateId: '', strategyId: '' });
 
   useEffect(() => {
-    Promise.all([getCampaigns(), getSegments(), getTemplates(), getStrategies()])
+    Promise.allSettled([getCampaigns({ limit: 100 }), getSegments(), getTemplates({ limit: 100 }), getStrategies()])
       .then(([c, s, t, st]) => {
-        setCampaigns(c.data || []);
-        setSegments(Array.isArray(s) ? s : (s.data || []));
-        setTemplates(t.data || []);
-        setStrategies(st.data || []);
+        if (c.status === 'fulfilled') setCampaigns(c.value.data || []);
+        if (s.status === 'fulfilled') setSegments(Array.isArray(s.value) ? s.value : (s.value.data || []));
+        if (t.status === 'fulfilled') setTemplates(t.value.data || []);
+        if (st.status === 'fulfilled') setStrategies(st.value.data || []);
       })
-      .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 

@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentActivity, snapshotDailySegments, getSegmentCustomers, downloadSegmentActivity, downloadSegmentCustomers } from '../api';
+import { getSegmentActivity, snapshotDailySegments, getSegmentCustomers, downloadSegmentActivity, downloadSegmentCustomers, getUnifiedContact } from '../api';
 import { useBusinessType } from '../App';
 import {
   Users, TrendingUp, TrendingDown, ArrowRightLeft, Mail, MessageCircle, Bell,
   RefreshCw, Loader2, Calendar, DollarSign, Filter, Download, Eye, X,
-  ChevronLeft, ChevronRight, Phone, Search,
+  ChevronLeft, ChevronRight, Phone, Search, Globe, Building2, Hash, MapPin,
+  Clock, Palmtree, Hotel, FileText, Plane, ChevronDown, ChevronUp, Layers,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
@@ -46,13 +47,13 @@ export default function SegmentActivity() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { days };
+      const params = { days, businessType };
       if (segmentFilter) params.segment = segmentFilter;
       const res = await getSegmentActivity(params);
       setData(res);
     } catch (err) { console.error(err); }
     setLoading(false);
-  }, [days, segmentFilter]);
+  }, [days, segmentFilter, businessType]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -68,7 +69,7 @@ export default function SegmentActivity() {
     setDetailSearch('');
     setDetailLoading(true);
     try {
-      const res = await getSegmentCustomers({ bookingStatus: segmentLabel, page: 1, limit: 25 });
+      const res = await getSegmentCustomers({ bookingStatus: segmentLabel, businessType, page: 1, limit: 25 });
       setDetailCustomers(res);
     } catch (err) { console.error(err); }
     setDetailLoading(false);
@@ -77,7 +78,7 @@ export default function SegmentActivity() {
   const loadDetailPage = async (page, search) => {
     setDetailLoading(true);
     try {
-      const res = await getSegmentCustomers({ bookingStatus: detailSegment, page, limit: 25, search });
+      const res = await getSegmentCustomers({ bookingStatus: detailSegment, businessType, page, limit: 25, search });
       setDetailCustomers(res);
       setDetailPage(page);
     } catch (err) { console.error(err); }
@@ -85,6 +86,17 @@ export default function SegmentActivity() {
   };
 
   const closeDetail = () => { setDetailSegment(null); setDetailCustomers(null); };
+
+  // Contact detail modal
+  const [contactDetail, setContactDetail] = useState(null);
+  const [contactLoading, setContactLoading] = useState(false);
+
+  const openContact = async (id) => {
+    setContactLoading(true);
+    try { const res = await getUnifiedContact(id); setContactDetail(res.data); }
+    catch { /* ignore */ }
+    setContactLoading(false);
+  };
 
   const liveToday = data?.liveToday || [];
   const totalCustomers = liveToday.reduce((s, r) => s + (r.total_count || 0), 0);
@@ -111,7 +123,7 @@ export default function SegmentActivity() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter })}
+          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, businessType })}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, color: '#fff', fontWeight: 500 }}>
             <Download size={14} /> Download CSV
           </button>
@@ -187,7 +199,7 @@ export default function SegmentActivity() {
       <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Log</span>
-          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter })}
+          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, businessType })}
             style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 11, color: 'var(--muted-foreground)' }}>
             <Download size={11} /> Export
           </button>
@@ -278,7 +290,7 @@ export default function SegmentActivity() {
                     placeholder="Search..."
                     style={{ padding: '6px 8px 6px 28px', fontSize: 12, borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--secondary)', color: 'var(--foreground)', width: 180, outline: 'none' }} />
                 </div>
-                <button onClick={() => downloadSegmentCustomers({ bookingStatus: detailSegment })}
+                <button onClick={() => downloadSegmentCustomers({ bookingStatus: detailSegment, businessType })}
                   style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', background: 'var(--primary)', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 12, color: '#fff', fontWeight: 500 }}>
                   <Download size={12} /> CSV
                 </button>
@@ -310,7 +322,10 @@ export default function SegmentActivity() {
                     </thead>
                     <tbody>
                       {detailCustomers.data.map(c => (
-                        <tr key={c.unified_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <tr key={c.unified_id} onClick={() => openContact(c.unified_id)}
+                          style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--secondary)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <td style={{ ...tdStyle, fontWeight: 500 }}>{c.name || '\u2014'}</td>
                           <td style={{ ...tdStyle, fontSize: 11 }}>{c.email || '\u2014'}</td>
                           <td style={{ ...tdStyle, fontSize: 11 }}>{c.phone || '\u2014'}</td>
@@ -347,9 +362,197 @@ export default function SegmentActivity() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Contact Detail Modal */}
+      <AnimatePresence>
+        {(contactDetail || contactLoading) && (
+          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setContactDetail(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              style={{ maxWidth: 800, width: '92vw', maxHeight: '85vh', overflow: 'auto', background: 'var(--card)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--border)', padding: 24 }}>
+              {contactLoading && !contactDetail ? (
+                <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={24} className="spin" /></div>
+              ) : contactDetail && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{contactDetail.name || 'Unknown'}</h3>
+                      <span style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'monospace' }}>ID: {contactDetail.unified_id}</span>
+                      <div style={{ marginTop: 6 }}>{contactDetail.sources?.split(', ').map(s => <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 10, marginRight: 4 }}>{s}</span>)}</div>
+                    </div>
+                    <button onClick={() => setContactDetail(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 4 }}><X size={16} /></button>
+                  </div>
+
+                  <ModalSection title="Segment">
+                    <DetailRow icon={Hash} label="Status" value={contactDetail.booking_status} />
+                    <DetailRow icon={Hash} label="Product Tier" value={contactDetail.product_tier || 'N/A'} />
+                    <DetailRow icon={Globe} label="Geography" value={contactDetail.geography || 'Unknown'} />
+                    <DetailRow icon={Layers} label="Full Segment" value={contactDetail.segment_label} />
+                  </ModalSection>
+
+                  <ModalSection title="Contact Information">
+                    <DetailRow icon={Mail} label="Email" value={contactDetail.email} />
+                    <DetailRow icon={Phone} label="Phone" value={contactDetail.phone} />
+                    <DetailRow icon={Building2} label="Company" value={contactDetail.company_name} />
+                    <DetailRow icon={MapPin} label="City" value={contactDetail.city} />
+                    <DetailRow icon={Globe} label="Country" value={contactDetail.country} />
+                    <DetailRow icon={Hash} label="Type" value={contactDetail.contact_type} />
+                  </ModalSection>
+
+                  <ModalSection title="Chat Activity">
+                    <DetailRow icon={MessageCircle} label="Total Chats" value={contactDetail.total_chats || 0} />
+                    <DetailRow icon={Hash} label="Departments" value={contactDetail.chat_departments} />
+                    <DetailRow icon={Clock} label="First Chat" value={formatDate(contactDetail.first_chat_at)} />
+                    <DetailRow icon={Clock} label="Last Chat" value={formatDate(contactDetail.last_chat_at)} />
+                  </ModalSection>
+
+                  {(contactDetail.total_tour_bookings > 0 || contactDetail.total_hotel_bookings > 0 || contactDetail.total_visa_bookings > 0 || contactDetail.total_flight_bookings > 0) && (
+                    <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', padding: 16, marginBottom: 12 }}>
+                      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--muted-foreground)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>Booking Summary</div>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                        {contactDetail.total_tour_bookings > 0 && <MiniStat icon={Palmtree} label="Tours" value={contactDetail.total_tour_bookings} color="#10b981" />}
+                        {contactDetail.total_hotel_bookings > 0 && <MiniStat icon={Hotel} label="Hotels" value={contactDetail.total_hotel_bookings} color="#6366f1" />}
+                        {contactDetail.total_visa_bookings > 0 && <MiniStat icon={FileText} label="Visas" value={contactDetail.total_visa_bookings} color="#f59e0b" />}
+                        {contactDetail.total_flight_bookings > 0 && <MiniStat icon={Plane} label="Flights" value={contactDetail.total_flight_bookings} color="#3b82f6" />}
+                        <MiniStat icon={DollarSign} label="Revenue" value={fmtAED(contactDetail.total_booking_revenue)} color="var(--primary)" />
+                      </div>
+                      {(contactDetail.first_booking_at || contactDetail.last_booking_at) && (
+                        <div style={{ display: 'flex', gap: 24, marginTop: 10, fontSize: 12, color: 'var(--muted-foreground)' }}>
+                          {contactDetail.first_booking_at && <span>First: {formatDate(contactDetail.first_booking_at)}</span>}
+                          {contactDetail.last_booking_at && <span>Last: {formatDate(contactDetail.last_booking_at)}</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <BookingTable icon={Palmtree} title="Tour Bookings" color="#10b981" rows={contactDetail.rayna_tours} columns={tourColumns} />
+                  <BookingTable icon={Hotel} title="Hotel Bookings" color="#6366f1" rows={contactDetail.rayna_hotels} columns={hotelColumns} />
+                  <BookingTable icon={FileText} title="Visa Bookings" color="#f59e0b" rows={contactDetail.rayna_visas} columns={visaColumns} />
+                  <BookingTable icon={Plane} title="Flight Bookings" color="#3b82f6" rows={contactDetail.rayna_flights} columns={flightColumns} />
+                  <BookingTable icon={MessageCircle} title="Chats" color="#25D366" rows={contactDetail.chats_list} columns={chatColumns} />
+
+                  <ModalSection title="Timeline">
+                    <DetailRow icon={Calendar} label="First Seen" value={formatDate(contactDetail.first_seen_at)} />
+                    <DetailRow icon={Clock} label="Last Seen" value={formatDate(contactDetail.last_seen_at)} />
+                  </ModalSection>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
+
+/* ── Helper Components ────────────────────────────────── */
+
+function ModalSection({ title, children }) {
+  return (
+    <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', padding: 16, marginBottom: 12 }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--muted-foreground)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px' }}>{children}</div>
+    </div>
+  );
+}
+
+function DetailRow({ icon: Icon, label, value }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <Icon size={13} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
+      <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 70 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 500 }}>{value || '\u2014'}</span>
+    </div>
+  );
+}
+
+function MiniStat({ icon: Icon, label, value, color }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <Icon size={14} style={{ color }} />
+      <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{label}:</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color }}>{value}</span>
+    </div>
+  );
+}
+
+function BookingTable({ icon: Icon, title, color, rows, columns }) {
+  const [expanded, setExpanded] = useState(false);
+  const count = rows?.length || 0;
+  if (count === 0) return null;
+  return (
+    <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', marginBottom: 12, overflow: 'hidden' }}>
+      <div onClick={() => setExpanded(e => !e)}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', userSelect: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 6, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Icon size={14} style={{ color }} />
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{title}</span>
+          <span style={{ background: `${color}20`, color, fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>{count}</span>
+        </div>
+        {expanded ? <ChevronUp size={16} style={{ color: 'var(--muted-foreground)' }} /> : <ChevronDown size={16} style={{ color: 'var(--muted-foreground)' }} />}
+      </div>
+      {expanded && (
+        <div style={{ maxHeight: 300, overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead><tr>{columns.map(c => <th key={c.key} style={{ ...thStyle, fontSize: 10, padding: '8px 10px' }}>{c.label}</th>)}</tr></thead>
+            <tbody>{rows.map((r, i) => (
+              <tr key={i}>{columns.map(c => <td key={c.key} style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{c.render ? c.render(r[c.key], r) : (r[c.key] ?? '\u2014')}</td>)}</tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtCurrency(v) { return v == null ? '\u2014' : `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+
+const tourColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'tours_name', label: 'Tour', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'tour_date', label: 'Tour Date', render: v => formatDate(v) },
+  { key: 'guest_name', label: 'Guest' },
+  { key: 'adult', label: 'Pax', render: (_v, r) => `${r.adult || 0}A ${r.child || 0}C ${r.infant || 0}I` },
+  { key: 'total_sell', label: 'Amount', render: v => fmtCurrency(v) },
+  { key: 'status', label: 'Status' },
+];
+const hotelColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'hotel_name', label: 'Hotel', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'check_in_date', label: 'Check-in', render: v => formatDate(v) },
+  { key: 'guest_name', label: 'Guest' },
+  { key: 'no_of_rooms', label: 'Rooms' },
+  { key: 'total_sell', label: 'Amount', render: v => fmtCurrency(v) },
+];
+const visaColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'visa_type', label: 'Visa Type' },
+  { key: 'applicant_name', label: 'Applicant' },
+  { key: 'passport_number', label: 'Passport' },
+  { key: 'apply_date', label: 'Applied', render: v => formatDate(v) },
+  { key: 'status', label: 'Status' },
+  { key: 'total_sell', label: 'Amount', render: v => fmtCurrency(v) },
+];
+const flightColumns = [
+  { key: 'billno', label: 'Bill #' },
+  { key: 'flight_no', label: 'Flight' },
+  { key: 'airport_name', label: 'Airport', render: v => v ? (v.length > 25 ? v.slice(0, 25) + '...' : v) : '\u2014' },
+  { key: 'from_datetime', label: 'Departure', render: v => formatDate(v) },
+  { key: 'passenger_name', label: 'Passenger' },
+  { key: 'status', label: 'Status' },
+  { key: 'selling_price', label: 'Amount', render: v => fmtCurrency(v) },
+];
+const chatColumns = [
+  { key: 'wa_name', label: 'WA Name' },
+  { key: 'wa_id', label: 'WA ID' },
+  { key: 'country', label: 'Country' },
+  { key: 'status', label: 'Status', render: v => v === 0 ? 'Open' : v === 1 ? 'Resolved' : v },
+  { key: 'last_short', label: 'Last Msg', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'last_msg_at', label: 'Last Msg At', render: v => formatDate(v) },
+];
 
 const thStyle = { padding: '10px 14px', textAlign: 'left', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', whiteSpace: 'nowrap' };
 const tdStyle = { padding: '10px 14px', whiteSpace: 'nowrap' };

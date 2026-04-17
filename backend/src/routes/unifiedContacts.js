@@ -35,6 +35,7 @@ router.get('/', async (req, res, next) => {
     const source = req.query.source || undefined;
     const country = req.query.country || undefined;
     const contactType = req.query.contactType || undefined;
+    const businessType = req.query.businessType || undefined;
     const bookingStatus = req.query.bookingStatus || undefined;
     const productTier = req.query.productTier || undefined;
     const geography = req.query.geography || undefined;
@@ -44,7 +45,7 @@ router.get('/', async (req, res, next) => {
     const waStatus = req.query.waStatus || undefined;
     const emailStatus = req.query.emailStatus || undefined;
     const result = await UnifiedContactService.getAll({ page, limit, search, sortBy, sortDir, source, country,
-      contactType, bookingStatus, productTier, geography, chatDepartment, hasChats, hasBookings, waStatus, emailStatus });
+      contactType, businessType, bookingStatus, productTier, geography, chatDepartment, hasChats, hasBookings, waStatus, emailStatus });
     res.json({ success: true, ...result });
   } catch (err) { next(err); }
 });
@@ -62,7 +63,8 @@ router.get('/segment-activity', async (req, res, next) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const segment = req.query.segment || undefined;
-    const data = await UnifiedContactService.getSegmentDailyLog({ days, segment });
+    const businessType = req.query.businessType || undefined;
+    const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
@@ -72,12 +74,13 @@ router.get('/segment-activity/download', async (req, res, next) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const segment = req.query.segment || undefined;
-    const data = await UnifiedContactService.getSegmentDailyLog({ days, segment });
+    const businessType = req.query.businessType || undefined;
+    const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType });
     const rows = data.logs;
 
     const header = 'Date,Segment,Total,Entered,Exited,Converted,Emails Sent,WhatsApp Sent,Push Sent,Total Reached,Journey Active,Journey Completed,Revenue';
     const csv = [header, ...rows.map(r =>
-      `${r.log_date?.slice(0,10)},${r.segment_label},${r.total_count},${r.entered},${r.exited},${r.converted},${r.emails_sent},${r.whatsapp_sent},${r.push_sent},${r.total_reached},${r.journey_active},${r.journey_completed},${r.revenue}`
+      `${r.log_date instanceof Date ? r.log_date.toISOString().slice(0,10) : String(r.log_date||'').slice(0,10)},${r.segment_label},${r.total_count},${r.entered},${r.exited},${r.converted},${r.emails_sent},${r.whatsapp_sent},${r.push_sent},${r.total_reached},${r.journey_active},${r.journey_completed},${r.revenue}`
     )].join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
@@ -96,7 +99,7 @@ router.get('/segment-customers/download', async (req, res, next) => {
 
     const header = 'Name,Email,Phone,Company,Country,Status,Tier,Geography,Tours,Hotels,Visas,Flights,Revenue,Last Seen';
     const csv = [header, ...result.data.map(c =>
-      `"${(c.name||'').replace(/"/g,'""')}","${c.email||''}","${c.phone||''}","${(c.company_name||'').replace(/"/g,'""')}","${c.country||''}",${c.booking_status},${c.product_tier||''},${c.geography||''},${c.total_tour_bookings||0},${c.total_hotel_bookings||0},${c.total_visa_bookings||0},${c.total_flight_bookings||0},${c.total_booking_revenue||0},"${c.last_seen_at?.slice(0,10)||''}"`
+      `"${(c.name||'').replace(/"/g,'""')}","${c.email||''}","${c.phone||''}","${(c.company_name||'').replace(/"/g,'""')}","${c.country||''}",${c.booking_status},${c.product_tier||''},${c.geography||''},${c.total_tour_bookings||0},${c.total_hotel_bookings||0},${c.total_visa_bookings||0},${c.total_flight_bookings||0},${c.total_booking_revenue||0},"${c.last_seen_at instanceof Date ? c.last_seen_at.toISOString().slice(0,10) : (c.last_seen_at||'').toString().slice(0,10)}"`
     )].join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
@@ -116,9 +119,9 @@ router.get('/segmentation-tree', async (req, res, next) => {
 // GET /api/v3/unified-contacts/segment-customers — customers for a specific segment combo
 router.get('/segment-customers', async (req, res, next) => {
   try {
-    const { bookingStatus, productTier, geography, page, limit, search } = req.query;
+    const { bookingStatus, productTier, geography, businessType, page, limit, search } = req.query;
     const result = await UnifiedContactService.getSegmentCustomers({
-      bookingStatus, productTier, geography,
+      bookingStatus, productTier, geography, businessType,
       page: parseInt(page) || 1, limit: parseInt(limit) || 25, search,
     });
     res.json({ success: true, ...result });
