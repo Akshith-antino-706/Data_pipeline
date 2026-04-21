@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { getTemplates, createTemplate, approveTemplate, rejectTemplate, generateContent, getSegments, generateContentWithProducts, getSegmentProducts, getBaseTemplates, previewBaseTemplate, useBaseTemplate, getSegmentEmailTemplates, previewSegmentEmail, useSegmentEmail, createCampaign, executeCampaign, previewTemplate, previewHtmlEmail } from '../api';
+import { getTemplates, createTemplate, approveTemplate, rejectTemplate, generateContent, getSegments, generateContentWithProducts, getSegmentProducts, getBaseTemplates, previewBaseTemplate, useBaseTemplate, getSegmentEmailTemplates, previewSegmentEmail, useSegmentEmail, createCampaign, executeCampaign, previewTemplate, previewHtmlEmail, submitTemplateForApproval, checkGupshupStatus, forceApproveGupshup, getGupshupConfig } from '../api';
 import { useBusinessType } from '../App';
 import { Plus, Sparkles, Check, X, Image, Eye, Package, Send, Layout, ShoppingCart, Tag, Heart, UserCheck, Mail, Users, Play, Loader, CheckCircle, AlertCircle } from 'lucide-react';
 
@@ -98,6 +98,49 @@ export default function Content() {
 
   const handleApprove = async (id) => { await approveTemplate(id); loadTemplates(tab); };
   const handleReject = async (id) => { await rejectTemplate(id); loadTemplates(tab); };
+
+  // ── Gupshup approval pipeline ─────────────────────────
+  const [gupshupConfig, setGupshupConfig] = useState({ whatsapp: { configured: false }, sms: { configured: false } });
+  const [gupshupBusy, setGupshupBusy] = useState({});  // { [templateId]: 'submit'|'check'|'force' }
+  useEffect(() => { getGupshupConfig().then(r => setGupshupConfig(r)).catch(() => {}); }, []);
+
+  const handleSubmitGupshup = async (id) => {
+    setGupshupBusy(s => ({ ...s, [id]: 'submit' }));
+    try {
+      const r = await submitTemplateForApproval(id);
+      await loadTemplates(tab);
+      alert(r.data?.simulated
+        ? `Submitted (simulated — no Gupshup keys). Status: ${r.data.status}`
+        : `Submitted to Gupshup. Status: ${r.data?.status || 'pending'}`);
+    } catch (err) { alert(err.message); }
+    setGupshupBusy(s => { const n = { ...s }; delete n[id]; return n; });
+  };
+  const handleCheckGupshup = async (id) => {
+    setGupshupBusy(s => ({ ...s, [id]: 'check' }));
+    try {
+      const r = await checkGupshupStatus(id);
+      await loadTemplates(tab);
+      alert(`Status: ${r.data?.status}${r.data?.changed ? ' (changed)' : ' (unchanged)'}`);
+    } catch (err) { alert(err.message); }
+    setGupshupBusy(s => { const n = { ...s }; delete n[id]; return n; });
+  };
+  const handleForceApproveGupshup = async (id) => {
+    if (!confirm('Dev-only: mark this template as approved without calling Gupshup. Continue?')) return;
+    setGupshupBusy(s => ({ ...s, [id]: 'force' }));
+    try { await forceApproveGupshup(id); await loadTemplates(tab); }
+    catch (err) { alert(err.message); }
+    setGupshupBusy(s => { const n = { ...s }; delete n[id]; return n; });
+  };
+
+  const APPROVAL_BADGE = {
+    not_submitted: { label: 'Not submitted', bg: '#64748b' },
+    pending:       { label: 'Pending Gupshup', bg: '#f59e0b' },
+    approved:      { label: 'Gupshup ✓',       bg: '#10b981' },
+    rejected:      { label: 'Gupshup ✗',       bg: '#ef4444' },
+    paused:        { label: 'Paused',          bg: '#a78bfa' },
+    disabled:      { label: 'Disabled',        bg: '#475569' },
+    error:         { label: 'Error',           bg: '#ef4444' },
+  };
 
   const handleBasePreview = async (tpl) => {
     setBasePreview(tpl);
@@ -242,7 +285,37 @@ export default function Content() {
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {t.ai_generated && <span className="badge-orange" style={{ padding: '2px 8px', borderRadius: 8, fontSize: 10, fontWeight: 600 }}>AI</span>}
                 {t.cta_text && <span style={{ padding: '2px 8px', borderRadius: 8, background: 'var(--border-color)', color: 'var(--text-secondary)', fontSize: 10 }}>CTA: {t.cta_text}</span>}
+                {(t.channel === 'whatsapp' || t.channel === 'sms') && (() => {
+                  const ap = APPROVAL_BADGE[t.external_status || 'not_submitted'] || APPROVAL_BADGE.not_submitted;
+                  return (
+                    <span style={{ padding: '2px 8px', borderRadius: 8, background: ap.bg, color: '#fff', fontSize: 10, fontWeight: 600 }}
+                          title={t.external_rejection_reason || ''}>{ap.label}</span>
+                  );
+                })()}
               </div>
+              {(t.channel === 'whatsapp' || t.channel === 'sms') && (
+                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                  {(!t.external_status || t.external_status === 'not_submitted' || t.external_status === 'rejected') && (
+                    <button onClick={() => handleSubmitGupshup(t.id)} disabled={gupshupBusy[t.id]}
+                      className="btn btn-sm" style={{ gap: 4, background: '#0ea5e9', color: '#fff', border: 'none', fontSize: 11 }}>
+                      <Send size={11} /> {gupshupBusy[t.id] === 'submit' ? 'Submitting…' : 'Submit for approval'}
+                    </button>
+                  )}
+                  {t.external_status === 'pending' && (
+                    <button onClick={() => handleCheckGupshup(t.id)} disabled={gupshupBusy[t.id]}
+                      className="btn btn-ghost btn-sm" style={{ gap: 4, fontSize: 11 }}>
+                      {gupshupBusy[t.id] === 'check' ? 'Checking…' : 'Check status'}
+                    </button>
+                  )}
+                  {t.external_status !== 'approved' && !gupshupConfig[t.channel]?.configured && (
+                    <button onClick={() => handleForceApproveGupshup(t.id)} disabled={gupshupBusy[t.id]}
+                      className="btn btn-ghost btn-sm" style={{ gap: 4, fontSize: 11, color: 'var(--text-tertiary)' }}
+                      title="Dev-only: bypass Gupshup until keys are configured">
+                      Force approve (dev)
+                    </button>
+                  )}
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 6, marginTop: 12, borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
                 <button onClick={async () => {
                   if (t.channel === 'email') {

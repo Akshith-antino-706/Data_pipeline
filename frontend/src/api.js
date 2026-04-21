@@ -218,6 +218,23 @@ export const refreshSegmentationMV = () =>
   request('/api/v3/unified-contacts/refresh-segmentation-mv', { method: 'POST' });
 export const recomputeSegmentation = () =>
   request('/api/v3/unified-contacts/recompute-segmentation', { method: 'POST' });
+
+// ── Gupshup approval pipeline ───────────────────────────────
+export const getGupshupConfig = () => request('/api/v3/gupshup/config');
+export const submitTemplateForApproval = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/submit`, { method: 'POST' });
+export const checkGupshupStatus = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/check-status`, { method: 'POST' });
+export const setGupshupExternalId = (templateId, externalId, { status, category } = {}) =>
+  request(`/api/v3/gupshup/templates/${templateId}/set-external-id`, {
+    method: 'POST', body: JSON.stringify({ externalId, status, category }),
+  });
+export const forceApproveGupshup = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/force-approve`, { method: 'POST' });
+export const getGupshupEvents = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/events`);
+export const bulkSubmitGupshup = () =>
+  request('/api/v3/gupshup/bulk-submit', { method: 'POST' });
 export const getUnifiedFilters = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/filters${qs ? `?${qs}` : ''}`);

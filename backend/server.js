@@ -33,6 +33,7 @@ import raynaSyncRouter from './src/routes/raynaSync.js';
 import dailyReportRouter from './src/routes/dailyReport.js';
 import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 import testE2ERouter from './src/routes/testE2E.js';
+import gupshupRouter from './src/routes/gupshup.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -115,6 +116,7 @@ app.use('/api/v3/rayna-sync', raynaSyncRouter);
 app.use('/api/v3/daily-report', dailyReportRouter);
 app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 app.use('/api/v3/test', testE2ERouter);
+app.use('/api/v3/gupshup', gupshupRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {

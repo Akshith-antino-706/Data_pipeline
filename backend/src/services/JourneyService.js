@@ -3,6 +3,7 @@ import EmailRenderer from './EmailRenderer.js';
 import { EmailChannel } from './channels/EmailChannel.js';
 import { SMSChannel } from './channels/SMSChannel.js';
 import { WhatsAppChannel } from './channels/WhatsAppChannel.js';
+import GupshupService from './GupshupService.js';
 
 /**
  * JourneyService — Journey Flow Builder & Execution Engine
@@ -249,21 +250,32 @@ class JourneyService {
     if (channel === 'sms' || channel === 'whatsapp') {
       const to = (recipient || '').trim();
       if (!/^\+?[0-9][0-9\s\-()]{5,}$/.test(to)) throw new Error('Valid phone number required (E.164 recommended, e.g. +971501234567)');
-      const { rows: [tpl] } = await db.query('SELECT body, subject FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+      const { rows: [tpl] } = await db.query(
+        'SELECT body, subject, external_status, external_template_id FROM content_templates WHERE id = $1',
+        [parseInt(templateId)]
+      );
       if (!tpl) throw new Error(`Template ${templateId} not found`);
+
+      // Approval gate — WA/SMS must be approved via Gupshup before any send.
+      // Simulation mode (no keys) still enforces this, but you can flip a template
+      // to 'approved' via /api/v3/gupshup/templates/:id/force-approve for local dev.
+      await GupshupService.assertApproved(parseInt(templateId));
+
       const user = await resolveRecipient(to);
       const utmLink = buildUtmLink(user?.unified_id);
-      // Substitute {{utm_link}} and {{first_name}} in body for SMS/WA too.
       const rawBody = tpl.body || tpl.subject || node.data?.label || 'Journey node test';
       const firstName = user?.name ? user.name.split(' ')[0] : 'there';
       const body = `[TEST] ${rawBody
         .replace(/\{\{utm_link\}\}/g, utmLink)
         .replace(/\{\{first_name\}\}/g, firstName)}`;
+
       const result = channel === 'sms'
-        ? await SMSChannel.send({ to, body })
-        : await WhatsAppChannel.sendText({ to, text: body });
+        ? await GupshupService.sendSMS({ to, templateId: parseInt(templateId), messageBody: body })
+        : await GupshupService.sendWhatsApp({ to, templateId: parseInt(templateId), params: [firstName, utmLink] });
+
       return {
         channel, recipient: to, templateId, utmLink,
+        externalTemplateId: tpl.external_template_id,
         resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null,
         ...result,
       };
@@ -495,8 +507,9 @@ class JourneyService {
         }
 
         let sendResult = null;
+        let approvalBlocked = false;
 
-        // Email channel — render template + send via SMTP
+        // Email channel — render template + send via SMTP (no Gupshup approval needed)
         if (channel === 'email' && templateId && entry.email) {
           try {
             const rendered = await EmailRenderer.render(parseInt(templateId), entry.customer_id);
@@ -512,14 +525,46 @@ class JourneyService {
             sendResult = { success: false, error: err.message };
           }
         }
-        // SMS / WhatsApp channels: no provider wired yet — logged as simulated.
+
+        // WhatsApp — must be Gupshup-approved. Indian track only.
+        else if (channel === 'whatsapp' && templateId && entry.phone) {
+          try {
+            await GupshupService.assertApproved(parseInt(templateId));
+            const firstName = entry.name ? entry.name.split(' ')[0] : 'there';
+            sendResult = await GupshupService.sendWhatsApp({
+              to: entry.phone, templateId: parseInt(templateId),
+              params: [firstName],
+            });
+          } catch (err) {
+            approvalBlocked = /not approved/i.test(err.message);
+            sendResult = { success: false, error: err.message, blocked: approvalBlocked };
+          }
+        }
+
+        // SMS — must be DLT-registered and Gupshup-approved.
+        else if (channel === 'sms' && templateId && entry.phone) {
+          try {
+            await GupshupService.assertApproved(parseInt(templateId));
+            const { rows: [tpl] } = await db.query('SELECT body FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+            const firstName = entry.name ? entry.name.split(' ')[0] : 'there';
+            const messageBody = (tpl?.body || '').replace(/\{\{first_name\}\}/g, firstName);
+            sendResult = await GupshupService.sendSMS({
+              to: entry.phone, templateId: parseInt(templateId), messageBody,
+            });
+          } catch (err) {
+            approvalBlocked = /not approved/i.test(err.message);
+            sendResult = { success: false, error: err.message, blocked: approvalBlocked };
+          }
+        }
 
         await db.query(`
           INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-          VALUES ($1, $2, 'action_sent', $3, $4)
-        `, [entry.entry_id, currentNode.id, channel,
+          VALUES ($1, $2, $3, $4, $5)
+        `, [entry.entry_id, currentNode.id,
+            approvalBlocked ? 'action_blocked' : 'action_sent',
+            channel,
             JSON.stringify({ templateId, channel, originalChannel: rawChannel, autoPaired, track: entryTrack,
-              sendResult: sendResult ? { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated } : null })]);
+              sendResult: sendResult ? { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated, error: sendResult.error } : null })]);
         actioned++;
       }
 
