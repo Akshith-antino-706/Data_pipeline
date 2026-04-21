@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getRaynaSyncStatus, getMappingStats, triggerRaynaSync, triggerRaynaSyncEndpoint, refreshBookingMapping } from '../api';
-import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Ticket, Activity } from 'lucide-react';
+import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Activity } from 'lucide-react';
 
 const SOURCE_ICONS = { tours: MapPin, hotels: Building2, visas: Globe, flights: Plane };
 const SOURCE_COLORS = { tours: 'var(--brand-primary)', hotels: 'var(--orange)', visas: 'var(--green)', flights: 'var(--red)' };
@@ -128,7 +128,6 @@ export default function DataPipeline() {
         {[
           { label: 'Users', value: formatNum(dataOverview.users), color: 'var(--brand-primary)', icon: Users },
           { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), color: 'var(--green)', icon: MapPin },
-          { label: 'Tickets', value: formatNum(dataOverview.tickets), color: 'var(--orange)', icon: Ticket },
           { label: 'Chats', value: formatNum(dataOverview.chats), color: '#25D366', icon: MessageSquare },
           { label: 'Unified Contacts', value: formatNum(dataOverview.unifiedContacts), color: 'var(--red)', icon: Database },
         ].map(({ label, value, color, icon: Icon }) => (
@@ -154,7 +153,6 @@ export default function DataPipeline() {
             { label: 'Phones', value: formatNum(dataOverview.phones), sub: 'contact numbers', icon: Phone, color: '#25D366' },
             { label: 'Departments', value: formatNum(dataOverview.departments), sub: 'active', icon: Building2, color: 'var(--brand-primary)' },
             { label: 'Dept Emails', value: formatNum(dataOverview.deptEmails), sub: 'mapped', icon: Mail, color: 'var(--orange)' },
-            { label: 'Tickets', value: formatNum(dataOverview.tickets), sub: 'email tickets', icon: Ticket, color: 'var(--orange)' },
             { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), sub: 'all sources', icon: MapPin, color: 'var(--green)' },
             { label: 'Chats', value: formatNum(dataOverview.chats), sub: 'WhatsApp', icon: MessageSquare, color: '#25D366' },
             { label: 'Tours', value: formatNum(dataOverview.tours), sub: 'from API', icon: MapPin, color: SOURCE_COLORS.tours },
@@ -196,10 +194,6 @@ export default function DataPipeline() {
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#25D366' }}>{formatNum(d.chats)}</div>
                       <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Chats</div>
-                    </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--orange)' }}>{formatNum(d.tickets)}</div>
-                      <div style={{ fontSize: 9, color: 'var(--text-secondary)' }}>Tickets</div>
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)' }}>{formatNum(d.bookings)}</div>
@@ -259,22 +253,29 @@ export default function DataPipeline() {
             <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Every 10 min</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {mysqlStatus.filter(t => t.table_name.startsWith('mysql_')).map(t => (
+            {mysqlStatus.filter(t => (t.table_name.startsWith('mysql_') || t.table_name.startsWith('incr_')) && t.table_name !== 'incr_tickets' && t.table_name !== 'incr_travel').map(t => (
               <div key={t.table_name} style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '12px 14px', borderRadius: 8, background: 'var(--bg-primary)',
                 border: '1px solid var(--border-color)',
               }}>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{t.table_name.replace('mysql_', '')}</div>
+                  <div style={{ fontWeight: 600, fontSize: 14, textTransform: 'capitalize' }}>
+                    {t.table_name.replace(/^(mysql_|incr_)/, '')}
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
                     {formatNum(t.rows_synced)} rows | {t.sync_duration_ms ? `${(t.sync_duration_ms / 1000).toFixed(1)}s` : '--'} | Last: {formatDate(t.last_synced_at)}
                   </div>
+                  {t.error_message && t.sync_status === 'error' && (
+                    <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }} title={t.error_message}>
+                      {t.error_message.length > 90 ? t.error_message.slice(0, 90) + '…' : t.error_message}
+                    </div>
+                  )}
                 </div>
                 <StatusBadge status={t.sync_status} />
               </div>
             ))}
-            {mysqlStatus.filter(t => t.table_name.startsWith('mysql_')).length === 0 && (
+            {mysqlStatus.filter(t => (t.table_name.startsWith('mysql_') || t.table_name.startsWith('incr_')) && t.table_name !== 'incr_tickets' && t.table_name !== 'incr_travel').length === 0 && (
               <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
                 No MySQL sync data yet
               </div>

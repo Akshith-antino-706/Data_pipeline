@@ -38,13 +38,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust first hop (devtunnel / reverse proxy) so X-Forwarded-For is honored
+// by rate-limit and Express uses the real client IP.
+app.set('trust proxy', 1);
+
 // ── Security Middleware ──────────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
   contentSecurityPolicy: false,  // API server, not serving HTML
 }));
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com,https://raynadata.netlify.app,https://qh6hjtm8-3001.inc1.devtunnels.ms').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com,https://www.raynatours.com,https://raynadata.netlify.app,https://qh6hjtm8-3001.inc1.devtunnels.ms').split(',').map(s => s.trim());
 app.use(cors({
   origin: (origin, cb) => {
     // Allow requests with no origin (curl, server-to-server, mobile)
@@ -55,6 +59,15 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+// Always echo Access-Control-Allow-Credentials: true on every response — required for
+// browsers that attach devtunnel session cookies regardless of fetch credentials mode.
+app.use((req, res, next) => {
+  if (req.headers.origin && ALLOWED_ORIGINS.includes(req.headers.origin)) {
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+  next();
+});
 
 // Rate limiting — general: 200 req/min, mutations: 30 req/min
 const generalLimiter = rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many requests, slow down' } });

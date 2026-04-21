@@ -12,16 +12,16 @@ router.post('/sync', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/stats', async (_req, res, next) => {
+router.get('/stats', async (req, res, next) => {
   try {
-    const data = await UnifiedContactService.getStats();
+    const data = await UnifiedContactService.getStats({ businessType: req.query.businessType });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
 
-router.get('/filters', async (_req, res, next) => {
+router.get('/filters', async (req, res, next) => {
   try {
-    const data = await UnifiedContactService.getFilterOptions();
+    const data = await UnifiedContactService.getFilterOptions({ businessType: req.query.businessType });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -112,6 +112,22 @@ router.get('/segment-customers/download', async (req, res, next) => {
 router.get('/segmentation-tree', async (req, res, next) => {
   try {
     const data = await UnifiedContactService.getSegmentationTree({ businessType: req.query.businessType });
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v3/unified-contacts/refresh-segmentation-mv — rebuild the segmentation MV (fast, no rule recompute)
+router.post('/refresh-segmentation-mv', async (_req, res, next) => {
+  try {
+    const data = await UnifiedContactService.refreshSegmentationMV();
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v3/unified-contacts/recompute-segmentation — rerun segmentation rules + refresh MV
+router.post('/recompute-segmentation', async (_req, res, next) => {
+  try {
+    const data = await UnifiedContactService.recomputeSegmentation();
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });

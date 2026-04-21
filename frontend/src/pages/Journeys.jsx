@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
-  getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney
+  getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
+  testSendJourneyNode
 } from '../api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -106,7 +107,10 @@ export default function Journeys() {
   const [flowEditMode, setFlowEditMode] = useState(false);
   const [editingNode, setEditingNode] = useState(null); // node being edited
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
-  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' });
+  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', track: 'all' });
+  const [trackFilter, setTrackFilter] = useState('all'); // 'all' | 'indian' | 'rest'
+  // Test-send-from-node modal state: null when closed, { node, recipient, sending, result } when open
+  const [testSendNode, setTestSendNode] = useState(null);
 
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState({
@@ -259,7 +263,16 @@ export default function Journeys() {
       type: nodeForm.type,
       data: {
         label: nodeForm.label || `New ${nodeForm.type} step`,
-        ...(nodeForm.type === 'action' && { channel: nodeForm.channel, message: nodeForm.message }),
+        track: nodeForm.track || (trackFilter !== 'all' ? trackFilter : 'all'),
+        ...(nodeForm.type === 'action' && {
+          channel: nodeForm.channel,
+          message: nodeForm.message,
+          // Save rest auto-pair settings when this is a WhatsApp node
+          ...(nodeForm.channel === 'whatsapp' && {
+            restChannel: nodeForm.restChannel || 'email',
+            restTemplateId: nodeForm.restTemplateId || null,
+          }),
+        }),
         ...(nodeForm.type === 'wait' && { waitDays: nodeForm.waitDays }),
         ...(nodeForm.type === 'condition' && { label: nodeForm.label }),
         ...(nodeForm.type === 'goal' && { goalType: nodeForm.goalType }),
@@ -282,7 +295,16 @@ export default function Journeys() {
       data: {
         ...updated[idx].data,
         label: nodeForm.label || updated[idx].data?.label,
-        ...(nodeForm.type === 'action' && { channel: nodeForm.channel, message: nodeForm.message }),
+        track: nodeForm.track || updated[idx].data?.track || 'all',
+        ...(nodeForm.type === 'action' && {
+          channel: nodeForm.channel,
+          message: nodeForm.message,
+          // Save rest auto-pair settings when this is a WhatsApp node
+          ...(nodeForm.channel === 'whatsapp' && {
+            restChannel: nodeForm.restChannel || 'email',
+            restTemplateId: nodeForm.restTemplateId || null,
+          }),
+        }),
         ...(nodeForm.type === 'wait' && { waitDays: nodeForm.waitDays }),
         ...(nodeForm.type === 'goal' && { goalType: nodeForm.goalType }),
       }
@@ -683,7 +705,17 @@ export default function Journeys() {
                     <p className="text-secondary text-sm">Generate from a strategy to populate the flow.</p>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
+                    {/* Column headers */}
+                    <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                      <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,153,51,0.08)', border: '1px solid rgba(255,153,51,0.3)', fontWeight: 600, fontSize: 12, color: '#FF9933', textAlign: 'center' }}>
+                        🇮🇳 Indian Track — WhatsApp + Email + SMS
+                      </div>
+                      <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600, fontSize: 12, color: '#3B82F6', textAlign: 'center' }}>
+                        🌍 Rest of World — Email + SMS
+                      </div>
+                    </div>
+
                     {nodes.map((node, i) => {
                       const Icon = NODE_ICONS[node.type] || Target;
                       const color = NODE_COLORS[node.type] || 'var(--text-tertiary)';
@@ -693,8 +725,43 @@ export default function Journeys() {
                       const isExpanded = expandedNode === node.id;
                       const hasSent = nodeStats.action_sent > 0;
 
-                      return (
-                        <div key={node.id} style={{ width: '100%', maxWidth: 520 }}>
+                      // ── Track-aware grid placement ──
+                      // Trigger spans both columns (single shared entry).
+                      // Indian-only → col 1; Rest-only → col 2.
+                      // Untagged (track='all') action/wait/condition/goal: DUPLICATE into BOTH columns
+                      //   so users visually see parallel tracks (same message fires for both audiences).
+                      // WhatsApp rule: Indian column always WhatsApp; Rest column auto-pairs to Email
+                      //   (or node.data.restChannel if configured) so Rest users don't skip the step.
+                      const nodeTrack = node.data?.track || 'all';
+                      const isTriggerSpan = node.type === 'trigger';
+                      const isWhatsApp = (node.data?.channel || '').toLowerCase() === 'whatsapp';
+                      const isDualShared = !isTriggerSpan && nodeTrack === 'all';
+                      const restChannel = (node.data?.restChannel || 'email').toLowerCase();
+
+                      // Build the list of (column, label) mirror renders this node needs
+                      const renders = isTriggerSpan
+                        ? [{ gc: '1 / span 2', badge: null, centered: true, key: node.id }]
+                        : isWhatsApp
+                          // WhatsApp: Indian column shows WhatsApp, Rest column shows auto-pair (Email/SMS)
+                          ? [
+                              { gc: '1', badge: '🇮🇳 IN · WhatsApp', accent: '#25D366', key: node.id },
+                              { gc: '2', badge: `🌍 ROW · auto ${restChannel}`, accent: '#3B82F6', key: node.id + '_row', channelOverride: restChannel, restPair: true },
+                            ]
+                          : isDualShared
+                            ? [
+                                { gc: '1', badge: '🇮🇳 IN',  accent: '#FF9933', key: node.id + '_in'  },
+                                { gc: '2', badge: '🌍 ROW', accent: '#3B82F6', key: node.id + '_row' },
+                              ]
+                            : [{ gc: nodeTrack === 'indian' ? '1' : '2', badge: nodeTrack === 'indian' ? '🇮🇳 IN' : '🌍 ROW', accent: nodeTrack === 'indian' ? '#FF9933' : '#3B82F6', key: node.id }];
+
+                      return renders.map(({ gc, badge, accent, centered, key, channelOverride, restPair }) => (
+                        <div key={key} style={{ gridColumn: gc, width: '100%', maxWidth: centered ? 520 : '100%', justifySelf: centered ? 'center' : 'stretch', position: 'relative' }}>
+                          {/* Track label on each non-trigger node */}
+                          {badge && (
+                            <div style={{ position: 'absolute', top: -6, left: 10, fontSize: 9, fontWeight: 700, letterSpacing: 0.5, padding: '1px 6px', borderRadius: 3, background: accent, color: 'white', zIndex: 1 }}>
+                              {badge}
+                            </div>
+                          )}
                           {/* Connector Arrow + Insert Button */}
                           {i > 0 && (
                             <div className="flex flex-col items-center" style={{ position: 'relative' }}>
@@ -712,17 +779,54 @@ export default function Journeys() {
                                         </button>
                                       ))}
                                     </div>
+                                    {/* Track picker — which column this node belongs to */}
+                                    <div className="flex gap-1.5 mb-2">
+                                      {[
+                                        { v: 'all',    label: 'Shared', c: 'var(--text-muted)' },
+                                        { v: 'indian', label: '🇮🇳 Indian',  c: '#FF9933' },
+                                        { v: 'rest',   label: '🌍 Rest',    c: '#3B82F6' },
+                                      ].map(t => (
+                                        <button key={t.v} onClick={() => setNodeForm(f => ({...f, track: t.v}))}
+                                          style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
+                                            border: (nodeForm.track || 'all') === t.v ? `2px solid ${t.c}` : '1px solid var(--border-color)',
+                                            background: (nodeForm.track || 'all') === t.v ? t.c + '15' : 'var(--bg-secondary)', color: t.c }}>
+                                          {t.label}
+                                        </button>
+                                      ))}
+                                    </div>
                                     {nodeForm.type === 'action' && (
-                                      <div className="flex gap-1.5 mb-2">
-                                        {['email', 'whatsapp', 'sms', 'push'].map(ch => (
-                                          <button key={ch} onClick={() => setNodeForm(f => ({...f, channel: ch}))}
-                                            style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
-                                              border: nodeForm.channel === ch ? '2px solid var(--red)' : '1px solid var(--border-color)',
-                                              background: nodeForm.channel === ch ? 'var(--red)' + '15' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
-                                            {ch}
-                                          </button>
-                                        ))}
-                                      </div>
+                                      <>
+                                        <div className="flex gap-1.5 mb-2">
+                                          {['email', 'whatsapp', 'sms', 'push']
+                                            .filter(ch => ch !== 'whatsapp' || (nodeForm.track || 'all') !== 'rest')
+                                            .map(ch => (
+                                              <button key={ch} onClick={() => setNodeForm(f => ({...f, channel: ch}))}
+                                                style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
+                                                  border: nodeForm.channel === ch ? '2px solid var(--red)' : '1px solid var(--border-color)',
+                                                  background: nodeForm.channel === ch ? 'var(--red)' + '15' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
+                                                {ch}
+                                              </button>
+                                            ))}
+                                        </div>
+                                        {/* When channel is WhatsApp, let user pick the Rest auto-pair channel (Email or SMS). */}
+                                        {nodeForm.channel === 'whatsapp' && (
+                                          <div style={{ padding: '6px 8px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, marginBottom: 8 }}>
+                                            <div style={{ fontSize: 10, color: '#3B82F6', fontWeight: 600, marginBottom: 4 }}>
+                                              🌍 Rest-of-World auto-pair:
+                                            </div>
+                                            <div className="flex gap-1.5">
+                                              {['email', 'sms'].map(ch => (
+                                                <button key={ch} onClick={() => setNodeForm(f => ({...f, restChannel: ch}))}
+                                                  style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
+                                                    border: (nodeForm.restChannel || 'email') === ch ? '2px solid #3B82F6' : '1px solid var(--border-color)',
+                                                    background: (nodeForm.restChannel || 'email') === ch ? 'rgba(59,130,246,0.15)' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
+                                                  {ch}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </>
                                     )}
                                     <input value={nodeForm.label} onChange={e => setNodeForm(f => ({...f, label: e.target.value}))}
                                       placeholder={nodeForm.type === 'wait' ? 'e.g. Wait 3 days' : 'Step description...'}
@@ -780,15 +884,23 @@ export default function Journeys() {
                                   <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color, lineHeight: 1 }}>
                                     {NODE_LABELS[node.type] || node.type}
                                   </span>
-                                  {channelConf && (
-                                    <span style={{
-                                      display: 'inline-flex', alignItems: 'center', gap: 3,
-                                      padding: '2px 8px', borderRadius: 12, fontSize: 10, fontWeight: 600,
-                                      background: channelConf.color + '12', color: channelConf.color
-                                    }}>
-                                      <ChannelIcon size={10} /> {channelConf.label}
-                                    </span>
-                                  )}
+                                  {(() => {
+                                    // Rest-pair duplicate for WhatsApp nodes: override the channel chip so
+                                    // the Rest column visually shows Email/SMS instead of WhatsApp.
+                                    const effChannel = channelOverride || node.data?.channel;
+                                    const effConf = effChannel ? CHANNEL_CONFIG[effChannel.toLowerCase()] : null;
+                                    const EffIcon = effConf?.icon;
+                                    return effConf ? (
+                                      <span style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                                        padding: '2px 8px', borderRadius: 12, fontSize: 10, fontWeight: 600,
+                                        background: effConf.color + '12', color: effConf.color
+                                      }}>
+                                        <EffIcon size={10} /> {effConf.label}
+                                        {restPair && <span style={{ opacity: 0.7, marginLeft: 2 }}>(auto-pair)</span>}
+                                      </span>
+                                    ) : null;
+                                  })()}
                                   {node.data?.timing && (
                                     <span className="flex items-center gap-0.5" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                                       <Clock size={10} /> {node.data.timing}
@@ -934,6 +1046,25 @@ export default function Journeys() {
                                           </div>
                                         );
                                       })()}
+                                      {/* Manual test-send — sends this node's content to an arbitrary recipient */}
+                                      <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setTestSendNode({ node, recipient: '', sending: false, result: null });
+                                          }}
+                                          style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                                            fontSize: 11, fontWeight: 600, padding: '6px 12px',
+                                            borderRadius: 6, border: '1px solid var(--border-color)',
+                                            background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+                                            cursor: 'pointer',
+                                          }}
+                                        >
+                                          <Send size={12} /> Send test
+                                        </button>
+                                      </div>
                                     </div>
                                   );
                                 })()}
@@ -963,7 +1094,7 @@ export default function Journeys() {
                             )}
                           </div>
                         </div>
-                      );
+                      ));
                     })}
                     {/* Add node at end when in edit mode */}
                     {flowEditMode && (
@@ -981,16 +1112,33 @@ export default function Journeys() {
                                 </button>
                               ))}
                             </div>
+                            {/* Track picker */}
+                            <div className="flex gap-1.5 mb-2">
+                              {[
+                                { v: 'all',    label: 'Shared',     c: 'var(--text-muted)' },
+                                { v: 'indian', label: '🇮🇳 Indian',  c: '#FF9933' },
+                                { v: 'rest',   label: '🌍 Rest',    c: '#3B82F6' },
+                              ].map(t => (
+                                <button key={t.v} onClick={() => setNodeForm(f => ({...f, track: t.v}))}
+                                  style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
+                                    border: (nodeForm.track || 'all') === t.v ? `2px solid ${t.c}` : '1px solid var(--border-color)',
+                                    background: (nodeForm.track || 'all') === t.v ? t.c + '15' : 'var(--bg-secondary)', color: t.c }}>
+                                  {t.label}
+                                </button>
+                              ))}
+                            </div>
                             {nodeForm.type === 'action' && (
                               <div className="flex gap-1.5 mb-2">
-                                {['email', 'whatsapp', 'sms', 'push'].map(ch => (
-                                  <button key={ch} onClick={() => setNodeForm(f => ({...f, channel: ch}))}
-                                    style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
-                                      border: nodeForm.channel === ch ? '2px solid var(--red)' : '1px solid var(--border-color)',
-                                      background: nodeForm.channel === ch ? 'var(--red)' + '15' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
-                                    {ch}
-                                  </button>
-                                ))}
+                                {['email', 'whatsapp', 'sms', 'push']
+                                  .filter(ch => ch !== 'whatsapp' || (nodeForm.track || 'all') !== 'rest')
+                                  .map(ch => (
+                                    <button key={ch} onClick={() => setNodeForm(f => ({...f, channel: ch}))}
+                                      style={{ padding: '3px 8px', borderRadius: 6, fontSize: 10, cursor: 'pointer',
+                                        border: nodeForm.channel === ch ? '2px solid var(--red)' : '1px solid var(--border-color)',
+                                        background: nodeForm.channel === ch ? 'var(--red)' + '15' : 'var(--bg-secondary)', textTransform: 'capitalize' }}>
+                                      {ch}
+                                    </button>
+                                  ))}
                               </div>
                             )}
                             <input value={nodeForm.label} onChange={e => setNodeForm(f => ({...f, label: e.target.value}))}
@@ -1329,6 +1477,105 @@ export default function Journeys() {
         )}
 
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
+
+        {/* ═══ Test-send modal — channel-aware recipient input ═══ */}
+        {testSendNode && (() => {
+          const n = testSendNode.node;
+          const ch = (n.data?.channel || '').toLowerCase();
+          const isEmail = ch === 'email';
+          const placeholder = isEmail ? 'name@example.com' : '+971501234567';
+          const inputType = isEmail ? 'email' : 'tel';
+          const tplId = n.data?.templateId;
+
+          const submit = async () => {
+            if (!testSendNode.recipient.trim()) return;
+            setTestSendNode(s => ({ ...s, sending: true, result: null }));
+            try {
+              const res = await testSendJourneyNode(selected, n.id, testSendNode.recipient.trim());
+              setTestSendNode(s => ({ ...s, sending: false, result: { ok: true, data: res.data } }));
+              setToast({ type: 'success', msg: `Test ${ch} sent to ${testSendNode.recipient}` });
+              setTimeout(() => setToast(null), 3000);
+            } catch (err) {
+              setTestSendNode(s => ({ ...s, sending: false, result: { ok: false, error: err.message || 'Send failed' } }));
+            }
+          };
+
+          return (
+            <div
+              onClick={() => !testSendNode.sending && setTestSendNode(null)}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 24, width: 460, maxWidth: '92vw', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid var(--border-color)' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <Send size={18} color={NODE_COLORS.action} />
+                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Send test</h3>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  <div><strong style={{ color: 'var(--text-primary)' }}>{n.data?.label || n.id}</strong></div>
+                  <div style={{ marginTop: 2 }}>Channel: <span style={{ color: NODE_COLORS.action, fontWeight: 600 }}>{ch}</span> · Template: {tplId || '(none)'}</div>
+                </div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                  {isEmail ? 'Email address' : 'Phone number (E.164)'}
+                </label>
+                <input
+                  type={inputType}
+                  autoFocus
+                  placeholder={placeholder}
+                  value={testSendNode.recipient}
+                  disabled={testSendNode.sending}
+                  onChange={e => setTestSendNode(s => ({ ...s, recipient: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, boxSizing: 'border-box' }}
+                />
+                {testSendNode.result && (
+                  <div style={{
+                    marginTop: 12, padding: '10px 12px', borderRadius: 8, fontSize: 12,
+                    background: testSendNode.result.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                    color: testSendNode.result.ok ? 'var(--green)' : 'var(--red)',
+                    border: `1px solid ${testSendNode.result.ok ? 'var(--green)' : 'var(--red)'}`,
+                  }}>
+                    {testSendNode.result.ok ? (
+                      <>
+                        <div>✓ Sent — provider: {testSendNode.result.data?.provider || 'unknown'}{testSendNode.result.data?.simulated ? ' (simulated — provider not configured)' : ''}{testSendNode.result.data?.externalId ? `, id: ${testSendNode.result.data.externalId}` : ''}</div>
+                        {testSendNode.result.data?.resolvedUser ? (
+                          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+                            Matched <strong style={{ color: 'var(--text-secondary)' }}>{testSendNode.result.data.resolvedUser.name || '(no name)'}</strong> · unified_id: {testSendNode.result.data.resolvedUser.unifiedId} — personalized + rid attached
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+                            No matching contact — sent with generic personalization (no rid)
+                          </div>
+                        )}
+                        {testSendNode.result.data?.utmLink && (
+                          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all' }}>
+                            UTM: <span style={{ color: 'var(--text-secondary)' }}>{testSendNode.result.data.utmLink}</span>
+                          </div>
+                        )}
+                      </>
+                    ) : `✗ ${testSendNode.result.error}`}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setTestSendNode(null)}
+                    disabled={testSendNode.sending}
+                    className="btn btn-ghost"
+                  >Close</button>
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={!testSendNode.recipient.trim() || testSendNode.sending}
+                    className="btn btn-primary"
+                  >{testSendNode.sending ? 'Sending…' : 'Send'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         </motion.div>
       </motion.div>
     );

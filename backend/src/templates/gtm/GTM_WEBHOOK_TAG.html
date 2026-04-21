@@ -36,10 +36,12 @@
 <script>
 (function() {
 
-  // ╔═══════════════════════════════════════════════╗
-  // ║  CHANGE THIS to your deployed backend URL     ║
-  // ╚═══════════════════════════════════════════════╝
-  var API_URL = 'http://localhost:3001/api/v3/gtm/events';
+  // ╔═══════════════════════════════════════════════════════════════╗
+  // ║  Backend ingest URL — must be reachable from visitors' browsers. ║
+  // ║  Dev tunnel (VS Code) while testing locally; swap for prod URL  ║
+  // ║  once backend is deployed to a public host.                     ║
+  // ╚═══════════════════════════════════════════════════════════════╝
+  var API_URL = 'https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events';
 
   // ── Events to track (matching your GTM setup) ──
   var TRACKED_EVENTS = [

@@ -581,7 +581,7 @@ export default class UnifiedContactSync {
     // INDIAN sub-tag — WhatsApp channel included for these customers
     await query(`
       UPDATE unified_contacts SET is_indian = true
-      WHERE phone LIKE '91%' OR phone LIKE '+91%' OR country = 'India' OR nationality = 'India'`);
+      WHERE phone LIKE '91%' OR phone LIKE '+91%' OR country = 'India'`);
 
     // ── Combined segment label + business_type ──────────────────
     await query(`UPDATE unified_contacts SET segment_label = CONCAT_WS(' / ', booking_status, product_tier, geography, CASE WHEN is_indian THEN 'INDIAN' END)`);

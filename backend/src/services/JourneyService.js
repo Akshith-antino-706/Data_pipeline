@@ -1,6 +1,8 @@
 import db from '../config/database.js';
 import EmailRenderer from './EmailRenderer.js';
 import { EmailChannel } from './channels/EmailChannel.js';
+import { SMSChannel } from './channels/SMSChannel.js';
+import { WhatsAppChannel } from './channels/WhatsAppChannel.js';
 
 /**
  * JourneyService — Journey Flow Builder & Execution Engine
@@ -20,7 +22,7 @@ class JourneyService {
 
   // ── CRUD ──────────────────────────────────────────────────
 
-  static async getAll({ status, page = 1, limit = 20 } = {}) {
+  static async getAll({ status, audience, page = 1, limit = 20 } = {}) {
     const offset = (page - 1) * limit;
     let where = '1=1';
     const params = [];
@@ -28,6 +30,10 @@ class JourneyService {
     if (status) {
       params.push(status);
       where += ` AND jf.status = $${params.length}`;
+    }
+    if (audience) {
+      params.push(audience);
+      where += ` AND jf.audience = $${params.length}`;
     }
 
     const { rows: [{ count }] } = await db.query(
@@ -87,19 +93,19 @@ class JourneyService {
     return { ...journey, entryStats, nodeAnalytics };
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience }) {
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
-    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy]);
+    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all']);
     return journey;
   }
 
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {
@@ -111,14 +117,159 @@ class JourneyService {
     if (sets.length === 0) return this.getById(journeyId);
 
     const { rows: [journey] } = await db.query(
-      `UPDATE journey_flows SET ${sets.join(', ')} WHERE journey_id = $1 RETURNING *`, params
+      `UPDATE journey_flows SET ${sets.join(', ')}, updated_at = NOW() WHERE journey_id = $1 RETURNING *`, params
     );
     return journey;
+  }
+
+  // ── Node-level CRUD helpers (used by the UI editor) ───────
+
+  /** Add a node + edge from `afterNodeId` → newNode. If afterNodeId is null/undefined, append to end. */
+  static async addNode(journeyId, node, afterNodeId = null) {
+    const j = await this.getById(journeyId);
+    if (!j) throw new Error('Journey not found');
+    const nodes = Array.isArray(j.nodes) ? j.nodes : [];
+    const edges = Array.isArray(j.edges) ? j.edges : [];
+
+    if (!node.id) node.id = `node_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+    nodes.push(node);
+
+    // Wire an edge from afterNodeId to this node (or from last node if unspecified).
+    const source = afterNodeId || (nodes.length > 1 ? nodes[nodes.length - 2].id : null);
+    if (source) {
+      edges.push({ id: `e_${source}_${node.id}`, source, target: node.id });
+    }
+    return this.update(journeyId, { nodes, edges });
+  }
+
+  /** Update a single node's fields (type, channel, templateId, waitDays, label, etc.). */
+  static async updateNode(journeyId, nodeId, patch) {
+    const j = await this.getById(journeyId);
+    if (!j) throw new Error('Journey not found');
+    const nodes = (j.nodes || []).map(n =>
+      n.id === nodeId ? { ...n, ...patch, data: { ...(n.data || {}), ...(patch.data || {}) } } : n
+    );
+    return this.update(journeyId, { nodes });
+  }
+
+  /** Delete a node and stitch edges around it (previous node's edges re-point to this node's targets). */
+  static async deleteNode(journeyId, nodeId) {
+    const j = await this.getById(journeyId);
+    if (!j) throw new Error('Journey not found');
+    const nodes = (j.nodes || []).filter(n => n.id !== nodeId);
+    const incoming = (j.edges || []).filter(e => e.target === nodeId).map(e => e.source);
+    const outgoing = (j.edges || []).filter(e => e.source === nodeId).map(e => e.target);
+    let edges = (j.edges || []).filter(e => e.source !== nodeId && e.target !== nodeId);
+    // Stitch: every incoming source → every outgoing target
+    for (const s of incoming) {
+      for (const t of outgoing) {
+        if (!edges.some(e => e.source === s && e.target === t)) {
+          edges.push({ id: `e_${s}_${t}`, source: s, target: t });
+        }
+      }
+    }
+    return this.update(journeyId, { nodes, edges });
   }
 
   static async delete(journeyId) {
     await db.query('DELETE FROM journey_flows WHERE journey_id = $1', [journeyId]);
     return { deleted: true };
+  }
+
+  /**
+   * Test-send a single action node to an arbitrary recipient. Does NOT touch
+   * journey_entries or journey_events — this is purely for content QA.
+   *   - email  → renders template via EmailRenderer (no unifiedId personalization)
+   *              and sends via EmailChannel
+   *   - sms    → sends template body via SMSChannel
+   *   - whatsapp → sends template body as free-form text via WhatsAppChannel.sendText
+   *                (session-window only; no approved template lookup here)
+   */
+  static async testSendNode(journeyId, nodeId, recipient) {
+    const journey = await this.getById(journeyId);
+    if (!journey) throw new Error('Journey not found');
+
+    const node = (journey.nodes || []).find(n => n.id === nodeId);
+    if (!node) throw new Error(`Node ${nodeId} not found in journey ${journeyId}`);
+    if (node.type !== 'action') throw new Error(`Node ${nodeId} is type='${node.type}', only 'action' nodes are sendable`);
+
+    const channel = (node.data?.channel || '').toLowerCase();
+    const templateId = node.data?.templateId;
+    if (!templateId) throw new Error(`Node ${nodeId} has no templateId`);
+
+    // Slugified journey name in utm_campaign keeps analytics readable.
+    const campaignSlug = String(journey.name || `journey-${journeyId}`)
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+    // Resolve recipient → unified_contacts for full personalization + rid attribution.
+    // Email: match on email_key (lowercased). Phone: match on phone_key (last 10 digits).
+    // If no match, fall back to generic (null unifiedId) — send still works.
+    const resolveRecipient = async (to) => {
+      if (channel === 'email') {
+        const { rows: [u] } = await db.query(
+          'SELECT unified_id, name, email FROM unified_contacts WHERE email_key = LOWER(TRIM($1)) LIMIT 1',
+          [to]
+        );
+        return u || null;
+      }
+      const { rows: [u] } = await db.query(
+        `SELECT unified_id, name, phone FROM unified_contacts
+         WHERE phone_key = RIGHT(REGEXP_REPLACE($1, '[^0-9]', '', 'g'), 10) LIMIT 1`,
+        [to]
+      );
+      return u || null;
+    };
+
+    // Build the UTM link including rid= when we found the user, so GTM event
+    // attribution links clicks back to the same unified_id.
+    const buildUtmLink = (unifiedId) => {
+      const base = `https://www.raynatours.com/?utm_source=journey_test&utm_medium=${encodeURIComponent(channel)}&utm_campaign=${encodeURIComponent(campaignSlug)}&utm_content=${encodeURIComponent(nodeId)}`;
+      return unifiedId ? `${base}&rid=${unifiedId}` : base;
+    };
+
+    if (channel === 'email') {
+      const to = (recipient || '').trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error('Valid email address required');
+      const user = await resolveRecipient(to);
+      const utmLink = buildUtmLink(user?.unified_id);
+      const rendered = await EmailRenderer.render(parseInt(templateId), user?.unified_id || null, { utm_link: utmLink });
+      const result = await EmailChannel.send({
+        to,
+        subject: rendered.subject || `[TEST] ${node.data?.label || 'Journey node'}`,
+        html: rendered.html,
+        text: rendered.plainText,
+      });
+      return {
+        channel, recipient: to, templateId, utmLink,
+        resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null,
+        ...result,
+      };
+    }
+
+    if (channel === 'sms' || channel === 'whatsapp') {
+      const to = (recipient || '').trim();
+      if (!/^\+?[0-9][0-9\s\-()]{5,}$/.test(to)) throw new Error('Valid phone number required (E.164 recommended, e.g. +971501234567)');
+      const { rows: [tpl] } = await db.query('SELECT body, subject FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+      if (!tpl) throw new Error(`Template ${templateId} not found`);
+      const user = await resolveRecipient(to);
+      const utmLink = buildUtmLink(user?.unified_id);
+      // Substitute {{utm_link}} and {{first_name}} in body for SMS/WA too.
+      const rawBody = tpl.body || tpl.subject || node.data?.label || 'Journey node test';
+      const firstName = user?.name ? user.name.split(' ')[0] : 'there';
+      const body = `[TEST] ${rawBody
+        .replace(/\{\{utm_link\}\}/g, utmLink)
+        .replace(/\{\{first_name\}\}/g, firstName)}`;
+      const result = channel === 'sms'
+        ? await SMSChannel.send({ to, body })
+        : await WhatsAppChannel.sendText({ to, text: body });
+      return {
+        channel, recipient: to, templateId, utmLink,
+        resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null,
+        ...result,
+      };
+    }
+
+    throw new Error(`Unsupported channel '${channel}'`);
   }
 
   // ── Auto-generate journey from strategy flow_steps ──────────
@@ -224,12 +375,20 @@ class JourneyService {
     );
     if (!journey || !journey.segment_id) throw new Error('Journey has no segment');
 
-    // Get all active customers in this segment not already enrolled
+    // Get all active customers in this segment not already enrolled.
+    // Dual-track journeys (audience='all') enroll everyone and stamp each entry with
+    // track='indian'|'rest' per is_indian. Legacy single-audience journeys keep prior behavior.
+    let audienceFilter = '';
+    if (journey.audience === 'indian')      audienceFilter = 'AND uc.is_indian = true';
+    else if (journey.audience === 'rest')   audienceFilter = 'AND uc.is_indian = false';
+
     const { rows } = await db.query(`
-      INSERT INTO journey_entries (journey_id, customer_id, current_node_id)
-      SELECT $1, sc.customer_id, $2
+      INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
+      SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
       FROM segment_customers sc
+      JOIN unified_contacts uc ON uc.unified_id = sc.customer_id
       WHERE sc.segment_id = $3 AND sc.is_active = true
+        ${audienceFilter}
         AND NOT EXISTS (SELECT 1 FROM journey_entries je WHERE je.journey_id = $1 AND je.customer_id = sc.customer_id)
       RETURNING entry_id
     `, [journeyId, journey.nodes?.[0]?.id || 'node_0', journey.segment_id]);
@@ -260,23 +419,49 @@ class JourneyService {
     const edges = journey.edges || [];
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
-    // Get all active entries joined with unified_contacts
+    // Get all active entries joined with unified_contacts + current journey segment
     const { rows: entries } = await db.query(`
       SELECT je.*, uc.name, uc.email, uc.phone, uc.phone_key, uc.booking_status,
-        uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings
+        uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings,
+        uc.segment_label AS current_segment, uc.is_indian,
+        sd.segment_name AS journey_segment
       FROM journey_entries je
       JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      LEFT JOIN segment_definitions sd ON sd.segment_id = $2
       WHERE je.journey_id = $1 AND je.status = 'active'
-    `, [journeyId]);
+    `, [journeyId, journey.segment_id]);
 
     let processed = 0;
     let actioned = 0;
     let waited = 0;
     let conditioned = 0;
+    let converted = 0;
 
     for (const entry of entries) {
+      // ── CONVERSION CHECK: runs BEFORE every node fires ──
+      // If user booked or moved segments since entering, exit the journey.
+      const conv = await this.checkConversion(entry);
+      if (conv.converted) {
+        await db.query(`
+          UPDATE journey_entries
+          SET status = 'converted', converted_at = NOW(), exit_reason = $2, last_conversion_check = NOW()
+          WHERE entry_id = $1
+        `, [entry.entry_id, conv.reason]);
+        await db.query(`
+          INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+          VALUES ($1, $2, 'converted', NULL, $3)
+        `, [entry.entry_id, entry.current_node_id, JSON.stringify(conv)]);
+        console.log(`[Journey ${journeyId}] Converted entry ${entry.entry_id} (uid=${entry.customer_id}) → ${conv.reason}`);
+        converted++;
+        processed++;
+        continue;
+      }
+      await db.query('UPDATE journey_entries SET last_conversion_check = NOW() WHERE entry_id = $1', [entry.entry_id]);
+
       const currentNode = nodeMap[entry.current_node_id];
       if (!currentNode) continue;
+
+      const entryTrack = entry.track || 'all';
 
       // ── WAIT node: check if enough time has elapsed ──
       if (currentNode.type === 'wait') {
@@ -296,8 +481,19 @@ class JourneyService {
 
       // ── ACTION node: send message + log event ──
       if (currentNode.type === 'action') {
-        const channel = currentNode.data?.channel;
-        const templateId = currentNode.data?.templateId;
+        // Resolve effective channel + template per entry track.
+        // WhatsApp nodes auto-pair for Rest entries → use restChannel (default 'email') + restTemplateId.
+        const rawChannel = currentNode.data?.channel;
+        const rawTemplateId = currentNode.data?.templateId;
+        let channel = rawChannel;
+        let templateId = rawTemplateId;
+        let autoPaired = false;
+        if ((rawChannel || '').toLowerCase() === 'whatsapp' && entryTrack === 'rest') {
+          channel = (currentNode.data?.restChannel || 'email').toLowerCase();
+          templateId = currentNode.data?.restTemplateId || rawTemplateId;  // fall back to same template
+          autoPaired = true;
+        }
+
         let sendResult = null;
 
         // Email channel — render template + send via SMTP
@@ -310,18 +506,20 @@ class JourneyService {
               html: rendered.html,
               text: rendered.plainText,
             });
-            console.log(`[Journey] Email sent → ${entry.email} | template=${templateId} | success=${sendResult.success}`);
+            console.log(`[Journey] Email sent → ${entry.email} | template=${templateId} | track=${entryTrack}${autoPaired ? ' (auto-pair from WhatsApp)' : ''} | success=${sendResult.success}`);
           } catch (err) {
             console.error(`[Journey] Email failed → ${entry.email}: ${err.message}`);
             sendResult = { success: false, error: err.message };
           }
         }
+        // SMS / WhatsApp channels: no provider wired yet — logged as simulated.
 
         await db.query(`
           INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
           VALUES ($1, $2, 'action_sent', $3, $4)
         `, [entry.entry_id, currentNode.id, channel,
-            JSON.stringify({ templateId, channel, sendResult: sendResult ? { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated } : null })]);
+            JSON.stringify({ templateId, channel, originalChannel: rawChannel, autoPaired, track: entryTrack,
+              sendResult: sendResult ? { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated } : null })]);
         actioned++;
       }
 
@@ -398,9 +596,23 @@ class JourneyService {
       }
 
       // ── Advance to next node ──
+      // Track-aware: prefer edges whose target node's track matches the entry's track.
+      // Shared nodes (track='all') match any entry. For WhatsApp nodes, Rest users
+      // receive the auto-pair (Email or SMS using restChannel + restTemplateId) — they
+      // do NOT skip the step. The actual channel swap happens in the action-send block.
+      const matchesTrack = (nodeId) => {
+        const n = nodeMap[nodeId];
+        if (!n) return false;
+        const t = n.data?.track || 'all';
+        return t === 'all' || t === entryTrack;
+      };
+
       const outEdges = edges.filter(e => e.source === currentNode.id);
-      if (outEdges.length > 0) {
-        await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [outEdges[0].target, entry.entry_id]);
+      const trackEdges = outEdges.filter(e => matchesTrack(e.target));
+      const chosen = trackEdges[0] || outEdges[0];  // fall back to any edge if no track-match
+
+      if (chosen) {
+        await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [chosen.target, entry.entry_id]);
       } else {
         await db.query(
           "UPDATE journey_entries SET status = 'completed', completed_at = NOW() WHERE entry_id = $1",
@@ -421,7 +633,46 @@ class JourneyService {
       WHERE journey_id = $1
     `, [journeyId]);
 
-    return { processed, actioned, waited, conditioned };
+    return { processed, actioned, waited, conditioned, converted };
+  }
+
+  /**
+   * Check whether an entry has converted since it was enrolled.
+   * Converts when EITHER:
+   *   - A new booking exists in any rayna_* table with bill_date >= entered_at, OR
+   *   - The user's current segment differs from the journey's intended segment
+   *     (segment engine has moved them; they're no longer the target audience).
+   * Returns: { converted: bool, reason: 'booking' | 'segment_change' | null, details?: {...} }
+   */
+  static async checkConversion(entry) {
+    // 1. Booking-based conversion
+    const { rows: [b] } = await db.query(`
+      SELECT
+        EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = $1 AND bill_date >= $2) AS tour,
+        EXISTS (SELECT 1 FROM rayna_hotels  WHERE unified_id = $1 AND bill_date >= $2) AS hotel,
+        EXISTS (SELECT 1 FROM rayna_visas   WHERE unified_id = $1 AND bill_date >= $2) AS visa,
+        EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = $1 AND bill_date >= $2) AS flight
+    `, [entry.customer_id, entry.entered_at]);
+    if (b.tour || b.hotel || b.visa || b.flight) {
+      const types = [];
+      if (b.tour) types.push('tour');
+      if (b.hotel) types.push('hotel');
+      if (b.visa) types.push('visa');
+      if (b.flight) types.push('flight');
+      return { converted: true, reason: 'booking', details: { types } };
+    }
+
+    // 2. Segment-change conversion — user no longer matches the journey's target segment.
+    // Skip this check for journeys that aren't tied to a specific segment (e.g., occasions).
+    if (entry.journey_segment && entry.current_segment && entry.journey_segment !== entry.current_segment) {
+      return {
+        converted: true,
+        reason: 'segment_change',
+        details: { from: entry.journey_segment, to: entry.current_segment },
+      };
+    }
+
+    return { converted: false, reason: null };
   }
 
   /**

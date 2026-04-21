@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, getSegmentCustomers } from '../api';
+import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation } from '../api';
 import { useBusinessType } from '../App';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
@@ -41,6 +41,8 @@ export default function CustomerSegmentation() {
   const [expandedStatus, setExpandedStatus] = useState(null);
   const { businessType } = useBusinessType();
 
+  const [refreshing, setRefreshing] = useState(false);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -49,6 +51,21 @@ export default function CustomerSegmentation() {
     } catch (err) { console.error('Failed to load segmentation:', err); }
     setLoading(false);
   }, [businessType]);
+
+  // Full recompute — re-runs ON_TRIP / FUTURE_TRAVEL / PAST_BOOKING rules against
+  // today's date so contacts whose trip window just ended drop out correctly.
+  // Takes 10-30s on ~1.6M contacts. Followed by MV refresh + re-fetch.
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await recomputeSegmentation();
+      await loadData();
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -114,8 +131,10 @@ export default function CustomerSegmentation() {
               3-step decision tree: Booking Status &rarr; Product Tier &rarr; Geography
             </p>
           </div>
-          <button onClick={loadData} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', color: 'var(--primary-foreground)', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
-            <RefreshCw size={14} /> Refresh
+          <button onClick={handleRefresh} disabled={refreshing || loading}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', color: 'var(--primary-foreground)', border: 'none', borderRadius: 'var(--radius)', cursor: (refreshing || loading) ? 'wait' : 'pointer', opacity: (refreshing || loading) ? 0.7 : 1, fontSize: 13, fontWeight: 500 }}>
+            <RefreshCw size={14} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
+            {refreshing ? 'Recomputing…' : 'Refresh'}
           </button>
         </div>
 

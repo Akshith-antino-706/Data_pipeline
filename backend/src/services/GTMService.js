@@ -197,12 +197,38 @@ window.addEventListener('scroll', function() {
    * Stores both structured fields and the full raw payload.
    */
   static async recordEvent(body) {
-    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city } = body;
+    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId } = body;
+
+    // Resolve unified_id: explicit `rid` / `unifiedId` in payload wins, else try pulling from pageUrl,
+    // else fall back to matching customerId (email) against unified_contacts.
+    let resolvedUnifiedId = parseInt(rid || unifiedId) || null;
+    if (!resolvedUnifiedId && pageUrl) {
+      const m = /[?&]rid=(\d+)/.exec(pageUrl);
+      if (m) resolvedUnifiedId = parseInt(m[1]);
+    }
+    if (!resolvedUnifiedId && customerId && customerId.includes('@')) {
+      const { rows: [uc] } = await db.query(
+        'SELECT unified_id FROM unified_contacts WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        [customerId]
+      );
+      if (uc) resolvedUnifiedId = uc.unified_id;
+    }
+    // Final fallback: borrow unified_id from a recent event in the same session (last 2 hrs)
+    if (!resolvedUnifiedId && sessionId) {
+      const { rows: [prev] } = await db.query(
+        `SELECT unified_id FROM gtm_events
+         WHERE session_id = $1 AND unified_id IS NOT NULL AND created_at > NOW() - INTERVAL '2 hours'
+         ORDER BY created_at DESC LIMIT 1`,
+        [sessionId]
+      );
+      if (prev) resolvedUnifiedId = prev.unified_id;
+    }
+
     const { rows: [event] } = await db.query(`
-      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, raw_payload)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       RETURNING *
-    `, [eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, JSON.stringify(body)]);
+    `, [eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body)]);
     return event;
   }
 

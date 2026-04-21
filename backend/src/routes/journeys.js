@@ -3,11 +3,11 @@ import JourneyService from '../services/JourneyService.js';
 import ConversionDetector from '../services/ConversionDetector.js';
 const router = Router();
 
-// List journeys
+// List journeys (supports ?audience=indian|rest|all)
 router.get('/', async (req, res, next) => {
   try {
-    const { status, page, limit } = req.query;
-    const data = await JourneyService.getAll({ status, page: parseInt(page) || 1, limit: parseInt(limit) || 20 });
+    const { status, audience, page, limit } = req.query;
+    const data = await JourneyService.getAll({ status, audience, page: parseInt(page) || 1, limit: parseInt(limit) || 20 });
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -43,6 +43,44 @@ router.delete('/:id', async (req, res, next) => {
     await JourneyService.delete(parseInt(req.params.id));
     res.json({ success: true });
   } catch (err) { next(err); }
+});
+
+// ── Node-level CRUD (used by the UI editor) ──
+router.post('/:id/nodes', async (req, res, next) => {
+  try {
+    const { node, afterNodeId } = req.body;
+    const data = await JourneyService.addNode(parseInt(req.params.id), node, afterNodeId);
+    res.status(201).json({ data });
+  } catch (err) { next(err); }
+});
+
+router.patch('/:id/nodes/:nodeId', async (req, res, next) => {
+  try {
+    const data = await JourneyService.updateNode(parseInt(req.params.id), req.params.nodeId, req.body);
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.delete('/:id/nodes/:nodeId', async (req, res, next) => {
+  try {
+    const data = await JourneyService.deleteNode(parseInt(req.params.id), req.params.nodeId);
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Manual test-send for a single action node (email / sms / whatsapp).
+// Body: { recipient: "<email or phone>" }
+router.post('/:id/nodes/:nodeId/test', async (req, res, next) => {
+  try {
+    const data = await JourneyService.testSendNode(
+      parseInt(req.params.id),
+      req.params.nodeId,
+      req.body?.recipient
+    );
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Auto-generate journey from strategy

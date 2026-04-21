@@ -69,12 +69,13 @@ export default class EmailRenderer {
       html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val);
     }
 
-    // 6. Inject product affinity cards if this is a dynamic/cart-abandonment template
-    if (unifiedId && (tpl.html_category === 'activities' || tpl.segment_label === 'ACTIVE_ENQUIRY')) {
+    // 6. Inject product affinity cards ONLY for dynamic/cart-abandonment templates.
+    //    Static templates (Day 1–5) must render exactly as designed.
+    if (unifiedId && (tpl.html_type === 'dynamic' || tpl.html_category === 'cart_abandonment')) {
       html = await this.injectProductCards(html, unifiedId, vars.utm_link);
     }
 
-    // 7. Inject UTM links into all CTA buttons
+    // 7. Append UTM params to all raynatours.com links (preserves paths).
     html = this.injectUTMLinks(html, vars.utm_link);
 
     // 8. Plain text fallback
@@ -145,18 +146,38 @@ export default class EmailRenderer {
   }
 
   /**
-   * Replace all href links in CTA buttons with UTM-tracked versions
+   * Append UTM query params (and rid) to every raynatours.com link, preserving paths.
+   * Accepts either:
+   *   - A per-user tracking URL (e.g. https://track.rayna.com/u/<token>) — used as-is for CTAs
+   *     that should hit the redirect-tracker; other links get UTM params appended.
+   *   - A full UTM URL (e.g. https://www.raynatours.com/activities?utm_source=...) — we extract
+   *     its query string and append it to each link.
+   * Links that already carry utm_source are left untouched.
    */
   static injectUTMLinks(html, utmLink) {
-    if (!utmLink || utmLink === 'https://www.raynatours.com') return html;
+    if (!utmLink) return html;
 
-    // Replace raynatours.com links in CTA buttons with UTM link
-    html = html.replace(
-      /href="https:\/\/www\.raynatours\.com([^"]*)"/g,
-      (match, path) => `href="${utmLink}${path}"`
+    // Extract the UTM query string from the provided link (if any).
+    let utmQuery = '';
+    try {
+      const u = new URL(utmLink);
+      const params = new URLSearchParams();
+      for (const [k, v] of u.searchParams) {
+        if (k.startsWith('utm_') || k === 'rid') params.append(k, v);
+      }
+      utmQuery = params.toString();
+    } catch { /* utmLink is not a full URL (e.g. tracker path) — nothing to extract */ }
+
+    if (!utmQuery) return html;
+
+    return html.replace(
+      /href="(https?:\/\/(?:www\.)?raynatours\.com[^"]*)"/g,
+      (_m, url) => {
+        if (/[?&]utm_source=/.test(url)) return `href="${url}"`;
+        const sep = url.includes('?') ? '&' : '?';
+        return `href="${url}${sep}${utmQuery}"`;
+      }
     );
-
-    return html;
   }
 
   /**

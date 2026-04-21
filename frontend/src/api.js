@@ -87,6 +87,15 @@ export const getJourneyAnalytics = (id) => request(`/api/v3/journeys/${id}/analy
 export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${id}/campaign-analytics`);
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
+// Node-level CRUD inside a journey
+export const addJourneyNode = (id, node, afterNodeId = null) =>
+  request(`/api/v3/journeys/${id}/nodes`, { method: 'POST', body: JSON.stringify({ node, afterNodeId }) });
+export const updateJourneyNode = (id, nodeId, patch) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+export const deleteJourneyNode = (id, nodeId) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}`, { method: 'DELETE' });
+export const testSendJourneyNode = (id, nodeId, recipient) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/test`, { method: 'POST', body: JSON.stringify({ recipient }) });
 
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });
@@ -201,8 +210,18 @@ export const getUnifiedContacts = (params = {}) => {
   return request(`/api/v3/unified-contacts?${qs}`);
 };
 export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
-export const getUnifiedStats = () => request('/api/v3/unified-contacts/stats');
-export const getUnifiedFilters = () => request('/api/v3/unified-contacts/filters');
+export const getUnifiedStats = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/unified-contacts/stats${qs ? `?${qs}` : ''}`);
+};
+export const refreshSegmentationMV = () =>
+  request('/api/v3/unified-contacts/refresh-segmentation-mv', { method: 'POST' });
+export const recomputeSegmentation = () =>
+  request('/api/v3/unified-contacts/recompute-segmentation', { method: 'POST' });
+export const getUnifiedFilters = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/unified-contacts/filters${qs ? `?${qs}` : ''}`);
+};
 export const getSegmentationTree = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/segmentation-tree?${qs}`);

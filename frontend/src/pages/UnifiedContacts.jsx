@@ -70,13 +70,16 @@ export default function UnifiedContacts() {
       setTotalPages(res.totalPages || 1);
     } catch (err) { showToast(err.message); }
     finally { setLoading(false); }
-  }, [page, search, sortBy, sortDir, filters]);
+  }, [page, search, sortBy, sortDir, filters, businessType]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
   useEffect(() => {
-    getUnifiedStats().then(res => setStats(res.data)).catch(() => {});
-    getUnifiedFilters().then(res => setFilterOptions(res.data)).catch(() => {});
-  }, []);
+    // Stats + filter options both scope to the current B2B/B2C selection
+    getUnifiedStats({ businessType }).then(res => setStats(res.data)).catch(() => {});
+    getUnifiedFilters({ businessType }).then(res => setFilterOptions(res.data)).catch(() => {});
+    // Reset page when the business scope changes so the user sees the first page of filtered results
+    setPage(1);
+  }, [businessType]);
 
   const handleSearch = (e) => { e.preventDefault(); setPage(1); setSearch(searchInput); };
   const handleSort = (col) => {
@@ -104,9 +107,15 @@ export default function UnifiedContacts() {
     <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <motion.div variants={fadeInUp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Unified Contacts</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Unified Contacts</h2>
+            <span style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: 0.5, padding: '3px 10px',
+              borderRadius: 12, background: '#C9A96E', color: '#fff',
+            }}>{businessType}</span>
+          </div>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-            All customers across chats, tickets, CRM &amp; bookings &middot; {formatNum(total)} records
+            {businessType === 'B2B' ? 'B2B partners & agents' : 'B2C end-customers'} &middot; across chats, tickets, CRM &amp; bookings &middot; {formatNum(total)} records
           </p>
         </div>
       </motion.div>
