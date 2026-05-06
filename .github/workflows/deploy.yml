@@ -18,8 +18,9 @@ jobs:
           script: |
             cd ~/Data_pipeline
 
-            # Pull latest code
-            git pull origin main
+            # Pull latest code (force match GitHub)
+            git fetch origin main
+            git reset --hard origin/main
 
             # Create .env for docker-compose (root level)
             cat > .env <<'ENVEOF'
