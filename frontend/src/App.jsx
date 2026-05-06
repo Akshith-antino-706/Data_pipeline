@@ -218,7 +218,7 @@ function AppShell() {
       >
         <div className="logo">
           <h1>Rayna Tours</h1>
-          <span className="logo-sub">Omnichannel Platform</span>
+          <span className="logo-sub">Omnichannel Platform (Live)</span>
         </div>
         <nav>
           {NAV.map(({ to, icon: Icon, label }, index) => (
