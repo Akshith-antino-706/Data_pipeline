@@ -127,7 +127,9 @@ router.post('/refresh-segmentation-mv', async (_req, res, next) => {
 // POST /api/v3/unified-contacts/recompute-segmentation — rerun segmentation rules + refresh MV
 router.post('/recompute-segmentation', async (_req, res, next) => {
   try {
+    await UnifiedContactSync.relinkRawTables();
     const data = await UnifiedContactService.recomputeSegmentation();
+    await UnifiedContactService.refreshSegmentationMV();
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });

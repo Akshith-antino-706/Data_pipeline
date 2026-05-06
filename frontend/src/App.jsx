@@ -176,7 +176,7 @@ function BusinessTypeSwitcher() {
   return (
     <div style={{ padding: '8px 16px', marginBottom: 4 }}>
       <div style={{ display: 'flex', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
-        {['B2C', 'B2B'].map(type => (
+        {['All', 'B2C', 'B2B'].map(type => (
           <button
             key={type}
             onClick={() => setBusinessType(type)}

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getRaynaSyncStatus, getMappingStats, triggerRaynaSync, triggerRaynaSyncEndpoint, refreshBookingMapping } from '../api';
 import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Activity } from 'lucide-react';
+import { useBusinessType } from '../App';
 
 const SOURCE_ICONS = { tours: MapPin, hotels: Building2, visas: Globe, flights: Plane };
 const SOURCE_COLORS = { tours: 'var(--brand-primary)', hotels: 'var(--orange)', visas: 'var(--green)', flights: 'var(--red)' };
@@ -41,10 +42,13 @@ export default function DataPipeline() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const { businessType } = useBusinessType();
 
   const loadData = async () => {
+    setLoading(true);
     try {
-      const [sync, mapping] = await Promise.all([getRaynaSyncStatus(), getMappingStats()]);
+      const btParam = businessType === 'All' ? {} : { businessType };
+      const [sync, mapping] = await Promise.all([getRaynaSyncStatus(), getMappingStats(btParam)]);
       setSyncStatus(sync);
       setMappingStats(mapping);
     } catch (err) {
@@ -54,7 +58,7 @@ export default function DataPipeline() {
     }
   };
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [businessType]);
 
   const handleSyncAll = async () => {
     setSyncing({ all: true });
@@ -126,10 +130,11 @@ export default function DataPipeline() {
       {/* KPI Row */}
       <motion.div variants={fadeInUp} className="kpi-strip" style={{ marginBottom: 28 }}>
         {[
-          { label: 'Users', value: formatNum(dataOverview.users), color: 'var(--brand-primary)', icon: Users },
-          { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), color: 'var(--green)', icon: MapPin },
+          { label: `${businessType} Users (of ${formatNum(dataOverview.totalUsers)} total)`, value: formatNum(dataOverview.users), color: 'var(--brand-primary)', icon: Users },
+          { label: `Not Set (of ${formatNum(dataOverview.totalUsers)} total)`, value: formatNum(dataOverview.notSetUsers), color: 'var(--orange)', icon: Users },
+          { label: `Travel Bookings (${businessType})`, value: formatNum(dataOverview.travelBookings), color: 'var(--green)', icon: MapPin },
           { label: 'Chats', value: formatNum(dataOverview.chats), color: '#25D366', icon: MessageSquare },
-          { label: 'Unified Contacts', value: formatNum(dataOverview.unifiedContacts), color: 'var(--red)', icon: Database },
+          { label: `Unified Contacts (${businessType})`, value: formatNum(dataOverview.unifiedContacts), color: 'var(--red)', icon: Database },
         ].map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '20px 18px' }}>
             <div style={{ width: 42, height: 42, borderRadius: 10, background: `color-mix(in srgb, ${color} 10%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -148,7 +153,7 @@ export default function DataPipeline() {
         <h3 style={{ margin: '0 0 18px', fontSize: 16 }}>Data Sources Overview</h3>
         <div className="kpi-strip">
           {[
-            { label: 'Users', value: formatNum(dataOverview.users), sub: 'customer profiles', icon: Users, color: 'var(--brand-primary)' },
+            { label: `Users (${businessType})`, value: formatNum(dataOverview.users), sub: `of ${formatNum(dataOverview.totalUsers)} total`, icon: Users, color: 'var(--brand-primary)' },
             { label: 'Unique Emails', value: formatNum(dataOverview.uniqueEmails), sub: 'verified', icon: Mail, color: 'var(--purple)' },
             { label: 'Phones', value: formatNum(dataOverview.phones), sub: 'contact numbers', icon: Phone, color: '#25D366' },
             { label: 'Departments', value: formatNum(dataOverview.departments), sub: 'active', icon: Building2, color: 'var(--brand-primary)' },

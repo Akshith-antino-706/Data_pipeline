@@ -47,7 +47,8 @@ export default function SegmentActivity() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { days, businessType };
+      const params = { days };
+      if (businessType !== 'All') params.businessType = businessType;
       if (segmentFilter) params.segment = segmentFilter;
       const res = await getSegmentActivity(params);
       setData(res);
@@ -69,7 +70,7 @@ export default function SegmentActivity() {
     setDetailSearch('');
     setDetailLoading(true);
     try {
-      const res = await getSegmentCustomers({ bookingStatus: segmentLabel, businessType, page: 1, limit: 25 });
+      const res = await getSegmentCustomers({ bookingStatus: segmentLabel, ...(businessType !== 'All' && { businessType }), page: 1, limit: 25 });
       setDetailCustomers(res);
     } catch (err) { console.error(err); }
     setDetailLoading(false);
@@ -78,7 +79,7 @@ export default function SegmentActivity() {
   const loadDetailPage = async (page, search) => {
     setDetailLoading(true);
     try {
-      const res = await getSegmentCustomers({ bookingStatus: detailSegment, businessType, page, limit: 25, search });
+      const res = await getSegmentCustomers({ bookingStatus: detailSegment, ...(businessType !== 'All' && { businessType }), page, limit: 25, search });
       setDetailCustomers(res);
       setDetailPage(page);
     } catch (err) { console.error(err); }
@@ -123,7 +124,7 @@ export default function SegmentActivity() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, businessType })}
+          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) })}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, color: '#fff', fontWeight: 500 }}>
             <Download size={14} /> Download CSV
           </button>
@@ -199,7 +200,7 @@ export default function SegmentActivity() {
       <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Log</span>
-          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, businessType })}
+          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) })}
             style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 11, color: 'var(--muted-foreground)' }}>
             <Download size={11} /> Export
           </button>

@@ -61,7 +61,8 @@ export default function UnifiedContacts() {
   const loadContacts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit, sortBy, sortDir, businessType };
+      const params = { page, limit, sortBy, sortDir };
+      if (businessType !== 'All') params.businessType = businessType;
       if (search) params.search = search;
       Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await getUnifiedContacts(params);
@@ -75,8 +76,9 @@ export default function UnifiedContacts() {
   useEffect(() => { loadContacts(); }, [loadContacts]);
   useEffect(() => {
     // Stats + filter options both scope to the current B2B/B2C selection
-    getUnifiedStats({ businessType }).then(res => setStats(res.data)).catch(() => {});
-    getUnifiedFilters({ businessType }).then(res => setFilterOptions(res.data)).catch(() => {});
+    const btParam = businessType === 'All' ? {} : { businessType };
+    getUnifiedStats(btParam).then(res => setStats(res.data)).catch(() => {});
+    getUnifiedFilters(btParam).then(res => setFilterOptions(res.data)).catch(() => {});
     // Reset page when the business scope changes so the user sees the first page of filtered results
     setPage(1);
   }, [businessType]);

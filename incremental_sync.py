@@ -38,7 +38,7 @@ MYSQL_DB2 = dict(
 POSTGRES = dict(
     host="localhost", port=5432,
     dbname="rayna_data_pipe",
-    user="akshithkumaryv", password="7884",
+    user="postgres", password="Avinash1234",
 )
 
 BATCH_SIZE = 5000
@@ -123,7 +123,8 @@ def get_or_create_user(pg_cur, emails=None, phones=None, name=None,
                        company_name=None, designation=None, dob=None,
                        website=None, cstate=None, pincode=None,
                        address_line1=None, address_line2=None,
-                       created_at=None, updated_at=None):
+                       created_at=None, updated_at=None,
+                       n_bookings=None, l_booking=None):
     clean_emails = [str(e).strip().lower() for e in (emails or []) if e and str(e).strip()]
     clean_phones = []
     for p in (phones or []):
@@ -152,8 +153,8 @@ def get_or_create_user(pg_cur, emails=None, phones=None, name=None,
                                contact_type, contact_status, source,
                                company_name, designation, dob, website,
                                cstate, pincode, address_line1, address_line2,
-                               created_at, updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                               created_at, updated_at, n_bookings, l_booking)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
         """, (
             name, clean_emails[0] if clean_emails else None,
@@ -161,9 +162,16 @@ def get_or_create_user(pg_cur, emails=None, phones=None, name=None,
             city, country, contact_type, contact_status or "new", source,
             company_name, designation, dob, website,
             cstate, pincode, address_line1, address_line2,
-            created_at, updated_at,
+            created_at, updated_at, n_bookings, clean_date(l_booking),
         ))
         user_id = pg_cur.fetchone()[0]
+    else:
+        # Update n_bookings / l_booking on existing user
+        if n_bookings is not None:
+            pg_cur.execute("""
+                UPDATE users SET n_bookings = %s, l_booking = %s, updated_at = %s
+                WHERE id = %s AND (n_bookings IS DISTINCT FROM %s OR l_booking IS DISTINCT FROM %s)
+            """, (n_bookings, clean_date(l_booking), updated_at, user_id, n_bookings, clean_date(l_booking)))
 
     for e in clean_emails:
         if e not in email_cache:
@@ -200,7 +208,8 @@ def sync_contacts(pg_cur, pg_conn, since, force_full=False):
                 contact_type=row.get("contact_type"), contact_status=row.get("contact_status"),
                 source="db1_contacts", company_name=row.get("company_name"),
                 designation=row.get("designation"), dob=row.get("dob"),
-                created_at=row.get("created_at"), updated_at=row.get("updated_at"))
+                created_at=row.get("created_at"), updated_at=row.get("updated_at"),
+                n_bookings=row.get("n_bookings"), l_booking=row.get("l_booking"))
             pg_cur.execute("RELEASE SAVEPOINT rsp")
             processed += 1
         except:

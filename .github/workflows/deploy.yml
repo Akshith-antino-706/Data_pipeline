@@ -1,0 +1,38 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd ~/Data_pipeline
+
+            # Pull latest code
+            git pull origin main
+
+            # Create .env for docker-compose (root level)
+            cat > .env <<'ENVEOF'
+            DB_PASS=${{ secrets.DB_PASS }}
+            VITE_API_URL=${{ secrets.VITE_API_URL }}
+            DB_PORT_EXTERNAL=5433
+            ENVEOF
+
+            # Rebuild and restart containers
+            docker compose build --no-cache
+            docker compose up -d
+
+            # Cleanup old images
+            docker image prune -f
+
+            echo "Deploy complete!"

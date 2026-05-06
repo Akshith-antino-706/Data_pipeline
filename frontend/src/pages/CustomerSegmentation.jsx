@@ -13,14 +13,19 @@ const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, t
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 const fmt = (n) => (n || 0).toLocaleString();
-const fmtAED = (n) => `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}`;
+const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtM = (n) => `AED ${(Number(n || 0) / 1000000).toFixed(2)}M`;
 const pct = (n, total) => total > 0 ? ((n / total) * 100).toFixed(1) + '%' : '0%';
 
+const fmtDate = (d) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+const today = new Date();
+const onTripFrom = new Date(); onTripFrom.setDate(today.getDate() - 7);
+
 const STATUS_CONFIG = {
-  ON_TRIP:         { label: 'On Trip',         color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  icon: Plane,       desc: 'Currently travelling' },
-  FUTURE_TRAVEL:   { label: 'Future Travel',   color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', icon: Clock,       desc: 'Booked, travel date ahead' },
+  ON_TRIP:         { label: 'On Trip',         color: '#22c55e', bg: 'rgba(34,197,94,0.12)',  icon: Plane,       desc: `${fmtDate(onTripFrom)} — ${fmtDate(today)}` },
+  FUTURE_TRAVEL:   { label: 'Future Travel',   color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', icon: Clock,       desc: `After ${fmtDate(today)}` },
   ACTIVE_ENQUIRY:  { label: 'Active Enquiry',  color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', icon: MessageCircle, desc: 'Enquired in last 30 days' },
-  PAST_BOOKING:    { label: 'Past Booking',    color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', icon: Ticket,      desc: 'Completed past trips' },
+  PAST_BOOKING:    { label: 'Past Booking',    color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', icon: Ticket,      desc: `Before ${fmtDate(onTripFrom)}` },
   PAST_ENQUIRY:    { label: 'Past Enquiry',    color: '#f97316', bg: 'rgba(249,115,22,0.12)', icon: Search,      desc: 'Enquired 30+ days ago, not booked' },
   PROSPECT:        { label: 'Prospect',        color: '#64748b', bg: 'rgba(100,116,139,0.12)',icon: Users,       desc: 'Never engaged' },
 };
@@ -46,7 +51,8 @@ export default function CustomerSegmentation() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getSegmentationTree({ businessType });
+      const params = businessType === 'All' ? {} : { businessType };
+      const res = await getSegmentationTree(params);
       setData(res);
     } catch (err) { console.error('Failed to load segmentation:', err); }
     setLoading(false);
@@ -72,7 +78,8 @@ export default function CustomerSegmentation() {
   const loadCustomers = useCallback(async (combo, page = 1, search = '') => {
     setCustLoading(true);
     try {
-      const params = { page, limit: 25, businessType };
+      const params = { page, limit: 25 };
+      if (businessType !== 'All') params.businessType = businessType;
       if (combo.bookingStatus) params.bookingStatus = combo.bookingStatus;
       if (combo.productTier) params.productTier = combo.productTier;
       if (combo.geography) params.geography = combo.geography;
@@ -113,7 +120,7 @@ export default function CustomerSegmentation() {
 
   if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>Failed to load segmentation data.</div>;
 
-  const { totals, statusCounts, breakdown } = data;
+  const { totals, statusCounts, breakdown, acicoRevenue } = data;
 
   // Pie chart data for status distribution
   const pieData = statusCounts.map(s => ({ name: STATUS_CONFIG[s.booking_status]?.label || s.booking_status, value: s.count }));
@@ -140,12 +147,12 @@ export default function CustomerSegmentation() {
 
         {/* Top KPIs */}
         <motion.div variants={staggerContainer} initial="hidden" animate="visible"
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 32 }}>
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
           {[
             { label: 'Total Customers', value: fmt(totals.total), icon: Users },
             { label: 'Segmented', value: `${fmt(totals.segmented)} (${pct(totals.segmented, totals.total)})`, icon: TrendingUp },
             { label: 'Segments', value: totals.segment_count, icon: Map },
-            { label: 'Total Revenue', value: fmtAED(totals.total_revenue), icon: DollarSign },
+            { label: 'Total Confirmed Revenue', value: fmtM(acicoRevenue?.total), icon: DollarSign },
           ].map((kpi, i) => (
             <motion.div key={i} variants={fadeInUp}
               style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '20px 24px' }}>
@@ -157,6 +164,36 @@ export default function CustomerSegmentation() {
             </motion.div>
           ))}
         </motion.div>
+
+        {/* ACICO Revenue Breakdown */}
+        {acicoRevenue?.sources && (
+          <motion.div variants={fadeInUp} initial="hidden" animate="visible"
+            style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 32 }}>
+            <div style={{ fontSize: 12, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500, marginBottom: 12 }}>
+              Revenue Breakdown — All-Time Confirmed (Cancelled Excluded)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              {acicoRevenue.sources.map((s) => {
+                const icons = { tours: Plane, hotels: Hotel, visas: Globe, flights: Ticket };
+                const labels = { tours: 'Tours', hotels: 'Hotels', visas: 'Visas', flights: 'Flights' };
+                const colors = { tours: '#22c55e', hotels: '#3b82f6', visas: '#f59e0b', flights: '#8b5cf6' };
+                const Icon = icons[s.source] || DollarSign;
+                return (
+                  <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 'var(--radius)', background: `${colors[s.source]}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Icon size={16} style={{ color: colors[s.source] }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{labels[s.source] || s.source}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{fmt(s.bookings)} bookings</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: colors[s.source] }}>{fmtM(s.revenue)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
 
         {/* Step 1: Booking Status cards */}
         <div style={{ marginBottom: 8 }}>
@@ -192,6 +229,16 @@ export default function CustomerSegmentation() {
                   <span style={{ fontSize: 28, fontWeight: 700, color: cfg.color }}>{fmt(s.count)}</span>
                   <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>{pct(s.count, totals.total)} &middot; {fmtAED(s.revenue)}</span>
                 </div>
+                {s.total_bookings != null && (
+                  <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4, fontWeight: 500 }}>Total Bookings: {fmt(s.total_bookings)}</div>
+                    <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--muted-foreground)' }}>
+                      {s.booking_breakdown?.tours > 0 && <span><Plane size={11} style={{ marginRight: 2 }} />{fmt(s.booking_breakdown.tours)} tours</span>}
+                      {s.booking_breakdown?.hotels > 0 && <span><Hotel size={11} style={{ marginRight: 2 }} />{fmt(s.booking_breakdown.hotels)} hotels</span>}
+                      {s.booking_breakdown?.flights > 0 && <span><Ticket size={11} style={{ marginRight: 2 }} />{fmt(s.booking_breakdown.flights)} flights</span>}
+                    </div>
+                  </div>
+                )}
               </motion.div>
             );
           })}

@@ -48,7 +48,7 @@ app.use(helmet({
   contentSecurityPolicy: false,  // API server, not serving HTML
 }));
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com,https://www.raynatours.com,https://raynadata.netlify.app,https://qh6hjtm8-3001.inc1.devtunnels.ms').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com,https://www.raynatours.com,https://raynadata.netlify.app').split(',').map(s => s.trim());
 app.use(cors({
   origin: (origin, cb) => {
     // Allow requests with no origin (curl, server-to-server, mobile)
@@ -179,7 +179,7 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
-    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql']) {
+    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql', '047_missing_infrastructure.sql', '048_dept_contact_type.sql', '049_users_from_rayna.sql']) {
       await runMigrationFile(file);
     }
     res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
@@ -367,35 +367,86 @@ if (process.env.MYSQL_SYNC_ENABLED === 'true') {
   console.log(`[MySQL Sync] Cron scheduled: ${schedule}`);
 }
 
-// ── Rayna API Sync Cron (incremental, every 6 hours) ────────
+// ── Rayna API Sync Cron (modified-date based, daily) ────────
 if (process.env.RAYNA_SYNC_ENABLED === 'true') {
   const schedule = process.env.RAYNA_SYNC_CRON || '0 23 * * *'; // 3 AM Dubai (UTC+4)
   let raynaSyncing = false;
   cron.schedule(schedule, async () => {
     if (raynaSyncing) return;
     raynaSyncing = true;
-    console.log('[Rayna Sync] Incremental sync starting (day-by-day)...');
+    console.log('[Rayna Sync] Modified-date sync starting (yesterday\'s modifications)...');
     try {
-      const results = await RaynaSyncService.syncAll();
-      console.log('[Rayna Sync] Incremental sync completed:', JSON.stringify(results));
+      const results = await RaynaSyncService.syncAllByModifiedDate();
+      console.log('[Rayna Sync] Modified-date sync completed:', JSON.stringify(results));
     } catch (err) {
-      console.error('[Rayna Sync] Incremental sync failed:', err.message);
+      console.error('[Rayna Sync] Modified-date sync failed:', err.message);
     }
     raynaSyncing = false;
   });
-  console.log(`[Rayna Sync] Incremental cron scheduled: ${schedule}`);
+  console.log(`[Rayna Sync] Modified-date cron scheduled: ${schedule}`);
 
-  // Daily catch-up: re-fetch last 30 days at 4 AM Dubai (UTC 00:00) to pick up cancellations/modifications
-  cron.schedule('0 0 * * *', async () => {
-    console.log('[Rayna Sync] Daily catch-up starting — re-fetching last 30 days for modifications...');
+  // Tours Daily Batch Sync: 3:10 AM Dubai (UTC 23:10)
+  // Fetches ALL from API, combo key match against DB, batch update/insert + unified_contacts sync
+  cron.schedule('10 23 * * *', async () => {
+    console.log('[Tours Daily] Batch sync starting...');
     try {
-      const results = await RaynaSyncService.syncCatchUp(30);
+      const result = await RaynaSyncService.syncToursDaily();
+      console.log('[Tours Daily] Completed:', JSON.stringify(result));
+    } catch (err) {
+      console.error('[Tours Daily] Failed:', err.message);
+    }
+  });
+  console.log('[Rayna Sync] Tours daily batch sync cron scheduled: 10 23 * * * (3:10 AM Dubai daily)');
+
+  // Hotels Daily Batch Sync: 3:20 AM Dubai (UTC 23:20)
+  // Fetches ALL from API, combo key match against DB, batch update/insert + unified_contacts sync
+  cron.schedule('20 23 * * *', async () => {
+    console.log('[Hotels Daily] Batch sync starting...');
+    try {
+      const result = await RaynaSyncService.syncHotelsDaily();
+      console.log('[Hotels Daily] Completed:', JSON.stringify(result));
+    } catch (err) {
+      console.error('[Hotels Daily] Failed:', err.message);
+    }
+  });
+  console.log('[Rayna Sync] Hotels daily batch sync cron scheduled: 20 23 * * * (3:20 AM Dubai daily)');
+
+  // Visas Daily Batch Sync: 3:30 AM Dubai (UTC 23:30)
+  cron.schedule('30 23 * * *', async () => {
+    console.log('[Visas Daily] Batch sync starting...');
+    try {
+      const result = await RaynaSyncService.syncVisasDaily();
+      console.log('[Visas Daily] Completed:', JSON.stringify(result));
+    } catch (err) {
+      console.error('[Visas Daily] Failed:', err.message);
+    }
+  });
+  console.log('[Rayna Sync] Visas daily batch sync cron scheduled: 30 23 * * * (3:30 AM Dubai daily)');
+
+  // Flights Daily Batch Sync: 3:40 AM Dubai (UTC 23:40)
+  cron.schedule('40 23 * * *', async () => {
+    console.log('[Flights Daily] Batch sync starting...');
+    try {
+      const result = await RaynaSyncService.syncFlightsDaily();
+      console.log('[Flights Daily] Completed:', JSON.stringify(result));
+    } catch (err) {
+      console.error('[Flights Daily] Failed:', err.message);
+    }
+  });
+  console.log('[Rayna Sync] Flights daily batch sync cron scheduled: 40 23 * * * (3:40 AM Dubai daily)');
+
+  // Daily catch-up: re-fetch last 90 days at 3:50 AM Dubai (UTC 23:50)
+  // Runs BEFORE UnifiedContactSync so fresh data is available for segmentation
+  cron.schedule('50 23 * * *', async () => {
+    console.log('[Rayna Sync] Daily catch-up starting — re-fetching last 90 days for modifications...');
+    try {
+      const results = await RaynaSyncService.syncCatchUp(90);
       console.log('[Rayna Sync] Daily catch-up completed:', JSON.stringify(results));
     } catch (err) {
       console.error('[Rayna Sync] Daily catch-up failed:', err.message);
     }
   });
-  console.log('[Rayna Sync] Daily catch-up cron scheduled: 0 0 * * * (4 AM Dubai daily)');
+  console.log('[Rayna Sync] Daily catch-up cron scheduled: 50 23 * * * (3:50 AM Dubai daily)');
 }
 
 // ── Full Data Pipeline Cron ──────────────────────────────────
@@ -448,11 +499,10 @@ cron.schedule('0 0 * * *', async () => {
       UPDATE users u SET
         cached_chats = COALESCE(ch.cnt, 0),
         cached_tickets = COALESCE(tk.cnt, 0),
-        cached_bookings = COALESCE(tb.cnt, 0)
+        cached_bookings = 0
       FROM (SELECT id FROM users) base
       LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM chats GROUP BY user_id) ch ON ch.user_id = base.id
       LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM tickets GROUP BY user_id) tk ON tk.user_id = base.id
-      LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM travel_bookings GROUP BY user_id) tb ON tb.user_id = base.id
       WHERE u.id = base.id
     `);
     console.log('[Cache Refresh] Done.');
