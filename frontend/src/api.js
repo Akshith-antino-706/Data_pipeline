@@ -243,6 +243,10 @@ export const getSegmentationTree = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/segmentation-tree?${qs}`);
 };
+export const getGeneralSegment = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/segments/general${qs ? `?${qs}` : ''}`);
+};
 export const getSegmentActivity = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/segment-activity?${qs}`);

@@ -273,6 +273,24 @@ export default class UnifiedContactService {
         )
     `);
 
+    // 4. CANCELLED — move contacts sitting in PROSPECT/PAST_ENQUIRY who
+    //    actually have cancelled-only Rayna bookings (engaged past enquiry).
+    //    Only picks contacts with zero aggregate bookings but some cancellation on record.
+    const { rowCount: toCancelled } = await pool.query(`
+      UPDATE unified_contacts uc SET booking_status = 'CANCELLED', updated_at = NOW()
+      WHERE booking_status IN ('PROSPECT', 'PAST_ENQUIRY')
+        AND COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0) = 0
+        AND (EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = uc.unified_id AND status = 'Cancelled')
+          OR EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND status = 'Cancelled'))
+    `);
+
+    // 5. Reverse: anyone in CANCELLED who now has valid active bookings should move to PAST_BOOKING
+    const { rowCount: cancelledToPastBooking } = await pool.query(`
+      UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
+      WHERE booking_status = 'CANCELLED'
+        AND (COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0)) > 0
+    `);
+
     await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
 
     return {
@@ -281,6 +299,8 @@ export default class UnifiedContactService {
         on_trip_demoted: demoted,
         on_trip_promoted: promoted,
         future_travel_to_past: futureToPast,
+        to_cancelled: toCancelled,
+        cancelled_to_past_booking: cancelledToPastBooking,
       },
       durationMs: Date.now() - started,
     };

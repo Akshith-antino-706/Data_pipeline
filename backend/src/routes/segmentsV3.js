@@ -34,6 +34,60 @@ router.post('/run', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// "General Segment" — virtual segment covering all email- or WA-eligible
+// contacts in unified_contacts. Cuts across booking_status, so we surface it
+// as a separate panel in the segmentation UI. Shape:
+//   {
+//     emailEligible: <int>, waEligible: <int>, totalContacts: <int>,
+//     journeys: [{ journey_id, name, status, total_entries, audience, ... }]
+//   }
+router.get('/general', async (req, res, next) => {
+  try {
+    const { query } = await import('../config/database.js');
+
+    const businessType = req.query.businessType === 'B2B' || req.query.businessType === 'B2C'
+      ? req.query.businessType : null;
+    const btParams = businessType ? [businessType] : [];
+    const btAnd = businessType ? `AND uc.business_type = $1` : '';
+    const btWhere = businessType ? `WHERE business_type = $1` : '';
+
+    const [emailRow, waRow, totalRow, journeysRow] = await Promise.all([
+      query(`
+        SELECT COUNT(*)::int AS n FROM unified_contacts uc
+         WHERE uc.email IS NOT NULL AND uc.email <> ''
+           AND COALESCE(uc.email_unsubscribed,'No') <> 'Yes'
+           AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$'
+           ${btAnd}`, btParams),
+      query(`
+        SELECT COUNT(*)::int AS n FROM unified_contacts uc
+         WHERE uc.phone IS NOT NULL AND uc.phone <> ''
+           AND COALESCE(uc.wa_unsubscribed,'No') <> 'Yes'
+           AND COALESCE(uc.is_indian,false) = true
+           ${btAnd}`, btParams),
+      query(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),
+      // Treat any audience-driven journey with no saved segment as a "general broadcast"
+      // journey. This catches the seed-script-created journey 120 plus any future ones.
+      query(`
+        SELECT journey_id, name, description, status, audience,
+               total_entries, total_conversions, total_exits,
+               jsonb_array_length(nodes) AS node_count,
+               created_at, updated_at
+          FROM journey_flows
+         WHERE segment_id IS NULL
+         ORDER BY updated_at DESC`),
+    ]);
+
+    res.json({
+      data: {
+        emailEligible: emailRow.rows[0].n,
+        waEligible:    waRow.rows[0].n,
+        totalContacts: totalRow.rows[0].n,
+        journeys:      journeysRow.rows,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
 // Get single segment detail
 router.get('/:id', async (req, res, next) => {
   try {

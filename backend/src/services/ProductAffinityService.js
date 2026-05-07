@@ -17,6 +17,8 @@ import { query } from '../config/database.js';
  */
 
 const PRODUCT_API = 'https://data-projects-flax.vercel.app/api/generate-feed?format=json';
+const PRODUCT_DETAILS_API = 'https://data-projects-flax.vercel.app/api/product-details';
+const DETAIL_CONCURRENCY = 12;
 
 const AFFINITY_WEIGHTS = {
   purchase: 100,
@@ -68,24 +70,27 @@ export default class ProductAffinityService {
         const batch = uniqueProducts.slice(i, i + BATCH);
         const values = [];
         const placeholders = batch.map((p, idx) => {
-          const base = idx * 12;
+          const base = idx * 14;
           values.push(
             p.productId || (900000 + i + idx), p.name, p.type, p.item_group_id,
             p.normalPrice, p.salePrice, p.currency || 'AED',
             p.country, p.city, p.cityId,
-            p.url, p.image
+            p.url, p.image,
+            p.pageTitle || null, p.pageDescription || null
           );
-          return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9},$${base+10},$${base+11},$${base+12})`;
+          return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9},$${base+10},$${base+11},$${base+12},$${base+13},$${base+14})`;
         });
 
         await query(`
-          INSERT INTO products (product_id, name, type, category, normal_price, sale_price, currency, country, city, city_id, url, image_url)
+          INSERT INTO products (product_id, name, type, category, normal_price, sale_price, currency, country, city, city_id, url, image_url, page_title, page_description)
           VALUES ${placeholders.join(',')}
           ON CONFLICT (product_id) DO UPDATE SET
             name = EXCLUDED.name, type = EXCLUDED.type, category = EXCLUDED.category,
             normal_price = EXCLUDED.normal_price, sale_price = EXCLUDED.sale_price,
             country = EXCLUDED.country, city = EXCLUDED.city, city_id = EXCLUDED.city_id,
-            url = EXCLUDED.url, image_url = EXCLUDED.image_url, synced_at = NOW()
+            url = EXCLUDED.url, image_url = EXCLUDED.image_url,
+            page_title = EXCLUDED.page_title, page_description = EXCLUDED.page_description,
+            synced_at = NOW()
         `, values);
 
         synced += batch.length;
@@ -93,10 +98,68 @@ export default class ProductAffinityService {
 
       const duration = ((Date.now() - start) / 1000).toFixed(1);
       console.log(`[ProductSync] Done — ${synced} products synced in ${duration}s`);
-      return { synced, duration };
+
+      const enriched = await this.enrichProductDetails();
+
+      return { synced, duration, enriched };
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /**
+   * Enrich products with real SEO title + meta description from /api/product-details.
+   * The bulk feed only returns the product name as pageTitle and an empty pageDescription,
+   * so we fan out per-URL calls to populate the actual marketing copy.
+   */
+  static async enrichProductDetails({ onlyMissing = false } = {}) {
+    const productsRes = await query(
+      onlyMissing
+        ? `SELECT product_id, url FROM products WHERE url IS NOT NULL AND url <> '' AND (page_description IS NULL OR page_description = '')`
+        : `SELECT product_id, url FROM products WHERE url IS NOT NULL AND url <> ''`
+    );
+    const products = productsRes.rows;
+    console.log(`[ProductSync] Enriching ${products.length} products from /api/product-details (concurrency=${DETAIL_CONCURRENCY})...`);
+    const start = Date.now();
+    let updated = 0;
+    let failed = 0;
+
+    let cursor = 0;
+    const workers = Array.from({ length: DETAIL_CONCURRENCY }, async () => {
+      while (cursor < products.length) {
+        const idx = cursor++;
+        const { product_id, url } = products[idx];
+        try {
+          const res = await fetch(`${PRODUCT_DETAILS_API}?url=${encodeURIComponent(url)}`, {
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!res.ok) { failed++; continue; }
+          const data = await res.json();
+          const title = (data.title || '').trim();
+          const description = (data.description || '').trim();
+          if (!title && !description) { failed++; continue; }
+          await query(
+            `UPDATE products
+               SET page_title = COALESCE(NULLIF($1,''), page_title),
+                   page_description = COALESCE(NULLIF($2,''), page_description),
+                   synced_at = NOW()
+             WHERE product_id = $3`,
+            [title, description, product_id]
+          );
+          updated++;
+          if (updated % 100 === 0) {
+            console.log(`[ProductSync]   enriched ${updated}/${products.length}`);
+          }
+        } catch {
+          failed++;
+        }
+      }
+    });
+    await Promise.all(workers);
+
+    const duration = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[ProductSync] Enrichment done — ${updated} updated, ${failed} failed in ${duration}s`);
+    return { updated, failed, duration };
   }
 
   // ── Affinity Scoring ──────────────────────────────────────────

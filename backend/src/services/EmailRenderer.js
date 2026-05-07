@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
 import ProductAffinityService from './ProductAffinityService.js';
+import PopularityService from './PopularityService.js';
 
 /**
  * EmailRenderer — Renders HTML email templates with dynamic data
@@ -9,6 +10,8 @@ import ProductAffinityService from './ProductAffinityService.js';
  *   - {{utm_link}} — user-specific UTM tracking link
  *   - Product affinity cards — for cart abandonment template (dynamic product injection)
  *   - Destination-specific content — for destination templates (city swap)
+ *   - Popular-product slots — for templates marked uses_popular_products=true,
+ *     filled from a frozen popularity_snapshots row keyed by (journey_id, node_id, run_id)
  */
 export default class EmailRenderer {
 
@@ -179,6 +182,307 @@ export default class EmailRenderer {
       }
     );
   }
+
+  /**
+   * Render an HTML email for a single journey entry, expanding any
+   * `<!-- SLOT:product_grid ... -->` markers from the run's popularity snapshot.
+   *
+   * @param {object} args
+   * @param {number} args.htmlTemplateId  email_html_templates.id
+   * @param {number} args.unifiedId       unified_contacts.unified_id (for personalization + UTM rid)
+   * @param {number} args.journeyId       journey_flows.id (used as snapshot key)
+   * @param {string} args.nodeId          journey node id (used as snapshot key)
+   * @param {string} args.runId           journey run uuid (used as snapshot key)
+   * @param {object} [args.extraVars]     additional {{var}} substitutions
+   * @returns {{ subject, html, plainText, slotsFilled }}
+   */
+  static async renderForJourneyNode({ htmlTemplateId, unifiedId, journeyId, nodeId, runId, extraVars = {} }) {
+    const { rows: [tpl] } = await query(
+      `SELECT id, name, html_body, preview_text,
+              uses_popular_products, product_type, product_limit
+         FROM email_html_templates WHERE id = $1`,
+      [htmlTemplateId]
+    );
+    if (!tpl) throw new Error(`html_template ${htmlTemplateId} not found`);
+
+    let user = {};
+    if (unifiedId) {
+      const { rows: [u] } = await query(
+        `SELECT unified_id, name, email, phone, country, city, company_name,
+                booking_status, occasion_offer_tag, current_occasion
+           FROM unified_contacts WHERE unified_id = $1`,
+        [unifiedId]
+      );
+      user = u || {};
+    }
+
+    const utmLink = extraVars.utm_link
+      || this._buildUtmLink({ journeyId, nodeId, htmlTemplateName: tpl.name, unifiedId });
+
+    const vars = {
+      first_name:       user.name?.split(' ')[0] || 'there',
+      full_name:        user.name || 'Valued Traveller',
+      email:            user.email || '',
+      phone:            user.phone || '',
+      country:          user.country || '',
+      city:             user.city || '',
+      offer_tag:        extraVars.offer_tag    || user.occasion_offer_tag || '',
+      holiday_name:     extraVars.holiday_name || user.current_occasion   || '',
+      city_name:        extraVars.city_name    || user.city || 'Dubai',
+      utm_link:         utmLink,
+      unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,
+      ...extraVars,
+    };
+
+    let subject = (extraVars.subject_override || tpl.preview_text || tpl.name || '').toString();
+    let html    = tpl.html_body || '';
+
+    for (const [k, v] of Object.entries(vars)) {
+      const re = new RegExp(`\\{\\{${k}\\}\\}`, 'g');
+      subject = subject.replace(re, v);
+      html    = html.replace(re, v);
+    }
+
+    let slotsFilled = 0;
+    if (tpl.uses_popular_products && journeyId && nodeId && runId) {
+      // Hero image first — it pulls from the same snapshot but is rendered as
+      // a full-width <img> using the #1 ranked product's image, not a card grid.
+      const heroOut = await this.expandHeroImageSlots({
+        html, journeyId, nodeId, runId, fallbackProductType: tpl.product_type, utmLink,
+      });
+      html = heroOut.html;
+      slotsFilled += heroOut.slotsFilled;
+
+      const { html: filled, slotsFilled: n } = await this.expandProductSlots({
+        html, journeyId, nodeId, runId, fallbackProductType: tpl.product_type, utmLink,
+      });
+      html = filled;
+      slotsFilled += n;
+    }
+
+    html = this.injectUTMLinks(html, utmLink);
+
+    return { subject, html, plainText: subject, slotsFilled };
+  }
+
+  /**
+   * Replace every `<!-- SLOT:product_grid ... -->` comment in `html` with a
+   * grid of product cards built from the journey-run popularity snapshot.
+   *
+   * Slot syntax (HTML comment):
+   *   <!-- SLOT:product_grid product_type="activity" theme="thrill" count="4" cols="2" -->
+   *
+   * Attributes:
+   *   product_type   required — must match a snapshot row's product_type
+   *   theme          optional — pulls only rows whose theme matches
+   *   count          how many cards to render (defaults to all matching rows)
+   *   cols           grid width (defaults to 2)
+   */
+  static async expandProductSlots({ html, journeyId, nodeId, runId, fallbackProductType, utmLink }) {
+    const slotRe = /<!--\s*SLOT:product_grid\s+([^>]*?)-->/g;
+    const matches = [...html.matchAll(slotRe)];
+    if (matches.length === 0) return { html, slotsFilled: 0 };
+
+    // Group lookups by product_type so we hit popularity_snapshots once per type.
+    const types = new Set();
+    const parsedSlots = matches.map(m => {
+      const attrs = this._parseSlotAttrs(m[1]);
+      const productType = attrs.product_type || fallbackProductType;
+      types.add(productType);
+      return { match: m[0], productType, theme: attrs.theme || null,
+               count: attrs.count ? parseInt(attrs.count) : null,
+               cols: attrs.cols ? parseInt(attrs.cols) : 2 };
+    });
+
+    const snapshots = new Map();          // productType → Map(theme → rows)
+    for (const t of types) {
+      const grouped = await PopularityService.getSnapshot({ journeyId, nodeId, runId, productType: t });
+      snapshots.set(t, grouped);
+    }
+
+    let out = html;
+    let filled = 0;
+    for (const slot of parsedSlots) {
+      const grouped = snapshots.get(slot.productType);
+      const themeKey = slot.theme || '_default';
+      let rows = grouped?.get(themeKey)
+              || grouped?.get('_default')
+              || [];
+      if (slot.count) rows = rows.slice(0, slot.count);
+
+      const grid = rows.length > 0
+        ? this._buildProductGrid(rows, slot.cols, utmLink)
+        : '';                              // empty snapshot → drop the marker silently
+
+      out = out.replace(slot.match, grid);
+      if (rows.length > 0) filled++;
+    }
+
+    return { html: out, slotsFilled: filled };
+  }
+
+  /**
+   * Build the deterministic UTM link for a journey node send.
+   *
+   *   utm_source   = email
+   *   utm_medium   = journey
+   *   utm_campaign = general_broadcast      (sliced by /utm_campaign in GA)
+   *   utm_content  = j<journeyId>_<nodeId>  (per-node attribution)
+   *   utm_term     = <html-template-slug>   (theme — activities/cruise/etc.)
+   *   rid          = <unifiedId>            (recipient id for click tracking)
+   *
+   * Per-node UTMs let GA/UTM dashboards split open/click/booking conversion
+   * by node — which day in the drip is actually driving the booking.
+   */
+  static _buildUtmLink({ journeyId, nodeId, htmlTemplateName, unifiedId, base = 'https://www.raynatours.com/' }) {
+    const slug = (s) => String(s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    const params = new URLSearchParams({
+      utm_source:   'email',
+      utm_medium:   'journey',
+      utm_campaign: 'general_broadcast',
+    });
+    if (journeyId && nodeId) params.set('utm_content', `j${journeyId}_${slug(nodeId)}`);
+    if (htmlTemplateName)    params.set('utm_term',    slug(htmlTemplateName));
+    if (unifiedId)           params.set('rid',         String(unifiedId));
+    return `${base}${base.includes('?') ? '&' : '?'}${params.toString()}`;
+  }
+
+  /**
+   * Replace every `<!-- SLOT:hero_image ... -->` comment with an <img> tag
+   * built from the #1-ranked product in the run's popularity snapshot. The
+   * marker pulls from the same snapshot a SLOT:product_grid would — so the
+   * hero image is always the same cruise/holiday/activity that ranks first
+   * in the cards below it. No extra LLM call.
+   *
+   * Slot syntax:
+   *   <!-- SLOT:hero_image product_type="cruise" height="280" -->
+   *
+   * Attributes:
+   *   product_type   required — must match a snapshot row's product_type
+   *   theme          optional — pulls only rows whose theme matches
+   *   height         optional — px height of the hero band (default 280)
+   *   alt            optional — override alt text (default = product name)
+   */
+  static async expandHeroImageSlots({ html, journeyId, nodeId, runId, fallbackProductType, utmLink }) {
+    const slotRe = /<!--\s*SLOT:hero_image\s+([^>]*?)-->/g;
+    const matches = [...html.matchAll(slotRe)];
+    if (matches.length === 0) return { html, slotsFilled: 0 };
+
+    const types = new Set();
+    const parsed = matches.map(m => {
+      const a = this._parseSlotAttrs(m[1]);
+      const productType = a.product_type || fallbackProductType;
+      types.add(productType);
+      return { match: m[0], productType, theme: a.theme || null,
+               height: parseInt(a.height || '280'), alt: a.alt || null };
+    });
+
+    const snapshots = new Map();
+    for (const t of types) {
+      const grouped = await PopularityService.getSnapshot({ journeyId, nodeId, runId, productType: t });
+      snapshots.set(t, grouped);
+    }
+
+    const utmQs = this._extractUtmQuery(utmLink);
+    const linkWithUtm = (url) => {
+      if (!url) return '#';
+      if (/[?&]utm_source=/.test(url)) return url;
+      if (!utmQs) return url;
+      return url + (url.includes('?') ? '&' : '?') + utmQs;
+    };
+
+    let out = html;
+    let filled = 0;
+    for (const slot of parsed) {
+      const grouped = snapshots.get(slot.productType);
+      const themeKey = slot.theme || '_default';
+      const rows = grouped?.get(themeKey) || grouped?.get('_default') || [];
+      const top = rows[0];
+      if (!top || !top.image_url) {
+        // No snapshot row → drop the marker silently (keeps the rest of the
+        // template intact even if popularity backfill failed for this node).
+        out = out.replace(slot.match, '');
+        continue;
+      }
+
+      const altText = this._escapeAttr(slot.alt || top.name || 'Featured');
+      const linked  = this._escapeAttr(linkWithUtm(top.product_url));
+      const heroHtml = `<a href="${linked}" style="display: block; line-height: 0;"><img src="${this._escapeAttr(top.image_url)}" alt="${altText}" width="600" style="display: block; width: 100%; max-width: 600px; height: ${slot.height}px; object-fit: cover; border: 0;" /></a>`;
+      out = out.replace(slot.match, heroHtml);
+      filled++;
+    }
+
+    return { html: out, slotsFilled: filled };
+  }
+
+  // ── slot helpers ────────────────────────────────────────────────
+
+  static _parseSlotAttrs(attrString) {
+    const out = {};
+    const re = /(\w+)\s*=\s*"([^"]*)"/g;
+    let m;
+    while ((m = re.exec(attrString)) !== null) out[m[1]] = m[2];
+    return out;
+  }
+
+  /**
+   * Build the same 2×N table-card grid the original day5 / day4 / day2 templates
+   * used. Pixel-identical chrome — only the per-card data is supplied here.
+   */
+  static _buildProductGrid(rows, cols, utmLink) {
+    const utmQs = this._extractUtmQuery(utmLink);
+    const linkWithUtm = (url) => {
+      if (!url) return '#';
+      if (/[?&]utm_source=/.test(url)) return url;
+      if (!utmQs) return url;
+      return url + (url.includes('?') ? '&' : '?') + utmQs;
+    };
+
+    const card = (r) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; height: 280px">
+      <tr>
+        <td valign="bottom" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(&quot;${this._escapeAttr(r.image_url || '')}&quot;); background-size: cover; background-position: center; background-repeat: no-repeat; padding: 40px 20px 20px 20px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%">
+            <tr><td align="left" style="font-family: Arial, Helvetica, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;"><span style="opacity: 0.8">${this._escape(r.category || '')}${r.location ? ' - ' + this._escape(r.location) : ''}</span></td></tr>
+            <tr><td align="left" style="font-family: Georgia, &quot;Times New Roman&quot;, serif; font-size: 20px; line-height: 30px; font-weight: 400; color: #ffffff; padding-top: 6px;">${this._escape(r.name || '')}</td></tr>
+            <tr><td align="left" style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; color: #e0e0e0; padding-top: 6px;">${this._escape(r.duration || '')}</td></tr>
+            <tr><td align="left" style="font-family: Georgia, &quot;Times New Roman&quot;, serif; font-size: 18px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 6px;">${this._escape(r.price || '')}</td></tr>
+            <tr><td align="left" style="padding-top: 10px"><a href="${this._escapeAttr(linkWithUtm(r.product_url))}" style="font-family: Arial, Helvetica, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now -&gt;</a></td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>`;
+
+    const colWidth = `${Math.floor(100 / cols)}%`;
+    const tdCell = (r) => `<td width="${colWidth}" valign="top" style="padding: 0 5px 10px 5px">${card(r)}</td>`;
+
+    let body = '';
+    for (let i = 0; i < rows.length; i += cols) {
+      const cells = rows.slice(i, i + cols).map(tdCell).join('');
+      body += `<tr>${cells}</tr>`;
+    }
+
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">${body}</table>`;
+  }
+
+  static _extractUtmQuery(utmLink) {
+    if (!utmLink) return '';
+    try {
+      const u = new URL(utmLink);
+      const p = new URLSearchParams();
+      for (const [k, v] of u.searchParams) {
+        if (k.startsWith('utm_') || k === 'rid') p.append(k, v);
+      }
+      return p.toString();
+    } catch {
+      return '';
+    }
+  }
+
+  static _escape(s)     { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  static _escapeAttr(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
 
   /**
    * Render a preview with sample data (for Content page preview)

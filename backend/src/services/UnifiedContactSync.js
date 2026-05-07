@@ -76,59 +76,86 @@ export default class UnifiedContactSync {
   // All booking data comes from Rayna API tables: rayna_tours, rayna_hotels, rayna_visas, rayna_flights.
 
   /**
-   * Sync Rayna API booking counts
+   * Sync per-contact booking counts + revenue from the four Rayna tables.
+   *
+   * 2026-04-22: scoped to **bill_date >= 2026-02-01 and non-Cancelled only**.
+   * Anything earlier is covered by the historical travel_data dump; anything
+   * cancelled should not count as revenue. Policy applied uniformly to every
+   * aggregate so counts, revenue, and segment rules line up.
    */
+  static API_CUTOFF = '2026-02-01';
+
   static async syncRaynaBookings() {
-    const tables = [
-      { name: 'rayna_tours', col: 'total_tour_bookings', rev: 'total_sell' },
-      { name: 'rayna_hotels', col: 'total_hotel_bookings', rev: 'total_sell' },
-      { name: 'rayna_visas', col: 'total_visa_bookings', rev: 'total_sell' },
-      { name: 'rayna_flights', col: 'total_flight_bookings', rev: 'selling_price' },
-    ];
+    const t0 = Date.now();
+    const CUTOFF = this.API_CUTOFF;
 
-    let total = 0;
-    for (const t of tables) {
-      // Step 1: Match by phone_key (primary)
-      const { rowCount: byPhone } = await query(`
-        UPDATE unified_contacts uc SET
-          ${t.col} = ta.cnt,
-          total_booking_revenue = uc.total_booking_revenue + COALESCE(ta.rev, 0) - COALESCE(uc.${t.col}, 0) * (CASE WHEN uc.${t.col} > 0 THEN uc.total_booking_revenue / NULLIF(uc.${t.col},0) ELSE 0 END),
-          first_booking_at = LEAST(uc.first_booking_at, ta.f),
-          last_booking_at = GREATEST(uc.last_booking_at, ta.l),
-          sources = CASE WHEN uc.sources LIKE '%rayna%' THEN uc.sources ELSE uc.sources || ', rayna' END,
-          updated_at = NOW()
+    // Count CONFIRMED bookings with bill_date >= CUTOFF, per contact per table
+    const { rowCount: countsChanged } = await query(`
+      WITH per_contact AS (
+        SELECT uc.unified_id,
+          (SELECT COUNT(*) FROM rayna_tours   WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}') AS tours,
+          (SELECT COUNT(*) FROM rayna_hotels  WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}') AS hotels,
+          (SELECT COUNT(*) FROM rayna_visas   WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}') AS visas,
+          (SELECT COUNT(*) FROM rayna_flights WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}') AS flights
+        FROM unified_contacts uc
+        WHERE EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}')
+           OR EXISTS (SELECT 1 FROM rayna_hotels  WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}')
+           OR EXISTS (SELECT 1 FROM rayna_visas   WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}')
+           OR EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}')
+      )
+      UPDATE unified_contacts uc SET
+        total_tour_bookings   = p.tours,
+        total_hotel_bookings  = p.hotels,
+        total_visa_bookings   = p.visas,
+        total_flight_bookings = p.flights,
+        sources = CASE WHEN uc.sources LIKE '%rayna%' THEN uc.sources ELSE uc.sources || ', rayna' END,
+        updated_at = NOW()
+      FROM per_contact p
+      WHERE uc.unified_id = p.unified_id
+        AND (COALESCE(uc.total_tour_bookings,0)   IS DISTINCT FROM p.tours
+          OR COALESCE(uc.total_hotel_bookings,0)  IS DISTINCT FROM p.hotels
+          OR COALESCE(uc.total_visa_bookings,0)   IS DISTINCT FROM p.visas
+          OR COALESCE(uc.total_flight_bookings,0) IS DISTINCT FROM p.flights)
+    `);
+
+    // Revenue: same scope — post-cutoff + confirmed
+    const { rowCount: revChanged } = await query(`
+      WITH per_contact AS (
+        SELECT unified_id,
+          SUM(rev) AS total_rev, MIN(dt) AS first_dt, MAX(dt) AS last_dt
         FROM (
-          SELECT RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) as pk,
-            COUNT(DISTINCT id) as cnt, SUM(${t.rev}) as rev, MIN(bill_date) as f, MAX(bill_date) as l
-          FROM ${t.name} WHERE guest_contact IS NOT NULL AND LENGTH(REGEXP_REPLACE(guest_contact,'[^0-9]','','g')) >= 7
-          GROUP BY RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10)
-        ) ta WHERE uc.phone_key = ta.pk AND (uc.${t.col} IS NULL OR uc.${t.col} != ta.cnt)
-      `);
+          SELECT unified_id, total_sell    AS rev, bill_date AS dt FROM rayna_tours   WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}'
+          UNION ALL
+          SELECT unified_id, total_sell,    bill_date FROM rayna_hotels  WHERE unified_id IS NOT NULL AND bill_date >= '${CUTOFF}'
+          UNION ALL
+          SELECT unified_id, total_sell,    bill_date FROM rayna_visas   WHERE unified_id IS NOT NULL AND bill_date >= '${CUTOFF}'
+          UNION ALL
+          SELECT unified_id, selling_price, bill_date FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}'
+        ) all_bookings
+        GROUP BY unified_id
+      )
+      UPDATE unified_contacts uc SET
+        total_booking_revenue = COALESCE(p.total_rev, 0),
+        first_booking_at = LEAST(uc.first_booking_at, p.first_dt),
+        last_booking_at  = GREATEST(uc.last_booking_at, p.last_dt),
+        updated_at = NOW()
+      FROM per_contact p
+      WHERE uc.unified_id = p.unified_id
+        AND COALESCE(uc.total_booking_revenue, 0) IS DISTINCT FROM COALESCE(p.total_rev, 0)
+    `);
 
-      // Step 2: Match by grnty_email (fallback for records not matched by phone)
-      const { rowCount: byEmail } = await query(`
-        UPDATE unified_contacts uc SET
-          ${t.col} = GREATEST(COALESCE(uc.${t.col}, 0), ta.cnt),
-          total_booking_revenue = uc.total_booking_revenue + COALESCE(ta.rev, 0) - COALESCE(uc.${t.col}, 0) * (CASE WHEN uc.${t.col} > 0 THEN uc.total_booking_revenue / NULLIF(uc.${t.col},0) ELSE 0 END),
-          first_booking_at = LEAST(uc.first_booking_at, ta.f),
-          last_booking_at = GREATEST(uc.last_booking_at, ta.l),
-          sources = CASE WHEN uc.sources LIKE '%rayna%' THEN uc.sources ELSE uc.sources || ', rayna' END,
-          updated_at = NOW()
-        FROM (
-          SELECT LOWER(TRIM(grnty_email)) as ek,
-            COUNT(DISTINCT id) as cnt, SUM(${t.rev}) as rev, MIN(bill_date) as f, MAX(bill_date) as l
-          FROM ${t.name}
-          WHERE grnty_email IS NOT NULL AND TRIM(grnty_email) != ''
-            AND (guest_contact IS NULL OR LENGTH(REGEXP_REPLACE(guest_contact,'[^0-9]','','g')) < 7
-                 OR RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) NOT IN (SELECT phone_key FROM unified_contacts WHERE phone_key IS NOT NULL))
-          GROUP BY LOWER(TRIM(grnty_email))
-        ) ta WHERE uc.email_key = ta.ek AND (uc.${t.col} IS NULL OR uc.${t.col} < ta.cnt)
-      `);
+    // Zero out contacts whose post-cutoff bookings all got cancelled / removed
+    const { rowCount: zeroed } = await query(`
+      UPDATE unified_contacts SET total_booking_revenue = 0, updated_at = NOW()
+      WHERE total_booking_revenue > 0
+        AND NOT EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = unified_contacts.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}')
+        AND NOT EXISTS (SELECT 1 FROM rayna_hotels  WHERE unified_id = unified_contacts.unified_id AND bill_date >= '${CUTOFF}')
+        AND NOT EXISTS (SELECT 1 FROM rayna_visas   WHERE unified_id = unified_contacts.unified_id AND bill_date >= '${CUTOFF}')
+        AND NOT EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = unified_contacts.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}')
+    `);
 
-      total += byPhone + byEmail;
-      console.log(`[UnifiedSync] ${t.name} updated: ${byPhone} by phone, ${byEmail} by email`);
-    }
-    return total;
+    console.log(`[UnifiedSync] syncRaynaBookings (>=${CUTOFF}, confirmed): counts=${countsChanged}, revenue=${revChanged}, zeroed=${zeroed} in ${((Date.now()-t0)/1000).toFixed(1)}s`);
+    return countsChanged + revChanged;
   }
 
   /**
@@ -137,72 +164,82 @@ export default class UnifiedContactSync {
    * If neither matches → creates a new unified_contacts row.
    */
   static async syncNewRaynaContacts() {
+    // Each table has a slightly different schema — especially the country column —
+    // so we parameterise it per-table instead of hard-coding country_name everywhere.
     const tables = [
-      { name: 'rayna_tours',   dateCol: 'tour_date' },
-      { name: 'rayna_hotels',  dateCol: 'check_in_date' },
-      { name: 'rayna_visas',   dateCol: 'bill_date' },
-      { name: 'rayna_flights', dateCol: 'bill_date' },
+      { name: 'rayna_tours',   countryExpr: 'country_name' },
+      { name: 'rayna_hotels',  countryExpr: 'country_name' },
+      { name: 'rayna_visas',   countryExpr: 'country_name' },
+      { name: 'rayna_flights', countryExpr: 'nationality' },
     ];
 
     let totalByPhone = 0;
     let totalByEmail = 0;
 
     for (const t of tables) {
-      // Step 1: Insert by phone — Rayna contacts with valid phone not in unified_contacts
+      // ── Stage 1: insert contacts with a usable phone ──
+      // phone_key = last 10 digits of a guest_contact with >=7 digits, not all zeros.
+      // This uses a CTE so the same row-shape logic is visible and debuggable.
+      // If email is present on that row, it goes in too — one contact carries both.
       const { rowCount: byPhone } = await query(`
-        INSERT INTO unified_contacts (phone_key, phone, email, email_key, name, country, sources, first_seen_at)
-        SELECT DISTINCT ON (pk)
-          pk, guest_contact, grnty_email,
-          CASE WHEN grnty_email IS NOT NULL AND TRIM(grnty_email) != '' THEN LOWER(TRIM(grnty_email)) END,
-          guest_name, country_name, 'rayna', MIN(bill_date)
-        FROM (
+        WITH cleaned AS (
           SELECT
-            RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) as pk,
-            guest_contact, grnty_email, guest_name, country_name, bill_date
+            RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) AS phone_key,
+            MIN(guest_contact) AS phone,
+            MIN(NULLIF(TRIM(COALESCE(grnty_email,'')), '')) AS email_raw,
+            MIN(NULLIF(TRIM(COALESCE(guest_name,'')), '')) AS name,
+            MIN(NULLIF(TRIM(COALESCE(${t.countryExpr},'')), '')) AS country,
+            MIN(bill_date) AS first_seen
           FROM ${t.name}
           WHERE guest_contact IS NOT NULL
             AND LENGTH(REGEXP_REPLACE(guest_contact,'[^0-9]','','g')) >= 7
             AND RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) !~ '^0+$'
-        ) r
-        WHERE pk NOT IN (SELECT phone_key FROM unified_contacts WHERE phone_key IS NOT NULL)
-        GROUP BY pk, guest_contact, grnty_email, guest_name, country_name
-        ORDER BY pk, guest_name IS NOT NULL DESC, grnty_email IS NOT NULL DESC
-        ON CONFLICT DO NOTHING
+          GROUP BY RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10)
+        )
+        INSERT INTO unified_contacts (phone_key, phone, email, email_key, name, country, sources, first_seen_at)
+        SELECT
+          c.phone_key, c.phone, c.email_raw,
+          CASE WHEN c.email_raw IS NOT NULL THEN LOWER(c.email_raw) END,
+          c.name, c.country, 'rayna', c.first_seen
+        FROM cleaned c
+        WHERE NOT EXISTS (SELECT 1 FROM unified_contacts uc WHERE uc.phone_key = c.phone_key)
+        ON CONFLICT (phone_key) WHERE phone_key IS NOT NULL DO NOTHING
       `);
       totalByPhone += byPhone;
 
-      // Step 2: Insert by email — Rayna contacts with valid email but no valid phone (or phone already failed)
+      // ── Stage 2: insert contacts with email only ──
+      // Catches rows where the phone is junk ("-", "0", "000", etc.) but the email is real.
+      // Filters out (a) emails already in unified_contacts, (b) emails whose corresponding
+      // phone was already inserted above (so one person doesn't become two contacts).
       const { rowCount: byEmail } = await query(`
-        INSERT INTO unified_contacts (email_key, email, phone, phone_key, name, country, sources, first_seen_at)
-        SELECT DISTINCT ON (ek)
-          ek, grnty_email, guest_contact,
-          CASE WHEN guest_contact IS NOT NULL
-               AND LENGTH(REGEXP_REPLACE(guest_contact,'[^0-9]','','g')) >= 7
-               AND RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) !~ '^0+$'
-               THEN RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) END,
-          guest_name, country_name, 'rayna', MIN(bill_date)
-        FROM (
+        WITH cleaned AS (
           SELECT
-            LOWER(TRIM(grnty_email)) as ek,
-            grnty_email, guest_contact, guest_name, country_name, bill_date
+            LOWER(TRIM(grnty_email)) AS email_key,
+            MIN(grnty_email) AS email,
+            MIN(guest_contact) AS phone_raw,
+            MIN(NULLIF(TRIM(COALESCE(guest_name,'')), '')) AS name,
+            MIN(NULLIF(TRIM(COALESCE(${t.countryExpr},'')), '')) AS country,
+            MIN(bill_date) AS first_seen
           FROM ${t.name}
-          WHERE grnty_email IS NOT NULL AND TRIM(grnty_email) != ''
-        ) r
-        WHERE ek NOT IN (SELECT email_key FROM unified_contacts WHERE email_key IS NOT NULL)
-          AND (guest_contact IS NULL
-               OR LENGTH(REGEXP_REPLACE(guest_contact,'[^0-9]','','g')) < 7
-               OR RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) ~ '^0+$'
-               OR RIGHT(REGEXP_REPLACE(guest_contact,'[^0-9]','','g'), 10) NOT IN (SELECT phone_key FROM unified_contacts WHERE phone_key IS NOT NULL))
-        GROUP BY ek, grnty_email, guest_contact, guest_name, country_name
-        ORDER BY ek, guest_name IS NOT NULL DESC
-        ON CONFLICT DO NOTHING
+          WHERE grnty_email IS NOT NULL
+            AND TRIM(grnty_email) != ''
+            AND TRIM(grnty_email) ~ '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'
+          GROUP BY LOWER(TRIM(grnty_email))
+        )
+        INSERT INTO unified_contacts (email_key, email, phone, phone_key, name, country, sources, first_seen_at)
+        SELECT
+          c.email_key, c.email, c.phone_raw,
+          NULL,  -- phone_key intentionally NULL — if phone was valid, stage 1 already handled it
+          c.name, c.country, 'rayna', c.first_seen
+        FROM cleaned c
+        WHERE NOT EXISTS (SELECT 1 FROM unified_contacts uc WHERE uc.email_key = c.email_key)
       `);
       totalByEmail += byEmail;
 
-      console.log(`[UnifiedSync] ${t.name} new contacts: ${byPhone} by phone, ${byEmail} by email`);
+      console.log(`[UnifiedSync] ${t.name} — created ${byPhone} by phone, ${byEmail} by email`);
     }
 
-    console.log(`[UnifiedSync] Total new Rayna contacts: ${totalByPhone} by phone, ${totalByEmail} by email`);
+    console.log(`[UnifiedSync] Total Rayna contacts created: ${totalByPhone} by phone, ${totalByEmail} by email`);
     return { byPhone: totalByPhone, byEmail: totalByEmail };
   }
 
@@ -476,116 +513,130 @@ export default class UnifiedContactSync {
    * Step 3: Geography (LOCAL = UAE, INTERNATIONAL = rest) + INDIAN sub-tag
    */
   static async computeSegments() {
-    // Reset all segment fields
-    await query(`UPDATE unified_contacts SET booking_status = NULL, product_tier = NULL, geography = NULL, is_indian = false, segment_label = NULL WHERE booking_status IS NOT NULL OR geography IS NOT NULL`);
+    // ── Single-pass booking_status compute ─────────────────────
+    // Previous version cleared every row and ran 8 sequential UPDATEs, each scanning
+    // ~1.6M rows with 21 indexes to maintain → ~17 min. This version builds the
+    // target status in one CTE (using EXISTS for booking dates, reading pre-aggregated
+    // totals for the booking bucket) and only writes rows whose status actually
+    // changes. Typical daily drift: <1% of rows, so writes go from 1.6M to <20K.
+    const t0 = Date.now();
+    const CUTOFF = UnifiedContactSync.API_CUTOFF;  // '2026-02-01'
+    const { rowCount: statusChanged } = await query(`
+      WITH target AS (
+        SELECT uc.unified_id,
+          CASE
+            -- ON_TRIP: current-window non-cancelled booking from Rayna API (post-cutoff only)
+            WHEN EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}' AND tour_date::date <= CURRENT_DATE AND (tour_date::date + INTERVAL '7 days') >= CURRENT_DATE)
+              OR EXISTS (SELECT 1 FROM rayna_hotels  WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}' AND check_in_date::date <= CURRENT_DATE AND (check_in_date::date + INTERVAL '7 days') >= CURRENT_DATE)
+              OR EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}' AND from_datetime::date <= CURRENT_DATE AND (from_datetime::date + INTERVAL '7 days') >= CURRENT_DATE)
+            THEN 'FUTURE_ONTRIP_ONTRIP'
+            -- FUTURE_TRAVEL: future non-cancelled Rayna booking (post-cutoff only)
+            WHEN EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}' AND tour_date::date > CURRENT_DATE)
+              OR EXISTS (SELECT 1 FROM rayna_hotels  WHERE unified_id = uc.unified_id AND bill_date >= '${CUTOFF}' AND check_in_date::date > CURRENT_DATE)
+              OR EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled') AND bill_date >= '${CUTOFF}' AND from_datetime::date > CURRENT_DATE)
+            THEN 'FUTURE_TRAVEL'
+            -- ACTIVE_ENQUIRY: recent chat, no confirmed bookings anywhere
+            WHEN uc.total_chats > 0
+              AND uc.last_chat_at >= NOW() - INTERVAL '30 days'
+              AND COALESCE(uc.total_tour_bookings,0)+COALESCE(uc.total_hotel_bookings,0)+COALESCE(uc.total_visa_bookings,0)+COALESCE(uc.total_flight_bookings,0) = 0
+              AND NOT EXISTS (SELECT 1 FROM travel_data WHERE unified_id = uc.unified_id)
+            THEN 'ACTIVE_ENQUIRY'
+            -- PAST_BOOKING: confirmed post-cutoff Rayna bookings OR historical travel_data
+            WHEN COALESCE(uc.total_tour_bookings,0)+COALESCE(uc.total_hotel_bookings,0)+COALESCE(uc.total_visa_bookings,0)+COALESCE(uc.total_flight_bookings,0) > 0
+              OR EXISTS (SELECT 1 FROM travel_data WHERE unified_id = uc.unified_id)
+            THEN 'PAST_BOOKING'
+            -- CANCELLED: zero valid bookings, but has cancellation history post-cutoff
+            WHEN EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = uc.unified_id AND status = 'Cancelled' AND bill_date >= '${CUTOFF}')
+              OR EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND status = 'Cancelled' AND bill_date >= '${CUTOFF}')
+            THEN 'CANCELLED'
+            -- PAST_ENQUIRY: old chat, never booked
+            WHEN uc.total_chats > 0 AND uc.last_chat_at < NOW() - INTERVAL '30 days'
+            THEN 'PAST_ENQUIRY'
+            ELSE 'PROSPECT'
+          END AS new_status
+        FROM unified_contacts uc
+      ),
+      target_fixed AS (
+        -- The ON_TRIP sentinel is a trick to avoid column-name collisions in CASE;
+        -- normalise it back here.
+        SELECT unified_id,
+          CASE new_status WHEN 'FUTURE_ONTRIP_ONTRIP' THEN 'ON_TRIP' ELSE new_status END AS new_status
+        FROM target
+      )
+      UPDATE unified_contacts uc
+      SET booking_status = t.new_status, updated_at = NOW()
+      FROM target_fixed t
+      WHERE uc.unified_id = t.unified_id
+        AND uc.booking_status IS DISTINCT FROM t.new_status
+    `);
+    console.log(`[UnifiedSync] booking_status: ${statusChanged} rows changed in ${((Date.now()-t0)/1000).toFixed(1)}s`);
 
-    // ── Step 1: Booking Status (priority order) ─────────────────
+    // ── Product Tier + Geography + Indian — single-pass, writes only changed rows ──
+    const luxuryTours = `tours_name ILIKE '%premium%' OR tours_name ILIKE '%private%' OR tours_name ILIKE '%vip%' OR tours_name ILIKE '%yacht%' OR tours_name ILIKE '%helicopter%' OR tours_name ILIKE '%limousine%' OR tours_name ILIKE '%luxury%' OR tours_name ILIKE '%megayacht%' OR tours_name ILIKE '%falcon%' OR tours_name ILIKE '%chauffeur%'`;
+    const luxuryTravel = `service_name ILIKE '%premium%' OR service_name ILIKE '%private%' OR service_name ILIKE '%vip%' OR service_name ILIKE '%yacht%' OR service_name ILIKE '%helicopter%' OR service_name ILIKE '%limousine%' OR service_name ILIKE '%luxury%' OR service_name ILIKE '%megayacht%' OR service_name ILIKE '%falcon%' OR service_name ILIKE '%chauffeur%'`;
 
-    // 1a. ON_TRIP — currently travelling (travel date to travel date + 7 days)
-    //     Only CONFIRMED bookings count — cancelled bookings are excluded
-    //     Tours: tour_date <= today <= tour_date + 7
-    await query(`
-      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP'
-      FROM (SELECT DISTINCT unified_id FROM rayna_tours
-            WHERE unified_id IS NOT NULL
-              AND (status IS NULL OR status != 'Cancelled')
-              AND tour_date::date <= CURRENT_DATE
-              AND (tour_date::date + INTERVAL '7 days') >= CURRENT_DATE) rt
-      WHERE uc.unified_id = rt.unified_id`);
+    const t1 = Date.now();
+    const { rowCount: tierGeoChanged } = await query(`
+      WITH luxury_bookers AS (
+        SELECT DISTINCT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL AND (${luxuryTours})
+        UNION
+        SELECT DISTINCT unified_id FROM travel_data WHERE unified_id IS NOT NULL AND (${luxuryTravel})
+      ),
+      any_bookers AS (
+        -- Anyone with at least one booking in rayna_* totals or in travel_data
+        SELECT unified_id FROM unified_contacts
+        WHERE COALESCE(total_tour_bookings,0)+COALESCE(total_hotel_bookings,0)+COALESCE(total_visa_bookings,0)+COALESCE(total_flight_bookings,0) > 0
+        UNION
+        SELECT DISTINCT unified_id FROM travel_data WHERE unified_id IS NOT NULL
+      ),
+      target AS (
+        SELECT uc.unified_id,
+          CASE
+            WHEN lb.unified_id IS NOT NULL THEN 'LUXURY'
+            WHEN ab.unified_id IS NOT NULL THEN 'STANDARD'
+            ELSE NULL
+          END AS new_tier,
+          CASE
+            WHEN uc.country = 'United Arab Emirates' THEN 'LOCAL'
+            WHEN uc.country IS NOT NULL AND uc.country NOT IN ('', 'N/A', 'NA') THEN 'INTERNATIONAL'
+            ELSE NULL
+          END AS new_geo,
+          (uc.phone LIKE '91%' OR uc.phone LIKE '+91%' OR uc.country = 'India') AS new_indian
+        FROM unified_contacts uc
+        LEFT JOIN luxury_bookers lb ON lb.unified_id = uc.unified_id
+        LEFT JOIN any_bookers   ab ON ab.unified_id = uc.unified_id
+      )
+      UPDATE unified_contacts uc
+      SET product_tier = t.new_tier,
+          geography    = t.new_geo,
+          is_indian    = t.new_indian,
+          updated_at   = NOW()
+      FROM target t
+      WHERE uc.unified_id = t.unified_id
+        AND (uc.product_tier IS DISTINCT FROM t.new_tier
+          OR uc.geography    IS DISTINCT FROM t.new_geo
+          OR uc.is_indian    IS DISTINCT FROM t.new_indian)
+    `);
+    console.log(`[UnifiedSync] tier/geo/indian: ${tierGeoChanged} rows changed in ${((Date.now()-t1)/1000).toFixed(1)}s`);
 
-    //     Hotels: check_in_date <= today <= check_in_date + 7
-    await query(`
-      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP'
-      FROM (SELECT DISTINCT unified_id FROM rayna_hotels
-            WHERE unified_id IS NOT NULL
-              AND check_in_date::date <= CURRENT_DATE
-              AND (check_in_date::date + INTERVAL '7 days') >= CURRENT_DATE) rh
-      WHERE uc.unified_id = rh.unified_id AND uc.booking_status IS NULL`);
-
-    //     Flights: from_datetime <= today <= from_datetime + 7
-    await query(`
-      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP'
-      FROM (SELECT DISTINCT unified_id FROM rayna_flights
-            WHERE unified_id IS NOT NULL
-              AND (status IS NULL OR status != 'Cancelled')
-              AND from_datetime::date <= CURRENT_DATE
-              AND (from_datetime::date + INTERVAL '7 days') >= CURRENT_DATE) rf
-      WHERE uc.unified_id = rf.unified_id AND uc.booking_status IS NULL`);
-
-    // 1b. FUTURE_TRAVEL — booked, travel date is ahead (exclude cancelled)
-    await query(`
-      UPDATE unified_contacts uc SET booking_status = 'FUTURE_TRAVEL'
-      WHERE uc.booking_status IS NULL AND uc.unified_id IN (
-        SELECT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL AND tour_date::date > CURRENT_DATE AND (status IS NULL OR status != 'Cancelled')
-        UNION SELECT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date > CURRENT_DATE
-        UNION SELECT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL AND from_datetime::date > CURRENT_DATE AND (status IS NULL OR status != 'Cancelled')
-      )`);
-
-    // 1c. ACTIVE_ENQUIRY — chatted on WhatsApp in last 30 days, not yet booked
-    await query(`
-      UPDATE unified_contacts SET booking_status = 'ACTIVE_ENQUIRY'
-      WHERE booking_status IS NULL
-        AND total_chats > 0
-        AND last_chat_at >= NOW() - INTERVAL '30 days'
-        AND COALESCE(total_tour_bookings, 0) = 0
-        AND COALESCE(total_hotel_bookings, 0) = 0
-        AND COALESCE(total_visa_bookings, 0) = 0
-        AND COALESCE(total_flight_bookings, 0) = 0`);
-
-    // 1d. PAST_BOOKING — completed past trips
-    await query(`
-      UPDATE unified_contacts SET booking_status = 'PAST_BOOKING'
-      WHERE booking_status IS NULL
-        AND (COALESCE(total_tour_bookings, 0) > 0
-          OR COALESCE(total_hotel_bookings, 0) > 0
-          OR COALESCE(total_visa_bookings, 0) > 0
-          OR COALESCE(total_flight_bookings, 0) > 0)`);
-
-    // 1e. PAST_ENQUIRY — chatted 30+ days ago, never booked
-    await query(`
-      UPDATE unified_contacts SET booking_status = 'PAST_ENQUIRY'
-      WHERE booking_status IS NULL
-        AND total_chats > 0
-        AND last_chat_at < NOW() - INTERVAL '30 days'`);
-
-    // 1f. PROSPECT — never engaged
-    await query(`UPDATE unified_contacts SET booking_status = 'PROSPECT' WHERE booking_status IS NULL`);
-
-    // ── Step 2: Product Tier ────────────────────────────────────
-    // LUXURY = at least one luxury product booked (any table)
-    const luxuryKeywords = `tours_name ILIKE '%premium%' OR tours_name ILIKE '%private%' OR tours_name ILIKE '%vip%' OR tours_name ILIKE '%yacht%' OR tours_name ILIKE '%helicopter%' OR tours_name ILIKE '%limousine%' OR tours_name ILIKE '%luxury%' OR tours_name ILIKE '%megayacht%' OR tours_name ILIKE '%falcon%' OR tours_name ILIKE '%chauffeur%'`;
-
-    await query(`
-      UPDATE unified_contacts uc SET product_tier = 'LUXURY'
-      FROM (SELECT DISTINCT unified_id FROM rayna_tours
-            WHERE unified_id IS NOT NULL AND (${luxuryKeywords})) rt
-      WHERE uc.unified_id = rt.unified_id`);
-
-    // STANDARD = has bookings but none are luxury
-    await query(`
-      UPDATE unified_contacts SET product_tier = 'STANDARD'
-      WHERE product_tier IS NULL
-        AND (COALESCE(total_tour_bookings, 0) > 0
-          OR COALESCE(total_hotel_bookings, 0) > 0
-          OR COALESCE(total_visa_bookings, 0) > 0
-          OR COALESCE(total_flight_bookings, 0) > 0)`);
-
-    // ── Step 3: Geography + Indian ──────────────────────────────
-    // LOCAL = UAE resident, INTERNATIONAL = everyone else
-    await query(`
-      UPDATE unified_contacts SET geography = CASE
-        WHEN country = 'United Arab Emirates' THEN 'LOCAL'
-        WHEN country IS NOT NULL AND country NOT IN ('', 'N/A', 'NA') THEN 'INTERNATIONAL'
-        ELSE NULL END`);
-
-    // INDIAN sub-tag — WhatsApp channel included for these customers
-    await query(`
-      UPDATE unified_contacts SET is_indian = true
-      WHERE phone LIKE '91%' OR phone LIKE '+91%' OR country = 'India'`);
-
-    // ── Combined segment label + business_type ──────────────────
-    await query(`UPDATE unified_contacts SET segment_label = CONCAT_WS(' / ', booking_status, product_tier, geography, CASE WHEN is_indian THEN 'INDIAN' END)`);
-    await query(`UPDATE unified_contacts SET business_type = CASE WHEN contact_type IN ('B2B', 'b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END WHERE business_type IS DISTINCT FROM (CASE WHEN contact_type IN ('B2B', 'b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END)`);
+    // ── Combined segment label + business_type (both: only write changed rows) ──
+    const t2 = Date.now();
+    const { rowCount: labelChanged } = await query(`
+      UPDATE unified_contacts SET segment_label = new_label
+      FROM (
+        SELECT unified_id, CONCAT_WS(' / ', booking_status, product_tier, geography,
+          CASE WHEN is_indian THEN 'INDIAN' END) AS new_label
+        FROM unified_contacts
+      ) t
+      WHERE unified_contacts.unified_id = t.unified_id
+        AND unified_contacts.segment_label IS DISTINCT FROM t.new_label
+    `);
+    const { rowCount: btChanged } = await query(`
+      UPDATE unified_contacts
+      SET business_type = CASE WHEN contact_type IN ('B2B','b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END
+      WHERE business_type IS DISTINCT FROM (CASE WHEN contact_type IN ('B2B','b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END)
+    `);
+    console.log(`[UnifiedSync] segment_label: ${labelChanged} changed, business_type: ${btChanged} changed in ${((Date.now()-t2)/1000).toFixed(1)}s`);
 
     const { rows } = await query(`SELECT booking_status, COUNT(*) as cnt FROM unified_contacts GROUP BY booking_status ORDER BY cnt DESC`);
     console.log('[UnifiedSync] Segments computed:', rows.map(r => `${r.booking_status}: ${r.cnt}`).join(', '));
