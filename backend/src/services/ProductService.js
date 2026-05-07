@@ -1,4 +1,4 @@
-const BASE_URL = 'https://earnest-panda-e8edbd.netlify.app/api/all-products';
+const BASE_URL = 'https://data-projects-flax.vercel.app/api/all-products';
 
 // In-memory cache (refreshes every 30 min)
 let cache = { data: null, ts: 0 };

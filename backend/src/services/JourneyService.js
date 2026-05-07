@@ -3,6 +3,9 @@ import EmailRenderer from './EmailRenderer.js';
 import { EmailChannel } from './channels/EmailChannel.js';
 import { SMSChannel } from './channels/SMSChannel.js';
 import { WhatsAppChannel } from './channels/WhatsAppChannel.js';
+import GupshupService from './GupshupService.js';
+import PopularityService from './PopularityService.js';
+import { enqueueBatch } from './queue/index.js';
 
 /**
  * JourneyService — Journey Flow Builder & Execution Engine
@@ -249,21 +252,32 @@ class JourneyService {
     if (channel === 'sms' || channel === 'whatsapp') {
       const to = (recipient || '').trim();
       if (!/^\+?[0-9][0-9\s\-()]{5,}$/.test(to)) throw new Error('Valid phone number required (E.164 recommended, e.g. +971501234567)');
-      const { rows: [tpl] } = await db.query('SELECT body, subject FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+      const { rows: [tpl] } = await db.query(
+        'SELECT body, subject, external_status, external_template_id FROM content_templates WHERE id = $1',
+        [parseInt(templateId)]
+      );
       if (!tpl) throw new Error(`Template ${templateId} not found`);
+
+      // Approval gate — WA/SMS must be approved via Gupshup before any send.
+      // Simulation mode (no keys) still enforces this, but you can flip a template
+      // to 'approved' via /api/v3/gupshup/templates/:id/force-approve for local dev.
+      await GupshupService.assertApproved(parseInt(templateId));
+
       const user = await resolveRecipient(to);
       const utmLink = buildUtmLink(user?.unified_id);
-      // Substitute {{utm_link}} and {{first_name}} in body for SMS/WA too.
       const rawBody = tpl.body || tpl.subject || node.data?.label || 'Journey node test';
       const firstName = user?.name ? user.name.split(' ')[0] : 'there';
       const body = `[TEST] ${rawBody
         .replace(/\{\{utm_link\}\}/g, utmLink)
         .replace(/\{\{first_name\}\}/g, firstName)}`;
+
       const result = channel === 'sms'
-        ? await SMSChannel.send({ to, body })
-        : await WhatsAppChannel.sendText({ to, text: body });
+        ? await GupshupService.sendSMS({ to, templateId: parseInt(templateId), messageBody: body })
+        : await GupshupService.sendWhatsApp({ to, templateId: parseInt(templateId), params: [firstName, utmLink] });
+
       return {
         channel, recipient: to, templateId, utmLink,
+        externalTemplateId: tpl.external_template_id,
         resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null,
         ...result,
       };
@@ -367,6 +381,92 @@ class JourneyService {
   // ── Journey Execution ───────────────────────────────────────
 
   /**
+   * Enroll-everyone-eligible. For "general broadcast" journeys that target
+   * all email-eligible (or WA-eligible) contacts rather than a saved segment.
+   *
+   * @param {object} args
+   * @param {number} args.journeyId
+   * @param {'email'|'whatsapp'|'both'} [args.channel='email']  Eligibility filter
+   * @param {'test_users'|'full'|'sample'} [args.mode='full']   How many to enroll
+   * @param {number} [args.sampleSize]   For mode='sample' — exact N rows (random)
+   * @param {number[]} [args.unifiedIds] For mode='test_users' — explicit ids
+   *                                     (defaults to the 4 known test users in memory)
+   */
+  static async enrollAll({ journeyId, channel = 'email', mode = 'full', sampleSize = null, unifiedIds = null } = {}) {
+    const { rows: [journey] } = await db.query(
+      'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
+    );
+    if (!journey) throw new Error('Journey not found');
+
+    const startNodeId = journey.nodes?.[0]?.id || 'node_0';
+
+    // Build the eligibility predicate per channel.
+    const where = [];
+    if (channel === 'email' || channel === 'both') {
+      where.push(`(uc.email IS NOT NULL AND uc.email <> ''
+                   AND COALESCE(uc.email_unsubscribed,'No') <> 'Yes'
+                   AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$')`);
+    }
+    if (channel === 'whatsapp' || channel === 'both') {
+      where.push(`(uc.phone IS NOT NULL AND uc.phone <> ''
+                   AND COALESCE(uc.wa_unsubscribed,'No') <> 'Yes'
+                   AND COALESCE(uc.is_indian, false) = true)`);
+    }
+    if (where.length === 0) throw new Error(`Unknown channel: ${channel}`);
+
+    // Apply audience filter (existing journey-level Indian/Rest/All split).
+    if (journey.audience === 'indian') where.push('uc.is_indian = true');
+    else if (journey.audience === 'rest') where.push('uc.is_indian = false');
+
+    let extra = '';
+    let params = [journeyId, startNodeId];
+    if (mode === 'test_users') {
+      // Match by canonical email — the 4 test users (Akshith / Anket / Vaibhav /
+      // Alok) saved in /memory. unifiedIds override available for ad-hoc tests.
+      if (unifiedIds && unifiedIds.length > 0) {
+        extra = `AND uc.unified_id = ANY($3::bigint[])`;
+        params.push(unifiedIds);
+      } else {
+        const TEST_EMAILS = [
+          'akshith@antino.com',
+          'akshith@raynatours.com',
+          'anket@raynatours.com',
+          'vaibhav@raynatours.com',
+          'alok@raynatours.com',
+        ];
+        extra = `AND LOWER(uc.email) = ANY($3::text[])`;
+        params.push(TEST_EMAILS);
+      }
+    } else if (mode === 'sample') {
+      const n = Math.max(1, parseInt(sampleSize || 100));
+      extra = `ORDER BY random() LIMIT ${n}`;
+    }
+    // mode === 'full' adds nothing extra.
+
+    const sql = `
+      INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
+      SELECT $1, uc.unified_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
+      FROM unified_contacts uc
+      WHERE ${where.join(' AND ')}
+        AND NOT EXISTS (
+          SELECT 1 FROM journey_entries je
+          WHERE je.journey_id = $1 AND je.customer_id = uc.unified_id
+        )
+        ${extra}
+      RETURNING entry_id`;
+
+    const { rows } = await db.query(sql, params);
+
+    if (rows.length > 0) {
+      await db.query(
+        'UPDATE journey_flows SET total_entries = total_entries + $1 WHERE journey_id = $2',
+        [rows.length, journeyId]
+      );
+    }
+    return { enrolled: rows.length, mode, channel };
+  }
+
+  /**
    * Enroll customers from a segment into a journey
    */
   static async enrollSegment(journeyId) {
@@ -419,6 +519,23 @@ class JourneyService {
     const edges = journey.edges || [];
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
+    // Run id is deterministic per (journey, UTC day). This lets the T-60min
+    // prewarm cron (prewarmJourneyPopularity) and the fire-time processJourney
+    // call write/read snapshot rows under the SAME run_id — the prewarm
+    // populates the day bucket at 4 AM Dubai, and the 5 AM journey cron's
+    // _ensureNodeSnapshotted is a no-op (popularity_snapshots ON CONFLICT DO
+    // NOTHING) because the rows already exist. journey_entries.last_run_id is
+    // unchanged in semantics: same-day re-runs of the cron skip already-enqueued
+    // entries, fresh-day runs re-enqueue any entries still on action nodes.
+    const runId = PopularityService.runIdForBucket(journeyId);
+
+    // Popularity is snapshotted LAZILY: only when a node first fires in this
+    // run (i.e., we're about to enqueue an action for an entry sitting on it).
+    // This way the LLM only ranks for nodes that actually have firing entries,
+    // which is what "on every node fire → fresh dynamic content" actually means
+    // in practice. _ensureNodeSnapshotted() dedupes within a run via this Set.
+    const snapshottedNodes = new Set();
+
     // Get all active entries joined with unified_contacts + current journey segment
     const { rows: entries } = await db.query(`
       SELECT je.*, uc.name, uc.email, uc.phone, uc.phone_key, uc.booking_status,
@@ -436,6 +553,11 @@ class JourneyService {
     let waited = 0;
     let conditioned = 0;
     let converted = 0;
+    let enqueued = 0;
+
+    // Action sends are batched and enqueued at the end of the loop so we minimize
+    // BullMQ round-trips. One batch per channel.
+    const enqueueByChannel = { email: [], whatsapp: [], sms: [] };
 
     for (const entry of entries) {
       // ── CONVERSION CHECK: runs BEFORE every node fires ──
@@ -479,48 +601,97 @@ class JourneyService {
         // Time elapsed — fall through to advance to next node
       }
 
-      // ── ACTION node: send message + log event ──
+      // ── ACTION node: enqueue a BullMQ job for the worker to send + advance ──
+      // We do NOT send inline anymore. Instead we resolve the effective channel
+      // + template per entry track, build a self-contained job payload, and add
+      // it to the channel-specific queue. The worker handles render → send →
+      // journey_events insert → entry advance. This is what scales the journey
+      // run from a synchronous loop to ~18 lakh recipients.
       if (currentNode.type === 'action') {
-        // Resolve effective channel + template per entry track.
-        // WhatsApp nodes auto-pair for Rest entries → use restChannel (default 'email') + restTemplateId.
-        const rawChannel = currentNode.data?.channel;
+        // Skip if this entry was already enqueued in this run — prevents double
+        // enqueue if processJourney() is re-triggered before workers drain.
+        if (entry.last_run_id === runId) {
+          processed++;
+          continue;
+        }
+
+        const rawChannel = (currentNode.data?.channel || '').toLowerCase();
         const rawTemplateId = currentNode.data?.templateId;
         let channel = rawChannel;
         let templateId = rawTemplateId;
         let autoPaired = false;
-        if ((rawChannel || '').toLowerCase() === 'whatsapp' && entryTrack === 'rest') {
+        if (rawChannel === 'whatsapp' && entryTrack === 'rest') {
           channel = (currentNode.data?.restChannel || 'email').toLowerCase();
-          templateId = currentNode.data?.restTemplateId || rawTemplateId;  // fall back to same template
+          templateId = currentNode.data?.restTemplateId || rawTemplateId;
           autoPaired = true;
         }
 
-        let sendResult = null;
-
-        // Email channel — render template + send via SMTP
-        if (channel === 'email' && templateId && entry.email) {
-          try {
-            const rendered = await EmailRenderer.render(parseInt(templateId), entry.customer_id);
-            sendResult = await EmailChannel.send({
-              to: entry.email,
-              subject: rendered.subject,
-              html: rendered.html,
-              text: rendered.plainText,
-            });
-            console.log(`[Journey] Email sent → ${entry.email} | template=${templateId} | track=${entryTrack}${autoPaired ? ' (auto-pair from WhatsApp)' : ''} | success=${sendResult.success}`);
-          } catch (err) {
-            console.error(`[Journey] Email failed → ${entry.email}: ${err.message}`);
-            sendResult = { success: false, error: err.message };
-          }
+        // Pre-resolve the html_template_id once per templateId per run (cached
+        // on this in-memory map) so the worker doesn't have to do another lookup.
+        let htmlTemplateId = null;
+        if (channel === 'email' && templateId) {
+          htmlTemplateId = await this._resolveHtmlTemplateId(parseInt(templateId));
         }
-        // SMS / WhatsApp channels: no provider wired yet — logged as simulated.
 
-        await db.query(`
-          INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-          VALUES ($1, $2, 'action_sent', $3, $4)
-        `, [entry.entry_id, currentNode.id, channel,
-            JSON.stringify({ templateId, channel, originalChannel: rawChannel, autoPaired, track: entryTrack,
-              sendResult: sendResult ? { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated } : null })]);
+        // Lazy snapshot: this is the first entry firing this node in this run,
+        // so snapshot popular products NOW (not at the top of processJourney).
+        // Subsequent entries hitting the same node share the snapshot via the
+        // popularity_snapshots UNIQUE constraint + this in-process dedupe Set.
+        if (channel === 'email' && htmlTemplateId && !snapshottedNodes.has(currentNode.id)) {
+          await this._ensureNodeSnapshotted({
+            journeyId, runId, nodeId: currentNode.id, contentTemplateId: parseInt(templateId),
+          });
+          snapshottedNodes.add(currentNode.id);
+        }
+
+        const jobData = {
+          entryId:        entry.entry_id,
+          customerId:     entry.customer_id,
+          journeyId,
+          nodeId:         currentNode.id,
+          runId,
+          channel,
+          templateId,
+          htmlTemplateId,
+          name:           entry.name,
+          email:          entry.email,
+          phone:          entry.phone,
+          isIndian:       entry.is_indian,
+          track:          entryTrack,
+          autoPaired,
+          originalChannel: rawChannel,
+          edges,
+          nodes:          nodeMap,
+        };
+
+        if (!channel || !templateId) {
+          // Misconfigured action node — log + advance now, don't enqueue.
+          await db.query(
+            `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+             VALUES ($1, $2, 'action_blocked', $3, $4)`,
+            [entry.entry_id, currentNode.id, channel || null,
+             JSON.stringify({ reason: 'missing_channel_or_template', autoPaired, track: entryTrack })]
+          );
+          // Advance to next track-matched edge so the entry doesn't get stuck.
+          await this._advanceEntry(entry.entry_id, currentNode.id, edges, nodeMap, entryTrack);
+          processed++;
+          continue;
+        }
+
+        if (!enqueueByChannel[channel]) enqueueByChannel[channel] = [];
+        enqueueByChannel[channel].push({ data: jobData, opts: { jobId: `${journeyId}:${entry.entry_id}:${runId}` } });
+
+        // Stamp the entry so we can tell it's in flight + skip it on re-runs.
+        await db.query(
+          `UPDATE journey_entries SET last_run_id = $2, last_enqueued_at = NOW()
+             WHERE entry_id = $1`,
+          [entry.entry_id, runId]
+        );
         actioned++;
+        processed++;
+        // Worker advances the entry after the actual send — do NOT fall through
+        // into the synchronous track-aware advance block at the bottom.
+        continue;
       }
 
       // ── CONDITION node: evaluate and choose the right branch ──
@@ -622,6 +793,30 @@ class JourneyService {
       processed++;
     }
 
+    // Drain per-channel batches into BullMQ. We chunk to ~1000 jobs per addBulk
+    // call to keep the Redis round-trip and the in-memory pipeline bounded.
+    const BATCH_SIZE = 1000;
+    for (const [channel, jobs] of Object.entries(enqueueByChannel)) {
+      if (!jobs || jobs.length === 0) continue;
+      for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
+        const slice = jobs.slice(i, i + BATCH_SIZE);
+        try {
+          await enqueueBatch(channel, slice);
+          enqueued += slice.length;
+        } catch (err) {
+          console.error(`[Journey ${journeyId}] enqueueBatch(${channel}) failed: ${err.message}`);
+          // Roll back the last_run_id stamp on the affected entries so they are
+          // re-tried on the next processJourney() run instead of being skipped.
+          const entryIds = slice.map(j => j.data.entryId);
+          await db.query(
+            `UPDATE journey_entries SET last_run_id = NULL, last_enqueued_at = NULL
+               WHERE entry_id = ANY($1::bigint[]) AND last_run_id = $2`,
+            [entryIds, runId]
+          ).catch(() => {});
+        }
+      }
+    }
+
     // Update journey stats
     await db.query(`
       UPDATE journey_flows SET
@@ -633,7 +828,199 @@ class JourneyService {
       WHERE journey_id = $1
     `, [journeyId]);
 
-    return { processed, actioned, waited, conditioned, converted };
+    return { processed, actioned, waited, conditioned, converted, enqueued, runId };
+  }
+
+  // ── processJourney helpers ────────────────────────────────────
+
+  /**
+   * T-60min popularity prewarm. Looks for entries that will become due to
+   * fire within the lookahead window, identifies the action node they'll hit,
+   * and takes the popularity snapshot NOW so it's already in the DB by the
+   * time the journey cron actually fires the send.
+   *
+   * Called from a cron 60 min ahead of processJourney's run (e.g., 4 AM Dubai
+   * when processJourney is at 5 AM Dubai). Both share runIdForBucket(journeyId)
+   * so the snapshots line up.
+   *
+   * @param {object} args
+   * @param {number} [args.journeyId]            scope to one journey, else all active
+   * @param {number} [args.lookaheadMinutes=60]  how far ahead to look
+   * @param {number} [args.windowMinutes=30]     +/- tolerance around T-lookahead
+   * @returns {{ journeysScanned, nodesSnapshotted, entriesConsidered }}
+   */
+  static async prewarmJourneyPopularity({
+    journeyId = null,
+    lookaheadMinutes = 60,
+    windowMinutes = 30,
+  } = {}) {
+    const lookaheadMs = lookaheadMinutes * 60_000;
+    const windowMs    = windowMinutes    * 60_000;
+    const now = Date.now();
+
+    const { rows: journeys } = await db.query(
+      journeyId
+        ? `SELECT journey_id, nodes, edges FROM journey_flows WHERE journey_id = $1`
+        : `SELECT journey_id, nodes, edges FROM journey_flows WHERE status = 'active'`,
+      journeyId ? [journeyId] : []
+    );
+
+    let nodesSnapshotted = 0;
+    let entriesConsidered = 0;
+
+    for (const j of journeys) {
+      const nodes   = j.nodes || [];
+      const edges   = j.edges || [];
+      const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+      const runId   = PopularityService.runIdForBucket(j.journey_id);
+
+      // Active entries + when their last journey event happened (used to compute
+      // when their current wait will elapse).
+      const { rows: entries } = await db.query(
+        `SELECT je.entry_id, je.current_node_id, je.entered_at,
+                (SELECT MAX(created_at) FROM journey_events WHERE entry_id = je.entry_id) AS last_event
+           FROM journey_entries je
+          WHERE je.journey_id = $1 AND je.status = 'active'`,
+        [j.journey_id]
+      );
+
+      // Track which (journey, action_node) pairs we've already snapshotted in
+      // this prewarm pass — many entries can land on the same node, and the
+      // snapshot only needs to happen once per node per run.
+      const snapshotted = new Set();
+
+      for (const entry of entries) {
+        entriesConsidered++;
+        const currentNode = nodeMap[entry.current_node_id];
+        if (!currentNode) continue;
+
+        // Only entries sitting on a wait node have a predictable fire time.
+        // (Entries already on action nodes will fire on the very next cron.)
+        if (currentNode.type !== 'wait') continue;
+
+        const waitDays = currentNode.data?.waitDays || 1;
+        const lastEventTs = new Date(entry.last_event || entry.entered_at).getTime();
+        const fireTs = lastEventTs + waitDays * 86_400_000;
+
+        // Within [now+lookahead-window, now+lookahead+window]?
+        if (Math.abs(fireTs - (now + lookaheadMs)) > windowMs) continue;
+
+        // Find the action node this wait flows into.
+        const outEdge = edges.find(e => e.source === entry.current_node_id);
+        const nextNode = outEdge && nodeMap[outEdge.target];
+        if (!nextNode || nextNode.type !== 'action') continue;
+        if (!nextNode.data?.templateId) continue;
+
+        if (snapshotted.has(nextNode.id)) continue;
+        snapshotted.add(nextNode.id);
+
+        await this._ensureNodeSnapshotted({
+          journeyId:         j.journey_id,
+          runId,
+          nodeId:            nextNode.id,
+          contentTemplateId: parseInt(nextNode.data.templateId),
+        });
+        nodesSnapshotted++;
+      }
+    }
+
+    return {
+      journeysScanned:    journeys.length,
+      nodesSnapshotted,
+      entriesConsidered,
+      lookaheadMinutes,
+      windowMinutes,
+    };
+  }
+
+  /**
+   * Lazy popularity snapshot — fired the first time an entry actually hits a
+   * given action node within a processJourney run. Same one-call-per-run
+   * uniformity as before (the popularity_snapshots UNIQUE constraint + the
+   * in-memory dedupe Set in processJourney guarantee a single Anthropic call
+   * per (journey, node, run)) but skips nodes that have no firing entries.
+   *
+   * Why lazy: a journey with a 14-day drip would otherwise pay for 4 LLM
+   * ranking calls every cron tick — including the 13 ticks where the day-14
+   * node has zero firing entries. Lazy snapshotting makes "node fires → fresh
+   * dynamic content" a literal invariant of the code, not an emergent property.
+   */
+  static async _ensureNodeSnapshotted({ journeyId, runId, nodeId, contentTemplateId }) {
+    const { rows: [cfg] } = await db.query(
+      `SELECT eht.uses_popular_products, eht.product_type, eht.product_limit,
+              eht.html_body
+         FROM content_templates ct
+         LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
+        WHERE ct.id = $1`,
+      [contentTemplateId]
+    );
+    if (!cfg || !cfg.uses_popular_products || !cfg.product_type) return;
+
+    const themes = this._extractThemesFromTemplate(cfg.html_body, cfg.product_type);
+
+    try {
+      await PopularityService.snapshot({
+        journeyId,
+        nodeId,
+        runId,
+        productType: cfg.product_type,
+        themes:      themes.length > 0 ? themes : [null],
+        limit:       cfg.product_limit || undefined,
+      });
+      console.log(`[Journey ${journeyId}] popularity snapshot taken at node fire — node=${nodeId} type=${cfg.product_type} provider=${PopularityService.provider()}`);
+    } catch (err) {
+      // Snapshot failures are surfaced but don't kill the run — the renderer
+      // will see an empty grouped map and drop the marker silently.
+      console.error(`[Journey ${journeyId}] popularity snapshot failed for node=${nodeId}: ${err.message}`);
+    }
+  }
+
+  /** Pull every theme=... attribute from <!-- SLOT:(product_grid|hero_image) ... --> comments matching productType. */
+  static _extractThemesFromTemplate(html, productType) {
+    if (!html) return [];
+    const re = /<!--\s*SLOT:(?:product_grid|hero_image)\s+([^>]*?)-->/g;
+    const themes = new Set();
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const attrs = {};
+      const ar = /(\w+)\s*=\s*"([^"]*)"/g;
+      let a;
+      while ((a = ar.exec(m[1])) !== null) attrs[a[1]] = a[2];
+      if (attrs.product_type !== productType) continue;
+      themes.add(attrs.theme || null);
+    }
+    return [...themes];
+  }
+
+  static async _resolveHtmlTemplateId(contentTemplateId) {
+    if (!contentTemplateId) return null;
+    const { rows: [r] } = await db.query(
+      'SELECT html_template_id FROM content_templates WHERE id = $1',
+      [contentTemplateId]
+    );
+    return r?.html_template_id || null;
+  }
+
+  /** Track-aware entry advance — same logic the worker uses, but available to the producer
+   *  for the misconfigured-action-node fallback so we don't enqueue garbage jobs. */
+  static async _advanceEntry(entryId, currentNodeId, edges, nodeMap, entryTrack) {
+    const matchesTrack = (nodeId) => {
+      const n = nodeMap[nodeId];
+      if (!n) return false;
+      const t = n.data?.track || 'all';
+      return t === 'all' || t === entryTrack;
+    };
+    const outEdges = edges.filter(e => e.source === currentNodeId);
+    const trackEdges = outEdges.filter(e => matchesTrack(e.target));
+    const chosen = trackEdges[0] || outEdges[0];
+
+    if (chosen) {
+      await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2',
+                     [chosen.target, entryId]);
+    } else {
+      await db.query("UPDATE journey_entries SET status = 'completed', completed_at = NOW() WHERE entry_id = $1",
+                     [entryId]);
+    }
   }
 
   /**

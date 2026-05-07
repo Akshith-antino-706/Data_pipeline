@@ -90,7 +90,7 @@ export default function SystemArchitecture() {
         <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--muted-foreground)', lineHeight: 1.6 }}>
           Complete technical documentation for the Rayna Tours Omnichannel Marketing Platform.
           This page covers every data flow, table relationship, business logic, and automation in the system.
-          If you are new to this project, read sections 1-6 in order.
+          If you are new to this project, read sections 1-7 in order.
         </p>
       </motion.div>
 
@@ -381,7 +381,54 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="7. Conversion Detection — How We Know It Worked" icon={Zap} color="#ef4444">
+      <Section title="7. Template Approval Pipeline (Gupshup) — WhatsApp + SMS" icon={Shield} color="#0ea5e9">
+        <p>Email goes out directly over SMTP, but WhatsApp and SMS both require <strong>external approval before any message can be sent</strong>. WhatsApp templates are reviewed by Meta via Gupshup's template API; Indian SMS templates must be DLT-registered under a Principal Entity ID with TRAI. The pipeline enforces both — no WA/SMS message ships until the template is <M>external_status = 'approved'</M>.</p>
+
+        <h4 style={{ marginTop: 20 }}>7.1 Approval States</h4>
+        <Tbl headers={['external_status', 'Meaning', 'Sendable?']} rows={[
+          ['not_submitted', 'Template exists locally, never sent to Gupshup', 'No'],
+          ['pending', 'Submitted — awaiting Meta (WA) or DLT registration (SMS)', 'No'],
+          ['approved', 'Cleared by Gupshup/Meta/TRAI — ready to send', 'Yes'],
+          ['rejected', 'Rejected with a reason stored in external_rejection_reason', 'No'],
+          ['paused', 'Temporarily blocked by Meta (e.g. quality rating dropped)', 'No'],
+          ['disabled', 'Provider disabled this template', 'No'],
+          ['error', 'Submission failed — see external_payload for raw response', 'No'],
+        ]} />
+
+        <h4 style={{ marginTop: 20 }}>7.2 How It Flows</h4>
+        <ol style={{ paddingLeft: 20 }}>
+          <li><strong>Template authored</strong> on the Content page (or seeded by <M>seed_journey_content.js</M>) — starts as <M>not_submitted</M></li>
+          <li><strong>Submit for approval</strong> — UI button on Content page calls <M>POST /api/v3/gupshup/templates/:id/submit</M>. WA templates go to Gupshup's template API; SMS templates need a DLT Content Template ID set separately via <M>set-external-id</M> once registered</li>
+          <li><strong>Status updates</strong> arrive via Gupshup webhook at <M>POST /api/v3/gupshup/webhook/wa</M>. Alternatively the UI can poll via <M>check-status</M></li>
+          <li><strong>Every send</strong> (journey engine or manual test-send) calls <M>GupshupService.assertApproved()</M> first. Non-approved templates fail with a clean "not approved" error and log a <M>send_blocked</M> event — they <strong>never reach the provider</strong></li>
+          <li><strong>Delivery</strong> for approved templates routes through <M>GupshupService.sendWhatsApp()</M> or <M>sendSMS()</M>, which include DLT headers (Principal Entity ID, Content Template ID) where required</li>
+        </ol>
+
+        <Callout type="info">
+          <strong>Simulation mode:</strong> Until Gupshup keys land in <M>.env</M>, the whole pipeline runs in simulation — submissions mark templates <M>pending</M> with a fake external ID, and sends return <M>simulated: true</M> without hitting any provider. Use <M>POST /templates/:id/force-approve</M> (Content page → "Force approve (dev)") to flip a template to approved for end-to-end testing. The button auto-hides once real keys are configured.
+        </Callout>
+
+        <h4 style={{ marginTop: 20 }}>7.3 DLT for SMS (India)</h4>
+        <p>Indian SMS has a second approval layer — <strong>DLT registration via TRAI</strong>. Every sender ID, header, and content template must be registered with your telecom operator (Jio/Airtel/Vi) and assigned a 19-digit Content Template ID <strong>before</strong> Gupshup will dispatch. Our pipeline stores that DLT ID as <M>external_template_id</M>, and the send method attaches it as <M>dltTemplateId</M> on every outgoing request.</p>
+        <Tbl headers={['DLT Field', 'Env Var', 'Purpose']} rows={[
+          ['Principal Entity ID', 'DLT_PRINCIPAL_ENTITY_ID', 'Your brand on TRAI (19 digits)'],
+          ['Telemarketer ID', 'DLT_TELEMARKETER_ID', 'Gupshup\'s telemarketer registration'],
+          ['Header / Sender Mask', 'DLT_HEADER_ID + GUPSHUP_SMS_SENDER_ID', '6-char sender e.g. RAYNAT'],
+          ['Content Template ID', 'stored per-template in external_template_id', 'Specific to each approved message'],
+        ]} />
+
+        <h4 style={{ marginTop: 20 }}>7.4 Audit Trail</h4>
+        <p>Every state transition (submit, webhook update, manual sync, blocked send) writes a row to <M>template_approval_events</M>. Use <M>GET /api/v3/gupshup/templates/:id/events</M> to see the full history, including the provider's raw response stored in the <M>details</M> JSONB.</p>
+
+        <Callout type="warning">
+          <strong>The approval gate cannot be bypassed in production.</strong> Even if a journey node has a valid templateId, <M>processJourney()</M> will skip the send (logging <M>event_type = 'action_blocked'</M>) rather than fall back to raw text. WhatsApp's 24-hour session window would let <M>sendText</M> work for some users, but it can't match the approved copy, so we don't use it — every customer gets the same reviewed message, or no message at all.
+        </Callout>
+
+        <p><strong>Key files:</strong> <M>backend/src/services/GupshupService.js</M>, <M>backend/src/routes/gupshup.js</M>, <M>backend/src/migrations/047_gupshup_approval.sql</M></p>
+      </Section>
+
+      {/* ══════════════════════════════════════════════════════════ */}
+      <Section title="8. Conversion Detection — How We Know It Worked" icon={Zap} color="#ef4444">
         <p>The <strong>ConversionDetector</strong> answers the question: "did the journey messages actually lead to a booking?" It checks 3 signals, runs daily at 5 AM Dubai.</p>
 
         <h4 style={{ marginTop: 20 }}>7.1 The Three Signals</h4>
@@ -408,7 +455,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="8. Product Affinity — Personalized Recommendations" icon={DollarSign} color="#f59e0b">
+      <Section title="9. Product Affinity — Personalized Recommendations" icon={DollarSign} color="#f59e0b">
         <p>When a customer browses the Rayna Tours website, GTM tracks which products they view, add to cart, or purchase. The <strong>ProductAffinityService</strong> scores these interactions and recommends products in journey messages.</p>
 
         <h4 style={{ marginTop: 20 }}>8.1 Scoring Weights</h4>
@@ -439,7 +486,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="9. Campaign & UTM Tracking Chain" icon={Megaphone} color="#6366f1">
+      <Section title="10. Campaign & UTM Tracking Chain" icon={Megaphone} color="#6366f1">
         <p>The full chain from customer segment to tracked click:</p>
 
         <Flow steps={[
@@ -459,7 +506,7 @@ export default function SystemArchitecture() {
           ['Strategies', '11 (6 B2C + 4 B2B + 1 Occasion)', 'omnichannel_strategies'],
           ['Journeys', '11 (each with 10-15 nodes)', 'journey_flows'],
           ['Campaigns', '15 (one per segment per channel)', 'campaigns'],
-          ['Templates', '42 (29 B2C + 8 B2B + 5 Occasion)', 'content_templates'],
+          ['Templates', '65 (one per journey action node, rebuilt 2026-04-21)', 'content_templates'],
           ['UTM Links', '15 (one per campaign)', 'utm_tracking'],
           ['User Links', 'Generated per user per campaign', 'user_utm_links'],
         ]} />
@@ -478,7 +525,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="10. Cron Schedule — What Runs When" icon={Clock} color="#f97316">
+      <Section title="11. Cron Schedule — What Runs When" icon={Clock} color="#f97316">
         <p>All automated jobs with their exact timing (Dubai timezone = UTC+4):</p>
 
         <Tbl headers={['Dubai Time', 'UTC', 'Cron Expression', 'Job', 'Service', 'Duration']} rows={[
@@ -496,7 +543,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="11. Database Tables — Complete Reference" icon={Database} color="#06b6d4">
+      <Section title="12. Database Tables — Complete Reference" icon={Database} color="#06b6d4">
         <h4>Core Identity & Booking Tables</h4>
         <Tbl headers={['Table', 'Rows', 'Purpose', 'Key Columns']} rows={[
           ['unified_contacts', '~1.6M', 'Single source of truth for all customers', 'unified_id (PK), email_key, phone_key, booking_status, product_tier, geography, is_indian, current_occasion'],
@@ -528,15 +575,29 @@ export default function SystemArchitecture() {
           ['journey_entries', 'Dynamic', 'One row per customer per journey enrollment', 'journey_id, customer_id (=unified_id), current_node_id, status, entered_at'],
           ['journey_events', 'Dynamic', 'Action log per node per entry', 'entry_id, node_id, event_type, channel, details (JSON)'],
           ['campaigns', '15', 'Campaigns linking segment → template', 'segment_label, channel, template_id, journey_id, sent/delivered/read/click counts'],
-          ['content_templates', '42', 'Message templates for email/WA/push', 'segment_label, channel, subject, body, variables[], coupon_code'],
+          ['content_templates', '65', 'Message templates for email/WA/SMS (one per journey action node)', 'channel, subject, body, external_provider, external_template_id, external_status, external_approved_at'],
+          ['template_approval_events', 'Dynamic', 'Audit trail of every Gupshup approval state change', 'template_id, provider, event_type (submitted/status_update/status_checked/send_blocked), previous_status, new_status, details (JSONB)'],
           ['utm_tracking', '15', 'Campaign-level UTM links', 'campaign_id, utm_source/medium/campaign/content, full_url, clicks, conversions'],
           ['user_utm_links', 'Dynamic', 'Per-user unique tracking tokens', 'utm_id, unified_id, token, click_count, first/last_clicked_at'],
           ['sync_metadata', '~15', 'Last sync timestamp per table', 'table_name, last_synced_at, rows_synced, sync_status, error_message'],
         ]} />
+
+        <h4 style={{ marginTop: 20 }}>content_templates — Gupshup Approval Columns</h4>
+        <Tbl headers={['Column', 'Type', 'Purpose']} rows={[
+          ['external_provider', 'TEXT', "'gupshup' — which provider owns the approval (null for email)"],
+          ['external_template_id', 'TEXT', 'Gupshup template UUID (WA) or DLT Content Template ID (SMS)'],
+          ['external_status', 'TEXT', "not_submitted | pending | approved | rejected | paused | disabled | error"],
+          ['external_category', 'TEXT', 'WA: MARKETING/UTILITY/AUTHENTICATION  |  SMS: transactional/promotional/service'],
+          ['external_language', 'TEXT', "Language code, default 'en'"],
+          ['external_submitted_at / approved_at / rejected_at', 'TIMESTAMPTZ', 'Timestamps per state transition'],
+          ['external_rejection_reason', 'TEXT', "Meta's reason when status is rejected"],
+          ['external_last_checked_at', 'TIMESTAMPTZ', 'Last time we polled Gupshup for this template'],
+          ['external_payload', 'JSONB', "Raw response from Gupshup's last interaction (for debugging)"],
+        ]} />
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="12. API Endpoints — Complete Reference" icon={Code} color="#94a3b8">
+      <Section title="13. API Endpoints — Complete Reference" icon={Code} color="#94a3b8">
         <h4>Unified Contacts & Segmentation</h4>
         <Tbl headers={['Method', 'Endpoint', 'Purpose', 'Key Params']} rows={[
           ['GET', '/api/v3/unified-contacts', 'Paginated contact list', 'page, limit, search, sortBy, contactType, bookingStatus, productTier, geography'],
@@ -578,10 +639,23 @@ export default function SystemArchitecture() {
           ['GET', '/api/v3/utm/track/:token', 'Track click + 302 redirect with rid param'],
           ['POST', '/api/v3/gtm/event', 'Receive real-time GTM events from website'],
         ]} />
+
+        <h4 style={{ marginTop: 20 }}>Gupshup Approval (WhatsApp + SMS)</h4>
+        <Tbl headers={['Method', 'Endpoint', 'Purpose']} rows={[
+          ['GET',  '/api/v3/gupshup/config', 'Whether WA + SMS credentials are live or simulated'],
+          ['POST', '/api/v3/gupshup/templates/:id/submit', 'Submit a WA/SMS template for Gupshup/Meta approval'],
+          ['POST', '/api/v3/gupshup/templates/:id/check-status', 'Poll Gupshup for current template status'],
+          ['POST', '/api/v3/gupshup/templates/:id/set-external-id', 'Manually set external ID (e.g. DLT Content Template ID)'],
+          ['POST', '/api/v3/gupshup/templates/:id/force-approve', 'Dev bypass — flip to approved without calling Gupshup'],
+          ['GET',  '/api/v3/gupshup/templates/:id/events', 'Audit trail of approval state transitions'],
+          ['POST', '/api/v3/gupshup/bulk-submit', 'Submit every not_submitted WA/SMS template'],
+          ['POST', '/api/v3/gupshup/webhook/wa', 'Gupshup template-status webhook (Meta approvals)'],
+          ['POST', '/api/v3/gupshup/webhook/sms', 'Gupshup SMS delivery receipts'],
+        ]} />
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="13. Frontend Pages & Navigation" icon={Activity} color="#e2b340">
+      <Section title="14. Frontend Pages & Navigation" icon={Activity} color="#e2b340">
         <Tbl headers={['Page', 'Route', 'What It Shows', 'Key API Calls']} rows={[
           ['Dashboard', '/', 'KPIs, segment chart, revenue table, quick actions', 'getSegmentationTree, getSegmentActivity'],
           ['Segmentation', '/segmentation', '3-step decision tree: status cards → tier × geo → customer drill-down', 'getSegmentationTree, getSegmentCustomers'],
@@ -589,7 +663,7 @@ export default function SystemArchitecture() {
           ['Contacts', '/contacts', 'Unified contact list + detail modal with expandable booking tables', 'getUnifiedContacts, getUnifiedContact'],
           ['Journeys', '/journeys', 'Visual flow builder with drag-drop nodes, analytics, enrollments', 'getJourneys, getJourney, processJourney'],
           ['Campaigns', '/campaigns', 'Campaign list with metrics per channel + segment', 'getCampaigns, createCampaign, executeCampaign'],
-          ['Content', '/content', '42 templates with preview, AI generation, approval workflow', 'getTemplates, createTemplate, generateContent'],
+          ['Content', '/content', '65 templates with preview, AI generation, Gupshup approval workflow for WA/SMS', 'getTemplates, createTemplate, submitTemplateForApproval, checkGupshupStatus'],
           ['UTM Tracking', '/utm', 'Campaign UTM links + per-user token generation + click stats', 'getUTMLinks, generateUserLinks'],
           ['GTM & BigQuery', '/gtm', 'GTM tag setup, event log, GA4 sync status', 'getGTMEvents, getGA4Status'],
           ['Data Pipeline', '/data-pipeline', 'All sync statuses, row counts, manual sync triggers', 'getSyncStatus, triggerSync'],
@@ -601,7 +675,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="14. Environment & Deployment" icon={Shield} color="#64748b">
+      <Section title="15. Environment & Deployment" icon={Shield} color="#64748b">
         <h4>Environment Variables (.env file)</h4>
         <Tbl headers={['Variable', 'Purpose', 'Example Value']} rows={[
           ['DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS', 'PostgreSQL connection', 'localhost, 5432, rayna_data_pipe'],
@@ -614,6 +688,26 @@ export default function SystemArchitecture() {
           ['VITE_API_URL', 'Frontend → Backend API base URL (Netlify env var)', 'https://qh6hjtm8-3001.inc1.devtunnels.ms'],
           ['SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS', 'Email sending via SMTP/SendGrid', 'smtp.sendgrid.net, 587'],
         ]} />
+
+        <h4 style={{ marginTop: 20 }}>Gupshup — WhatsApp + SMS Approval & Send</h4>
+        <p>All of these are optional — if absent, the approval pipeline runs in simulation mode (submissions marked <M>pending</M> with fake external IDs, sends return <M>{`{simulated: true}`}</M>). Drop them into <M>backend/.env</M> when ready to go live.</p>
+        <Tbl headers={['Variable', 'Channel', 'Purpose']} rows={[
+          ['GUPSHUP_API_KEY',        'WA', 'Gupshup API key from dashboard → API section'],
+          ['GUPSHUP_APP_NAME',       'WA', 'Your Gupshup app name (exact)'],
+          ['GUPSHUP_APP_ID',         'WA', 'Numeric app ID under Account Details'],
+          ['GUPSHUP_WA_SOURCE',      'WA', 'Registered WhatsApp Business number (international, no +)'],
+          ['GUPSHUP_WA_NAMESPACE',   'WA', 'Template namespace UUID from Gupshup dashboard'],
+          ['GUPSHUP_CALLBACK_SECRET','WA', 'Shared secret for verifying incoming webhook POSTs'],
+          ['GUPSHUP_SMS_USER_ID',    'SMS', 'Gupshup SMS API user ID'],
+          ['GUPSHUP_SMS_PASSWORD',   'SMS', 'Gupshup SMS API password'],
+          ['GUPSHUP_SMS_SENDER_ID',  'SMS', '6-char DLT-registered sender mask, e.g. RAYNAT'],
+          ['DLT_PRINCIPAL_ENTITY_ID','SMS', '19-digit Principal Entity ID from TRAI DLT portal'],
+          ['DLT_TELEMARKETER_ID',    'SMS', 'DLT Telemarketer ID (Gupshup provides)'],
+          ['DLT_HEADER_ID',          'SMS', 'DLT Header ID for your sender mask'],
+        ]} />
+        <Callout type="info">
+          Per-template DLT Content Template IDs (issued by TRAI when each SMS template is registered) are stored on individual <M>content_templates</M> rows via <M>POST /api/v3/gupshup/templates/:id/set-external-id</M> — not as env vars.
+        </Callout>
 
         <h4 style={{ marginTop: 20 }}>Deployment Architecture</h4>
         <Tbl headers={['Component', 'Where', 'URL']} rows={[
@@ -672,7 +766,7 @@ frontend/
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="15. Troubleshooting & Common Issues" icon={AlertTriangle} color="#ef4444">
+      <Section title="16. Troubleshooting & Common Issues" icon={AlertTriangle} color="#ef4444">
         <Tbl headers={['Problem', 'Likely Cause', 'How to Fix']} rows={[
           ['Segment counts show 0', 'computeSegments() hasn\'t run yet', 'Trigger sync: POST /api/v3/unified-contacts/sync'],
           ['New Rayna bookings not showing', 'Incremental sync hasn\'t run or API is down', 'Check: GET /api/v3/rayna-sync/status, then POST /api/v3/rayna-sync/trigger'],
@@ -682,8 +776,13 @@ frontend/
           ['CORS error on Netlify', 'Backend ALLOWED_ORIGINS missing the Netlify URL', 'Add URL to ALLOWED_ORIGINS in server.js'],
           ['Port 3443 in use error', 'Previous backend instance not killed', 'Kill process: lsof -ti :3443 | xargs kill -9'],
           ['Empty product affinity', 'No GTM events captured yet (GTM tag not live)', 'Deploy GTM tag on raynatours.com, wait for events'],
-          ['Occasion segment not triggering', 'Holiday is >14 days away, or country doesn\'t match', 'Check holidays_calendar dates and customer country field'],
+          ['Occasion segment not triggering', 'Holiday is >90 days away, or country doesn\'t match', 'Check holidays_calendar.entry_days (now 90) and customer country field'],
           ['B2B filter shows no data', 'contact_type is null for most contacts', 'Contacts with no type default to B2C; check chat_departments for B2B flag'],
+          ['WA/SMS test-send fails "not approved"', 'Template hasn\'t been Gupshup-approved yet', 'Content page → "Submit for approval", then "Check status" when ready. Or "Force approve (dev)" in simulation mode'],
+          ['Submit-for-approval returns simulated', 'GUPSHUP_API_KEY not set in backend/.env', 'Normal in dev — simulation is the intended fallback. Add keys when going live'],
+          ['SMS stuck pending forever', 'DLT Content Template ID never set', 'Register template on TRAI portal, then POST /api/v3/gupshup/templates/:id/set-external-id with the 19-digit ID'],
+          ['Gupshup webhook never fires', 'Callback URL not configured on Gupshup dashboard, or not publicly reachable', 'Set POST https://<your-public-host>/api/v3/gupshup/webhook/wa in Gupshup dashboard → Inbox Settings'],
+          ['journey_events shows action_blocked', 'Journey tried to send via unapproved template', 'Approve the template via Gupshup pipeline. Blocked sends do not retry automatically — next cron cycle will retry once status becomes approved'],
         ]} />
       </Section>
 

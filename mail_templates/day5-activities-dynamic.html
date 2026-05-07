@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Rayna Tours - Activities &amp; Experiences</title>
+  <style type="text/css">
+    @media only screen and (max-width: 620px) {
+      .container-table { width: 100% !important; max-width: 100% !important; }
+      .offer-title    { font-size: 24px !important; line-height: 34px !important; }
+      .offer-meta     { font-size: 12px !important; line-height: 19px !important; }
+      .offer-code-box { width: 100% !important; margin-top: 15px !important; }
+      .perk-grid      { table-layout: fixed !important; }
+      .perk-col       { display: table-cell !important; width: 25% !important; max-width: 25% !important; vertical-align: top !important; }
+      .promise-col    { width: 100% !important; display: block !important; margin-bottom: 10px !important; box-sizing: border-box !important; }
+      .promise-gap    { display: none !important; }
+      .platform-col   { width: 100% !important; display: block !important; padding: 0 0 10px 0 !important; box-sizing: border-box !important; }
+      .footer-pad     { padding-left: 20px !important; padding-right: 20px !important; }
+      .stack-column   { display: block !important; width: 100% !important; box-sizing: border-box !important; }
+      .grid-col       { display: block !important; width: 100% !important; padding: 0 0 15px 0 !important; box-sizing: border-box !important; }
+      .hero-stat-col  { width: 50% !important; display: inline-block !important; padding: 10px 0 !important; border-right: none !important; border-bottom: 1px solid rgba(255, 255, 255, 0.15) !important; }
+      .hero-title     { font-size: 32px !important; line-height: 40px !important; }
+      .section-title  { font-size: 28px !important; line-height: 36px !important; }
+      .nav-links      { display: block !important; text-align: center !important; padding-top: 10px !important; }
+      .nav-item       { display: inline-block !important; margin: 5px 10px !important; }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f0ede8">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #f0ede8">
+    <tr>
+      <td align="center" style="padding: 0">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="container-table" style="width: 600px; max-width: 600px; border-collapse: collapse; background-color: #ffffff;">
+
+          <tr>
+            <td align="center" style="background-color: #1a1a1a; padding: 10px 24px; font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">
+              &#9992; {{hero.subheading}} &#9992;
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 16px 24px; border-bottom: 1px solid #f0ece4">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                <tr>
+                  <td align="left" valign="middle">
+                    <img src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours" width="120" style="display: block; width: 120px; border: 0;">
+                  </td>
+                  <td align="right" valign="middle" class="nav-links" style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: #4a4a4a;">
+                    <!-- @loop navigation -->
+                    <span class="nav-item"><a href="{{item.url}}" style="color: #4a4a4a; text-decoration: none">{{item.label}}</a></span>&nbsp;&nbsp;
+                    <!-- @endloop -->
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td bgcolor="#101010" style="padding: 0; border-bottom: 3px solid #1a1a1a">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #101010; background-image: linear-gradient(to top, #101010 0%, rgba(16,16,16,0.96) 15%, rgba(16,16,16,0.78) 38%, rgba(16,16,16,0.42) 68%, rgba(16,16,16,0.18) 100%), url('{{hero.backgroundImage}}'); background-size: cover; background-position: center;">
+                <tr>
+                  <td align="center" style="padding: 70px 24px 10px 24px; font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: rgba(255,255,255,0.75);">
+                    &mdash;&nbsp;&nbsp;{{hero.subheading}}&nbsp;&nbsp;&mdash;
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" class="hero-title" style="padding: 0 24px 16px 24px; font-family: Georgia, serif; font-size: 46px; line-height: 54px; font-weight: 700; color: #ffffff;">
+                    {{hero.title}}
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding: 0 48px 28px 48px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 24px; color: rgba(255,255,255,0.78);">
+                    {{hero.description}}
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" style="padding: 0 24px 34px 24px">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse">
+                      <tr>
+                        <td align="center" bgcolor="#1a1a1a" style="border: 1px solid #1a1a1a; border-radius: 2px;">
+                          <a href="{{hero.buttonUrl}}" style="display: inline-block; padding: 14px 34px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff; text-decoration: none; background-color: #1a1a1a;">{{hero.buttonLabel}}</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 0 40px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                      <tr><td style="height: 1px; line-height: 1px; font-size: 1px; background-color: rgba(255, 255, 255, 0.28);">&nbsp;</td></tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 24px 10px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                      <tr>
+                        <!-- @loop hero.stats -->
+                        <td width="25%" align="center" valign="top" class="hero-stat-col" style="padding: 0 8px; border-right: {{#if @last}}none{{else}}1px solid rgba(255, 255, 255, 0.22){{/if}};">
+                          <div style="padding: 0 0 8px 0; font-family: Arial, Helvetica, sans-serif; font-size: 24px; line-height: 28px; font-weight: 700; color: #ffffff;">{{item.value}}</div>
+                          <div style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 18px; color: #f0ece5;">{{item.label}}</div>
+                        </td>
+                        <!-- @endloop -->
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr><td align="center" style="padding: 48px 24px 8px; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{topCities.sectionHeader}}</td></tr>
+          <tr><td align="center" class="section-title" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; color: #1a1a1a;">{{topCities.title}}</td></tr>
+          <tr><td align="center" style="padding: 0 40px 22px; font-family: Arial, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{topCities.description}}</td></tr>
+          <tr>
+            <td style="padding: 0 16px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop topCities.cities 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td width="50%" valign="top" class="grid-col" style="padding: 0 5px 10px 5px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="height: 280px">
+                      <tr>
+                        <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('{{item.imageUrl}}'); background-size: cover; background-position: center; padding: 40px 20px 20px 20px;">
+                          <div style="font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff; opacity: 0.8">{{item.country}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 20px; color: #ffffff; padding-top: 6px;">{{item.city}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #e0e0e0; padding-top: 6px;">{{item.activitiesCount}}</div>
+                          <div style="padding-top: 10px"><a href="{{item.exploreUrl}}" style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Explore &rarr;</a></div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr><td align="center" style="padding: 44px 24px 8px; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{thrillAdventure.sectionHeader}}</td></tr>
+          <tr><td align="center" class="section-title" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; color: #1a1a1a;">{{thrillAdventure.title}}</td></tr>
+          <tr><td align="center" style="padding: 0 40px 22px; font-family: Arial, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{thrillAdventure.description}}</td></tr>
+          <tr>
+            <td style="padding: 0 16px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop thrillAdventure.picks 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td width="50%" valign="top" class="grid-col" style="padding: 0 5px 10px 5px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="height: 280px">
+                      <tr>
+                        <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('{{item.imageUrl}}'); background-size: cover; background-position: center; padding: 40px 20px 20px 20px;">
+                          <div style="font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff; opacity: 0.8">{{item.category}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 20px; color: #ffffff; padding-top: 6px;">{{item.title}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #e0e0e0; padding-top: 6px;">{{item.duration}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 18px; font-weight: 700; color: #ffffff; padding-top: 6px;">{{item.price}}</div>
+                          <div style="padding-top: 10px"><a href="{{item.bookUrl}}" style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now &rarr;</a></div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr><td align="center" style="padding: 44px 24px 8px; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{familyFun.sectionHeader}}</td></tr>
+          <tr><td align="center" class="section-title" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; color: #1a1a1a;">{{familyFun.title}}</td></tr>
+          <tr><td align="center" style="padding: 0 40px 22px; font-family: Arial, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{familyFun.description}}</td></tr>
+          <tr>
+            <td style="padding: 0 16px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop familyFun.picks 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td width="50%" valign="top" class="grid-col" style="padding: 0 5px 10px 5px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="height: 280px">
+                      <tr>
+                        <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('{{item.imageUrl}}'); background-size: cover; background-position: center; padding: 40px 20px 20px 20px;">
+                          <div style="font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff; opacity: 0.8">{{item.category}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 20px; color: #ffffff; padding-top: 6px;">{{item.title}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #e0e0e0; padding-top: 6px;">{{item.duration}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 18px; font-weight: 700; color: #ffffff; padding-top: 6px;">{{item.price}}</div>
+                          <div style="padding-top: 10px"><a href="{{item.bookUrl}}" style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now &rarr;</a></div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr><td height="20" style="background-color: #ffffff;">&nbsp;</td></tr>
+          <tr>
+            <td style="background-color: #151617; padding: 31px 38px 32px 38px; border-top: 3px solid #ffffff;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout: fixed;">
+                <tr>
+                  <td width="65%" valign="middle" class="stack-column" style="padding-right: 20px;">
+                    <div style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2.7px; text-transform: uppercase; color: #ffffff; padding-bottom: 7px;">{{limitedOffer.sectionHeader}}</div>
+                    <div class="offer-title" style="font-family: Georgia, serif; font-size: 27px; color: #ffffff; padding-bottom: 6px;">{{limitedOffer.title}}</div>
+                    <div class="offer-meta" style="font-family: Arial, sans-serif; font-size: 12px; color: #aeb3b9;">{{limitedOffer.description}}</div>
+                  </td>
+                  <td width="35%" valign="middle" class="stack-column">
+                    <div class="offer-code-box" style="background-color: #ffffff; text-align: center; padding: 15px 10px;">
+                      <div style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2.4px; text-transform: uppercase; color: #686868; padding-bottom: 5px;">Use Code</div>
+                      <div style="font-family: Georgia, serif; font-size: 24px; font-weight: 700; color: #111111; letter-spacing: 2px; word-wrap: break-word;">{{limitedOffer.code}}</div>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr><td align="center" style="padding: 44px 24px 8px; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{mustVisitIcons.sectionHeader}}</td></tr>
+          <tr><td align="center" class="section-title" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; color: #1a1a1a;">{{mustVisitIcons.title}}</td></tr>
+          <tr><td align="center" style="padding: 0 40px 22px; font-family: Arial, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{mustVisitIcons.description}}</td></tr>
+          <tr>
+            <td style="padding: 0 16px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop mustVisitIcons.picks 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td width="50%" valign="top" class="grid-col" style="padding: 0 5px 10px 5px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="height: 280px">
+                      <tr>
+                        <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('{{item.imageUrl}}'); background-size: cover; background-position: center; padding: 40px 20px 20px 20px;">
+                          <div style="font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff; opacity: 0.8">{{item.category}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 20px; color: #ffffff; padding-top: 6px;">{{item.title}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #e0e0e0; padding-top: 6px;">{{item.duration}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 18px; font-weight: 700; color: #ffffff; padding-top: 6px;">{{item.price}}</div>
+                          <div style="padding-top: 10px"><a href="{{item.bookUrl}}" style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now &rarr;</a></div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr><td align="center" style="padding: 44px 24px 8px; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{cruisesWaterparks.sectionHeader}}</td></tr>
+          <tr><td align="center" class="section-title" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; color: #1a1a1a;">{{cruisesWaterparks.title}}</td></tr>
+          <tr><td align="center" style="padding: 0 40px 22px; font-family: Arial, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{cruisesWaterparks.description}}</td></tr>
+          <tr>
+            <td style="padding: 0 16px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop cruisesWaterparks.picks 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td width="50%" valign="top" class="grid-col" style="padding: 0 5px 10px 5px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="height: 280px">
+                      <tr>
+                        <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('{{item.imageUrl}}'); background-size: cover; background-position: center; padding: 40px 20px 20px 20px;">
+                          <div style="font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff; opacity: 0.8">{{item.category}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 20px; color: #ffffff; padding-top: 6px;">{{item.title}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #e0e0e0; padding-top: 6px;">{{item.duration}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 18px; font-weight: 700; color: #ffffff; padding-top: 6px;">{{item.price}}</div>
+                          <div style="padding-top: 10px"><a href="{{item.bookUrl}}" style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now &rarr;</a></div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr><td align="center" style="padding: 44px 24px 8px; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{wildlifeWonders.sectionHeader}}</td></tr>
+          <tr><td align="center" class="section-title" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; color: #1a1a1a;">{{wildlifeWonders.title}}</td></tr>
+          <tr><td align="center" style="padding: 0 40px 22px; font-family: Arial, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{wildlifeWonders.description}}</td></tr>
+          <tr>
+            <td style="padding: 0 16px 0">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop wildlifeWonders.picks 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td width="50%" valign="top" class="grid-col" style="padding: 0 5px 10px 5px">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="height: 280px">
+                      <tr>
+                        <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('{{item.imageUrl}}'); background-size: cover; background-position: center; padding: 40px 20px 20px 20px;">
+                          <div style="font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff; opacity: 0.8">{{item.category}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 20px; color: #ffffff; padding-top: 6px;">{{item.title}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #e0e0e0; padding-top: 6px;">{{item.duration}}</div>
+                          <div style="font-family: Georgia, serif; font-size: 18px; font-weight: 700; color: #ffffff; padding-top: 6px;">{{item.price}}</div>
+                          <div style="padding-top: 10px"><a href="{{item.bookUrl}}" style="font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now &rarr;</a></div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background-color: #f4f1ec; padding: 20px 0; border-top: 1px solid #e8e3d8; border-bottom: 1px solid #e8e3d8;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="perk-grid">
+                <tr>
+                  <!-- @loop perks -->
+                  <td class="perk-col" width="25%" align="center" valign="top" style="padding: 0 6px; font-family: Arial, sans-serif; font-size: 8px; line-height: 12px; letter-spacing: 2px; color: #101010; text-transform: uppercase;">
+                    <div style="font-size: 15px; line-height: 18px; padding-bottom: 5px; color: #c89b2c;">{{item.icon}}</div>{{item.label}}
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 46px 36px 28px; background-color: #ffffff">
+              <div align="center" style="font-family: Arial, sans-serif; font-size: 10px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase; color: #101010;">{{promise.sectionHeader}}</div>
+              <h2 align="center" class="section-title" style="margin: 8px 0 10px; font-family: Georgia, serif; font-size: 28px; font-weight: normal; color: #101010;">{{promise.title}}</h2>
+              <p align="center" style="margin: 0 0 30px; font-family: Arial, sans-serif; font-size: 14px; line-height: 24px; color: #8a8d91;">{{promise.description}}</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <!-- @loop promise.items -->
+                  <td class="promise-col" width="32%" valign="top" style="padding: 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8;">
+                    <div style="font-size: 24px; color: #c89b2c;">{{item.icon}}</div>
+                    <h3 style="margin: 10px 0 8px; font-family: Georgia, serif; font-size: 20px; color: #101010;">{{item.title}}</h3>
+                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91;">{{item.description}}</p>
+                  </td>
+                  {{#if @last}}{{else}}<td class="promise-gap" width="10">&nbsp;</td>{{/if}}
+                  <!-- @endloop -->
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 40px 38px 46px; background-color: #f4f1ec">
+              <div align="center" style="font-family: Arial, sans-serif; font-size: 10px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase; color: #9ea1a5;">{{platforms.sectionHeader}}</div>
+              <h2 align="center" class="section-title" style="margin: 10px 0 10px; font-family: Georgia, serif; font-size: 27px; font-weight: normal; color: #101010;">{{platforms.title}}</h2>
+              <p align="center" style="margin: 0 0 26px; font-family: Arial, sans-serif; font-size: 12px; line-height: 22px; color: #8a8d91;">{{platforms.description}}</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <!-- @chunk-loop platforms.items 2 -->
+                <tr>
+                  <!-- @loop chunk -->
+                  <td class="platform-col" width="50%" valign="top" style="padding: 0 5px 10px 5px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid {{item.color}}; background-color: {{item.bg}};">
+                      <tr>
+                        <td align="center" style="padding: 18px 12px 16px 12px;">
+                          <div style="padding-bottom: 8px;"><img src="{{item.logo}}" alt="{{item.name}}" style="height: 24px; width: auto; display: block; margin: 0 auto;"></div>
+                          <div style="padding-bottom: 8px; font-family: Arial, sans-serif; font-size: 18px; line-height: 1; color: {{item.color}};">{{item.stars}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 20px; font-weight: 800; color: #1a1a1a; padding-bottom: 2px;">{{item.rating}}</div>
+                          <div style="font-family: Arial, sans-serif; font-size: 11px; color: #666666; font-weight: 500;">{{item.reviews}}</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+                <!-- @endchunkloop -->
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="footer-pad" style="padding: 48px 40px 28px; background-color: #101010">
+              <div align="center" style="font-family: Arial, sans-serif; font-size: 10px; font-weight: bold; letter-spacing: 4px; text-transform: uppercase; color: #9ea1a5;">{{ctaFooter.sectionHeader}}</div>
+              <h2 align="center" class="section-title" style="margin: 12px 0 14px; font-family: Georgia, serif; font-size: 36px; color: #ffffff;">{{ctaFooter.title}}</h2>
+              <div align="center" style="font-family: Arial, sans-serif; font-size: 14px; line-height: 22px; color: #ffffff; padding-bottom: 26px;">{{ctaFooter.description}}</div>
+              <div align="center"><a href="{{ctaFooter.buttonUrl}}" style="display: inline-block; padding: 15px 28px; background-color: #ffffff; color: #101010; text-decoration: none; font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">{{ctaFooter.buttonLabel}}</a></div>
+
+              <div align="center" style="padding: 40px 0 18px;">
+                <img src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" width="150" alt="Rayna Tours" style="display: block; margin: 0 auto 12px; filter: brightness(0) invert(1);">
+                <div style="font-family: Arial, sans-serif; font-size: 14px; color: #9ea1a5;">Follow Us on</div>
+              </div>
+
+              <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto">
+                <tr>
+                  <!-- @loop footer.social -->
+                  <td style="padding: 0 7px">
+                    <div style="width: 40px; height: 40px; background-color: #333741; border-radius: 20px; line-height: 40px; text-align: center;">
+                      <a href="{{item.url}}" style="display: block; line-height: 0; padding-top: 10px;"><img src="{{item.icon}}" alt="{{item.name}}" width="20" style="display: inline-block; border: 0;"></a>
+                    </div>
+                  </td>
+                  <!-- @endloop -->
+                </tr>
+              </table>
+
+              <div align="center" style="font-family: Arial, sans-serif; font-size: 12px; color: #9ea1a5; letter-spacing: 2px; text-transform: uppercase; padding: 24px 0 14px;">
+                Activities&nbsp;&nbsp;|&nbsp;&nbsp;Holidays&nbsp;&nbsp;|&nbsp;&nbsp;Visas&nbsp;&nbsp;|&nbsp;&nbsp;Cruises
+              </div>
+              <div align="center" style="font-family: Arial, sans-serif; font-size: 12px; color: #9ea1a5; padding-bottom: 14px;">
+                {{footer.contact.address}}&nbsp;&nbsp; | &nbsp;&nbsp;<a href="tel:{{footer.contact.phone}}" style="color: #ffffff; text-decoration: none">{{footer.contact.phone}}</a>&nbsp;&nbsp; | &nbsp;&nbsp;<a href="mailto:{{footer.contact.email}}" style="color: #ffffff; text-decoration: none">{{footer.contact.email}}</a>
+              </div>
+              <div align="center" style="border-top: 1px solid #242424; padding-top: 14px; font-family: Arial, sans-serif; font-size: 11px; color: #6f747a;">
+                &copy; 2026 Rayna Tours. All rights reserved.<br />
+                <a href="#" style="color: #6f747a">Privacy Policy</a> &middot; <a href="#" style="color: #6f747a">Terms of Service</a> &middot; <a href="#" style="color: #6f747a">Unsubscribe</a>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -8,6 +8,7 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+import { spawn } from 'child_process';
 import pool from './src/config/database.js';
 import analyticsRouter from './src/routes/analytics.js';
 import segmentsRouter from './src/routes/segments.js';
@@ -33,6 +34,8 @@ import raynaSyncRouter from './src/routes/raynaSync.js';
 import dailyReportRouter from './src/routes/dailyReport.js';
 import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 import testE2ERouter from './src/routes/testE2E.js';
+import gupshupRouter from './src/routes/gupshup.js';
+import testSendsRouter from './src/routes/testSends.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -115,6 +118,8 @@ app.use('/api/v3/rayna-sync', raynaSyncRouter);
 app.use('/api/v3/daily-report', dailyReportRouter);
 app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 app.use('/api/v3/test', testE2ERouter);
+app.use('/api/v3/gupshup', gupshupRouter);
+app.use('/api/v3/test-sends', testSendsRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
@@ -352,19 +357,69 @@ if (process.env.BQ_SYNC_ENABLED === 'true') {
   console.log(`[GA4 Sync] Cron scheduled: ${schedule} (every 30 seconds)`);
 }
 
-// ── MySQL Sync Cron (every 10 minutes) ──────────────────
+// ── MySQL Sync Cron — delegates to incremental_sync.py ──────
+// MySQLSyncService is a deliberate no-op; the real work lives in the Python
+// script which connects to the two upstream MySQL servers, handles the
+// normalized schema (contacts_raw / chats / tickets), and upserts into Postgres.
+// We spawn it here so the single Node cron is the source of truth for when
+// it runs, with a lock to prevent overlap and graceful skip when MySQL is down.
 if (process.env.MYSQL_SYNC_ENABLED === 'true') {
-  const schedule = process.env.MYSQL_SYNC_CRON || '*/30 * * * *';
-  cron.schedule(schedule, async () => {
-    console.log('[MySQL Sync] Scheduled sync starting...');
-    try {
-      const results = await MySQLSyncService.syncAll();
-      console.log('[MySQL Sync] Scheduled sync completed:', JSON.stringify(results));
-    } catch (err) {
-      console.error('[MySQL Sync] Scheduled sync failed:', err.message);
+  const schedule = process.env.MYSQL_SYNC_CRON || '*/10 * * * *';
+  const pythonBin = process.env.PYTHON_BIN
+    || join(__dirname, '..', '.venv', 'bin', 'python3');
+  const scriptPath = join(__dirname, '..', 'incremental_sync.py');
+  const timeoutMs = parseInt(process.env.MYSQL_SYNC_TIMEOUT_MS || '480000'); // 8 min
+  let mysqlSyncing = false;
+
+  cron.schedule(schedule, () => {
+    if (mysqlSyncing) {
+      console.log('[MySQL Sync] Previous run still in progress — skipping');
+      return;
     }
+    mysqlSyncing = true;
+    const start = Date.now();
+    const child = spawn(pythonBin, [scriptPath], {
+      cwd: join(__dirname, '..'),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderrTail = '';
+    child.stdout.on('data', buf => {
+      // Only surface lines that signal real work (row counts, warnings)
+      const text = buf.toString();
+      if (/\b(rows?|inserted|updated|error|failed)\b/i.test(text)) {
+        process.stdout.write(`[MySQL Sync] ${text}`);
+      }
+    });
+    child.stderr.on('data', buf => { stderrTail = (stderrTail + buf.toString()).slice(-2000); });
+
+    const killer = setTimeout(() => {
+      if (!child.killed) {
+        console.error(`[MySQL Sync] Timed out after ${timeoutMs}ms — killing`);
+        child.kill('SIGKILL');
+      }
+    }, timeoutMs);
+
+    child.on('close', code => {
+      clearTimeout(killer);
+      const dur = ((Date.now() - start) / 1000).toFixed(1);
+      if (code === 0) {
+        console.log(`[MySQL Sync] Done in ${dur}s`);
+      } else {
+        // Common case: upstream MySQL is dead → connection error. Log terse, don't spam.
+        const isConnIssue = /timed out|connection|unreachable|host|refused/i.test(stderrTail);
+        console.error(`[MySQL Sync] Exit ${code} after ${dur}s${isConnIssue ? ' (upstream MySQL likely unreachable)' : ''}`);
+        if (!isConnIssue && stderrTail) console.error(stderrTail.slice(-500));
+      }
+      mysqlSyncing = false;
+    });
+    child.on('error', err => {
+      clearTimeout(killer);
+      console.error('[MySQL Sync] Spawn failed:', err.message);
+      mysqlSyncing = false;
+    });
   });
-  console.log(`[MySQL Sync] Cron scheduled: ${schedule}`);
+  console.log(`[MySQL Sync] Cron scheduled: ${schedule} (runs ${scriptPath})`);
 }
 
 // ── Rayna API Sync Cron (modified-date based, daily) ────────
@@ -512,6 +567,24 @@ cron.schedule('0 0 * * *', async () => {
 });
 console.log('[Cache Refresh] Cron scheduled: 0 0 * * * (4 AM Dubai daily)');
 
+// 4:00 AM Dubai — T-60min popularity prewarm. Walks active journeys, finds
+// entries whose wait will elapse in ~60 min, and snapshots their next action
+// node into popularity_snapshots NOW. Uses the same per-(journey, day) run_id
+// that processJourney will compute at 5 AM, so the 5 AM lazy snapshot becomes
+// a no-op (popularity_snapshots ON CONFLICT DO NOTHING). End-state: by send
+// time, the popularity rows are already in the DB and audit-able.
+cron.schedule('0 0 * * *', async () => {
+  console.log('[Popularity Prewarm] T-60 prewarm starting...');
+  try {
+    const { default: JourneyService } = await import('./src/services/JourneyService.js');
+    const result = await JourneyService.prewarmJourneyPopularity({ lookaheadMinutes: 60, windowMinutes: 30 });
+    console.log('[Popularity Prewarm] Done:', JSON.stringify(result));
+  } catch (err) {
+    console.error('[Popularity Prewarm] Failed:', err.message);
+  }
+});
+console.log('[Popularity Prewarm] Cron scheduled: 0 0 * * * (4 AM Dubai daily, 60 min before journey processing)');
+
 // 5:00 AM Dubai — Journey processing: advance customers through nodes
 import ConversionDetector from './src/services/ConversionDetector.js';
 cron.schedule('0 1 * * *', async () => {
@@ -546,6 +619,41 @@ cron.schedule('0 2 * * *', async () => {
   }
 });
 console.log('[Product Affinity] Cron scheduled: 0 2 * * * (6 AM Dubai daily)');
+
+// 9:00 AM Dubai — TEST_USERS auto-send tick. If is_running=true, sends the
+// next day's template (1..7) and advances. Idempotent (skips if last_sent_at
+// < 22h ago). Loops back to Day-1 if config.loop=true.
+cron.schedule('0 5 * * *', async () => {
+  console.log('[Test Auto-Send] Daily tick...');
+  try {
+    const { tick } = await import('./src/services/TestSendScheduler.js');
+    const baseUrl = `http://localhost:${PORT}`;
+    const result = await tick({ baseUrl });
+    if (result.skipped) {
+      console.log(`[Test Auto-Send] Skipped: ${result.reason}`);
+    } else {
+      console.log(`[Test Auto-Send] Day ${result.day} (${result.label}) — sent to ${result.sentTo}/${result.sentTo + result.failed}${result.sequenceDone ? ' — SEQUENCE COMPLETE' : ''}`);
+    }
+  } catch (err) {
+    console.error('[Test Auto-Send] Failed:', err.message);
+  }
+});
+console.log('[Test Auto-Send] Cron scheduled: 0 5 * * * (9 AM Dubai daily)');
+
+// ── BullMQ workers (optional in-process mode) ────────────────
+// In dev set WORKERS_INLINE=true to run journey send workers in this process.
+// In prod, run them separately: `node backend/scripts/start-workers.js`.
+if (process.env.WORKERS_INLINE === 'true') {
+  try {
+    const { startWorkers } = await import('./src/services/queue/workers.js');
+    startWorkers();
+    console.log('[Workers] In-process journey workers running (WORKERS_INLINE=true)');
+  } catch (err) {
+    console.error(`[Workers] Failed to start in-process: ${err.message}`);
+  }
+} else {
+  console.log('[Workers] Out-of-process — run: node backend/scripts/start-workers.js');
+}
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
 const HTTPS_PORT = 3443;
