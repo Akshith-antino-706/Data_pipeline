@@ -753,10 +753,13 @@ export default class UnifiedContactSync {
         FROM target
       )
       UPDATE unified_contacts uc
-      SET booking_status = t.new_status, updated_at = NOW()
+      SET booking_status = t.new_status,
+          is_on_trip     = (t.new_status = 'ON_TRIP'),
+          updated_at     = NOW()
       FROM target_fixed t
       WHERE uc.unified_id = t.unified_id
-        AND uc.booking_status IS DISTINCT FROM t.new_status
+        AND (uc.booking_status IS DISTINCT FROM t.new_status
+          OR uc.is_on_trip IS DISTINCT FROM (t.new_status = 'ON_TRIP'))
     `);
     console.log(`[UnifiedSync] booking_status: ${statusChanged} rows changed in ${((Date.now()-t0)/1000).toFixed(1)}s`);
 
