@@ -159,6 +159,43 @@ export default class UnifiedContactSync {
   }
 
   /**
+   * Sync CRM booking counts from users table into unified_contacts.
+   * The users.n_bookings field comes from MySQL CRM and captures bookings
+   * that may not exist in the Rayna ACICO API data.
+   * Matches by email_key (primary) and phone_key (fallback).
+   */
+  static async syncCRMBookings() {
+    console.log('[UnifiedSync] Syncing CRM booking counts from users table...');
+
+    // Match by email
+    const { rowCount: byEmail } = await query(`
+      UPDATE unified_contacts uc SET
+        crm_bookings = COALESCE(u.n_bookings, 0),
+        updated_at = NOW()
+      FROM users u
+      WHERE u.n_bookings > 0
+        AND u.primary_email IS NOT NULL AND TRIM(u.primary_email) != ''
+        AND uc.email_key = LOWER(TRIM(u.primary_email))
+        AND uc.crm_bookings IS DISTINCT FROM COALESCE(u.n_bookings, 0)
+    `);
+
+    // Match by phone (fallback for those not matched by email)
+    const { rowCount: byPhone } = await query(`
+      UPDATE unified_contacts uc SET
+        crm_bookings = GREATEST(uc.crm_bookings, COALESCE(u.n_bookings, 0)),
+        updated_at = NOW()
+      FROM users u
+      WHERE u.n_bookings > 0
+        AND u.mobile IS NOT NULL AND LENGTH(REGEXP_REPLACE(u.mobile, '[^0-9]', '', 'g')) >= 7
+        AND uc.phone_key = RIGHT(REGEXP_REPLACE(u.mobile, '[^0-9]', '', 'g'), 10)
+        AND uc.crm_bookings < COALESCE(u.n_bookings, 0)
+    `);
+
+    console.log(`[UnifiedSync] CRM bookings synced: ${byEmail} by email, ${byPhone} by phone`);
+    return byEmail + byPhone;
+  }
+
+  /**
    * Add new contacts from Rayna bookings that don't exist in unified_contacts
    * Checks both guest_contact (phone) and grnty_email against existing records.
    * If neither matches → creates a new unified_contacts row.
@@ -241,6 +278,142 @@ export default class UnifiedContactSync {
 
     console.log(`[UnifiedSync] Total Rayna contacts created: ${totalByPhone} by phone, ${totalByEmail} by email`);
     return { byPhone: totalByPhone, byEmail: totalByEmail };
+  }
+
+  /**
+   * Create users + user_emails + user_phones from Rayna-sourced unified_contacts
+   * that don't yet have a corresponding users row.
+   * Also sets contact_type/business_type from profitShareCenterName (B2B if any booking has B2B profit center).
+   */
+  static async syncRaynaContactsToUsers() {
+    // ── Part A: Set contact_type & business_type from profit_center ──
+    const { rowCount: typesSet } = await query(`
+      UPDATE unified_contacts uc SET
+        contact_type = sub.ct,
+        business_type = sub.ct
+      FROM (
+        SELECT unified_id,
+          CASE WHEN bool_or(profit_center ILIKE '%B2B%') THEN 'B2B' ELSE 'B2C' END AS ct
+        FROM (
+          SELECT unified_id, profit_center FROM rayna_tours   WHERE unified_id IS NOT NULL AND profit_center IS NOT NULL
+          UNION ALL
+          SELECT unified_id, profit_center FROM rayna_hotels  WHERE unified_id IS NOT NULL AND profit_center IS NOT NULL
+          UNION ALL
+          SELECT unified_id, profit_center FROM rayna_visas   WHERE unified_id IS NOT NULL AND profit_center IS NOT NULL
+          UNION ALL
+          SELECT unified_id, profit_center FROM rayna_flights WHERE unified_id IS NOT NULL AND profit_center IS NOT NULL
+        ) all_bookings
+        GROUP BY unified_id
+      ) sub
+      WHERE uc.unified_id = sub.unified_id
+        AND uc.sources LIKE '%rayna%'
+        AND (uc.contact_type IS NULL OR TRIM(uc.contact_type) = '')
+    `);
+    console.log(`[UnifiedSync] B2B/B2C types set from profit_center: ${typesSet}`);
+
+    // ── Part B: Find ALL unified_contacts with no user_id that have bookings or rayna source ──
+    const { rows: unmatched } = await query(`
+      SELECT unified_id, name, email, email_key, phone, phone_key,
+             company_name, city, country, contact_type
+      FROM unified_contacts
+      WHERE user_id IS NULL
+        AND (sources LIKE '%rayna%'
+             OR total_tour_bookings > 0 OR total_hotel_bookings > 0
+             OR total_visa_bookings > 0 OR total_flight_bookings > 0
+             OR unified_id IN (
+               SELECT DISTINCT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL
+               UNION SELECT DISTINCT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL
+               UNION SELECT DISTINCT unified_id FROM rayna_visas WHERE unified_id IS NOT NULL
+               UNION SELECT DISTINCT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL
+             ))
+      ORDER BY unified_id
+    `);
+
+    if (unmatched.length === 0) {
+      console.log('[UnifiedSync] No new Rayna contacts to create in users table');
+      return { typesSet, usersCreated: 0, matched: 0, emailsLinked: 0, phonesLinked: 0 };
+    }
+
+    let usersCreated = 0, matched = 0, emailsLinked = 0, phonesLinked = 0;
+
+    for (const uc of unmatched) {
+      let userId = null;
+
+      // Try match existing user by email
+      if (uc.email_key) {
+        const { rows } = await query(
+          `SELECT user_id FROM user_emails WHERE LOWER(email) = $1 LIMIT 1`,
+          [uc.email_key]
+        );
+        if (rows.length > 0) userId = rows[0].user_id;
+      }
+
+      // Try match existing user by phone
+      if (!userId && uc.phone_key) {
+        const { rows } = await query(
+          `SELECT user_id FROM user_phones
+           WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1
+           LIMIT 1`,
+          [uc.phone_key]
+        );
+        if (rows.length > 0) userId = rows[0].user_id;
+      }
+
+      if (userId) {
+        matched++;
+      } else {
+        // Create new user
+        const { rows: [newUser] } = await query(
+          `INSERT INTO users (name, primary_email, mobile, city, country,
+                              contact_type, contact_status, source, company_name,
+                              created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'new', 'rayna_api', $7, NOW(), NOW())
+           RETURNING id`,
+          [
+            uc.name || null,
+            uc.email || null,
+            uc.phone || null,
+            uc.city || null,
+            uc.country || null,
+            uc.contact_type || 'B2C',
+            uc.company_name || null,
+          ]
+        );
+        userId = newUser.id;
+        usersCreated++;
+      }
+
+      // Register email in user_emails
+      if (uc.email && uc.email.trim()) {
+        const { rowCount } = await query(
+          `INSERT INTO user_emails (user_id, email, source, created_at)
+           VALUES ($1, $2, 'rayna_api', NOW())
+           ON CONFLICT (email) DO NOTHING`,
+          [userId, uc.email.trim()]
+        );
+        emailsLinked += rowCount;
+      }
+
+      // Register phone in user_phones
+      if (uc.phone && uc.phone.trim()) {
+        const { rowCount } = await query(
+          `INSERT INTO user_phones (user_id, phone, phone_type, created_at)
+           VALUES ($1, $2, 'mobile', NOW())
+           ON CONFLICT (user_id, phone) DO NOTHING`,
+          [userId, uc.phone.trim()]
+        );
+        phonesLinked += rowCount;
+      }
+
+      // Link unified_contacts.user_id
+      await query(
+        `UPDATE unified_contacts SET user_id = $1 WHERE unified_id = $2`,
+        [userId, uc.unified_id]
+      );
+    }
+
+    console.log(`[UnifiedSync] Rayna → Users: ${usersCreated} created, ${matched} matched existing, ${emailsLinked} emails, ${phonesLinked} phones`);
+    return { typesSet, usersCreated, matched, emailsLinked, phonesLinked };
   }
 
   /**
@@ -407,7 +580,7 @@ export default class UnifiedContactSync {
       // Chats: link by phone
       `UPDATE chats c SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.phone_key = normalize_phone(c.wa_id) AND c.unified_id IS NULL AND c.wa_id IS NOT NULL`,
 
-      // Rayna tables: link by phone (primary)
+      // Rayna tables: link by phone (primary) — unlinked records only
       `UPDATE rayna_tours t SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.phone_key = normalize_phone(t.guest_contact) AND t.unified_id IS NULL AND t.guest_contact IS NOT NULL`,
       `UPDATE rayna_hotels h SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.phone_key = normalize_phone(h.guest_contact) AND h.unified_id IS NULL AND h.guest_contact IS NOT NULL`,
       `UPDATE rayna_visas v SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.phone_key = normalize_phone(v.guest_contact) AND v.unified_id IS NULL AND v.guest_contact IS NOT NULL`,
@@ -418,6 +591,22 @@ export default class UnifiedContactSync {
       `UPDATE rayna_hotels h SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.email_key = LOWER(TRIM(h.grnty_email)) AND h.unified_id IS NULL AND h.grnty_email IS NOT NULL AND TRIM(h.grnty_email) != ''`,
       `UPDATE rayna_visas v SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.email_key = LOWER(TRIM(v.grnty_email)) AND v.unified_id IS NULL AND v.grnty_email IS NOT NULL AND TRIM(v.grnty_email) != ''`,
       `UPDATE rayna_flights f SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.email_key = LOWER(TRIM(f.grnty_email)) AND f.unified_id IS NULL AND f.grnty_email IS NOT NULL AND TRIM(f.grnty_email) != ''`,
+
+      // Force re-link active booking window (last 7 days + next 60 days)
+      // Covers both ON_TRIP (past 7) and FUTURE_TRAVEL (next 60) segments
+      `UPDATE rayna_tours t SET unified_id = uc.unified_id FROM unified_contacts uc
+       WHERE uc.phone_key = normalize_phone(t.guest_contact) AND t.guest_contact IS NOT NULL
+         AND (status IS NULL OR status != 'Cancelled')
+         AND t.tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE + INTERVAL '60 days'`,
+      `UPDATE rayna_tours t SET unified_id = uc.unified_id FROM unified_contacts uc
+       WHERE uc.email_key = LOWER(TRIM(t.grnty_email)) AND t.grnty_email IS NOT NULL AND TRIM(t.grnty_email) != ''
+         AND normalize_phone(t.guest_contact) IS NULL
+         AND (status IS NULL OR status != 'Cancelled')
+         AND t.tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE + INTERVAL '60 days'`,
+      `UPDATE rayna_flights f SET unified_id = uc.unified_id FROM unified_contacts uc
+       WHERE uc.phone_key = normalize_phone(f.guest_contact) AND f.guest_contact IS NOT NULL
+         AND (status IS NULL OR status != 'Cancelled')
+         AND f.from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE + INTERVAL '60 days'`,
 
       // GA4: link by email then phone
       `UPDATE ga4_events g SET unified_id = uc.unified_id FROM unified_contacts uc WHERE uc.email_key = LOWER(TRIM(g.email_any)) AND g.unified_id IS NULL AND g.email_any IS NOT NULL AND TRIM(g.email_any) != ''`,
@@ -721,6 +910,122 @@ export default class UnifiedContactSync {
   }
 
   /**
+   * Classify users with NULL contact_type using department mappings.
+   * Runs 3 strategies: chat→dept, email match, phone match.
+   * Requires departments.contact_type to be populated (migration 048).
+   */
+  static async classifyUserContactTypes() {
+    console.log('[UnifiedSync] Classifying NULL contact_type users...');
+    let totalFixed = 0;
+
+    // Strategy 1: Chat → Department (biggest impact)
+    const { rowCount: chatFixed } = await query(`
+      WITH user_dept_types AS (
+        SELECT DISTINCT c.user_id, d.contact_type
+        FROM chats c
+        JOIN chat_contacts cc ON c.wa_id = cc.wa_id
+        CROSS JOIN LATERAL unnest(string_to_array(cc.departments, ',')) AS dept_conn
+        JOIN departments d ON TRIM(dept_conn) = d.connection
+        WHERE c.user_id IS NOT NULL AND d.contact_type IS NOT NULL
+      ),
+      user_classification AS (
+        SELECT user_id,
+          CASE WHEN bool_or(contact_type = 'B2C') THEN 'B2C' ELSE 'B2B' END AS ct
+        FROM user_dept_types GROUP BY user_id
+      )
+      UPDATE users u SET contact_type = uc.ct
+      FROM user_classification uc
+      WHERE u.id = uc.user_id AND (u.contact_type IS NULL OR u.contact_type = '')
+    `);
+    totalFixed += chatFixed;
+
+    // Strategy 2: Email match
+    const { rowCount: emailFixed } = await query(`
+      UPDATE users u SET contact_type = de.contact_type
+      FROM user_emails ue
+      JOIN dept_emails de ON LOWER(ue.email) = LOWER(de.email)
+      WHERE ue.user_id = u.id
+        AND (u.contact_type IS NULL OR u.contact_type = '')
+        AND de.contact_type IS NOT NULL
+    `);
+    totalFixed += emailFixed;
+
+    // Strategy 3: Phone match
+    const { rowCount: phoneFixed } = await query(`
+      UPDATE users u SET contact_type = d.contact_type
+      FROM user_phones up
+      JOIN departments d ON RIGHT(REGEXP_REPLACE(up.phone, '[^0-9]', '', 'g'), 10)
+                          = RIGHT(REGEXP_REPLACE(d.connection, '[^0-9]', '', 'g'), 10)
+      WHERE up.user_id = u.id
+        AND (u.contact_type IS NULL OR u.contact_type = '')
+        AND d.contact_type IS NOT NULL
+        AND d.connection IS NOT NULL AND d.connection != ''
+    `);
+    totalFixed += phoneFixed;
+
+    console.log(`[UnifiedSync] Users classified: ${totalFixed} (chat: ${chatFixed}, email: ${emailFixed}, phone: ${phoneFixed})`);
+
+    // Propagate users.contact_type → unified_contacts.contact_type (via email match)
+    const { rowCount: ucEmailSync } = await query(`
+      UPDATE unified_contacts uc SET contact_type = u.contact_type
+      FROM users u
+      JOIN user_emails ue ON ue.user_id = u.id
+      WHERE LOWER(TRIM(ue.email)) = uc.email_key
+        AND u.contact_type IS NOT NULL AND u.contact_type != ''
+        AND (uc.contact_type IS NULL OR uc.contact_type = '' OR uc.contact_type IS DISTINCT FROM u.contact_type)
+    `);
+
+    // Propagate via phone match
+    const { rowCount: ucPhoneSync } = await query(`
+      UPDATE unified_contacts uc SET contact_type = u.contact_type
+      FROM users u
+      JOIN user_phones up ON up.user_id = u.id
+      WHERE uc.phone_key = RIGHT(REGEXP_REPLACE(up.phone, '[^0-9]', '', 'g'), 10)
+        AND uc.phone_key IS NOT NULL
+        AND u.contact_type IS NOT NULL AND u.contact_type != ''
+        AND (uc.contact_type IS NULL OR uc.contact_type = '')
+    `);
+
+    // Also propagate via chat_contacts → departments for chat-only unified_contacts
+    const { rowCount: ucChatSync } = await query(`
+      WITH chat_dept_types AS (
+        SELECT cc.wa_id, d.contact_type
+        FROM chat_contacts cc
+        CROSS JOIN LATERAL unnest(string_to_array(cc.departments, ',')) AS dept_conn
+        JOIN departments d ON TRIM(dept_conn) = d.connection
+        WHERE d.contact_type IS NOT NULL
+      ),
+      wa_classification AS (
+        SELECT wa_id,
+          CASE WHEN bool_or(contact_type = 'B2C') THEN 'B2C' ELSE 'B2B' END AS ct
+        FROM chat_dept_types GROUP BY wa_id
+      )
+      UPDATE unified_contacts uc SET contact_type = wc.ct
+      FROM wa_classification wc
+      WHERE uc.phone_key = RIGHT(REGEXP_REPLACE(wc.wa_id, '[^0-9]', '', 'g'), 10)
+        AND uc.phone_key IS NOT NULL
+        AND (uc.contact_type IS NULL OR uc.contact_type = '')
+    `);
+
+    console.log(`[UnifiedSync] Unified contacts synced: email=${ucEmailSync}, phone=${ucPhoneSync}, chat=${ucChatSync}`);
+
+    // Recompute business_type based on updated contact_type
+    const { rowCount: btFixed } = await query(`
+      UPDATE unified_contacts SET business_type =
+        CASE WHEN contact_type IN ('B2B', 'b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END
+      WHERE business_type IS DISTINCT FROM
+        (CASE WHEN contact_type IN ('B2B', 'b2b') OR chat_departments LIKE '%B2B%' THEN 'B2B' ELSE 'B2C' END)
+    `);
+    console.log(`[UnifiedSync] business_type recomputed: ${btFixed} rows fixed`);
+
+    // Refresh materialized view
+    await query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
+    console.log('[UnifiedSync] Materialized view refreshed');
+
+    return { totalFixed, chatFixed, emailFixed, phoneFixed, ucEmailSync, ucPhoneSync, ucChatSync, btFixed };
+  }
+
+  /**
    * Run full incremental sync
    */
   static async run() {
@@ -732,16 +1037,19 @@ export default class UnifiedContactSync {
     const chats = await this.syncChats();
     const rayna = await this.syncRaynaBookings();
     const newRayna = await this.syncNewRaynaContacts();
+    const crmBookings = await this.syncCRMBookings();
     const unsub = await this.syncUnsubscribed();
     const ga4gtm = await this.syncGA4GTM();
     const newGTM = await this.syncNewGTMContacts();
     const relinked = await this.relinkRawTables();
+    const raynaUsers = await this.syncRaynaContactsToUsers();
     const segments = await this.computeSegments();
     const occasions = await this.computeOccasions();
+    const classified = await this.classifyUserContactTypes();
 
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[UnifiedSync] Done in ${duration}s`);
 
-    return { chatContacts, contacts, chats, rayna, newRayna, unsub, ga4gtm, newGTM, relinked, segments, occasions, duration };
+    return { chatContacts, contacts, chats, rayna, newRayna, crmBookings, unsub, ga4gtm, newGTM, relinked, raynaUsers, segments, occasions, classified, duration };
   }
 }

@@ -1,8 +1,19 @@
 import { Router } from 'express';
 import RaynaSyncService from '../services/RaynaSyncService.js';
-import { query } from '../config/database.js';
+import pool, { query } from '../config/database.js';
+import UnifiedContactSync from '../services/UnifiedContactSync.js';
+import UnifiedContactService from '../services/UnifiedContactService.js';
 
 const router = Router();
+
+// Run contact linking + segmentation after any Rayna data sync
+async function postSyncRecompute() {
+  await UnifiedContactSync.syncNewRaynaContacts();
+  await UnifiedContactSync.relinkRawTables();
+  await UnifiedContactSync.syncRaynaContactsToUsers();
+  await UnifiedContactService.recomputeSegmentation();
+  await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
+}
 
 // GET /api/v3/rayna-sync/status — sync status for all Rayna API tables
 router.get('/status', async (_req, res) => {
@@ -15,15 +26,39 @@ router.get('/status', async (_req, res) => {
   }
 });
 
-// GET /api/v3/rayna-sync/mapping-stats — booking ↔ customer mapping stats
-router.get('/mapping-stats', async (_req, res) => {
+// GET /api/v3/rayna-sync/mapping-stats — booking ↔ customer mapping stats (filtered by businessType)
+router.get('/mapping-stats', async (req, res) => {
   try {
+    const bt = (req.query.businessType || '').toUpperCase();
+
+    // Build dynamic filters based on businessType
+    // unified_contacts uses `business_type` column (computed B2B/B2C)
+    // users table uses `contact_type` column (set by dept-based classification)
+    let UC_FILTER, PROFIT_FILTER, USER_TYPE_FILTER, DEPT_FILTER;
+    if (bt === 'B2B') {
+      UC_FILTER = "business_type = 'B2B'";
+      PROFIT_FILTER = "profit_center ILIKE '%B2B%'";
+      USER_TYPE_FILTER = "UPPER(u.contact_type) = 'B2B'";
+      DEPT_FILTER = "contact_type = 'B2B'";
+    } else if (bt === 'B2C') {
+      UC_FILTER = "business_type = 'B2C'";
+      PROFIT_FILTER = "profit_center NOT ILIKE '%B2B%'";
+      USER_TYPE_FILTER = "UPPER(u.contact_type) = 'B2C'";
+      DEPT_FILTER = "contact_type = 'B2C'";
+    } else {
+      // All — no filter
+      UC_FILTER = "1=1";
+      PROFIT_FILTER = "1=1";
+      USER_TYPE_FILTER = "1=1";
+      DEPT_FILTER = "1=1";
+    }
+
     // Overall stats from unified_contacts
     const { rows: [overall] } = await query(`
       SELECT
-        (SELECT COUNT(*) FROM unified_contacts WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) as total_mapped,
-        (SELECT COUNT(*) FROM unified_contacts WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) as customers_with_bookings,
-        (SELECT COUNT(*) FROM unified_contacts) as total_customers
+        (SELECT COUNT(*) FROM unified_contacts WHERE (total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) AND ${UC_FILTER}) as total_mapped,
+        (SELECT COUNT(*) FROM unified_contacts WHERE (total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) AND ${UC_FILTER}) as customers_with_bookings,
+        (SELECT COUNT(*) FROM unified_contacts WHERE ${UC_FILTER}) as total_customers
     `);
 
     // Top customers by bookings from unified_contacts
@@ -34,7 +69,7 @@ router.get('/mapping-stats', async (_req, res) => {
         first_booking_at, last_booking_at,
         total_chats, total_tour_bookings, total_hotel_bookings, total_visa_bookings, total_flight_bookings
       FROM unified_contacts
-      WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0
+      WHERE (total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0) AND ${UC_FILTER}
       ORDER BY total_booking_revenue DESC NULLS LAST
       LIMIT 20
     `);
@@ -42,14 +77,14 @@ router.get('/mapping-stats', async (_req, res) => {
     // Coverage counts
     const { rows: [unmatched] } = await query(`
       SELECT
-        (SELECT COUNT(*) FROM rayna_tours) as total_tours,
-        (SELECT COUNT(*) FROM rayna_hotels) as total_hotels,
-        (SELECT COUNT(*) FROM rayna_visas) as total_visas,
-        (SELECT COUNT(*) FROM rayna_flights) as total_flights,
-        (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL) as mapped_tours,
-        (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL) as mapped_hotels,
-        (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL) as mapped_visas,
-        (SELECT COUNT(*) FROM rayna_flights WHERE unified_id IS NOT NULL) as mapped_flights
+        (SELECT COUNT(*) FROM rayna_tours WHERE ${PROFIT_FILTER}) as total_tours,
+        (SELECT COUNT(*) FROM rayna_hotels WHERE ${PROFIT_FILTER}) as total_hotels,
+        (SELECT COUNT(*) FROM rayna_visas WHERE ${PROFIT_FILTER}) as total_visas,
+        (SELECT COUNT(*) FROM rayna_flights WHERE ${PROFIT_FILTER}) as total_flights,
+        (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND ${PROFIT_FILTER}) as mapped_tours,
+        (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL AND ${PROFIT_FILTER}) as mapped_hotels,
+        (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL AND ${PROFIT_FILTER}) as mapped_visas,
+        (SELECT COUNT(*) FROM rayna_flights WHERE unified_id IS NOT NULL AND ${PROFIT_FILTER}) as mapped_flights
     `);
 
     // Sync status
@@ -64,21 +99,21 @@ router.get('/mapping-stats', async (_req, res) => {
       "SELECT * FROM sync_metadata WHERE table_name LIKE 'ga4%' OR table_name IN ('bigquery_events','user_profiles') ORDER BY table_name"
     );
 
-    // Comprehensive data overview — all data sources
+    // Comprehensive data overview — all data sources (filtered by businessType)
     const dataOverviewQueries = [
-      query("SELECT COUNT(*) as count FROM users"),
-      query("SELECT COUNT(*) as count FROM user_emails"),
-      query("SELECT COUNT(*) as count FROM user_phones"),
-      query("SELECT COUNT(*) as count FROM departments"),
-      query("SELECT COUNT(*) as count FROM dept_emails"),
-      query("SELECT COUNT(*) as count FROM tickets"),
-      query("SELECT 0 as count"),
-      query("SELECT COUNT(*) as count FROM chats"),
-      query("SELECT COUNT(*) as count FROM unified_contacts"),
-      query("SELECT COUNT(*) as count FROM rayna_tours"),
-      query("SELECT COUNT(*) as count FROM rayna_hotels"),
-      query("SELECT COUNT(*) as count FROM rayna_visas"),
-      query("SELECT COUNT(*) as count FROM rayna_flights"),
+      query(`SELECT COUNT(*) as count FROM users WHERE ${USER_TYPE_FILTER.replace('u.', '')}`),
+      query(`SELECT COUNT(*) as count FROM user_emails ue JOIN users u ON ue.user_id = u.id WHERE ${USER_TYPE_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM user_phones up JOIN users u ON up.user_id = u.id WHERE ${USER_TYPE_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM departments WHERE ${DEPT_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM dept_emails WHERE ${DEPT_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM tickets t JOIN users u ON t.user_id = u.id WHERE ${USER_TYPE_FILTER}`),
+      query(`SELECT (SELECT COUNT(*) FROM rayna_tours WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_hotels WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_visas WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_flights WHERE ${PROFIT_FILTER}) as count`),
+      query(`SELECT COUNT(*) as count FROM chats c JOIN users u ON c.user_id = u.id WHERE ${USER_TYPE_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM unified_contacts WHERE ${UC_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM rayna_tours WHERE ${PROFIT_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM rayna_hotels WHERE ${PROFIT_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM rayna_visas WHERE ${PROFIT_FILTER}`),
+      query(`SELECT COUNT(*) as count FROM rayna_flights WHERE ${PROFIT_FILTER}`),
     ];
     const [usersR, emailsR, phonesR, deptsR, deptEmailsR, ticketsR, bookingsR, chatsR, unifiedContactsR, toursR, hotelsR, visasR, flightsR] = await Promise.all(dataOverviewQueries);
 
@@ -90,7 +125,7 @@ router.get('/mapping-stats', async (_req, res) => {
       ga4Users = parseInt(ga4.users);
     } catch { /* table may not exist */ }
 
-    // Department breakdown — B2B vs B2C from unified_contacts
+    // Department breakdown from unified_contacts
     let deptBreakdown = [];
     try {
       const { rows } = await query(`
@@ -103,7 +138,7 @@ router.get('/mapping-stats', async (_req, res) => {
           SUM(total_chats) as chats,
           SUM(COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0)) as bookings
         FROM unified_contacts
-        WHERE chat_departments IS NOT NULL
+        WHERE chat_departments IS NOT NULL AND ${UC_FILTER}
         GROUP BY 1
         ORDER BY COUNT(*) DESC
       `);
@@ -128,9 +163,11 @@ router.get('/mapping-stats', async (_req, res) => {
         flights: { total: parseInt(unmatched.total_flights), mapped: parseInt(unmatched.mapped_flights) },
       },
       dataOverview: {
-        firstMsgFetched: parseInt((await query("SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NOT NULL")).rows[0].c),
-        firstMsgPending: parseInt((await query("SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NULL AND wa_id IS NOT NULL")).rows[0].c),
+        firstMsgFetched: parseInt((await query(`SELECT COUNT(*) as c FROM chats c JOIN users u ON c.user_id = u.id WHERE c.first_msg_text IS NOT NULL AND ${USER_TYPE_FILTER}`)).rows[0].c),
+        firstMsgPending: parseInt((await query(`SELECT COUNT(*) as c FROM chats c JOIN users u ON c.user_id = u.id WHERE c.first_msg_text IS NULL AND c.wa_id IS NOT NULL AND ${USER_TYPE_FILTER}`)).rows[0].c),
         users: parseInt(usersR.rows[0].count),
+        totalUsers: parseInt((await query("SELECT COUNT(*) as c FROM users")).rows[0].c),
+        notSetUsers: parseInt((await query("SELECT COUNT(*) as c FROM users WHERE contact_type IS NULL OR contact_type = ''")).rows[0].c),
         uniqueEmails: parseInt(emailsR.rows[0].count),
         phones: parseInt(phonesR.rows[0].count),
         departments: parseInt(deptsR.rows[0].count),
@@ -175,6 +212,7 @@ router.post('/refresh-mapping', async (_req, res) => {
 router.post('/trigger', async (_req, res) => {
   try {
     const results = await RaynaSyncService.syncAll();
+    await postSyncRecompute();
     res.json({ success: true, results });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -185,6 +223,7 @@ router.post('/trigger', async (_req, res) => {
 router.post('/trigger/:endpoint', async (req, res) => {
   try {
     const result = await RaynaSyncService.syncEndpoint(req.params.endpoint);
+    await postSyncRecompute();
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -197,10 +236,79 @@ router.post('/catch-up', async (req, res) => {
   try {
     const days = Math.min(parseInt(req.body.days) || 90, 365);
     const results = await RaynaSyncService.syncCatchUp(days);
+    await postSyncRecompute();
     res.json({ success: true, results });
   } catch (err) {
     console.error('[rayna-sync] catch-up error:', err.message);
     res.status(500).json({ success: false, error: 'Catch-up sync failed' });
+  }
+});
+
+// POST /api/v3/rayna-sync/modified-date — sync all endpoints filtered by modified_date (default: yesterday)
+// Body: { "targetDate": "2026-04-29" }  (optional, defaults to yesterday)
+router.post('/modified-date', async (req, res) => {
+  try {
+    const results = await RaynaSyncService.syncAllByModifiedDate({ targetDate: req.body.targetDate });
+    await postSyncRecompute();
+    res.json({ success: true, results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/rayna-sync/modified-date/:endpoint — sync single endpoint by modified_date
+// Body: { "targetDate": "2026-04-29" }  (optional, defaults to yesterday)
+router.post('/modified-date/:endpoint', async (req, res) => {
+  try {
+    const result = await RaynaSyncService.syncByModifiedDate(req.params.endpoint, { targetDate: req.body.targetDate });
+    await postSyncRecompute();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/rayna-sync/tours-daily — batch sync for tours (all records, combo key match)
+router.post('/tours-daily', async (req, res) => {
+  try {
+    const result = await RaynaSyncService.syncToursDaily();
+    await postSyncRecompute();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/rayna-sync/hotels-daily — batch sync for hotels (all records, combo key match)
+router.post('/hotels-daily', async (req, res) => {
+  try {
+    const result = await RaynaSyncService.syncHotelsDaily();
+    await postSyncRecompute();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/rayna-sync/visas-daily — batch sync for visas (all records, combo key match)
+router.post('/visas-daily', async (req, res) => {
+  try {
+    const result = await RaynaSyncService.syncVisasDaily();
+    await postSyncRecompute();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/rayna-sync/flights-daily — batch sync for flights (all records, combo key match)
+router.post('/flights-daily', async (req, res) => {
+  try {
+    const result = await RaynaSyncService.syncFlightsDaily();
+    await postSyncRecompute();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

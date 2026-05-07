@@ -179,7 +179,7 @@ function BusinessTypeSwitcher() {
   return (
     <div style={{ padding: '8px 16px', marginBottom: 4 }}>
       <div style={{ display: 'flex', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', overflow: 'hidden' }}>
-        {['B2C', 'B2B'].map(type => (
+        {['All', 'B2C', 'B2B'].map(type => (
           <button
             key={type}
             onClick={() => setBusinessType(type)}
@@ -221,7 +221,7 @@ function AppShell() {
       >
         <div className="logo">
           <h1>Rayna Tours</h1>
-          <span className="logo-sub">Omnichannel Platform</span>
+          <span className="logo-sub">Omnichannel Platform (Live)</span>
         </div>
         <nav>
           {NAV.map(({ to, icon: Icon, label }, index) => (

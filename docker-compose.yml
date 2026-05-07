@@ -1,43 +1,41 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT_EXTERNAL:-5433}:5432"
+    environment:
+      POSTGRES_DB: rayna_data_pipe
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS env variable is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   backend:
     build: ./backend
     restart: unless-stopped
     ports:
       - "3001:3001"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    env_file: ./backend/.env
     environment:
-      PORT: "3001"
-      NODE_ENV: development
-      DB_HOST: host.docker.internal
-      DB_PORT: "5432"
-      DB_NAME: rayna_data_pipe
-      DB_USER: akshithkumaryv
-      DB_PASS: "7884"
-      EMAIL_PROVIDER: smtp
-      SMTP_HOST: smtp.gmail.com
-      SMTP_PORT: "587"
-      SMTP_USER: akshith@raynatours.com
-      SMTP_PASS: vcovsfpyqjtudkfc
-      SMTP_SECURE: "false"
-      EMAIL_FROM: akshith@raynatours.com
-      EMAIL_FROM_NAME: Rayna Tours Marketing
-      # BigQuery Sync
-      GOOGLE_APPLICATION_CREDENTIALS: /app/service-account.json
-      BQ_PROJECT_ID: your-gcp-project-id
-      BQ_DATASET: your_dataset_name
-      BQ_SYNC_CRON: "0 */4 * * *"
-      BQ_SYNC_ENABLED: "false"
-      BQ_SYNC_BATCH_SIZE: "500"
+      DB_HOST: postgres
+    depends_on:
+      - postgres
     volumes:
       - ./backend/service-account.json:/app/service-account.json:ro
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:?VITE_API_URL env variable is required}
     restart: unless-stopped
     ports:
-      - "5176:5176"
+      - "5176:80"
     depends_on:
       - backend
+
+volumes:
+  pgdata:

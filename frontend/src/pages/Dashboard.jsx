@@ -32,7 +32,7 @@ export default function Dashboard() {
   const loadData = () => {
     setLoading(true);
     Promise.all([
-      getSegmentationTree({ businessType }).catch(() => ({})),
+      getSegmentationTree(businessType === 'All' ? {} : { businessType }).catch(() => ({})),
       getSegmentActivity({ days: 7 }).catch(() => ({})),
     ])
       .then(([t, a]) => { setTree(t); setActivity(a); })
@@ -46,9 +46,11 @@ export default function Dashboard() {
 
   const fmt = (n) => Number(n || 0).toLocaleString();
   const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const fmtM = (n) => `AED ${(Number(n || 0) / 1000000).toFixed(2)}M`;
 
   const totals = tree?.totals || {};
   const statusCounts = tree?.statusCounts || [];
+  const acicoRevenue = tree?.acicoRevenue;
   const logs = activity?.logs || [];
 
   // Totals from recent activity
@@ -69,7 +71,7 @@ export default function Dashboard() {
         <div className="page-header">
           <div>
             <h2>Dashboard</h2>
-            <div className="page-header-sub">Rayna Tours — {businessType} Overview</div>
+            <div className="page-header-sub">Rayna Tours — {businessType === 'All' ? 'All' : businessType} Overview</div>
           </div>
           <div className="page-actions">
             <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={14} /></button>
@@ -82,7 +84,7 @@ export default function Dashboard() {
         <Link to="/segmentation" className="card kpi no-underline color-inherit">
           <div className="icon-box"><Users size={18} color="var(--blue)" /></div>
           <div className="kpi-value kpi-blue">{fmt(totals.total)}</div>
-          <div className="kpi-label">Total {businessType} Customers</div>
+          <div className="kpi-label">Total {businessType === 'All' ? '' : businessType + ' '}Customers</div>
         </Link>
         <Link to="/segmentation" className="card kpi no-underline color-inherit">
           <div className="icon-box"><Target size={18} color="var(--green)" /></div>
@@ -96,8 +98,8 @@ export default function Dashboard() {
         </Link>
         <Link to="/campaigns" className="card kpi no-underline color-inherit">
           <div className="icon-box"><DollarSign size={18} color="var(--orange)" /></div>
-          <div className="kpi-value kpi-orange">{fmtAED(totals.total_revenue)}</div>
-          <div className="kpi-label">Total Revenue</div>
+          <div className="kpi-value kpi-orange">{fmtM(acicoRevenue?.total)}</div>
+          <div className="kpi-label">Total Confirmed Revenue</div>
         </Link>
       </motion.div>
 

@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -180,7 +180,10 @@ export const getDepartmentMap = () => request('/api/v3/affinity/departments');
 
 // ── Data Pipeline (Rayna Sync + MySQL Sync + Mapping) ───────
 export const getRaynaSyncStatus = () => request('/api/v3/rayna-sync/status');
-export const getMappingStats = () => request('/api/v3/rayna-sync/mapping-stats');
+export const getMappingStats = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/rayna-sync/mapping-stats${qs ? `?${qs}` : ''}`);
+};
 export const triggerRaynaSync = () => request('/api/v3/rayna-sync/trigger', { method: 'POST' });
 export const triggerRaynaSyncEndpoint = (ep) => request(`/api/v3/rayna-sync/trigger/${ep}`, { method: 'POST' });
 export const refreshBookingMapping = () => request('/api/v3/rayna-sync/refresh-mapping', { method: 'POST' });

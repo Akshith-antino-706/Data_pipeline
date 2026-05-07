@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recommended For You</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:20px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;">
+
+<!-- Header -->
+<tr><td style="background:#000000;padding:24px;text-align:center;">
+  <img src="https://d1i3enf1i5tb1f.cloudfront.net/assets/rayna-logo-gold.png" alt="Rayna Tours" width="160" style="display:inline-block;">
+</td></tr>
+
+<!-- Hero -->
+<tr><td style="padding:32px 24px;text-align:center;">
+  <h1 style="color:#1a1a1a;font-size:24px;margin:0 0 12px;">{{email_heading}}</h1>
+  <p style="color:#666;font-size:16px;line-height:1.5;margin:0;">
+    Hi {{customer_name}}, {{email_body}}
+  </p>
+</td></tr>
+
+<!-- Coupon Box -->
+{{#if coupon_code}}
+<tr><td style="padding:16px 24px;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fdf6e3;border:2px dashed #c8a84e;border-radius:8px;">
+  <tr><td style="padding:16px;text-align:center;">
+    <span style="color:#666;font-size:13px;">Use code </span>
+    <span style="color:#1a1a1a;font-size:18px;font-weight:bold;letter-spacing:2px;">{{coupon_code}}</span>
+    <span style="color:#c8a84e;font-size:14px;font-weight:bold;"> — {{coupon_discount}}</span>
+    {{#if coupon_expiry}}<br><span style="color:#e74c3c;font-size:12px;">Expires in {{coupon_expiry}}</span>{{/if}}
+  </td></tr>
+  </table>
+</td></tr>
+{{/if}}
+
+<!-- Products -->
+{{#products}}
+<tr><td style="padding:8px 24px;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eee;border-radius:8px;overflow:hidden;">
+  <tr>
+    <td width="160" style="vertical-align:top;">
+      <a href="{{product_url}}">
+        <img src="{{product_image}}" alt="{{product_name}}" width="160" height="120" style="display:block;object-fit:cover;">
+      </a>
+    </td>
+    <td style="padding:12px 16px;vertical-align:top;">
+      <p style="color:#999;font-size:11px;text-transform:uppercase;margin:0 0 4px;">{{product_category}}</p>
+      <p style="color:#1a1a1a;font-size:15px;font-weight:bold;margin:0 0 6px;">
+        <a href="{{product_url}}" style="color:#1a1a1a;text-decoration:none;">{{product_name}}</a>
+      </p>
+      <p style="color:#f5a623;font-size:13px;margin:0 0 6px;">&#9733; {{product_rating}} <span style="color:#999;">({{product_reviews}} reviews)</span></p>
+      <p style="margin:0;">
+        <span style="color:#c8a84e;font-size:18px;font-weight:bold;">AED {{product_price}}</span>
+        <span style="color:#999;font-size:13px;text-decoration:line-through;margin-left:8px;">AED {{product_strike_price}}</span>
+      </p>
+    </td>
+  </tr>
+  </table>
+</td></tr>
+{{/products}}
+
+<!-- CTA -->
+<tr><td style="padding:24px;text-align:center;">
+  <a href="https://www.raynatours.com" style="display:inline-block;background:#c8a84e;color:#000;font-size:16px;font-weight:bold;padding:14px 40px;border-radius:6px;text-decoration:none;">View All Experiences</a>
+</td></tr>
+
+<!-- Footer -->
+<tr><td style="background:#1a1a1a;padding:20px 24px;text-align:center;">
+  <p style="color:#999;font-size:12px;margin:0;">Rayna Tours &amp; Travels LLC | Dubai, UAE</p>
+  <p style="color:#666;font-size:11px;margin:8px 0 0;">
+    <a href="https://www.raynatours.com" style="color:#c8a84e;text-decoration:none;">raynatours.com</a>
+  </p>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

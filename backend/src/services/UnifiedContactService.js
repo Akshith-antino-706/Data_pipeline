@@ -215,80 +215,97 @@ export default class UnifiedContactService {
   static async recomputeSegmentation() {
     const started = Date.now();
 
-    // Build set of unified_ids that ARE on-trip today across tours/hotels/flights
-    const currentlyOnTripCTE = `
-      WITH currently_on_trip AS (
+    // FUTURE_TRAVEL CTE: contacts with any booking after today
+    const futureTravelCTE = `
+      WITH future_travel AS (
         SELECT DISTINCT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL
           AND (status IS NULL OR status != 'Cancelled')
-          AND tour_date::date <= CURRENT_DATE
-          AND (tour_date::date + INTERVAL '7 days') >= CURRENT_DATE
+          AND tour_date::date > CURRENT_DATE
         UNION
         SELECT DISTINCT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL
-          AND check_in_date::date <= CURRENT_DATE
-          AND (check_in_date::date + INTERVAL '7 days') >= CURRENT_DATE
+          AND check_in_date::date > CURRENT_DATE
         UNION
         SELECT DISTINCT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL
           AND (status IS NULL OR status != 'Cancelled')
-          AND from_datetime::date <= CURRENT_DATE
-          AND (from_datetime::date + INTERVAL '7 days') >= CURRENT_DATE
+          AND from_datetime::date > CURRENT_DATE
       )
     `;
 
-    // 1. Demote stale ON_TRIPs (window ended or booking cancelled) → PAST_BOOKING
+    // ON_TRIP CTE: contacts with booking in last 7 days
+    const onTripCTE = `
+      WITH currently_on_trip AS (
+        SELECT DISTINCT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL
+          AND (status IS NULL OR status != 'Cancelled')
+          AND tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
+        UNION
+        SELECT DISTINCT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL
+          AND check_in_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
+        UNION
+        SELECT DISTINCT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL
+          AND (status IS NULL OR status != 'Cancelled')
+          AND from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
+      )
+    `;
+
+    // 0. Reset and recompute is_on_trip flag (independent of waterfall)
+    await pool.query(`UPDATE unified_contacts SET is_on_trip = false WHERE is_on_trip = true`);
+    await pool.query(`
+      ${onTripCTE}
+      UPDATE unified_contacts uc SET is_on_trip = true
+      FROM currently_on_trip c
+      WHERE uc.unified_id = c.unified_id
+    `);
+
+    // 1. Promote contacts with future bookings → FUTURE_TRAVEL (highest priority)
+    const { rowCount: futurePromoted } = await pool.query(`
+      ${futureTravelCTE}
+      UPDATE unified_contacts uc SET booking_status = 'FUTURE_TRAVEL', updated_at = NOW()
+      FROM future_travel ft
+      WHERE uc.unified_id = ft.unified_id AND uc.booking_status IS DISTINCT FROM 'FUTURE_TRAVEL'
+    `);
+
+    // 2a. Demote stale FUTURE_TRAVELs → PAST_BOOKING (has past bookings but no future ones)
+    const { rowCount: futureToPast } = await pool.query(`
+      ${futureTravelCTE}
+      UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
+      WHERE booking_status = 'FUTURE_TRAVEL'
+        AND NOT EXISTS (SELECT 1 FROM future_travel ft WHERE ft.unified_id = uc.unified_id)
+        AND (
+          COALESCE(uc.crm_bookings, 0) > 0
+          OR EXISTS (
+            SELECT 1 FROM rayna_tours WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled')
+            UNION ALL
+            SELECT 1 FROM rayna_hotels WHERE unified_id = uc.unified_id
+            UNION ALL
+            SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled')
+          )
+        )
+    `);
+
+    // 2b. Catch-all: remaining stale FUTURE_TRAVELs with no bookings anywhere → PROSPECT
+    const { rowCount: futureToProspect } = await pool.query(`
+      ${futureTravelCTE}
+      UPDATE unified_contacts uc SET booking_status = 'PROSPECT', updated_at = NOW()
+      WHERE booking_status = 'FUTURE_TRAVEL'
+        AND NOT EXISTS (SELECT 1 FROM future_travel ft WHERE ft.unified_id = uc.unified_id)
+    `);
+
+    // 3. Promote on-trip contacts (only if NOT already FUTURE_TRAVEL)
+    const { rowCount: promoted } = await pool.query(`
+      ${onTripCTE}
+      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP', updated_at = NOW()
+      FROM currently_on_trip c
+      WHERE uc.unified_id = c.unified_id
+        AND uc.booking_status IS DISTINCT FROM 'ON_TRIP'
+        AND uc.booking_status IS DISTINCT FROM 'FUTURE_TRAVEL'
+    `);
+
+    // 4. Demote stale ON_TRIPs (window ended) → PAST_BOOKING
     const { rowCount: demoted } = await pool.query(`
-      ${currentlyOnTripCTE}
+      ${onTripCTE}
       UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
       WHERE booking_status = 'ON_TRIP'
         AND NOT EXISTS (SELECT 1 FROM currently_on_trip c WHERE c.unified_id = uc.unified_id)
-    `);
-
-    // 2. Promote newly-on-trip contacts (FUTURE_TRAVEL → ON_TRIP once window opens)
-    const { rowCount: promoted } = await pool.query(`
-      ${currentlyOnTripCTE}
-      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP', updated_at = NOW()
-      FROM currently_on_trip c
-      WHERE uc.unified_id = c.unified_id AND uc.booking_status IS DISTINCT FROM 'ON_TRIP'
-    `);
-
-    // 3. Demote stale FUTURE_TRAVELs (tour date has passed entirely — moved past ON_TRIP window)
-    //    These are people whose tour_date + 7 days is before today and they're still FUTURE_TRAVEL
-    const { rowCount: futureToPast } = await pool.query(`
-      UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
-      WHERE booking_status = 'FUTURE_TRAVEL'
-        AND NOT EXISTS (
-          SELECT 1 FROM rayna_tours WHERE unified_id = uc.unified_id AND tour_date::date > CURRENT_DATE AND (status IS NULL OR status != 'Cancelled')
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM rayna_hotels WHERE unified_id = uc.unified_id AND check_in_date::date > CURRENT_DATE
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND from_datetime::date > CURRENT_DATE AND (status IS NULL OR status != 'Cancelled')
-        )
-        AND EXISTS (
-          SELECT 1 FROM rayna_tours WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled')
-          UNION ALL
-          SELECT 1 FROM rayna_hotels WHERE unified_id = uc.unified_id
-          UNION ALL
-          SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled')
-        )
-    `);
-
-    // 4. CANCELLED — move contacts sitting in PROSPECT/PAST_ENQUIRY who
-    //    actually have cancelled-only Rayna bookings (engaged past enquiry).
-    //    Only picks contacts with zero aggregate bookings but some cancellation on record.
-    const { rowCount: toCancelled } = await pool.query(`
-      UPDATE unified_contacts uc SET booking_status = 'CANCELLED', updated_at = NOW()
-      WHERE booking_status IN ('PROSPECT', 'PAST_ENQUIRY')
-        AND COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0) = 0
-        AND (EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = uc.unified_id AND status = 'Cancelled')
-          OR EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND status = 'Cancelled'))
-    `);
-
-    // 5. Reverse: anyone in CANCELLED who now has valid active bookings should move to PAST_BOOKING
-    const { rowCount: cancelledToPastBooking } = await pool.query(`
-      UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
-      WHERE booking_status = 'CANCELLED'
-        AND (COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0)) > 0
     `);
 
     await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
@@ -296,11 +313,11 @@ export default class UnifiedContactService {
     return {
       recomputed: true,
       transitions: {
-        on_trip_demoted: demoted,
-        on_trip_promoted: promoted,
+        future_travel_promoted: futurePromoted,
         future_travel_to_past: futureToPast,
-        to_cancelled: toCancelled,
-        cancelled_to_past_booking: cancelledToPastBooking,
+        future_travel_to_prospect: futureToProspect,
+        on_trip_promoted: promoted,
+        on_trip_demoted: demoted,
       },
       durationMs: Date.now() - started,
     };
@@ -351,7 +368,78 @@ export default class UnifiedContactService {
       ${btWhere}
     `);
 
-    return { totals, statusCounts, breakdown };
+    // ACICO revenue — all-time confirmed (excluding cancelled) from source tables
+    const { rows: acicoRevenue } = await pool.query(`
+      SELECT 'tours' as source, COUNT(*)::int as bookings, COALESCE(SUM(total_sell),0)::numeric as revenue
+      FROM rayna_tours WHERE (status IS NULL OR status != 'Cancelled')
+      UNION ALL
+      SELECT 'hotels', COUNT(*)::int, COALESCE(SUM(total_sell),0)::numeric
+      FROM rayna_hotels
+      UNION ALL
+      SELECT 'visas', COUNT(*)::int, COALESCE(SUM(total_sell),0)::numeric
+      FROM rayna_visas
+      UNION ALL
+      SELECT 'flights', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric
+      FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled')
+    `);
+    const acicoTotal = acicoRevenue.reduce((s, r) => s + parseFloat(r.revenue || 0), 0);
+
+    // ON_TRIP count using is_on_trip flag (includes overlap with FUTURE_TRAVEL)
+    const btOnTripWhere = businessType ? `AND business_type = '${businessType}'` : '';
+    const { rows: [onTripLive] } = await pool.query(`
+      SELECT COUNT(*)::int as count,
+        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue,
+        COUNT(*) FILTER (WHERE total_chats > 0)::int as with_chats,
+        COUNT(*) FILTER (WHERE is_indian = true)::int as indian_count
+      FROM unified_contacts
+      WHERE is_on_trip = true ${btOnTripWhere}
+    `);
+
+    // ON_TRIP total bookings (unique bills) from source tables — UNION distinct for total
+    const { rows: [onTripBookings] } = await pool.query(`
+      SELECT (SELECT COUNT(DISTINCT billno) FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE)::int as tours,
+        (SELECT COUNT(DISTINCT billno) FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE)::int as hotels,
+        (SELECT COUNT(DISTINCT billno) FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE)::int as flights,
+        (SELECT COUNT(DISTINCT billno) FROM (
+          SELECT billno FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
+          UNION SELECT billno FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
+          UNION SELECT billno FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
+        ) x)::int as total
+    `);
+
+    // FUTURE_TRAVEL total bookings (unique bills) from source tables — UNION distinct for total
+    const { rows: [ftBookings] } = await pool.query(`
+      SELECT (SELECT COUNT(DISTINCT billno) FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date > CURRENT_DATE)::int as tours,
+        (SELECT COUNT(DISTINCT billno) FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date > CURRENT_DATE)::int as hotels,
+        (SELECT COUNT(DISTINCT billno) FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date > CURRENT_DATE)::int as flights,
+        (SELECT COUNT(DISTINCT billno) FROM (
+          SELECT billno FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date > CURRENT_DATE
+          UNION SELECT billno FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date > CURRENT_DATE
+          UNION SELECT billno FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date > CURRENT_DATE
+        ) x)::int as total
+    `);
+
+    // Override ON_TRIP row in statusCounts with the is_on_trip flag count
+    const onTripIdx = statusCounts.findIndex(r => r.booking_status === 'ON_TRIP');
+    if (onTripIdx >= 0) {
+      statusCounts[onTripIdx].count = onTripLive.count;
+      statusCounts[onTripIdx].revenue = onTripLive.revenue;
+      statusCounts[onTripIdx].with_chats = onTripLive.with_chats;
+      statusCounts[onTripIdx].indian_count = onTripLive.indian_count;
+      statusCounts[onTripIdx].total_bookings = onTripBookings.total;
+      statusCounts[onTripIdx].booking_breakdown = { tours: onTripBookings.tours, hotels: onTripBookings.hotels, flights: onTripBookings.flights };
+    } else {
+      statusCounts.splice(0, 0, { booking_status: 'ON_TRIP', ...onTripLive, total_bookings: onTripBookings.total, booking_breakdown: { tours: onTripBookings.tours, hotels: onTripBookings.hotels, flights: onTripBookings.flights } });
+    }
+
+    // Add booking counts to FUTURE_TRAVEL
+    const ftIdx = statusCounts.findIndex(r => r.booking_status === 'FUTURE_TRAVEL');
+    if (ftIdx >= 0) {
+      statusCounts[ftIdx].total_bookings = ftBookings.total;
+      statusCounts[ftIdx].booking_breakdown = { tours: ftBookings.tours, hotels: ftBookings.hotels, flights: ftBookings.flights };
+    }
+
+    return { totals, statusCounts, breakdown, acicoRevenue: { label: 'All-Time Confirmed', sources: acicoRevenue, total: acicoTotal } };
   }
 
   /**
@@ -372,6 +460,20 @@ export default class UnifiedContactService {
       WHERE booking_status IS NOT NULL
       GROUP BY booking_status
     `);
+
+    // Override ON_TRIP count with is_on_trip flag (includes overlap with FUTURE_TRAVEL)
+    const { rows: [onTripSnap] } = await pool.query(`
+      SELECT COUNT(*)::int as total_count,
+        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
+      FROM unified_contacts WHERE is_on_trip = true
+    `);
+    const onTripRow = segments.find(s => s.segment_label === 'ON_TRIP');
+    if (onTripRow) {
+      onTripRow.total_count = onTripSnap.total_count;
+      onTripRow.revenue = onTripSnap.revenue;
+    } else if (onTripSnap.total_count > 0) {
+      segments.push({ segment_label: 'ON_TRIP', total_count: onTripSnap.total_count, revenue: onTripSnap.revenue });
+    }
 
     // Journey entries/exits/conversions today
     const { rows: journeyStats } = await pool.query(`

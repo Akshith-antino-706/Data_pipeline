@@ -51,8 +51,8 @@ POSTGRES = dict(
     host     = "localhost",
     port     = 5432,
     dbname   = "rayna_data_pipe",
-    user     = "akshithkumaryv",
-    password = "7884",
+    user     = "postgres",
+    password = "Avinash1234",
 )
  
 BATCH_SIZE = 5000   # commit + log progress every N rows
