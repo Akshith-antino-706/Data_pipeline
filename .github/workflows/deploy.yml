@@ -25,7 +25,7 @@ jobs:
             # Create .env for docker-compose (root level)
             cat > .env <<'ENVEOF'
             DB_PASS=${{ secrets.DB_PASS }}
-            VITE_API_URL=${{ secrets.VITE_API_URL }}
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
             DB_PORT_EXTERNAL=5433
             ENVEOF
 
