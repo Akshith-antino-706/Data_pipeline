@@ -68,13 +68,13 @@ const HOLIDAY_DESTINATIONS = filterMapByKey({
 
 const RATINGS = [
   { platform: 'Rayna Tours',  logo: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',
-    scale: '4/5',   rating: '4.5', reviews: '3,450 Reviews',  color: '#f5a623', border: '#f0e5c0', bg: '#fffdf4' },
+    scale: '4/5',   rating: '4.5', reviews: '25 Million Customers', color: '#f5a623', border: '#f0e5c0', bg: '#fffdf4' },
   { platform: 'Trustpilot',   logo: 'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',
-    scale: '4/5',   rating: '4.3', reviews: '52,641 Reviews', color: '#00b67a', border: '#b8e8d0', bg: '#f4fcf8' },
+    scale: '4/5',   rating: '4.7', reviews: '34,655 Reviews', color: '#00b67a', border: '#b8e8d0', bg: '#f4fcf8' },
   { platform: 'Tripadvisor',  logo: 'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',
-    scale: '4.5/5', rating: '4.6', reviews: '12,861 Reviews', color: '#00aa6c', border: '#b8e8d0', bg: '#f4fcf8' },
+    scale: '4.5/5', rating: '4.6', reviews: '12,882 Reviews', color: '#00aa6c', border: '#b8e8d0', bg: '#f4fcf8' },
   { platform: 'Google',       logo: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',
-    scale: '5/5',   rating: '4.4', reviews: '1,517 Reviews',  color: '#fbbc04', border: '#f5cfc8', bg: '#fff8f6' },
+    scale: '5/5',   rating: '4.3', reviews: '1,693 Reviews',  color: '#fbbc04', border: '#f5cfc8', bg: '#fff8f6' },
 ];
 
 const HERO_VARIANTS = {

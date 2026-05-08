@@ -63,15 +63,21 @@ function generateCityRows(cities) {
     const padding = isLeftCol ? 'padding-right: 6px;' : 'padding-left: 6px;';
 
     html += `<td class="city-col" width="50%" valign="top" style="width: 50%; padding-top: 0; ${padding} padding-bottom: 0;">
-                <a href="${city.link}" style="display: block; text-decoration: none; border: 1px solid #e2ddd6; background-color: #fdfcf9; padding: 11px 12px;">
-                  <div style="font-size: 0; line-height: 0">
-                    <span style="display: inline-block; width: 10%; vertical-align: middle;"><img src="${city.flag_url}" alt="${city.flag_alt}" width="20" height="20" style="display: block; width: 20px; height: 20px; border: 0"/></span>
-                    <span style="display: inline-block; width: 65%; vertical-align: middle; font-family: Georgia, serif; margin-left: 20px;">
-                      <div style="font-size: 13px; line-height: 15px; color: #1a1a1a; font-weight: 700;">${city.name}</div>
-                      <div style="font-size: 9px; line-height: 13px; color: #b6b6b6;">${city.sub_text}</div>
-                    </span>
-                    <span style="display: inline-block; width: 10%; vertical-align: middle; text-align: right; font-family: Georgia, serif; font-size: 12px; color: #1a1a1a;">&#8594;</span>
-                  </div>
+                <a href="${city.link}" style="display: block; text-decoration: none;">
+                  <table role="presentation" width="100%" height="68" cellpadding="0" cellspacing="0" border="0" style="width: 100%; height: 68px; border: 1px solid #e2ddd6; background-color: #fdfcf9; border-collapse: separate;">
+                    <tr>
+                      <td valign="middle" style="padding: 10px 12px;">
+                        <div style="font-size: 0; line-height: 0">
+                          <span style="display: inline-block; width: 10%; vertical-align: middle;"><img src="${city.flag_url}" alt="${city.flag_alt}" width="20" height="20" style="display: block; width: 20px; height: 20px; border: 0"/></span>
+                          <span style="display: inline-block; width: 65%; vertical-align: middle; font-family: Georgia, serif; margin-left: 20px;">
+                            <div style="font-size: 13px; line-height: 15px; color: #1a1a1a; font-weight: 700;">${city.name}</div>
+                            <div style="font-size: 9px; line-height: 13px; color: #b6b6b6;">${city.sub_text}</div>
+                          </span>
+                          <span style="display: inline-block; width: 10%; vertical-align: middle; text-align: right; font-family: Georgia, serif; font-size: 12px; color: #1a1a1a;">&#8594;</span>
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
                 </a>
               </td>`;
 
@@ -148,7 +154,7 @@ function generateRegionalCruiseRows(regionalData) {
               </td>
             </tr>
             <tr>
-              <td valign="top" style="padding: 17px 16px 12px; font-family: Georgia, serif;">
+              <td valign="top" height="180" style="padding: 17px 16px 12px; font-family: Georgia, serif; height: 180px;">
                 <div style="display: inline-block; font-size: 10px; line-height: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: #7f7f7f; font-weight: 700; background-color: #efebe5; border-radius: 10px; padding: 3px 8px;">${item.tag}</div>
                 <div style="font-family: Georgia, serif; font-size: 20px; line-height: 26px; color: #1a1a1a; font-weight: 700; padding-top: 8px; padding-bottom: 8px;">${item.title}</div>
                 <div style="font-size: 12px; line-height: 18px; color: #888888; padding-bottom: 0;">${item.description}</div>
@@ -188,7 +194,7 @@ function generateCruiseLineRows(cruiseLines) {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid #e8e4de; background-color: #ffffff;">
               <tr><td><img class="fleet-img" src="${line.image}" alt="${line.name}" width="100%" height="165" style="display: block; width: 100%; height: 165px; border: 0; object-fit: cover;"/></td></tr>
               <tr>
-                <td style="padding: 12px;">
+                <td height="74" style="padding: 12px; height: 74px;">
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
                     <tr>
                       <td align="left" valign="middle" style="font-family: Georgia, serif;">

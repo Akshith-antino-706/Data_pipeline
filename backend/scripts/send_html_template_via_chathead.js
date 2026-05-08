@@ -9,7 +9,7 @@ import db from '../src/config/database.js';
 
 const API_URL = process.env.CHATHEAD_API_URL || 'http://chathead.io/apis/email/send/index.php';
 const API_TOKEN = process.env.CHATHEAD_API_TOKEN;
-const FROM = 'travelguide@newsletter.raynatours.com';
+const FROM = 'explore@promotions.raynatours.com';
 const FROM_NAME = 'Rayna Tours';
 
 if (!API_TOKEN) {

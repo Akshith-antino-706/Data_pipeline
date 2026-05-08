@@ -37,14 +37,14 @@ function generateInternationalVisaCards(visas) {
         const padding = (j === 0) ? 'padding: 0 6px 12px 0;' : 'padding: 0 0 12px 6px;';
         html += `
         <td width="50%" valign="top" style="display: table-cell; width: 50%; ${padding}">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="290" style="width: 100%; height: 290px; border-collapse: collapse">
             <tr>
-              <td>
+              <td height="160" style="height: 160px;">
                 <img class="fluid-img visa-card-img" src="${visa.image}" alt="${visa.name}" width="266" style="display: block; width: 100%; height: 160px; border: 0;"/>
               </td>
             </tr>
             <tr>
-              <td style="background-color: #1a1a1a; padding: 14px 16px;">
+              <td valign="top" height="130" style="height: 130px; background-color: #1a1a1a; padding: 14px 16px;">
                 <div style="font-family: Georgia, serif; font-size: 18px; line-height: 22px; color: #ffffff; padding-bottom: 4px;">
                   ${visa.flag} ${visa.name}
                 </div>
@@ -127,9 +127,13 @@ function generatePopularDestinationCards(items) {
     <td class="pop-col" width="25%" valign="top" style="display: table-cell; width: 25%; padding: 0 ${paddingRight} 8px ${paddingLeft};">
       <a href="${item.link}" style="text-decoration: none">
         <img class="fluid-img" src="${item.image}" alt="${item.name}" width="131" style="display: block; width: 100%; height: 90px; border: 0;"/>
-        <div style="background-color: #1a1a1a; text-align: center; font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #ffffff; padding: 8px 4px;">
-          ${item.name}
-        </div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td align="center" valign="middle" height="40" style="height: 40px; background-color: #1a1a1a; font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #ffffff; padding: 6px 4px;">
+              ${item.name}
+            </td>
+          </tr>
+        </table>
       </a>
     </td>`;
   });

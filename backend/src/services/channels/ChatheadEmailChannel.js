@@ -9,13 +9,13 @@
  * Env:
  *   CHATHEAD_API_URL       defaults to http://chathead.io/apis/email/send/index.php
  *   CHATHEAD_API_TOKEN     required — Bearer token
- *   CHATHEAD_FROM_EMAIL    defaults to travelguide@newsletter.raynatours.com
+ *   CHATHEAD_FROM_EMAIL    defaults to explore@promotions.raynatours.com
  *   CHATHEAD_FROM_NAME     defaults to "Rayna Tours"
  */
 
 const DEFAULT_API_URL = 'http://chathead.io/apis/email/send/index.php';
 
-function fromEmail() { return process.env.CHATHEAD_FROM_EMAIL || 'travelguide@newsletter.raynatours.com'; }
+function fromEmail() { return process.env.CHATHEAD_FROM_EMAIL || 'explore@promotions.raynatours.com'; }
 function fromName()  { return process.env.CHATHEAD_FROM_NAME  || 'Rayna Tours'; }
 
 export class ChatheadEmailChannel {

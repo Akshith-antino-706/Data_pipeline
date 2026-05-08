@@ -22,10 +22,10 @@ import { isCityBlocked } from '../config/blockedDestinations.js';
 const LOGO = 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png';
 
 const TRUST_PLATFORMS = [
-  { name: 'Rayna Tours',  stars_html: '<span style="color:#f5a623;">&#9733;&#9733;&#9733;&#9733;</span><span style="color:#ddd;">&#9733;</span>',                              score: '4.5', reviews: '3,450 Reviews',  name_color: '#1a1a1a' },
-  { name: 'Trustpilot',   stars_html: '<span style="color:#00b67a;">&#9733;&#9733;&#9733;&#9733;</span><span style="color:#ddd;">&#9733;</span>',                              score: '4.3', reviews: '52,641 Reviews', name_color: '#00b67a' },
-  { name: 'Tripadvisor',  stars_html: '<span style="color:#00aa6c;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>',                                                              score: '4.6', reviews: '12,861 Reviews', name_color: '#00aa6c' },
-  { name: 'Google',       stars_html: '<span style="color:#4285f4;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>',                                                              score: '4.4', reviews: '1,517 Reviews',  name_color: '#4285f4' },
+  { name: 'Rayna Tours',  stars_html: '<span style="color:#f5a623;">&#9733;&#9733;&#9733;&#9733;</span><span style="color:#ddd;">&#9733;</span>',                              score: '4.5', reviews: '25 Million Customers', name_color: '#1a1a1a' },
+  { name: 'Trustpilot',   stars_html: '<span style="color:#00b67a;">&#9733;&#9733;&#9733;&#9733;</span><span style="color:#ddd;">&#9733;</span>',                              score: '4.7', reviews: '34,655 Reviews', name_color: '#00b67a' },
+  { name: 'Tripadvisor',  stars_html: '<span style="color:#00aa6c;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>',                                                              score: '4.6', reviews: '12,882 Reviews', name_color: '#00aa6c' },
+  { name: 'Google',       stars_html: '<span style="color:#4285f4;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>',                                                              score: '4.3', reviews: '1,693 Reviews',  name_color: '#4285f4' },
 ];
 
 const HERO_VARIANTS = {

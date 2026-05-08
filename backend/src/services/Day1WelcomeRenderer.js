@@ -39,9 +39,13 @@ function generateCategories(sections) {
       <td class="service-col service-col-pad" width="25%" valign="top" style="padding: 0 4px; width: 25%">
         <a href="${item.link}" style="text-decoration: none; display: block" class="service-col-inner">
           <img src="${item.image}" alt="${item.name}" width="270" style="display: block; width: 100%; max-width: 270px; height: auto; border: 0;" />
-          <div align="center" style="padding: 10px 6px 9px 6px; border: 1px solid #e5e2dc; border-top: 2px solid #1a1a1a; background-color: #f5f2ec; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #1a1a1a;">
-            ${item.name}
-          </div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td align="center" valign="middle" height="48" style="height: 48px; padding: 6px; border: 1px solid #e5e2dc; border-top: 2px solid #1a1a1a; background-color: #f5f2ec; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #1a1a1a;">
+                ${item.name}
+              </td>
+            </tr>
+          </table>
         </a>
       </td>`).join('');
 
@@ -88,7 +92,7 @@ function generateRatings(ratings) {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid ${item.styles.border}; background-color: ${item.styles.bg};">
             <tr>
               <td align="center" style="padding: 18px 12px 16px 12px">
-                <div style="padding: 0 0 8px 0"><img src="${item.logo}" alt="${item.platform}" style="height: 22px; max-height: 22px; width: auto; display: block; margin: 0 auto;" /></div>
+                <div style="padding: 0 0 8px 0"><img class="ratings-logo" src="${item.logo}" alt="${item.platform}" style="height: 22px; max-height: 22px; width: auto; display: block; margin: 0 auto;" /></div>
                 <div style="padding: 0 0 8px 0; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 18px; color: ${item.styles.starColor};">${item.stars}</div>
                 <div style="padding: 0 0 3px 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; line-height: 20px; font-weight: 700; color: #1a1a1a;">${item.rating}</div>
                 <div style="font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 14px; color: #888888;">${item.reviews}</div>
