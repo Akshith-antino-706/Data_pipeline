@@ -36,6 +36,7 @@ import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 import testE2ERouter from './src/routes/testE2E.js';
 import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
+import authRouter from './src/routes/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -93,6 +94,9 @@ app.use((req, _res, next) => {
 });
 
 // ── Routes ──────────────────────────────────────────────────
+// Auth
+app.use('/api/auth', authRouter);
+
 // Legacy API (v1 — backward compatible with existing frontend)
 app.use('/api', analyticsRouter);
 
