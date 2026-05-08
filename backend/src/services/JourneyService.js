@@ -433,6 +433,7 @@ class JourneyService {
           'anket@raynatours.com',
           'vaibhav@raynatours.com',
           'alok@raynatours.com',
+          'manoj@raynatours.com',
         ];
         extra = `AND LOWER(uc.email) = ANY($3::text[])`;
         params.push(TEST_EMAILS);
