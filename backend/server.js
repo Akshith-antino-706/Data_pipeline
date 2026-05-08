@@ -36,6 +36,7 @@ import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 import testE2ERouter from './src/routes/testE2E.js';
 import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
+import authRouter from './src/routes/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -51,7 +52,7 @@ app.use(helmet({
   contentSecurityPolicy: false,  // API server, not serving HTML
 }));
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,https://raynatours.com,https://www.raynatours.com,https://raynadata.netlify.app').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,http://51.20.2.45:5176,http://ec2-51-20-2-45.eu-north-1.compute.amazonaws.com:5176,https://raynatours.com,https://www.raynatours.com,https://raynadata.netlify.app').split(',').map(s => s.trim());
 app.use(cors({
   origin: (origin, cb) => {
     // Allow requests with no origin (curl, server-to-server, mobile)
@@ -93,6 +94,9 @@ app.use((req, _res, next) => {
 });
 
 // ── Routes ──────────────────────────────────────────────────
+// Auth
+app.use('/api/auth', authRouter);
+
 // Legacy API (v1 — backward compatible with existing frontend)
 app.use('/api', analyticsRouter);
 
@@ -184,7 +188,7 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
-    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql', '047_missing_infrastructure.sql', '048_dept_contact_type.sql', '049_users_from_rayna.sql']) {
+    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql', '047_missing_infrastructure.sql', '048_dept_contact_type.sql', '049_users_from_rayna.sql', '053_auth_users.sql']) {
       await runMigrationFile(file);
     }
     res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
