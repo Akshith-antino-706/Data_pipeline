@@ -25,6 +25,7 @@ services:
       - postgres
     volumes:
       - ./backend/service-account.json:/app/service-account.json:ro
+      - ./mail_templates:/mail_templates:ro
 
   frontend:
     build:

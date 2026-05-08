@@ -6,7 +6,9 @@ import { ContentService } from '../services/ContentService.js';
 const router = Router();
 
 const __filename = fileURLToPath(import.meta.url);
-const TEMPLATES_DIR = path.resolve(path.dirname(__filename), '..', '..', '..', 'mail_templates');
+const TEMPLATES_DIR = process.env.NODE_ENV === 'production'
+  ? '/mail_templates'
+  : path.resolve(path.dirname(__filename), '..', '..', '..', 'mail_templates');
 
 // Each Day has its own fallback-ranking signature (the dry-run scripts
 // in backend/scripts/send_dayN_*.js diverge for each). The dispatcher
