@@ -7,6 +7,23 @@ import GupshupService from './GupshupService.js';
 import PopularityService from './PopularityService.js';
 import { enqueueBatch } from './queue/index.js';
 
+// Hardcoded test recipients — internal QA. Anything else seeded into the
+// TEST_USERS segment also matches by email here. Used by:
+//   - enrollAll({ mode: 'test_users' }) → restricts the enrollment query
+//   - processJourney action-node firing → forces email-only for these users
+//     so they never receive WhatsApp/SMS even if the action node specifies it.
+const TEST_EMAILS = new Set([
+  'akshith@antino.com',
+  'akshith@raynatours.com',
+  'anket@raynatours.com',
+  'vaibhav@raynatours.com',
+  'alok@raynatours.com',
+  'manoj@raynatours.com',
+]);
+function isTestUser(email) {
+  return !!email && TEST_EMAILS.has(String(email).toLowerCase().trim());
+}
+
 /**
  * JourneyService — Journey Flow Builder & Execution Engine
  * Manages visual flows with triggers, actions, conditions, and wait steps
@@ -427,16 +444,8 @@ class JourneyService {
         extra = `AND uc.unified_id = ANY($3::bigint[])`;
         params.push(unifiedIds);
       } else {
-        const TEST_EMAILS = [
-          'akshith@antino.com',
-          'akshith@raynatours.com',
-          'anket@raynatours.com',
-          'vaibhav@raynatours.com',
-          'alok@raynatours.com',
-          'manoj@raynatours.com',
-        ];
         extra = `AND LOWER(uc.email) = ANY($3::text[])`;
-        params.push(TEST_EMAILS);
+        params.push(Array.from(TEST_EMAILS));
       }
     } else if (mode === 'sample') {
       const n = Math.max(1, parseInt(sampleSize || 100));
@@ -625,6 +634,21 @@ class JourneyService {
           channel = (currentNode.data?.restChannel || 'email').toLowerCase();
           templateId = currentNode.data?.restTemplateId || rawTemplateId;
           autoPaired = true;
+        }
+
+        // TEST_USERS guard: hardcoded testers receive email only — no WhatsApp,
+        // no SMS — even if the action node specifies one of those channels.
+        // Skip the action entirely (don't enqueue) and advance to the next node.
+        if (isTestUser(entry.email) && channel !== 'email') {
+          await db.query(
+            `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+             VALUES ($1, $2, 'action_skipped', $3, $4)`,
+            [entry.entry_id, currentNode.id, channel,
+             JSON.stringify({ reason: 'test_user_email_only', track: entryTrack })]
+          );
+          await this._advanceEntry(entry.entry_id, currentNode.id, edges, nodeMap, entryTrack);
+          processed++;
+          continue;
         }
 
         // Pre-resolve the html_template_id once per templateId per run (cached
