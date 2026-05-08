@@ -1,14 +1,127 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
 import { ContentService } from '../services/ContentService.js';
-import { AIService } from '../services/AIService.js';
-import { BaseTemplateService } from '../services/BaseTemplateService.js';
-import { getSegmentProducts } from '../templates/segmentProducts.js';
-import ProductService from '../services/ProductService.js';
-import SEGMENT_EMAIL_CONFIG from '../templates/segmentEmailConfig.js';
 
 const router = Router();
 
-// GET /api/v2/content/templates
+const __filename = fileURLToPath(import.meta.url);
+const TEMPLATES_DIR = path.resolve(path.dirname(__filename), '..', '..', '..', 'mail_templates');
+
+// Each Day has its own fallback-ranking signature (the dry-run scripts
+// in backend/scripts/send_dayN_*.js diverge for each). The dispatcher
+// below mirrors what `--dry-run --no-claude` produces, inlined so the
+// preview is fast (no Claude, no HTTP). DB queries are still allowed —
+// some fallbacks fetch product candidates from the products table.
+
+async function renderDayTemplatePreview(day) {
+  try {
+    if (day === 1) {
+      const { renderDay1Welcome }    = await import('../services/Day1WelcomeRenderer.js');
+      const { buildDay1WelcomeData, _internals: dataInternals } = await import('../services/Day1WelcomeDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day1WelcomeRankingService.js');
+      const visaRows = await rankInternals.loadVisaCatalog();
+      const visaMap  = Object.fromEntries(visaRows.map(r => [r.key, r]));
+      const ranking  = rankInternals.buildFallbackRanking({
+        holidayMap:  dataInternals.HOLIDAY_DESTINATIONS,
+        cruiseMap:   dataInternals.CRUISE_DESTINATIONS,
+        activityMap: dataInternals.ACTIVITY_DESTINATIONS,
+        visaMap,
+      });
+      const data = await buildDay1WelcomeData({ contactId: 'preview', ranking });
+      return renderDay1Welcome(path.join(TEMPLATES_DIR, 'day1-welcome-dynamic.html'), data);
+    }
+
+    if (day === 2) {
+      const { renderDay2Cruise }    = await import('../services/Day2CruiseRenderer.js');
+      const { buildDay2CruiseData } = await import('../services/Day2CruiseDataService.js');
+      const ranking = {
+        saver_product_ids:    [900965, 900972, 900983],
+        regional_product_ids: [900981, 900983, 900984, 900986],
+        cruise_line_keys:     ['msc', 'costa', 'royal_caribbean', 'genting_dreams'],
+        departure_city_keys:  ['abu_dhabi', 'saudi_arabia', 'singapore', 'europe'],
+        hero_variant_key:           'horizon',
+        regional_copy_variant_key:  'mediterranean',
+        hero_product_id:            900965,
+      };
+      const data = await buildDay2CruiseData({ contactId: 'preview', ranking });
+      return renderDay2Cruise(path.join(TEMPLATES_DIR, 'day2-cruise-dynamic.html'), data);
+    }
+
+    if (day === 3) {
+      const { renderDay3Visa }      = await import('../services/Day3VisaRenderer.js');
+      const { buildDay3VisaData }   = await import('../services/Day3VisaDataService.js');
+      const { _internals: rankInternals } = await import('../services/VisaRankingService.js');
+      const catalog = await rankInternals.loadVisaCatalog();
+      // The fallback omits `ratings_keys` because Claude doesn't pick those —
+      // the send script injects them after the rank call. Mirror that here.
+      const ranking = {
+        ...rankInternals.buildFallbackRanking(catalog),
+        ratings_keys: ['rayna', 'trustpilot', 'tripadvisor', 'google'],
+      };
+      const data = await buildDay3VisaData({ contactId: 'preview', ranking });
+      return renderDay3Visa(path.join(TEMPLATES_DIR, 'day3-visa-dynamic.html'), data);
+    }
+
+    if (day === 4) {
+      const { renderDay4Holidays }    = await import('../services/Day4HolidaysRenderer.js');
+      const { buildDay4HolidaysData } = await import('../services/Day4HolidaysDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day4HolidaysRankingService.js');
+      const ranking = rankInternals.buildFallbackRanking();
+      const data    = await buildDay4HolidaysData({ contactId: 'preview', ranking });
+      return renderDay4Holidays(path.join(TEMPLATES_DIR, 'day4-holidays-dynamic.html'), data);
+    }
+
+    if (day === 5) {
+      const { renderDay5Activities }    = await import('../services/Day5ActivitiesRenderer.js');
+      const { buildDay5ActivitiesData } = await import('../services/Day5ActivitiesDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day5ActivitiesRankingService.js');
+      const ranking = rankInternals.buildFallbackRanking();
+      const data    = await buildDay5ActivitiesData({ contactId: 'preview', ranking });
+      return renderDay5Activities(path.join(TEMPLATES_DIR, 'day5-activities-dynamic.html'), data);
+    }
+
+    if (day === 6) {
+      const { renderDay6Destination }    = await import('../services/Day6DestinationRenderer.js');
+      const { buildDay6DestinationData, _internals: dataInternals } = await import('../services/Day6DestinationDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day6DestinationRankingService.js');
+      // Pick the first destination in the catalog as the preview default.
+      const destinationKey = Object.keys(dataInternals.DESTINATION_CATALOG || {})[0] || 'bali';
+      const dest = dataInternals.DESTINATION_CATALOG[destinationKey];
+      const [holidayCandidates, activityCandidates, cruiseCandidates] = await Promise.all([
+        rankInternals.fetchHolidayCandidates(dest.productCity),
+        rankInternals.fetchActivityCandidates(dest.productCity),
+        rankInternals.fetchCruiseCandidates(dest.cruiseCategory),
+      ]);
+      const ranking = rankInternals.buildFallbackRanking({ holidayCandidates, activityCandidates, cruiseCandidates });
+      const data    = await buildDay6DestinationData({ contactId: 'preview', destinationKey, ranking });
+      return renderDay6Destination(path.join(TEMPLATES_DIR, 'day6-destination-dynamic.html'), data);
+    }
+
+    if (day === 7) {
+      const { renderDay7AbandonedCart }    = await import('../services/Day7AbandonedCartRenderer.js');
+      const { buildDay7AbandonedCartData } = await import('../services/Day7AbandonedCartDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day7AbandonedCartRankingService.js');
+      const [activities, holidays, cruises, visas] = await Promise.all([
+        rankInternals.fetchCandidates('activities'),
+        rankInternals.fetchCandidates('holiday'),
+        rankInternals.fetchCandidates('cruise'),
+        rankInternals.fetchVisaKeys(),
+      ]);
+      const ranking = rankInternals.buildFallbackRanking({ activities, holidays, cruises, visas });
+      // contactId must be numeric (used in ga4_events lookup); null short-circuits the query.
+      const data    = await buildDay7AbandonedCartData({ contactId: null, ranking });
+      return renderDay7AbandonedCart(path.join(TEMPLATES_DIR, 'day7-abandoned-cart-dynamic.html'), data);
+    }
+
+    return null;
+  } catch (err) {
+    console.error(`[content preview] Day ${day} render failed:`, err.stack || err);
+    return null;
+  }
+}
+
+// GET /api/v2/content/templates — list all 7 day-templates
 router.get('/templates', async (req, res, next) => {
   try {
     const { channel, status, page, limit } = req.query;
@@ -30,53 +143,29 @@ router.get('/templates/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/v2/content/templates/:id/preview — Render full email preview with base template
+// GET /api/v2/content/templates/:id/preview — render via the file-based Day{N} renderer
 router.get('/templates/:id/preview', async (req, res, next) => {
   try {
     const template = await ContentService.getById(req.params.id);
     if (!template) return res.status(404).json({ success: false, error: 'Template not found' });
-
     if (template.channel !== 'email') {
       return res.json({ success: true, data: { html: template.body } });
     }
 
-    // Find matching segment config from template name
-    const segmentName = Object.keys(SEGMENT_EMAIL_CONFIG).find(s => template.name?.includes(s));
-    const segConfig = SEGMENT_EMAIL_CONFIG[segmentName] || {};
-    let products;
-    try {
-      const dynamic = await ProductService.getForSegment(segmentName || 'Registered Not Booked', 3);
-      if (dynamic.length > 0) {
-        products = dynamic.map(p => ({
-          product_url: p.url || 'https://www.raynatours.com',
-          product_image: p.image || '',
-          product_category: (p.item_group_id || '').replace(/-/g, ' '),
-          product_name: p.name || '',
-          product_rating: p.rating || '4.8',
-          product_reviews: String(p.reviewCount || ''),
-          product_price: String(p.salePrice || ''),
-          product_strike_price: String(p.normalPrice || ''),
-        }));
-      }
-    } catch { /* API down */ }
-    if (!products || products.length === 0) {
-      products = getSegmentProducts(segmentName || 'Registered Not Booked');
+    const dayMatch = (template.name || '').match(/^Day\s+(\d)\s*-/i);
+    if (!dayMatch) {
+      return res.status(400).json({
+        success: false,
+        error: `Preview only supported for the 7 day-templates (Day 1..Day 7). Got: ${template.name}`,
+      });
     }
-    const baseTemplate = segConfig.baseTemplate || 'product-recommendation';
-
-    const html = BaseTemplateService.render(baseTemplate, {
-      customer_name: 'Traveler',
-      email_heading: segConfig.email_heading || 'Explore Amazing Experiences',
-      email_body: segConfig.email_body || template.body?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
-      cta_url: segConfig.cta_url || 'https://www.raynatours.com/activities',
-      ...(segConfig.coupon_code ? {
-        coupon_code: template.coupon_code || segConfig.coupon_code,
-        coupon_discount: segConfig.coupon_discount || 'Flat 15% Off',
-        coupon_expiry: segConfig.coupon_expiry || '7 days',
-      } : {}),
-      products,
-    });
-
+    const html = await renderDayTemplatePreview(parseInt(dayMatch[1]));
+    if (!html) {
+      return res.status(500).json({
+        success: false,
+        error: `Day ${dayMatch[1]} renderer failed — check server logs.`,
+      });
+    }
     res.json({ success: true, data: { html } });
   } catch (err) { next(err); }
 });
@@ -113,102 +202,6 @@ router.post('/templates/:id/reject', async (req, res, next) => {
     const data = await ContentService.reject(req.params.id);
     if (!data) return res.status(404).json({ success: false, error: 'Template not found' });
     res.json({ success: true, data });
-  } catch (err) { next(err); }
-});
-
-// POST /api/v2/content/generate — AI content generation
-router.post('/generate', async (req, res, next) => {
-  try {
-    const { channel, segmentLabel, tone, goal, productContext } = req.body;
-    if (!channel || !segmentLabel) {
-      return res.status(400).json({ success: false, error: 'channel and segmentLabel are required' });
-    }
-    const content = await AIService.generateContent({ channel, segmentLabel, tone, goal, productContext });
-    res.json({ success: true, data: content });
-  } catch (err) { next(err); }
-});
-
-// POST /api/v2/content/generate-with-products — Generate content with real product data + images
-router.post('/generate-with-products', async (req, res, next) => {
-  try {
-    const { segmentLabel, channel, heading, subheading, ctaText, ctaUrl, couponCode, productCount } = req.body;
-    if (!segmentLabel) {
-      return res.status(400).json({ success: false, error: 'segmentLabel is required' });
-    }
-
-    const products = await ProductService.getForSegment(segmentLabel, productCount || 3);
-    const ch = channel || 'email';
-
-    if (ch === 'email') {
-      const html = ProductService.generateProductEmailHTML({
-        products,
-        heading: heading || `Top Picks for You`,
-        subheading: subheading || `Curated experiences from Rayna Tours`,
-        ctaText: ctaText || 'View All Tours',
-        ctaUrl: ctaUrl || `https://www.raynatours.com?utm_source=AI_marketer&utm_medium=email&utm_campaign=segment_${encodeURIComponent(segmentLabel)}`,
-        couponCode,
-        segmentLabel,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          channel: 'email',
-          body: html,
-          subject: heading || `Your Curated Dubai Experiences`,
-          products,
-          media_urls: products.map(p => p.image),
-        }
-      });
-    } else {
-      const message = ProductService.generateProductWAMessage({
-        products,
-        intro: heading || `Hi! 👋 Check out these amazing experiences we picked for you:`,
-        couponCode,
-      });
-
-      res.json({
-        success: true,
-        data: {
-          channel: 'whatsapp',
-          body: message,
-          products,
-          media_urls: products.map(p => p.image),
-        }
-      });
-    }
-  } catch (err) { next(err); }
-});
-
-// GET /api/v2/content/html-templates — list all HTML email templates
-router.get('/html-templates', async (_req, res, next) => {
-  try {
-    const { default: pool } = await import('../config/database.js');
-    const { rows } = await pool.query(`
-      SELECT id, name, type, category, preview_text, length(html_body) as size_bytes,
-        array_length(placeholders, 1) as placeholder_count, placeholders, created_at
-      FROM email_html_templates ORDER BY id
-    `);
-    res.json({ success: true, data: rows });
-  } catch (err) { next(err); }
-});
-
-// GET /api/v2/content/preview-html/:id — preview an email template with sample data
-router.get('/preview-html/:id', async (req, res, next) => {
-  try {
-    const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
-    const result = await EmailRenderer.renderPreview(parseInt(req.params.id));
-    res.json({ success: true, ...result });
-  } catch (err) { next(err); }
-});
-
-// POST /api/v2/content/render/:id — render template for a specific user
-router.post('/render/:id', async (req, res, next) => {
-  try {
-    const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
-    const { unifiedId, ...extraVars } = req.body;
-    const result = await EmailRenderer.render(parseInt(req.params.id), unifiedId, extraVars);
-    res.json({ success: true, ...result });
   } catch (err) { next(err); }
 });
 
