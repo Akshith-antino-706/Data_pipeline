@@ -8,105 +8,115 @@ const router = Router();
 const __filename = fileURLToPath(import.meta.url);
 const TEMPLATES_DIR = path.resolve(path.dirname(__filename), '..', '..', '..', 'mail_templates');
 
-// Map Day N → renderer + data service config. Each entry mirrors what
-// backend/scripts/send_dayN_*.js does in --dry-run --no-claude mode but
-// is inlined so the preview is fast and has no external dependencies
-// (no Claude, no DB writes, no HTTP fetches).
-const DAY_TEMPLATES = {
-  1: {
-    template: 'day1-welcome-dynamic.html',
-    rendererModule: '../services/Day1WelcomeRenderer.js',
-    renderFn: 'renderDay1Welcome',
-    dataModule: '../services/Day1WelcomeDataService.js',
-    buildFn: 'buildDay1WelcomeData',
-    rankingModule: '../services/Day1WelcomeRankingService.js',
-  },
-  2: {
-    template: 'day2-cruise-dynamic.html',
-    rendererModule: '../services/Day2CruiseRenderer.js',
-    renderFn: 'renderDay2Cruise',
-    dataModule: '../services/Day2CruiseDataService.js',
-    buildFn: 'buildDay2CruiseData',
-    defaultRanking: {
-      saver_product_ids:    [900965, 900972, 900983],
-      regional_product_ids: [900981, 900983, 900984, 900986],
-      cruise_line_keys:     ['msc', 'costa', 'royal_caribbean', 'genting_dreams'],
-      departure_city_keys:  ['abu_dhabi', 'saudi_arabia', 'singapore', 'europe'],
-      hero_variant_key:           'horizon',
-      regional_copy_variant_key:  'mediterranean',
-      hero_product_id:            900965,
-    },
-  },
-  3: {
-    template: 'day3-visa-dynamic.html',
-    rendererModule: '../services/Day3VisaRenderer.js',
-    renderFn: 'renderDay3Visa',
-    dataModule: '../services/Day3VisaDataService.js',
-    buildFn: 'buildDay3VisaData',
-    rankingModule: '../services/Day3VisaRankingService.js',
-  },
-  4: {
-    template: 'day4-holidays-dynamic.html',
-    rendererModule: '../services/Day4HolidaysRenderer.js',
-    renderFn: 'renderDay4Holidays',
-    dataModule: '../services/Day4HolidaysDataService.js',
-    buildFn: 'buildDay4HolidaysData',
-    rankingModule: '../services/Day4HolidaysRankingService.js',
-  },
-  5: {
-    template: 'day5-activities-dynamic.html',
-    rendererModule: '../services/Day5ActivitiesRenderer.js',
-    renderFn: 'renderDay5Activities',
-    dataModule: '../services/Day5ActivitiesDataService.js',
-    buildFn: 'buildDay5ActivitiesData',
-    rankingModule: '../services/Day5ActivitiesRankingService.js',
-  },
-  6: {
-    template: 'day6-destination-dynamic.html',
-    rendererModule: '../services/Day6DestinationRenderer.js',
-    renderFn: 'renderDay6Destination',
-    dataModule: '../services/Day6DestinationDataService.js',
-    buildFn: 'buildDay6DestinationData',
-    rankingModule: '../services/Day6DestinationRankingService.js',
-  },
-  7: {
-    template: 'day7-abandoned-cart-dynamic.html',
-    rendererModule: '../services/Day7AbandonedCartRenderer.js',
-    renderFn: 'renderDay7AbandonedCart',
-    dataModule: '../services/Day7AbandonedCartDataService.js',
-    buildFn: 'buildDay7AbandonedCartData',
-    rankingModule: '../services/Day7AbandonedCartRankingService.js',
-  },
-};
+// Each Day has its own fallback-ranking signature (the dry-run scripts
+// in backend/scripts/send_dayN_*.js diverge for each). The dispatcher
+// below mirrors what `--dry-run --no-claude` produces, inlined so the
+// preview is fast (no Claude, no HTTP). DB queries are still allowed —
+// some fallbacks fetch product candidates from the products table.
 
 async function renderDayTemplatePreview(day) {
-  const cfg = DAY_TEMPLATES[day];
-  if (!cfg) return null;
   try {
-    const rendererMod = await import(cfg.rendererModule);
-    const renderFn    = rendererMod[cfg.renderFn];
-    const dataMod     = await import(cfg.dataModule);
-    const buildFn     = dataMod[cfg.buildFn];
-    if (typeof renderFn !== 'function' || typeof buildFn !== 'function') return null;
-
-    let ranking = cfg.defaultRanking;
-    if (!ranking && cfg.rankingModule) {
-      try {
-        const rankMod = await import(cfg.rankingModule);
-        const internals = rankMod._internals;
-        if (internals?.buildFallbackRanking) {
-          const dataInternals = dataMod._internals || {};
-          ranking = internals.buildFallbackRanking(dataInternals);
-        }
-      } catch { /* ranking module unavailable — fall through */ }
+    if (day === 1) {
+      const { renderDay1Welcome }    = await import('../services/Day1WelcomeRenderer.js');
+      const { buildDay1WelcomeData, _internals: dataInternals } = await import('../services/Day1WelcomeDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day1WelcomeRankingService.js');
+      const visaRows = await rankInternals.loadVisaCatalog();
+      const visaMap  = Object.fromEntries(visaRows.map(r => [r.key, r]));
+      const ranking  = rankInternals.buildFallbackRanking({
+        holidayMap:  dataInternals.HOLIDAY_DESTINATIONS,
+        cruiseMap:   dataInternals.CRUISE_DESTINATIONS,
+        activityMap: dataInternals.ACTIVITY_DESTINATIONS,
+        visaMap,
+      });
+      const data = await buildDay1WelcomeData({ contactId: 'preview', ranking });
+      return renderDay1Welcome(path.join(TEMPLATES_DIR, 'day1-welcome-dynamic.html'), data);
     }
-    if (!ranking) return null;
 
-    const data = await buildFn({ contactId: 'preview', ranking });
-    const templatePath = path.join(TEMPLATES_DIR, cfg.template);
-    return renderFn(templatePath, data);
+    if (day === 2) {
+      const { renderDay2Cruise }    = await import('../services/Day2CruiseRenderer.js');
+      const { buildDay2CruiseData } = await import('../services/Day2CruiseDataService.js');
+      const ranking = {
+        saver_product_ids:    [900965, 900972, 900983],
+        regional_product_ids: [900981, 900983, 900984, 900986],
+        cruise_line_keys:     ['msc', 'costa', 'royal_caribbean', 'genting_dreams'],
+        departure_city_keys:  ['abu_dhabi', 'saudi_arabia', 'singapore', 'europe'],
+        hero_variant_key:           'horizon',
+        regional_copy_variant_key:  'mediterranean',
+        hero_product_id:            900965,
+      };
+      const data = await buildDay2CruiseData({ contactId: 'preview', ranking });
+      return renderDay2Cruise(path.join(TEMPLATES_DIR, 'day2-cruise-dynamic.html'), data);
+    }
+
+    if (day === 3) {
+      const { renderDay3Visa }      = await import('../services/Day3VisaRenderer.js');
+      const { buildDay3VisaData }   = await import('../services/Day3VisaDataService.js');
+      const { _internals: rankInternals } = await import('../services/VisaRankingService.js');
+      const catalog = await rankInternals.loadVisaCatalog();
+      // The fallback omits `ratings_keys` because Claude doesn't pick those —
+      // the send script injects them after the rank call. Mirror that here.
+      const ranking = {
+        ...rankInternals.buildFallbackRanking(catalog),
+        ratings_keys: ['rayna', 'trustpilot', 'tripadvisor', 'google'],
+      };
+      const data = await buildDay3VisaData({ contactId: 'preview', ranking });
+      return renderDay3Visa(path.join(TEMPLATES_DIR, 'day3-visa-dynamic.html'), data);
+    }
+
+    if (day === 4) {
+      const { renderDay4Holidays }    = await import('../services/Day4HolidaysRenderer.js');
+      const { buildDay4HolidaysData } = await import('../services/Day4HolidaysDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day4HolidaysRankingService.js');
+      const ranking = rankInternals.buildFallbackRanking();
+      const data    = await buildDay4HolidaysData({ contactId: 'preview', ranking });
+      return renderDay4Holidays(path.join(TEMPLATES_DIR, 'day4-holidays-dynamic.html'), data);
+    }
+
+    if (day === 5) {
+      const { renderDay5Activities }    = await import('../services/Day5ActivitiesRenderer.js');
+      const { buildDay5ActivitiesData } = await import('../services/Day5ActivitiesDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day5ActivitiesRankingService.js');
+      const ranking = rankInternals.buildFallbackRanking();
+      const data    = await buildDay5ActivitiesData({ contactId: 'preview', ranking });
+      return renderDay5Activities(path.join(TEMPLATES_DIR, 'day5-activities-dynamic.html'), data);
+    }
+
+    if (day === 6) {
+      const { renderDay6Destination }    = await import('../services/Day6DestinationRenderer.js');
+      const { buildDay6DestinationData, _internals: dataInternals } = await import('../services/Day6DestinationDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day6DestinationRankingService.js');
+      // Pick the first destination in the catalog as the preview default.
+      const destinationKey = Object.keys(dataInternals.DESTINATION_CATALOG || {})[0] || 'bali';
+      const dest = dataInternals.DESTINATION_CATALOG[destinationKey];
+      const [holidayCandidates, activityCandidates, cruiseCandidates] = await Promise.all([
+        rankInternals.fetchHolidayCandidates(dest.productCity),
+        rankInternals.fetchActivityCandidates(dest.productCity),
+        rankInternals.fetchCruiseCandidates(dest.cruiseCategory),
+      ]);
+      const ranking = rankInternals.buildFallbackRanking({ holidayCandidates, activityCandidates, cruiseCandidates });
+      const data    = await buildDay6DestinationData({ contactId: 'preview', destinationKey, ranking });
+      return renderDay6Destination(path.join(TEMPLATES_DIR, 'day6-destination-dynamic.html'), data);
+    }
+
+    if (day === 7) {
+      const { renderDay7AbandonedCart }    = await import('../services/Day7AbandonedCartRenderer.js');
+      const { buildDay7AbandonedCartData } = await import('../services/Day7AbandonedCartDataService.js');
+      const { _internals: rankInternals } = await import('../services/Day7AbandonedCartRankingService.js');
+      const [activities, holidays, cruises, visas] = await Promise.all([
+        rankInternals.fetchCandidates('activities'),
+        rankInternals.fetchCandidates('holiday'),
+        rankInternals.fetchCandidates('cruise'),
+        rankInternals.fetchVisaKeys(),
+      ]);
+      const ranking = rankInternals.buildFallbackRanking({ activities, holidays, cruises, visas });
+      // contactId must be numeric (used in ga4_events lookup); null short-circuits the query.
+      const data    = await buildDay7AbandonedCartData({ contactId: null, ranking });
+      return renderDay7AbandonedCart(path.join(TEMPLATES_DIR, 'day7-abandoned-cart-dynamic.html'), data);
+    }
+
+    return null;
   } catch (err) {
-    console.error(`[content preview] Day ${day} render failed:`, err.message);
+    console.error(`[content preview] Day ${day} render failed:`, err.stack || err);
     return null;
   }
 }
