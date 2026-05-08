@@ -8,7 +8,7 @@ import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
   Loader2, Globe, MapPin, MessageCircle, DollarSign, Gem, Eye, RefreshCw,
-  Clock, TrendingUp, Phone, Mail, Send,
+  Clock, TrendingUp, Phone, Mail, Send, Play,
   ExternalLink,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
