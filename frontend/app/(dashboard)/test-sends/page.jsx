@@ -22,7 +22,7 @@ const TEMPLATES = [
 
 const DAY6_DESTINATIONS = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
 
-const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3001' : '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 async function apiPost(path, body = {}) {
   const res = await fetch(`${API_BASE}${path}`, {

@@ -23,6 +23,7 @@ export function AuthProvider({ children }) {
         const parsed = JSON.parse(stored);
         if (parsed?.token && parsed?.user) {
           setAuth(parsed);
+          document.cookie = 'rayna-auth=1; path=/; max-age=604800; SameSite=Lax';
         }
       }
     } catch {}
@@ -48,12 +49,14 @@ export function AuthProvider({ children }) {
 
     const authData = { token: data.data.token, user: data.data.user };
     localStorage.setItem(AUTH_KEY, JSON.stringify(authData));
+    document.cookie = 'rayna-auth=1; path=/; max-age=604800; SameSite=Lax';
     setAuth(authData);
     return authData.user;
   }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem(AUTH_KEY);
+    document.cookie = 'rayna-auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     setAuth(null);
   }, []);
 

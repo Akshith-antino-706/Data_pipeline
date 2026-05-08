@@ -77,7 +77,7 @@ export default function CustomerSegmentation() {
       const [tree, gen, testReq] = await Promise.all([
         getSegmentationTree(params),
         getGeneralSegment(params).catch(() => ({ data: null })),
-        fetch(`${window.location.hostname === 'localhost' ? 'http://localhost:3001' : ''}/api/v3/test-sends/recipients`)
+        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/v3/test-sends/recipients`)
           .then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] })),
       ]);
       setData(tree);
