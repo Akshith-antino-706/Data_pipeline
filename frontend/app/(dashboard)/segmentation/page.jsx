@@ -3,12 +3,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation, getGeneralSegment, processJourney } from '@/lib/api';
+import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation, getGeneralSegment } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
   Loader2, Globe, MapPin, MessageCircle, DollarSign, Gem, Eye, RefreshCw,
-  Clock, TrendingUp, Phone, Mail, XCircle, Send, Play, CheckCircle2,
+  Clock, TrendingUp, Phone, Mail, Send,
   ExternalLink,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
@@ -52,23 +52,7 @@ export default function CustomerSegmentation() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [generalSeg, setGeneralSeg] = useState(null);
-  const [runningJourneyId, setRunningJourneyId] = useState(null);
-  const [runResult, setRunResult] = useState(null);
   const [testUsers, setTestUsers] = useState(null);
-
-  const handleRunJourney = useCallback(async (journeyId) => {
-    setRunningJourneyId(journeyId);
-    setRunResult(null);
-    try {
-      const res = await processJourney(journeyId);
-      setRunResult({ journeyId, ok: true, data: res?.data || res });
-    } catch (err) {
-      console.error('processJourney failed:', err);
-      setRunResult({ journeyId, ok: false, error: err?.message || 'Run failed' });
-    } finally {
-      setRunningJourneyId(null);
-    }
-  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -400,62 +384,6 @@ export default function CustomerSegmentation() {
           {expandedStatus === '__general__' && (
             <motion.div key="general-expanded" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
               style={{ marginBottom: 32, overflow: 'hidden' }}>
-              {/* General broadcast journeys — each can be run on demand */}
-              {generalSeg?.journeys && generalSeg.journeys.length > 0 && (
-                <div style={{ marginBottom: 24 }}>
-                  <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', marginBottom: 12 }}>
-                    Broadcast Journeys
-                  </h2>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
-                    {generalSeg.journeys.map((j) => {
-                      const isRunning = runningJourneyId === j.journey_id;
-                      const lastResult = runResult?.journeyId === j.journey_id ? runResult : null;
-                      return (
-                        <div key={j.journey_id} style={{
-                          background: 'var(--card)', border: '1px solid var(--border)',
-                          borderRadius: 'var(--radius-xl)', padding: '16px 18px',
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
-                            <div style={{ minWidth: 0, flex: 1 }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, marginBottom: 2 }}>{j.name}</div>
-                              <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-                                {j.status === 'active' ? '● Active' : `○ ${j.status}`} &middot; {j.node_count} nodes &middot; {fmt(j.total_entries)} enrolled
-                              </div>
-                            </div>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleRunJourney(j.journey_id); }}
-                              disabled={isRunning || j.status !== 'active'}
-                              title={j.status !== 'active' ? 'Activate journey to run it' : 'Process this journey now (advances enrolled customers + sends due touches)'}
-                              style={{
-                                background: isRunning ? 'rgba(226,179,64,0.15)' : '#e2b340',
-                                color: isRunning ? '#e2b340' : '#1a1a1a',
-                                border: 'none', borderRadius: 'var(--radius)', padding: '8px 14px',
-                                fontSize: 12, fontWeight: 600, cursor: isRunning ? 'wait' : 'pointer',
-                                opacity: j.status !== 'active' ? 0.4 : 1,
-                                display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
-                              }}>
-                              {isRunning ? (<><Loader2 size={13} className="spin" /> Running</>) : (<><Play size={13} /> Run Now</>)}
-                            </button>
-                          </div>
-                          {lastResult && (
-                            <div style={{
-                              fontSize: 11, padding: '6px 10px', borderRadius: 'var(--radius-sm)',
-                              background: lastResult.ok ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
-                              color: lastResult.ok ? '#22c55e' : '#ef4444',
-                              display: 'flex', alignItems: 'center', gap: 6,
-                            }}>
-                              {lastResult.ok
-                                ? <><CheckCircle2 size={12} /> Run complete &middot; {lastResult.data?.processed ?? 0} scanned &middot; {lastResult.data?.actioned ?? 0} actioned &middot; {lastResult.data?.enqueued ?? 0} queued{lastResult.data?.converted ? `, ${lastResult.data.converted} converted` : ''}</>
-                                : <><XCircle size={12} /> {lastResult.error}</>}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
               <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', marginBottom: 16 }}>
                 Step 2+3 &mdash; General Breakdown
               </h2>
