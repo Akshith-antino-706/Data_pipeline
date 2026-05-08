@@ -46,8 +46,23 @@
         .pop-col, .perk-col { padding: 0 2px !important; }
 
         /* Promise cards — STACK vertically (3 at 32% is too tight on phone) */
-        .promise-col { display: block !important; width: 100% !important; max-width: 100% !important; margin-bottom: 8px !important; }
-        .promise-gap { display: none !important; }
+        .promise-col {
+          display: table-cell !important;
+          width: 32% !important;
+          max-width: 32% !important;
+          margin: 0 !important;
+        }
+        .promise-gap { width: 4px !important; }
+        .promise-card-pad { padding: 12px 6px !important; }
+        .promise-icon-box {
+          width: 32px !important;
+          height: 32px !important;
+          margin: 0 auto 8px !important;
+          font-size: 16px !important;
+          line-height: 32px !important;
+        }
+        .promise-title { font-size: 11px !important; line-height: 14px !important; padding-bottom: 0 !important; }
+        .promise-desc { display: none !important; }
 
         /* Trust badges */
         .review-col { width: 50% !important; }
@@ -271,26 +286,26 @@
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                         <tr>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff; box-sizing: border-box;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128176;</div>
-                              <div style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
-                              <div style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference. Our price match guarantee ensures you always get the best deal.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff; box-sizing: border-box;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128176;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference. Our price match guarantee ensures you always get the best deal.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5" style="width: 5px; font-size: 0; line-height: 0">&nbsp;</td>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff; box-sizing: border-box;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #eef7f1; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128274;</div>
-                              <div style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Secure &amp; Safe<br />Booking</div>
-                              <div style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Your data is protected with 256-bit SSL encryption. We never share your personal information with third parties.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff; box-sizing: border-box;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #eef7f1; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128274;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Secure &amp; Safe<br />Booking</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Your data is protected with 256-bit SSL encryption. We never share your personal information with third parties.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5" style="width: 5px; font-size: 0; line-height: 0">&nbsp;</td>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff; box-sizing: border-box;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff1eb; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#9889;</div>
-                              <div style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Instant Confirmation</div>
-                              <div style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Get your tickets delivered instantly via email. No waiting, no hassle - just book and go.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff; box-sizing: border-box;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff1eb; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#9889;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Instant Confirmation</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Get your tickets delivered instantly via email. No waiting, no hassle - just book and go.</div>
                             </div>
                           </td>
                         </tr>

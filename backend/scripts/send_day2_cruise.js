@@ -46,7 +46,7 @@ const DEFAULT_RANKING = {
   saver_product_ids:    [900965, 900972, 900983],
   regional_product_ids: [900981, 900983, 900984, 900986],
   cruise_line_keys:     ['msc', 'costa', 'royal_caribbean', 'genting_dreams'],
-  departure_city_keys:  ['abu_dhabi', 'dubai', 'saudi_arabia', 'singapore', 'europe'],
+  departure_city_keys:  ['abu_dhabi', 'saudi_arabia', 'singapore', 'europe'],
   hero_variant_key:           'horizon',
   regional_copy_variant_key:  'mediterranean',
   hero_product_id:            900965,  // use this product's image_url as hero bg

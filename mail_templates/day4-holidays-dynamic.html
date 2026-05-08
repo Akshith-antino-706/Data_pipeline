@@ -14,22 +14,63 @@
       @media only screen and (max-width: 620px) {
         .perk-grid { table-layout: fixed !important; }
         .perk-col { display: table-cell !important; width: 25% !important; max-width: 25% !important; }
-        .promise-col { display: block !important; width: 100% !important; max-width: 100% !important; margin-bottom: 10px !important; }
-        .promise-gap { display: none !important; }
+        .promise-col {
+          display: table-cell !important;
+          width: 32% !important;
+          max-width: 32% !important;
+          margin: 0 !important;
+        }
+        .promise-gap { width: 4px !important; }
+        .promise-card-pad { padding: 14px 8px !important; }
+        .promise-icon-box {
+          width: 34px !important;
+          height: 34px !important;
+          margin: 0 auto 10px !important;
+          font-size: 18px !important;
+          line-height: 34px !important;
+        }
+        .promise-title { font-size: 11px !important; line-height: 14px !important; padding-bottom: 6px !important; }
+        .promise-desc { font-size: 10px !important; line-height: 14px !important; }
         .perk-wrap { padding: 20px !important; }
-        .eid-col-image, .eid-col-content {
-          display: block !important;
-          width: 100% !important;
-          max-width: 100% !important;
+        .eid-col-image {
+          display: table-cell !important;
+          width: 40% !important;
+          max-width: 40% !important;
+        }
+        .eid-col-content {
+          display: table-cell !important;
+          width: 60% !important;
+          max-width: 60% !important;
         }
         .eid-image {
           width: 100% !important;
           max-width: 100% !important;
-          height: 220px !important;
+          height: 100% !important;
+          min-height: 180px !important;
           object-fit: cover !important;
         }
-        .eid-content { padding: 22px 20px !important; }
-        .ratings-col { display: block !important; width: 100% !important; max-width: 100% !important; }
+        .eid-content { padding: 14px 12px !important; }
+        .eid-heading {
+          font-size: 18px !important;
+          line-height: 22px !important;
+          padding-top: 6px !important;
+        }
+        .eid-eyebrow { font-size: 8px !important; line-height: 12px !important; letter-spacing: 1.4px !important; }
+        .eid-desc { font-size: 10px !important; line-height: 14px !important; padding-top: 6px !important; }
+        .eid-cta-wrap { padding-top: 10px !important; }
+        .eid-cta {
+          font-size: 8.5px !important;
+          padding: 7px 10px !important;
+          letter-spacing: 1px !important;
+        }
+        .ratings-col {
+          display: table-cell !important;
+          width: 50% !important;
+          max-width: 50% !important;
+          padding: 0 4px 8px !important;
+        }
+        .ratings-logo { max-width: 88px !important; height: 22px !important; }
+        .ratings-section-title { font-size: 22px !important; line-height: 28px !important; }
       }
     </style>
   </head>
@@ -226,17 +267,17 @@
                       <img class="eid-image" src="{{eid_special_offer.image}}" alt="Special Eid Offer" width="240" height="240" style="display: block; width: 100%; max-width: 240px; height: 240px; object-fit: cover; border: 0;" />
                     </td>
                     <td class="eid-col-content eid-content" width="60%" valign="middle" style="width: 60%; padding: 22px 28px;">
-                      <p style="margin: 0; font-family: Arial, sans-serif; font-size: 9.5px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">
+                      <p class="eid-eyebrow" style="margin: 0; font-family: Arial, sans-serif; font-size: 9.5px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">
                         &#10024; Exclusive Eid Offer
                       </p>
                       <p class="eid-heading" style="margin: 0; font-family: Georgia, serif; font-size: 30px; line-height: 40px; font-weight: 400; color: #ffffff; padding-top: 10px;">
                         {{eid_special_offer.heading}}
                       </p>
-                      <p style="margin: 0; font-family: Arial, sans-serif; font-size: 11.5px; line-height: 18px; color: #b7b7b7; padding-top: 10px;">
+                      <p class="eid-desc" style="margin: 0; font-family: Arial, sans-serif; font-size: 11.5px; line-height: 18px; color: #b7b7b7; padding-top: 10px;">
                         {{eid_special_offer.text}}
                       </p>
-                      <p style="margin: 0; padding-top: 16px">
-                        <a href="{{eid_special_offer.link}}" style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 10px 18px;">View All Eid Packages &rarr;</a>
+                      <p class="eid-cta-wrap" style="margin: 0; padding-top: 16px">
+                        <a class="eid-cta" href="{{eid_special_offer.link}}" style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 10px 18px;">View All Eid Packages &rarr;</a>
                       </p>
                     </td>
                   </tr>
@@ -302,9 +343,9 @@
                   <tr>
                     {{#each row}}
                     <td width="50%" valign="top" style="padding: 0 5px 10px;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; height: 280px">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="border-collapse: collapse; width: 100%; height: 280px">
                         <tr>
-                          <td valign="bottom" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(&quot;{{image}}&quot;); background-size: cover; background-position: center; background-repeat: no-repeat; padding: 40px 20px 20px;">
+                          <td valign="bottom" height="280" style="height: 280px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(&quot;{{image}}&quot;); background-size: cover; background-position: center; background-repeat: no-repeat; padding: 40px 16px 18px;">
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%">
                               <tr>
                                 <td align="center" style="font-family: Arial, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;">
@@ -312,13 +353,13 @@
                                 </td>
                               </tr>
                               <tr>
-                                <td align="center" style="font-family: Georgia, serif; font-size: 32px; line-height: 36px; font-weight: 400; color: #ffffff; padding-top: 6px;">{{name}}</td>
+                                <td class="adv-title" align="center" style="font-family: Georgia, serif; font-size: 20px; line-height: 24px; font-weight: 400; color: #ffffff; padding-top: 6px;">{{name}}</td>
                               </tr>
                               <tr>
                                 <td align="center" style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #e0e0e0; padding-top: 6px;">{{duration}}</td>
                               </tr>
                               <tr>
-                                <td align="center" style="font-family: Georgia, serif; font-size: 18px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 6px;">From {{price}}</td>
+                                <td align="center" style="font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 6px;">From {{price}}</td>
                               </tr>
                               <tr>
                                 <td align="center" style="padding-top: 10px">
@@ -373,26 +414,26 @@
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                         <tr>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128176;</div>
-                              <div style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
-                              <div style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128176;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5">&nbsp;</td>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #eef7f1; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128274;</div>
-                              <div style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Secure &amp; Safe<br />Booking</div>
-                              <div style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Your data is protected with 256-bit SSL encryption.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #eef7f1; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128274;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Secure &amp; Safe<br />Booking</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Your data is protected with 256-bit SSL encryption.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5">&nbsp;</td>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff1eb; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#9889;</div>
-                              <div style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Instant Confirmation</div>
-                              <div style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Get your tickets delivered instantly via email.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff1eb; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#9889;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Instant Confirmation</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Get your tickets delivered instantly via email.</div>
                             </div>
                           </td>
                         </tr>
@@ -407,7 +448,7 @@
               <td style="padding: 40px 20px 44px; background-color: #f4f1ec; border-top: 1px solid #e8e4de; border-bottom: 1px solid #e8e4de;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                   <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; letter-spacing: 2.5px; text-transform: uppercase; color: #aaaaaa; font-weight: 700;">Don't just take our word for it</td></tr>
-                  <tr><td align="center" style="font-family: Georgia, serif; font-size: 30px; line-height: 36px; color: #1a1a1a; padding-top: 8px;">Verified by the Platforms You Already Trust</td></tr>
+                  <tr><td class="ratings-section-title" align="center" style="font-family: Georgia, serif; font-size: 30px; line-height: 36px; color: #1a1a1a; padding-top: 8px;">Verified by the Platforms You Already Trust</td></tr>
                   <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 12.5px; line-height: 20px; color: #888888; padding: 8px 0 28px;">Our ratings are earned - not curated. Check us on any major review platform and see what real travellers say.</td></tr>
                   <tr>
                     <td>
@@ -419,7 +460,7 @@
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border: 1px solid {{border}}; background-color: {{bg}};">
                               <tr>
                                 <td align="center" style="padding: 18px 10px">
-                                  <img src="{{logo}}" alt="{{platform}}" width="102" style="display: block; width: auto; max-width: 110px; height: 25px; border: 0; margin: 0 auto 10px;" />
+                                  <img class="ratings-logo" src="{{logo}}" alt="{{platform}}" width="102" style="display: block; width: auto; max-width: 110px; height: 25px; border: 0; margin: 0 auto 10px;" />
                                   <p style="margin: 0; font-size: 15px; line-height: 16px; color: {{color}};">{{scale}}</p>
                                   <p style="margin: 0; font-family: Georgia, serif; font-size: 22px; line-height: 24px; font-weight: 700; color: #1a1a1a; padding-top: 6px;">{{rating}}</p>
                                   <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; color: #aaaaaa; padding-top: 3px;">{{reviews}}</p>

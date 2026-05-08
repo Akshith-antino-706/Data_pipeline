@@ -177,10 +177,10 @@ const PLATFORMS = {
   title:         'Verified by the Platforms You Already Trust',
   description:   'Our ratings are earned - not curated. Check us on any major review platform and see what real travellers say.',
   items: [
-    { name: 'Rayna Tours',  logo: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',                                       rating: '4.5', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '3,450 Reviews',  color: '#ff9900', bg: '#fffdf4' },
-    { name: 'Trustpilot',   logo: 'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',                                                          rating: '4.3', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '52,641 Reviews', color: '#00b67a', bg: '#f4fcf8' },
-    { name: 'Tripadvisor',  logo: 'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',                  rating: '4.6', stars: '&#9733;&#9733;&#9733;&#9733;+',                                            reviews: '12,861 Reviews', color: '#34e0a1', bg: '#f4fcf8' },
-    { name: 'Google',       logo: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',                                  rating: '4.4', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '1,517 Reviews',  color: '#ea4335', bg: '#fff8f6' },
+    { name: 'Rayna Tours',  logo: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',                                       rating: '4.5', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '25 Million Customers', color: '#ff9900', bg: '#fffdf4' },
+    { name: 'Trustpilot',   logo: 'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',                                                          rating: '4.7', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '34,655 Reviews', color: '#00b67a', bg: '#f4fcf8' },
+    { name: 'Tripadvisor',  logo: 'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',                  rating: '4.6', stars: '&#9733;&#9733;&#9733;&#9733;+',                                            reviews: '12,882 Reviews', color: '#34e0a1', bg: '#f4fcf8' },
+    { name: 'Google',       logo: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',                                  rating: '4.3', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '1,693 Reviews',  color: '#ea4335', bg: '#fff8f6' },
   ],
 };
 

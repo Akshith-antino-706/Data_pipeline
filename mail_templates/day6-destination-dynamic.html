@@ -17,11 +17,16 @@
         .offer-meta { font-size: 12px !important; line-height: 19px !important; text-align: center !important; padding-bottom: 20px !important; }
         .offer-code-box { width: 100% !important; margin: 0 auto !important; }
         .perk-cell { width: 50% !important; max-width: 50% !important; }
-        .promise-cell { width: 100% !important; max-width: 100% !important; }
+        .promise-cell { width: 33.33% !important; max-width: 33.33% !important; }
+        .promise-cell-inner { margin: 0 3px 8px !important; padding: 12px 8px !important; }
+        .promise-cell-icon { font-size: 18px !important; line-height: 22px !important; padding-bottom: 2px !important; }
+        .promise-cell-title { font-size: 11px !important; line-height: 14px !important; margin: 4px 0 0 !important; }
+        .promise-cell-desc { display: none !important; }
         .section-pad { padding: 30px 20px !important; }
         .footer-pad { padding: 40px 20px 20px !important; }
         .hero-title { font-size: 32px !important; line-height: 42px !important; }
         .hero-desc { padding: 0 20px 32px 20px !important; }
+        .section-title { font-size: 26px !important; line-height: 32px !important; }
         .stats-col { display: inline-block !important; width: 48% !important; padding: 10px 0 !important; border-right: 0 !important; }
         .btn-stack { display: block !important; width: 100% !important; margin-bottom: 10px !important; }
         .btn-stack a { display: block !important; width: 100% !important; box-sizing: border-box !important; }
@@ -104,7 +109,7 @@
               <td align="center" style="padding: 48px 24px 8px; font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{HOLIDAY_PACKAGES_SUBTITLE}}</td>
             </tr>
             <tr>
-              <td align="center" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; line-height: 40px; color: #1a1a1a;">{{HOLIDAY_PACKAGES_TITLE}}</td>
+              <td class="section-title" align="center" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; line-height: 40px; color: #1a1a1a;">{{HOLIDAY_PACKAGES_TITLE}}</td>
             </tr>
             <tr>
               <td align="center" style="padding: 0 40px 22px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{HOLIDAY_PACKAGES_DESC}}</td>
@@ -121,7 +126,7 @@
               <td align="center" style="padding: 44px 24px 8px; font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{TOP_THINGS_SUBTITLE}}</td>
             </tr>
             <tr>
-              <td align="center" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; line-height: 40px; color: #1a1a1a;">{{TOP_THINGS_TITLE}}</td>
+              <td class="section-title" align="center" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; line-height: 40px; color: #1a1a1a;">{{TOP_THINGS_TITLE}}</td>
             </tr>
             <tr>
               <td align="center" style="padding: 0 40px 22px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{TOP_THINGS_DESC}}</td>
@@ -138,7 +143,7 @@
               <td align="center" style="padding: 44px 24px 8px; font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">{{CRUISES_SUBTITLE}}</td>
             </tr>
             <tr>
-              <td align="center" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; line-height: 40px; color: #1a1a1a;">{{CRUISES_TITLE}}</td>
+              <td class="section-title" align="center" style="padding: 0 24px 10px; font-family: Georgia, serif; font-size: 36px; line-height: 40px; color: #1a1a1a;">{{CRUISES_TITLE}}</td>
             </tr>
             <tr>
               <td align="center" style="padding: 0 40px 22px; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 21px; color: #7a7570;">{{CRUISES_DESC}}</td>
@@ -216,24 +221,24 @@
                       <!-- Inline-block promise cards: 3-up on desktop, stacks 1-per-row on mobile via .promise-cell width:100% -->
                       <div style="font-size:0; line-height:0; text-align:center;">
                         <div class="promise-cell" style="display:inline-block; width:33.33%; vertical-align:top; font-size:0; line-height:0;">
-                          <div style="margin:0 5px 10px; padding: 22px 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8; text-align:center;">
-                            <div style="font-size: 28px; line-height: 32px; color: #c89b2c; padding-bottom: 4px;">&#128176;</div>
-                            <h3 style="margin: 8px 0 8px; font-family: Georgia, serif; font-size: 18px; line-height: 24px; color: #101010; text-align:center;">Best Price Guarantee</h3>
-                            <p style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91; text-align:center;">Find a lower price? We'll refund 110% of the difference. Our price match guarantee ensures you always get the best deal.</p>
+                          <div class="promise-cell-inner" style="margin:0 5px 10px; padding: 22px 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8; text-align:center;">
+                            <div class="promise-cell-icon" style="font-size: 28px; line-height: 32px; color: #c89b2c; padding-bottom: 4px;">&#128176;</div>
+                            <h3 class="promise-cell-title" style="margin: 8px 0 8px; font-family: Georgia, serif; font-size: 18px; line-height: 24px; color: #101010; text-align:center;">Best Price Guarantee</h3>
+                            <p class="promise-cell-desc" style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91; text-align:center;">Find a lower price? We'll refund 110% of the difference. Our price match guarantee ensures you always get the best deal.</p>
                           </div>
                         </div>
                         <div class="promise-cell" style="display:inline-block; width:33.33%; vertical-align:top; font-size:0; line-height:0;">
-                          <div style="margin:0 5px 10px; padding: 22px 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8; text-align:center;">
-                            <div style="font-size: 28px; line-height: 32px; color: #101010; padding-bottom: 4px;">&#128274;</div>
-                            <h3 style="margin: 8px 0 8px; font-family: Georgia, serif; font-size: 18px; line-height: 24px; color: #101010; text-align:center;">Secure &amp; Safe Booking</h3>
-                            <p style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91; text-align:center;">Your data is protected with 256-bit SSL encryption. We never share your personal information with third parties.</p>
+                          <div class="promise-cell-inner" style="margin:0 5px 10px; padding: 22px 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8; text-align:center;">
+                            <div class="promise-cell-icon" style="font-size: 28px; line-height: 32px; color: #101010; padding-bottom: 4px;">&#128274;</div>
+                            <h3 class="promise-cell-title" style="margin: 8px 0 8px; font-family: Georgia, serif; font-size: 18px; line-height: 24px; color: #101010; text-align:center;">Secure &amp; Safe Booking</h3>
+                            <p class="promise-cell-desc" style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91; text-align:center;">Your data is protected with 256-bit SSL encryption. We never share your personal information with third parties.</p>
                           </div>
                         </div>
                         <div class="promise-cell" style="display:inline-block; width:33.33%; vertical-align:top; font-size:0; line-height:0;">
-                          <div style="margin:0 5px 10px; padding: 22px 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8; text-align:center;">
-                            <div style="font-size: 28px; line-height: 32px; color: #c89b2c; padding-bottom: 4px;">&#9889;</div>
-                            <h3 style="margin: 8px 0 8px; font-family: Georgia, serif; font-size: 18px; line-height: 24px; color: #101010; text-align:center;">Instant Confirmation</h3>
-                            <p style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91; text-align:center;">Most activities are confirmed instantly, so you can book with confidence and start planning your experience right away.</p>
+                          <div class="promise-cell-inner" style="margin:0 5px 10px; padding: 22px 18px; border: 1px solid #e8e3d8; background-color: #fbfaf8; text-align:center;">
+                            <div class="promise-cell-icon" style="font-size: 28px; line-height: 32px; color: #c89b2c; padding-bottom: 4px;">&#9889;</div>
+                            <h3 class="promise-cell-title" style="margin: 8px 0 8px; font-family: Georgia, serif; font-size: 18px; line-height: 24px; color: #101010; text-align:center;">Instant Confirmation</h3>
+                            <p class="promise-cell-desc" style="margin: 0; font-family: Arial, sans-serif; font-size: 12px; line-height: 20px; color: #8a8d91; text-align:center;">Most activities are confirmed instantly, so you can book with confidence and start planning your experience right away.</p>
                           </div>
                         </div>
                       </div>
@@ -270,7 +275,7 @@
                   <tr>
                     <td align="center" style="padding-bottom: 40px">
                       <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; letter-spacing: 4px; font-weight: bold; color: #9ea1a5; text-transform: uppercase;">{{LAST_PART_SUBTITLE}}</div>
-                      <h2 style="margin: 12px 0 14px; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: normal; letter-spacing: 1px; color: #ffffff;">{{LAST_PART_TITLE}}</h2>
+                      <h2 class="section-title" style="margin: 12px 0 14px; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: normal; letter-spacing: 1px; color: #ffffff;">{{LAST_PART_TITLE}}</h2>
                       <p style="margin: 0 0 26px; font-family: Arial, sans-serif; font-size: 14px; line-height: 22px; color: #ffffff;">{{LAST_PART_DESC}}</p>
                       <a href="{{LAST_PART_BUTTON_LINK}}" style="display: inline-block; padding: 15px 28px; background-color: #ffffff; color: #101010; text-decoration: none; font-family: Arial, sans-serif; font-size: 12px; line-height: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">{{LAST_PART_BUTTON_TEXT}}</a>
                     </td>

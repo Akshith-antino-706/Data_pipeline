@@ -34,9 +34,31 @@
         .service-col-pad { padding: 0 3px !important; }
         .service-col img { width: 100% !important; max-width: none !important; }
         .service-head-right { display: block !important; width: 100% !important; padding: 14px 8px !important; }
-        .promise-col { display: block !important; width: 100% !important; margin-bottom: 12px !important; }
-        .promise-gap { display: none !important; }
-        .ratings-col { display: block !important; width: 100% !important; padding: 0 0 10px 0 !important; }
+        .promise-col {
+          display: table-cell !important;
+          width: 32% !important;
+          max-width: 32% !important;
+          margin: 0 !important;
+        }
+        .promise-gap { width: 4px !important; }
+        .promise-card-pad { padding: 14px 8px !important; }
+        .promise-icon-box {
+          width: 34px !important;
+          height: 34px !important;
+          margin: 0 auto 10px !important;
+          font-size: 18px !important;
+          line-height: 34px !important;
+        }
+        .promise-title { font-size: 11px !important; line-height: 14px !important; padding-bottom: 6px !important; }
+        .promise-desc { font-size: 10px !important; line-height: 14px !important; }
+        .ratings-col {
+          display: table-cell !important;
+          width: 50% !important;
+          max-width: 50% !important;
+          padding: 0 4px 8px !important;
+        }
+        .ratings-logo { max-width: 88px !important; height: 22px !important; }
+        .ratings-section-title { font-size: 18px !important; line-height: 24px !important; }
         .exclusive-box { padding: 24px 16px !important; }
       }
     </style>
@@ -155,26 +177,26 @@
                       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                         <tr>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-size: 22px; line-height: 44px;">&#128176;</div>
-                              <div style="padding: 0 0 10px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
-                              <div style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-size: 22px; line-height: 44px;">&#128176;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
+                              <div class="promise-desc" style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5">&nbsp;</td>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #eef7f1; border-radius: 12px; font-size: 22px; line-height: 44px;">&#128274;</div>
-                              <div style="padding: 0 0 10px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Secure &amp; Safe<br />Booking</div>
-                              <div style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Your data is protected with 256-bit SSL encryption.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #eef7f1; border-radius: 12px; font-size: 22px; line-height: 44px;">&#128274;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Secure &amp; Safe<br />Booking</div>
+                              <div class="promise-desc" style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Your data is protected with 256-bit SSL encryption.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5">&nbsp;</td>
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
-                            <div style="padding: 20px 16px 18px; background-color: #ffffff;">
-                              <div align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff1eb; border-radius: 12px; font-size: 22px; line-height: 44px;">&#9889;</div>
-                              <div style="padding: 0 0 10px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Instant Confirmation</div>
-                              <div style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Get your tickets delivered instantly via email.</div>
+                            <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
+                              <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff1eb; border-radius: 12px; font-size: 22px; line-height: 44px;">&#9889;</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Instant Confirmation</div>
+                              <div class="promise-desc" style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Get your tickets delivered instantly via email.</div>
                             </div>
                           </td>
                         </tr>
@@ -189,7 +211,7 @@
               <td style="padding: 34px 20px 36px; background-color: #f7f5f0; border-top: 1px solid #eeebe5; border-bottom: 1px solid #eeebe5;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                   <tr><td align="center" style="padding: 0 0 8px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #888888;">Don't just take our word for it</td></tr>
-                  <tr><td align="center" style="padding: 0 0 8px; font-family: Arial, Helvetica, sans-serif; font-size: 22px; line-height: 30px; font-weight: 700; color: #1a1a1a;">Verified by the Platforms You Already Trust</td></tr>
+                  <tr><td class="ratings-section-title" align="center" style="padding: 0 0 8px; font-family: Arial, Helvetica, sans-serif; font-size: 22px; line-height: 30px; font-weight: 700; color: #1a1a1a;">Verified by the Platforms You Already Trust</td></tr>
                   <tr><td align="center" style="padding: 0 0 24px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 20px; color: #888888;">Our ratings are earned - not curated.</td></tr>
                   <tr>
                     <td>
