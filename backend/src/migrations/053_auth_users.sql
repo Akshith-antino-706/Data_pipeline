@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
 INSERT INTO auth_users (email, password_hash, name, role)
 VALUES (
   'admin@raynatours.com',
-  '$2b$10$cGN8a9Yu7PTOApVMSvpZeugtAzSAXfYqv9yNDAATn7etj1ywgLULO',
+  '$2b$10$4ihmxsxplHy/gek47J9NYeFeDu1QKXEJndyws8fCQw5axj2WooHUG',
   'Admin',
   'admin'
 )
