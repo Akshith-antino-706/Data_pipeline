@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom';
 import { Component, Suspense, lazy, useState, useEffect, createContext, useContext, useCallback } from 'react';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from 'react-hot-toast';
@@ -19,8 +19,7 @@ const UnifiedContacts = lazy(() => import('./pages/UnifiedContacts'));
 const CustomerSegmentation = lazy(() => import('./pages/CustomerSegmentation'));
 const SegmentActivity = lazy(() => import('./pages/SegmentActivity'));
 const SystemArchitecture = lazy(() => import('./pages/SystemArchitecture'));
-const LandingPage = lazy(() => import('./pages/LandingPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
+const TestSends = lazy(() => import('./pages/TestSends'));
 
 // Theme Context
 const ThemeContext = createContext();
@@ -92,6 +91,7 @@ const NAV = [
   { to: '/gtm', icon: Code, label: 'GTM & BigQuery' },
   { to: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
   { to: '/daily-report', icon: Download, label: 'Daily Report' },
+  { to: '/test-sends', icon: Mail, label: 'Test Sends' },
   { to: '/system', icon: FileText, label: 'System Docs' },
 ];
 
@@ -176,6 +176,7 @@ function AnimatedRoutes() {
           <Route path="/gtm" element={<GTMIntegration />} />
           <Route path="/data-pipeline" element={<DataPipeline />} />
           <Route path="/daily-report" element={<DailyReport />} />
+          <Route path="/test-sends" element={<TestSends />} />
           <Route path="/system" element={<SystemArchitecture />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

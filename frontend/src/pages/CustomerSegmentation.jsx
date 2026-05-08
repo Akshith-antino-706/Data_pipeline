@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation } from '../api';
+import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation, getGeneralSegment, processJourney } from '../api';
 import { useBusinessType } from '../App';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
   Loader2, Globe, MapPin, MessageCircle, DollarSign, Gem, Eye, RefreshCw,
-  Clock, TrendingUp, Phone, Mail,
+  Clock, TrendingUp, Phone, Mail, XCircle, Send, Play, CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -47,13 +49,38 @@ export default function CustomerSegmentation() {
   const { businessType } = useBusinessType();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [generalSeg, setGeneralSeg] = useState(null);
+  const [runningJourneyId, setRunningJourneyId] = useState(null);
+  const [runResult, setRunResult] = useState(null);
+  const [testUsers, setTestUsers] = useState(null);
+
+  const handleRunJourney = useCallback(async (journeyId) => {
+    setRunningJourneyId(journeyId);
+    setRunResult(null);
+    try {
+      const res = await processJourney(journeyId);
+      setRunResult({ journeyId, ok: true, data: res?.data || res });
+    } catch (err) {
+      console.error('processJourney failed:', err);
+      setRunResult({ journeyId, ok: false, error: err?.message || 'Run failed' });
+    } finally {
+      setRunningJourneyId(null);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const params = businessType === 'All' ? {} : { businessType };
-      const res = await getSegmentationTree(params);
-      setData(res);
+      const [tree, gen, testReq] = await Promise.all([
+        getSegmentationTree(params),
+        getGeneralSegment(params).catch(() => ({ data: null })),
+        fetch(`${window.location.hostname === 'localhost' ? 'http://localhost:3001' : ''}/api/v3/test-sends/recipients`)
+          .then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] })),
+      ]);
+      setData(tree);
+      setGeneralSeg(gen?.data || null);
+      setTestUsers(testReq?.data || []);
     } catch (err) { console.error('Failed to load segmentation:', err); }
     setLoading(false);
   }, [businessType]);
@@ -105,8 +132,31 @@ export default function CustomerSegmentation() {
     return data.breakdown.filter(b => b.booking_status === status);
   };
 
+  // Build General breakdown \u2014 aggregate across booking statuses, grouped by (tier, geography)
+  const getGeneralBreakdown = () => {
+    if (!data?.breakdown) return [];
+    const agg = {};
+    for (const b of data.breakdown) {
+      const key = `${b.product_tier || ''}|${b.geography || ''}`;
+      const cur = agg[key] || {
+        booking_status: null, product_tier: b.product_tier, geography: b.geography,
+        count: 0, revenue: 0, indian_count: 0,
+        total_tours: 0, total_hotels: 0, total_visas: 0, total_flights: 0,
+      };
+      cur.count         += +b.count         || 0;
+      cur.revenue       += +b.revenue       || 0;
+      cur.indian_count  += +b.indian_count  || 0;
+      cur.total_tours   += +b.total_tours   || 0;
+      cur.total_hotels  += +b.total_hotels  || 0;
+      cur.total_visas   += +b.total_visas   || 0;
+      cur.total_flights += +b.total_flights || 0;
+      agg[key] = cur;
+    }
+    return Object.values(agg).sort((a, b) => b.count - a.count);
+  };
+
   const comboLabel = (b) => {
-    const parts = [STATUS_CONFIG[b.booking_status]?.label || b.booking_status];
+    const parts = [b.booking_status ? (STATUS_CONFIG[b.booking_status]?.label || b.booking_status) : 'General'];
     if (b.product_tier) parts.push(b.product_tier === 'LUXURY' ? 'Luxury' : 'Standard');
     if (b.geography) parts.push(b.geography === 'LOCAL' ? 'Local' : 'International');
     return parts.join(' \u2014 ');
@@ -203,6 +253,61 @@ export default function CustomerSegmentation() {
         </div>
         <motion.div variants={staggerContainer} initial="hidden" animate="visible"
           style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 32 }}>
+          {/* Test Users segment — internal QA only */}
+          {(() => {
+            const isExpanded = expandedStatus === '__test_users__';
+            return (
+              <motion.div variants={fadeInUp}
+                onClick={() => setExpandedStatus(isExpanded ? null : '__test_users__')}
+                style={{
+                  background: 'var(--card)', border: `1px solid ${isExpanded ? '#22c55e' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-xl)', padding: '18px 20px', cursor: 'pointer',
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                  boxShadow: isExpanded ? '0 0 0 1px rgba(34,197,94,0.4)' : 'none',
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 'var(--radius)', background: 'rgba(34,197,94,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Mail size={18} style={{ color: '#22c55e' }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 600 }}>Test Users</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Internal QA segment</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 28, fontWeight: 700, color: '#22c55e' }}>{testUsers ? testUsers.length : '—'}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>5 hardcoded testers</span>
+                </div>
+              </motion.div>
+            );
+          })()}
+          {generalSeg && (() => {
+            const isExpanded = expandedStatus === '__general__';
+            return (
+              <motion.div variants={fadeInUp}
+                onClick={() => setExpandedStatus(isExpanded ? null : '__general__')}
+                style={{
+                  background: 'var(--card)', border: `1px solid ${isExpanded ? '#e2b340' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-xl)', padding: '18px 20px', cursor: 'pointer',
+                  transition: 'border-color 0.2s, box-shadow 0.2s',
+                  boxShadow: isExpanded ? '0 0 0 1px rgba(226,179,64,0.4)' : 'none',
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 'var(--radius)', background: 'rgba(226,179,64,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Send size={18} style={{ color: '#e2b340' }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 600 }}>General</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Cross-status broadcast</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 28, fontWeight: 700, color: '#e2b340' }}>{fmt(generalSeg.totalContacts)}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>{fmt(generalSeg.emailEligible)} email &middot; {fmt(generalSeg.waEligible)} wa</span>
+                </div>
+              </motion.div>
+            );
+          })()}
           {statusCounts.map((s) => {
             const cfg = STATUS_CONFIG[s.booking_status] || { label: s.booking_status, color: '#64748b', bg: 'rgba(100,116,139,0.12)', icon: Users };
             const Icon = cfg.icon;
@@ -246,8 +351,164 @@ export default function CustomerSegmentation() {
 
         {/* Step 2+3: Breakdown for expanded status */}
         <AnimatePresence>
-          {expandedStatus && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+          {expandedStatus === '__test_users__' && (
+            <motion.div key="test-users-expanded" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              style={{ marginBottom: 32, overflow: 'hidden' }}>
+              <div style={{
+                background: 'var(--card)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-xl)', padding: '20px 24px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
+                  <div>
+                    <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, marginBottom: 4 }}>Test Users Segment</h2>
+                    <p style={{ fontSize: 12, color: 'var(--muted-foreground)', margin: 0 }}>
+                      Internal QA only. Use this segment to test new email templates without reaching real customers.
+                    </p>
+                  </div>
+                  <Link to="/test-sends" style={{
+                    background: '#22c55e', color: '#0a0a0a',
+                    border: 'none', borderRadius: 'var(--radius)', padding: '10px 16px',
+                    fontSize: 12, fontWeight: 700, textDecoration: 'none',
+                    display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+                    letterSpacing: 0.5, textTransform: 'uppercase',
+                  }}>
+                    <Play size={13} /> Run Test Sends <ExternalLink size={11} />
+                  </Link>
+                </div>
+                {testUsers && testUsers.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {testUsers.map((u) => (
+                      <div key={u.email} style={{
+                        fontSize: 12, padding: '8px 12px', borderRadius: 'var(--radius)',
+                        background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.25)',
+                        color: 'var(--foreground)',
+                      }}>
+                        <Mail size={11} style={{ display: 'inline', marginRight: 4, color: '#22c55e' }} />
+                        {u.email}
+                        <span style={{ color: 'var(--muted-foreground)', marginLeft: 6 }}>· uid {u.unified_id}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>No test users loaded.</div>
+                )}
+              </div>
+            </motion.div>
+          )}
+          {expandedStatus === '__general__' && (
+            <motion.div key="general-expanded" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              style={{ marginBottom: 32, overflow: 'hidden' }}>
+              {/* General broadcast journeys — each can be run on demand */}
+              {generalSeg?.journeys && generalSeg.journeys.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', marginBottom: 12 }}>
+                    Broadcast Journeys
+                  </h2>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
+                    {generalSeg.journeys.map((j) => {
+                      const isRunning = runningJourneyId === j.journey_id;
+                      const lastResult = runResult?.journeyId === j.journey_id ? runResult : null;
+                      return (
+                        <div key={j.journey_id} style={{
+                          background: 'var(--card)', border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-xl)', padding: '16px 18px',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, marginBottom: 2 }}>{j.name}</div>
+                              <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                                {j.status === 'active' ? '● Active' : `○ ${j.status}`} &middot; {j.node_count} nodes &middot; {fmt(j.total_entries)} enrolled
+                              </div>
+                            </div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleRunJourney(j.journey_id); }}
+                              disabled={isRunning || j.status !== 'active'}
+                              title={j.status !== 'active' ? 'Activate journey to run it' : 'Process this journey now (advances enrolled customers + sends due touches)'}
+                              style={{
+                                background: isRunning ? 'rgba(226,179,64,0.15)' : '#e2b340',
+                                color: isRunning ? '#e2b340' : '#1a1a1a',
+                                border: 'none', borderRadius: 'var(--radius)', padding: '8px 14px',
+                                fontSize: 12, fontWeight: 600, cursor: isRunning ? 'wait' : 'pointer',
+                                opacity: j.status !== 'active' ? 0.4 : 1,
+                                display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+                              }}>
+                              {isRunning ? (<><Loader2 size={13} className="spin" /> Running</>) : (<><Play size={13} /> Run Now</>)}
+                            </button>
+                          </div>
+                          {lastResult && (
+                            <div style={{
+                              fontSize: 11, padding: '6px 10px', borderRadius: 'var(--radius-sm)',
+                              background: lastResult.ok ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)',
+                              color: lastResult.ok ? '#22c55e' : '#ef4444',
+                              display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                              {lastResult.ok
+                                ? <><CheckCircle2 size={12} /> Run complete &middot; {lastResult.data?.processed ?? 0} scanned &middot; {lastResult.data?.actioned ?? 0} actioned &middot; {lastResult.data?.enqueued ?? 0} queued{lastResult.data?.converted ? `, ${lastResult.data.converted} converted` : ''}</>
+                                : <><XCircle size={12} /> {lastResult.error}</>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', marginBottom: 16 }}>
+                Step 2+3 &mdash; General Breakdown
+              </h2>
+              <motion.div variants={staggerContainer} initial="hidden" animate="visible"
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+                {getGeneralBreakdown().map((b, i) => {
+                  const label = comboLabel(b);
+                  const isSelected = selectedCombo && selectedCombo.bookingStatus === null && selectedCombo.productTier === b.product_tier && selectedCombo.geography === b.geography;
+                  const tierColor = TIER_COLORS[b.product_tier] || '#94a3b8';
+                  const geoColor = GEO_COLORS[b.geography] || '#94a3b8';
+                  return (
+                    <motion.div key={i} variants={fadeInUp}
+                      onClick={() => openCombo({ bookingStatus: null, productTier: b.product_tier, geography: b.geography, label })}
+                      style={{
+                        background: 'var(--card)', border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
+                        borderRadius: 'var(--radius-xl)', padding: '18px 20px', cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: isSelected ? '0 0 0 1px var(--primary)' : 'none',
+                      }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{label}</div>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                        {b.product_tier && (
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: b.product_tier === 'LUXURY' ? 'rgba(226,179,64,0.15)' : 'rgba(148,163,184,0.15)', color: tierColor, fontWeight: 500 }}>
+                            {b.product_tier === 'LUXURY' ? 'Luxury' : 'Standard'}
+                          </span>
+                        )}
+                        {b.geography && (
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: b.geography === 'LOCAL' ? 'rgba(6,182,212,0.15)' : 'rgba(167,139,250,0.15)', color: geoColor, fontWeight: 500 }}>
+                            {b.geography === 'LOCAL' ? 'Local' : 'International'}
+                          </span>
+                        )}
+                        {b.indian_count > 0 && (
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(249,115,22,0.15)', color: '#f97316', fontWeight: 500 }}>
+                            {b.indian_count} Indian
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
+                        <div><span style={{ color: 'var(--muted-foreground)' }}>Customers</span><div style={{ fontWeight: 700, fontSize: 18 }}>{fmt(b.count)}</div></div>
+                        <div><span style={{ color: 'var(--muted-foreground)' }}>Revenue</span><div style={{ fontWeight: 600, fontSize: 13 }}>{fmtAED(b.revenue)}</div></div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4, marginTop: 12, fontSize: 11, color: 'var(--muted-foreground)' }}>
+                        <div title="Tours"><Plane size={12} style={{ marginRight: 2 }} />{fmt(b.total_tours)}</div>
+                        <div title="Hotels"><Hotel size={12} style={{ marginRight: 2 }} />{fmt(b.total_hotels)}</div>
+                        <div title="Visas"><Ticket size={12} style={{ marginRight: 2 }} />{fmt(b.total_visas)}</div>
+                        <div title="Flights"><Globe size={12} style={{ marginRight: 2 }} />{fmt(b.total_flights)}</div>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </motion.div>
+            </motion.div>
+          )}
+          {expandedStatus && expandedStatus !== '__general__' && (
+            <motion.div key={`status-${expandedStatus}`} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
               style={{ marginBottom: 32, overflow: 'hidden' }}>
               <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', marginBottom: 16 }}>
                 Step 2+3 &mdash; {STATUS_CONFIG[expandedStatus]?.label} Breakdown

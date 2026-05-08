@@ -1,20 +1,20 @@
 <!--
   ═══════════════════════════════════════════════════════════
-  Rayna Tours — GTM Webhook Tag
+  Rayna Tours —  Webhook Tag
   ═══════════════════════════════════════════════════════════
 
-  INSTRUCTIONS FOR GTM PERSON:
-  1. Go to GTM → Tags → New → Custom HTML
+  INSTRUCTIONS FOR  PERSON:
+  1. Go to  → Tags → New → Custom HTML
   2. Paste this ENTIRE script
   3. Trigger: All Pages (fires once per page)
   4. Replace API_URL below with the actual deployed backend URL
-  5. Publish the GTM container
+  5. Publish the  container
 
   This tag intercepts all dataLayer events and forwards them
   to the Rayna data pipeline in real-time. No data is lost —
   BigQuery serves as a fallback if this webhook misses anything.
 
-  TRACKED EVENTS (matching your current GTM setup):
+  TRACKED EVENTS (matching your current  setup):
   - view_item          (product page viewed)
   - click_call         (phone CTA clicked)
   - click_whatsapp     (WhatsApp CTA clicked)
@@ -41,9 +41,9 @@
   // ║  Dev tunnel (VS Code) while testing locally; swap for prod URL  ║
   // ║  once backend is deployed to a public host.                     ║
   // ╚═══════════════════════════════════════════════════════════════╝
-  var API_URL = 'https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3/gtm/events';
+  var API_URL = 'https://qh6hjtm8-3001.inc1.devtunnels.ms/api/v3//events';
 
-  // ── Events to track (matching your GTM setup) ──
+  // ── Events to track (matching your  setup) ──
   var TRACKED_EVENTS = [
     'view_item',
     'click_call',

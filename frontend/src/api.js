@@ -1,17 +1,5 @@
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-const AUTH_KEY = 'rayna-auth';
-
-function getToken() {
-  try {
-    const stored = localStorage.getItem(AUTH_KEY);
-    if (!stored) return null;
-    return JSON.parse(stored)?.token || null;
-  } catch {
-    return null;
-  }
-}
-
 async function request(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -248,6 +236,23 @@ export const refreshSegmentationMV = () =>
   request('/api/v3/unified-contacts/refresh-segmentation-mv', { method: 'POST' });
 export const recomputeSegmentation = () =>
   request('/api/v3/unified-contacts/recompute-segmentation', { method: 'POST' });
+
+// ── Gupshup approval pipeline ───────────────────────────────
+export const getGupshupConfig = () => request('/api/v3/gupshup/config');
+export const submitTemplateForApproval = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/submit`, { method: 'POST' });
+export const checkGupshupStatus = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/check-status`, { method: 'POST' });
+export const setGupshupExternalId = (templateId, externalId, { status, category } = {}) =>
+  request(`/api/v3/gupshup/templates/${templateId}/set-external-id`, {
+    method: 'POST', body: JSON.stringify({ externalId, status, category }),
+  });
+export const forceApproveGupshup = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/force-approve`, { method: 'POST' });
+export const getGupshupEvents = (templateId) =>
+  request(`/api/v3/gupshup/templates/${templateId}/events`);
+export const bulkSubmitGupshup = () =>
+  request('/api/v3/gupshup/bulk-submit', { method: 'POST' });
 export const getUnifiedFilters = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/filters${qs ? `?${qs}` : ''}`);
@@ -255,6 +260,10 @@ export const getUnifiedFilters = (params = {}) => {
 export const getSegmentationTree = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/segmentation-tree?${qs}`);
+};
+export const getGeneralSegment = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/segments/general${qs ? `?${qs}` : ''}`);
 };
 export const getSegmentActivity = (params = {}) => {
   const qs = new URLSearchParams(params).toString();

@@ -255,40 +255,10 @@ def sync_tickets(pg_cur, pg_conn, since, force_full=False):
     log(f"Tickets: {fmt_num(processed)} synced | {fmt_elapsed(t0)}", "OK")
     return processed
 
-def sync_travel(pg_cur, pg_conn, since, force_full=False):
-    log(f"Syncing travel bookings since {since}...")
-    t0 = time.time()
-    conn = mysql_conn(MYSQL_DB1)
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM travel_data WHERE added_date > %s ORDER BY added_date", (since,))
-    processed = 0
-    for row in cur:
-        pg_cur.execute("SAVEPOINT rsp")
-        try:
-            user_id = get_or_create_user(pg_cur,
-                emails=[row.get("email")], phones=[(row.get("contact"), "phone")],
-                name=row.get("guest_name"), source="db1_travel",
-                created_at=clean_date(row.get("added_date")))
-            pg_cur.execute("""
-                INSERT INTO travel_bookings (orig_id, user_id, bill_serial, bill_number, bill_type,
-                    service_name, guest_name, nationality, contact, start_date, end_date, bill_made_by, added_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (orig_id) DO NOTHING
-            """, (row.get("id"), user_id, row.get("bill_serial"), row.get("bill_number"),
-                  row.get("bill_type"), row.get("service_name"), row.get("guest_name"),
-                  row.get("nationality"), row.get("contact"),
-                  clean_date(row.get("start_date")), clean_date(row.get("last_date")),
-                  row.get("bill_made_by"), clean_date(row.get("added_date"))))
-            pg_cur.execute("RELEASE SAVEPOINT rsp")
-            processed += 1
-        except:
-            pg_cur.execute("ROLLBACK TO SAVEPOINT rsp")
-        if processed % BATCH_SIZE == 0:
-            pg_conn.commit()
-            log(f"  travel: {fmt_num(processed)} synced...", "PROG")
-    cur.close(); conn.close(); pg_conn.commit()
-    log(f"Travel: {fmt_num(processed)} synced | {fmt_elapsed(t0)}", "OK")
-    return processed
+
+# sync_travel removed 2026-04-22 — historical dump lives in travel_data (pre-2026-02-01)
+# and Rayna API covers everything after. See scripts/dump_travel_data_historical.py
+# if a one-time reload is ever needed.
 
 def sync_chats(pg_cur, pg_conn, since, force_full=False):
     log(f"Syncing chats since {since}...")
@@ -375,10 +345,16 @@ def sync_unsubscribed(pg_cur, pg_conn, since, force_full=False):
 
 SYNC_TABLES = {
     "contacts": sync_contacts,
-    "tickets": sync_tickets,
-    "travel": sync_travel,
     "chats": sync_chats,
     "unsubscribed": sync_unsubscribed,
+    # tickets + travel removed from default sync (2026-04-22).
+    # tickets handler is kept optional; travel handler deleted entirely —
+    # historical data already dumped into travel_data, Rayna API covers ongoing.
+}
+
+# Handlers kept available for one-off manual runs but no longer in the default loop.
+_OPTIONAL_HANDLERS = {
+    "tickets": sync_tickets,
 }
 
 def main():
@@ -400,7 +376,7 @@ def main():
         load_identity_cache(pg_cur)
 
         for table in tables:
-            fn = SYNC_TABLES.get(table)
+            fn = SYNC_TABLES.get(table) or _OPTIONAL_HANDLERS.get(table)
             if not fn:
                 log(f"Unknown table: {table}", "ERR"); continue
 
@@ -418,19 +394,21 @@ def main():
                 update_sync_meta(pg_cur, table, 0, "error", int((time.time() - t0) * 1000), str(e))
             pg_conn.commit()
 
-        # Summary
+        # Summary — only counts tables we still maintain
         print(f"\n{'='*50}")
         for label, q in [
             ("Users", "SELECT COUNT(*) FROM users"),
             ("Emails", "SELECT COUNT(*) FROM user_emails"),
             ("Phones", "SELECT COUNT(*) FROM user_phones"),
-            ("Tickets", "SELECT COUNT(*) FROM tickets"),
-            ("Bookings", "SELECT COUNT(*) FROM travel_bookings"),
             ("Chats", "SELECT COUNT(*) FROM chats"),
             ("Unsubscribed", "SELECT COUNT(*) FROM unsubscribed"),
         ]:
-            pg_cur.execute(q)
-            log(f"{label:<15} {pg_cur.fetchone()[0]:>10,}", "OK")
+            try:
+                pg_cur.execute(q)
+                log(f"{label:<15} {pg_cur.fetchone()[0]:>10,}", "OK")
+            except Exception as e:
+                pg_conn.rollback()
+                log(f"{label:<15} (skipped: {e})", "WARN")
         print(f"{'='*50}")
         log(f"Total time: {fmt_elapsed(t_start)}", "OK")
 
