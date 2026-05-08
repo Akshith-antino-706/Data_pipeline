@@ -1,7 +1,9 @@
-import { BrowserRouter, Routes, Route, NavLink, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom';
 import { Component, Suspense, lazy, useState, useEffect, createContext, useContext, useCallback } from 'react';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Toaster } from 'react-hot-toast';
 import './App.css';
 
 // Lazy-loaded pages for code splitting
@@ -17,6 +19,8 @@ const UnifiedContacts = lazy(() => import('./pages/UnifiedContacts'));
 const CustomerSegmentation = lazy(() => import('./pages/CustomerSegmentation'));
 const SegmentActivity = lazy(() => import('./pages/SegmentActivity'));
 const SystemArchitecture = lazy(() => import('./pages/SystemArchitecture'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
 
 // Theme Context
 const ThemeContext = createContext();
@@ -146,6 +150,15 @@ function ThemeToggle() {
   );
 }
 
+function RequireAuth({ children }) {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  return children;
+}
+
 function AnimatedRoutes() {
   const location = useLocation();
   return (
@@ -196,6 +209,25 @@ function BusinessTypeSwitcher() {
   );
 }
 
+function LogoutButton() {
+  const { logout } = useAuth();
+  return (
+    <div style={{ padding: '4px 14px' }}>
+      <motion.button
+        className="theme-toggle-btn"
+        onClick={logout}
+        aria-label="Sign out"
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.98 }}
+        style={{ color: 'var(--red)' }}
+      >
+        <LogOut size={16} />
+        <span>Sign Out</span>
+      </motion.button>
+    </div>
+  );
+}
+
 function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -221,7 +253,7 @@ function AppShell() {
           <span className="logo-sub">Omnichannel Platform (Live)</span>
         </div>
         <nav>
-          {NAV.map(({ to, icon: Icon, label }, index) => (
+          {NAV.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -236,6 +268,7 @@ function AppShell() {
         </nav>
         <BusinessTypeSwitcher />
         <ThemeToggle />
+        <LogoutButton />
       </motion.aside>
 
       <main className="main">
@@ -249,13 +282,46 @@ function AppShell() {
   );
 }
 
+function AppRoutes() {
+  return (
+    <Suspense fallback={<div className="spinner">Loading...</div>}>
+      <Routes>
+        {/* Public routes — no sidebar */}
+        <Route path="/landing" element={<LandingPage />} />
+        <Route path="/login" element={<LoginPage />} />
+
+        {/* Protected routes — full app shell */}
+        <Route
+          path="/*"
+          element={
+            <RequireAuth>
+              <AppShell />
+            </RequireAuth>
+          }
+        />
+      </Routes>
+    </Suspense>
+  );
+}
+
 export default function App() {
   return (
     <ThemeProvider>
       <BusinessTypeProvider>
-        <BrowserRouter>
-          <AppShell />
-        </BrowserRouter>
+        <AuthProvider>
+          <BrowserRouter>
+            <AppRoutes />
+          </BrowserRouter>
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: { background: '#111', color: '#fff', fontSize: 13, borderRadius: 10, padding: '10px 16px' },
+              error: { style: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }, iconTheme: { primary: '#dc2626', secondary: '#fff' } },
+              success: { style: { background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }, iconTheme: { primary: '#16a34a', secondary: '#fff' } },
+            }}
+          />
+        </AuthProvider>
       </BusinessTypeProvider>
     </ThemeProvider>
   );

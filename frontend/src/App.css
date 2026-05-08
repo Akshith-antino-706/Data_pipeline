@@ -1,7 +1,9 @@
 /* ══════════════════════════════════════════════════════════════
    Rayna Tours — Black & Gold Component Styles
    Uses CSS variables from index.css design system
+   Wrapped in @layer components so Tailwind utilities can override
    ══════════════════════════════════════════════════════════════ */
+@layer components {
 
 /* ── Layout ──────────────────────────────────────────────── */
 .app {
@@ -856,3 +858,130 @@ input.input-sm { width: auto; max-width: 240px; }
 
 /* Mobile menu button (hidden by default) */
 .mobile-menu-btn { display: none !important; }
+
+/* ── Landing Page helpers (can't do in Tailwind) ────────── */
+.lp-gold {
+  background: linear-gradient(135deg, #C9A96E 0%, #D4B87A 50%, #C9A96E 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.lp-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(150px);
+  pointer-events: none;
+  background: #C9A96E;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Login Page
+   ══════════════════════════════════════════════════════════════ */
+.login-page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  position: relative;
+  overflow: hidden;
+  padding: 40px 20px;
+}
+
+.login-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-2xl);
+  padding: 40px 36px;
+  width: 100%;
+  max-width: 420px;
+  position: relative;
+  z-index: 1;
+  box-shadow: var(--shadow-lg);
+}
+
+.login-brand {
+  text-align: center;
+  margin-bottom: 32px;
+}
+.login-brand h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 12px;
+}
+.login-brand p {
+  font-size: 10px;
+  color: #C9A96E;
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.login-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.login-input-wrap {
+  position: relative;
+}
+.login-input-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+.login-input-wrap input {
+  padding-left: 38px;
+}
+
+.login-error {
+  background: var(--red-dim);
+  color: var(--red);
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.login-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+  font-size: 14px;
+  padding: 11px 24px;
+}
+
+.login-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.login-back:hover {
+  color: #C9A96E;
+}
+
+@media (max-width: 480px) {
+  .login-card { padding: 32px 24px; }
+}
+
+} /* end @layer components */
