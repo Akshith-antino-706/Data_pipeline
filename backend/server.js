@@ -8,7 +8,7 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-import { spawn } from 'child_process';
+// import { spawn } from 'child_process'; // disabled — no cron jobs
 import pool from './src/config/database.js';
 import analyticsRouter from './src/routes/analytics.js';
 import segmentsRouter from './src/routes/segments.js';
@@ -27,9 +27,10 @@ import baseTemplatesRouter from './src/routes/baseTemplates.js';
 import syncRouter from './src/routes/sync.js';
 import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
-import BigQuerySyncService from './src/services/BigQuerySyncService.js';
-import MySQLSyncService from './src/services/MySQLSyncService.js';
-import RaynaSyncService from './src/services/RaynaSyncService.js';
+import DailyBillingSync from './src/services/DailyBillingSync.js';
+// import BigQuerySyncService from './src/services/BigQuerySyncService.js'; // disabled
+// import MySQLSyncService from './src/services/MySQLSyncService.js'; // disabled
+// RaynaSyncService — no longer uses ACICO API; data ingested via POST /api/v3/rayna-sync/ingest
 import raynaSyncRouter from './src/routes/raynaSync.js';
 import dailyReportRouter from './src/routes/dailyReport.js';
 import unifiedContactsRouter from './src/routes/unifiedContacts.js';
@@ -188,7 +189,7 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
-    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '024_rayna_api_sync_tables.sql', '047_missing_infrastructure.sql', '048_dept_contact_type.sql', '049_users_from_rayna.sql', '053_auth_users.sql']) {
+    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '047_missing_infrastructure.sql', '048_dept_contact_type.sql', '049_users_from_rayna.sql', '053_auth_users.sql']) {
       await runMigrationFile(file);
     }
     res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
@@ -224,15 +225,7 @@ app.post('/api/v3/migrate-rename-columns', async (_, res) => {
   }
 });
 
-app.post('/api/v3/migrate-rayna-sync', async (_, res) => {
-  try {
-    await runMigrationFile('024_rayna_api_sync_tables.sql');
-    await runMigrationFile('025_fix_rayna_conflict_keys.sql');
-    res.json({ success: true, message: 'Rayna API sync tables migration (024+025) succeeded — tours, hotels, visas, flights with fixed conflict keys' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// migrate-rayna-sync removed — old ACICO API tables replaced with new billing schema
 
 app.post('/api/v3/migrate-booking-map', async (_, res) => {
   try {
@@ -342,307 +335,34 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// ── GA4 BigQuery Sync Cron (every 30 seconds) ──────────────
-if (process.env.BQ_SYNC_ENABLED === 'true') {
-  const schedule = process.env.BQ_SYNC_CRON || '*/30 * * * * *';
-  let syncing = false;
-  cron.schedule(schedule, async () => {
-    if (syncing) return; // skip if previous sync still running
-    syncing = true;
-    console.log('[GA4 Sync] Scheduled sync starting...');
-    try {
-      const results = await BigQuerySyncService.syncAll();
-      console.log('[GA4 Sync] Completed:', JSON.stringify(results));
-    } catch (err) {
-      console.error('[GA4 Sync] Failed:', err.message);
-    }
-    syncing = false;
-  }, { scheduled: true });
-  console.log(`[GA4 Sync] Cron scheduled: ${schedule} (every 30 seconds)`);
-}
+// ── All cron jobs DISABLED ──────────────────────────────────
+// To re-enable, uncomment the relevant sections below.
 
-// ── MySQL Sync Cron — delegates to incremental_sync.py ──────
-// MySQLSyncService is a deliberate no-op; the real work lives in the Python
-// script which connects to the two upstream MySQL servers, handles the
-// normalized schema (contacts_raw / chats / tickets), and upserts into Postgres.
-// We spawn it here so the single Node cron is the source of truth for when
-// it runs, with a lock to prevent overlap and graceful skip when MySQL is down.
-if (process.env.MYSQL_SYNC_ENABLED === 'true') {
-  const schedule = process.env.MYSQL_SYNC_CRON || '*/10 * * * *';
-  const pythonBin = process.env.PYTHON_BIN
-    || join(__dirname, '..', '.venv', 'bin', 'python3');
-  const scriptPath = join(__dirname, '..', 'incremental_sync.py');
-  const timeoutMs = parseInt(process.env.MYSQL_SYNC_TIMEOUT_MS || '480000'); // 8 min
-  let mysqlSyncing = false;
+// [DISABLED] GA4 BigQuery Sync
+// [DISABLED] MySQL Sync (incremental_sync.py)
+// [DISABLED] Server Pull (MySQL contacts + chats)
+// [DISABLED] Unified Contacts Sync + Segmentation
+// [DISABLED] Cache Refresh (users table)
+// [DISABLED] Popularity Prewarm (journey engine)
+// [DISABLED] Journey Engine (process active journeys)
+// [DISABLED] Product Affinity refresh
+// [DISABLED] Test Auto-Send (day 1-7 emails)
 
-  cron.schedule(schedule, () => {
-    if (mysqlSyncing) {
-      console.log('[MySQL Sync] Previous run still in progress — skipping');
-      return;
-    }
-    mysqlSyncing = true;
-    const start = Date.now();
-    const child = spawn(pythonBin, [scriptPath], {
-      cwd: join(__dirname, '..'),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderrTail = '';
-    child.stdout.on('data', buf => {
-      // Only surface lines that signal real work (row counts, warnings)
-      const text = buf.toString();
-      if (/\b(rows?|inserted|updated|error|failed)\b/i.test(text)) {
-        process.stdout.write(`[MySQL Sync] ${text}`);
-      }
-    });
-    child.stderr.on('data', buf => { stderrTail = (stderrTail + buf.toString()).slice(-2000); });
+// import UnifiedContactSync from './src/services/UnifiedContactSync.js'; // disabled
+// import ConversionDetector from './src/services/ConversionDetector.js'; // disabled
+// import ProductAffinityService from './src/services/ProductAffinityService.js'; // disabled
 
-    const killer = setTimeout(() => {
-      if (!child.killed) {
-        console.error(`[MySQL Sync] Timed out after ${timeoutMs}ms — killing`);
-        child.kill('SIGKILL');
-      }
-    }, timeoutMs);
-
-    child.on('close', code => {
-      clearTimeout(killer);
-      const dur = ((Date.now() - start) / 1000).toFixed(1);
-      if (code === 0) {
-        console.log(`[MySQL Sync] Done in ${dur}s`);
-      } else {
-        // Common case: upstream MySQL is dead → connection error. Log terse, don't spam.
-        const isConnIssue = /timed out|connection|unreachable|host|refused/i.test(stderrTail);
-        console.error(`[MySQL Sync] Exit ${code} after ${dur}s${isConnIssue ? ' (upstream MySQL likely unreachable)' : ''}`);
-        if (!isConnIssue && stderrTail) console.error(stderrTail.slice(-500));
-      }
-      mysqlSyncing = false;
-    });
-    child.on('error', err => {
-      clearTimeout(killer);
-      console.error('[MySQL Sync] Spawn failed:', err.message);
-      mysqlSyncing = false;
-    });
-  });
-  console.log(`[MySQL Sync] Cron scheduled: ${schedule} (runs ${scriptPath})`);
-}
-
-// ── Rayna API Sync Cron (modified-date based, daily) ────────
-if (process.env.RAYNA_SYNC_ENABLED === 'true') {
-  const schedule = process.env.RAYNA_SYNC_CRON || '0 23 * * *'; // 3 AM Dubai (UTC+4)
-  let raynaSyncing = false;
-  cron.schedule(schedule, async () => {
-    if (raynaSyncing) return;
-    raynaSyncing = true;
-    console.log('[Rayna Sync] Modified-date sync starting (yesterday\'s modifications)...');
-    try {
-      const results = await RaynaSyncService.syncAllByModifiedDate();
-      console.log('[Rayna Sync] Modified-date sync completed:', JSON.stringify(results));
-    } catch (err) {
-      console.error('[Rayna Sync] Modified-date sync failed:', err.message);
-    }
-    raynaSyncing = false;
-  });
-  console.log(`[Rayna Sync] Modified-date cron scheduled: ${schedule}`);
-
-  // Tours Daily Batch Sync: 3:10 AM Dubai (UTC 23:10)
-  // Fetches ALL from API, combo key match against DB, batch update/insert + unified_contacts sync
-  cron.schedule('10 23 * * *', async () => {
-    console.log('[Tours Daily] Batch sync starting...');
-    try {
-      const result = await RaynaSyncService.syncToursDaily();
-      console.log('[Tours Daily] Completed:', JSON.stringify(result));
-    } catch (err) {
-      console.error('[Tours Daily] Failed:', err.message);
-    }
-  });
-  console.log('[Rayna Sync] Tours daily batch sync cron scheduled: 10 23 * * * (3:10 AM Dubai daily)');
-
-  // Hotels Daily Batch Sync: 3:20 AM Dubai (UTC 23:20)
-  // Fetches ALL from API, combo key match against DB, batch update/insert + unified_contacts sync
-  cron.schedule('20 23 * * *', async () => {
-    console.log('[Hotels Daily] Batch sync starting...');
-    try {
-      const result = await RaynaSyncService.syncHotelsDaily();
-      console.log('[Hotels Daily] Completed:', JSON.stringify(result));
-    } catch (err) {
-      console.error('[Hotels Daily] Failed:', err.message);
-    }
-  });
-  console.log('[Rayna Sync] Hotels daily batch sync cron scheduled: 20 23 * * * (3:20 AM Dubai daily)');
-
-  // Visas Daily Batch Sync: 3:30 AM Dubai (UTC 23:30)
-  cron.schedule('30 23 * * *', async () => {
-    console.log('[Visas Daily] Batch sync starting...');
-    try {
-      const result = await RaynaSyncService.syncVisasDaily();
-      console.log('[Visas Daily] Completed:', JSON.stringify(result));
-    } catch (err) {
-      console.error('[Visas Daily] Failed:', err.message);
-    }
-  });
-  console.log('[Rayna Sync] Visas daily batch sync cron scheduled: 30 23 * * * (3:30 AM Dubai daily)');
-
-  // Flights Daily Batch Sync: 3:40 AM Dubai (UTC 23:40)
-  cron.schedule('40 23 * * *', async () => {
-    console.log('[Flights Daily] Batch sync starting...');
-    try {
-      const result = await RaynaSyncService.syncFlightsDaily();
-      console.log('[Flights Daily] Completed:', JSON.stringify(result));
-    } catch (err) {
-      console.error('[Flights Daily] Failed:', err.message);
-    }
-  });
-  console.log('[Rayna Sync] Flights daily batch sync cron scheduled: 40 23 * * * (3:40 AM Dubai daily)');
-
-  // Daily catch-up: re-fetch last 90 days at 3:50 AM Dubai (UTC 23:50)
-  // Runs BEFORE UnifiedContactSync so fresh data is available for segmentation
-  cron.schedule('50 23 * * *', async () => {
-    console.log('[Rayna Sync] Daily catch-up starting — re-fetching last 90 days for modifications...');
-    try {
-      const results = await RaynaSyncService.syncCatchUp(90);
-      console.log('[Rayna Sync] Daily catch-up completed:', JSON.stringify(results));
-    } catch (err) {
-      console.error('[Rayna Sync] Daily catch-up failed:', err.message);
-    }
-  });
-  console.log('[Rayna Sync] Daily catch-up cron scheduled: 50 23 * * * (3:50 AM Dubai daily)');
-}
-
-// ── Full Data Pipeline Cron ──────────────────────────────────
-// 3:00 AM Dubai — Rayna API sync (already above)
-// 3:15 AM Dubai — Pull new data from MySQL servers
-// 3:30 AM Dubai — Unified contacts incremental sync + GA4/GTM linking
-import UnifiedContactSync from './src/services/UnifiedContactSync.js';
-
-// 3:15 AM — MySQL server pull (contacts + chats)
-cron.schedule('15 23 * * *', async () => {
-  console.log('[Server Pull] Pulling new data from MySQL servers...');
-  try {
-    const { execFile } = await import('child_process');
-    const { promisify } = await import('util');
-    const execFileAsync = promisify(execFile);
-    const scriptPath = join(__dirname, '..', 'incremental_sync.py');
-    const { stdout } = await execFileAsync('python3', [scriptPath, 'contacts', 'chats'], { timeout: 600000 });
-    console.log('[Server Pull] Completed:', stdout.slice(-200));
-  } catch (err) {
-    console.error('[Server Pull] Failed:', err.message);
-  }
-});
-console.log('[Server Pull] Cron scheduled: 15 23 * * * (3:15 AM Dubai daily)');
-
-// 3:30 AM — Unified contacts sync + GA4/GTM linking
-cron.schedule('30 23 * * *', async () => {
-  console.log('[Unified Sync] Starting incremental sync...');
-  try {
-    const result = await UnifiedContactSync.run();
-    console.log('[Unified Sync] Completed:', JSON.stringify(result));
-
-    // Snapshot daily segment counts after sync
-    const { default: UnifiedContactService } = await import('./src/services/UnifiedContactService.js');
-    await UnifiedContactService.snapshotDailySegments();
-
-    // Refresh materialized view for fast dashboard queries
-    await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
-    console.log('[Unified Sync] Materialized view refreshed');
-  } catch (err) {
-    console.error('[Unified Sync] Failed:', err.message);
-  }
-});
-console.log('[Unified Sync] Cron scheduled: 30 23 * * * (3:30 AM Dubai daily)');
-
-// 4:00 AM — Refresh cached counts on users table
-cron.schedule('0 0 * * *', async () => {
-  console.log('[Cache Refresh] Updating cached_chats/tickets/bookings on users...');
-  try {
-    await pool.query(`
-      UPDATE users u SET
-        cached_chats = COALESCE(ch.cnt, 0),
-        cached_tickets = COALESCE(tk.cnt, 0),
-        cached_bookings = 0
-      FROM (SELECT id FROM users) base
-      LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM chats GROUP BY user_id) ch ON ch.user_id = base.id
-      LEFT JOIN (SELECT user_id, COUNT(*)::int as cnt FROM tickets GROUP BY user_id) tk ON tk.user_id = base.id
-      WHERE u.id = base.id
-    `);
-    console.log('[Cache Refresh] Done.');
-  } catch (err) {
-    console.error('[Cache Refresh] Failed:', err.message);
-  }
-});
-console.log('[Cache Refresh] Cron scheduled: 0 0 * * * (4 AM Dubai daily)');
-
-// 4:00 AM Dubai — T-60min popularity prewarm. Walks active journeys, finds
-// entries whose wait will elapse in ~60 min, and snapshots their next action
-// node into popularity_snapshots NOW. Uses the same per-(journey, day) run_id
-// that processJourney will compute at 5 AM, so the 5 AM lazy snapshot becomes
-// a no-op (popularity_snapshots ON CONFLICT DO NOTHING). End-state: by send
-// time, the popularity rows are already in the DB and audit-able.
-cron.schedule('0 0 * * *', async () => {
-  console.log('[Popularity Prewarm] T-60 prewarm starting...');
-  try {
-    const { default: JourneyService } = await import('./src/services/JourneyService.js');
-    const result = await JourneyService.prewarmJourneyPopularity({ lookaheadMinutes: 60, windowMinutes: 30 });
-    console.log('[Popularity Prewarm] Done:', JSON.stringify(result));
-  } catch (err) {
-    console.error('[Popularity Prewarm] Failed:', err.message);
-  }
-});
-console.log('[Popularity Prewarm] Cron scheduled: 0 0 * * * (4 AM Dubai daily, 60 min before journey processing)');
-
-// 5:00 AM Dubai — Journey processing: advance customers through nodes
-import ConversionDetector from './src/services/ConversionDetector.js';
+// ── Daily Billing Sync — 1 AM Dubai time (UTC+4) ────────────
 cron.schedule('0 1 * * *', async () => {
-  console.log('[Journey Engine] Starting daily journey processing...');
   try {
-    // Step 1: Detect conversions (UTM + GTM + bookings)
-    const conversions = await ConversionDetector.runAll();
-    console.log('[Journey Engine] Conversions:', JSON.stringify(conversions));
-
-    // Step 2: Process all active journeys (advance nodes)
-    const { rows: journeys } = await pool.query("SELECT journey_id FROM journey_flows WHERE status = 'active'");
-    for (const j of journeys) {
-      const result = await (await import('./src/services/JourneyService.js')).default.processJourney(j.journey_id);
-      console.log(`[Journey Engine] Journey ${j.journey_id}: ${JSON.stringify(result)}`);
-    }
-    console.log('[Journey Engine] Done.');
+    console.log('[Cron] Daily billing sync starting...');
+    const result = await DailyBillingSync.run();
+    console.log('[Cron] Daily billing sync done:', JSON.stringify(result));
   } catch (err) {
-    console.error('[Journey Engine] Failed:', err.message);
+    console.error('[Cron] Daily billing sync failed:', err.message);
   }
-});
-console.log('[Journey Engine] Cron scheduled: 0 1 * * * (5 AM Dubai daily)');
-
-// 6:00 AM Dubai — Product sync + affinity refresh
-import ProductAffinityService from './src/services/ProductAffinityService.js';
-cron.schedule('0 2 * * *', async () => {
-  console.log('[Product Affinity] Starting product sync + affinity refresh...');
-  try {
-    const result = await ProductAffinityService.runAll();
-    console.log('[Product Affinity] Done:', JSON.stringify(result));
-  } catch (err) {
-    console.error('[Product Affinity] Failed:', err.message);
-  }
-});
-console.log('[Product Affinity] Cron scheduled: 0 2 * * * (6 AM Dubai daily)');
-
-// 9:00 AM Dubai — TEST_USERS auto-send tick. If is_running=true, sends the
-// next day's template (1..7) and advances. Idempotent (skips if last_sent_at
-// < 22h ago). Loops back to Day-1 if config.loop=true.
-cron.schedule('0 5 * * *', async () => {
-  console.log('[Test Auto-Send] Daily tick...');
-  try {
-    const { tick } = await import('./src/services/TestSendScheduler.js');
-    const baseUrl = `http://localhost:${PORT}`;
-    const result = await tick({ baseUrl });
-    if (result.skipped) {
-      console.log(`[Test Auto-Send] Skipped: ${result.reason}`);
-    } else {
-      console.log(`[Test Auto-Send] Day ${result.day} (${result.label}) — sent to ${result.sentTo}/${result.sentTo + result.failed}${result.sequenceDone ? ' — SEQUENCE COMPLETE' : ''}`);
-    }
-  } catch (err) {
-    console.error('[Test Auto-Send] Failed:', err.message);
-  }
-});
-console.log('[Test Auto-Send] Cron scheduled: 0 5 * * * (9 AM Dubai daily)');
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time');
 
 // ── BullMQ workers (optional in-process mode) ────────────────
 // In dev set WORKERS_INLINE=true to run journey send workers in this process.
@@ -695,7 +415,7 @@ try {
 ║               /api/v3/base-templates (5 email)   ║
 ║               /api/v3/sync  (BQ pipeline)        ║
 ║               /api/v3/mysql-sync (MySQL pull)    ║
-║               /api/v3/rayna-sync (API pull)     ║
+║               /api/v3/rayna-sync (billing data)  ║
 ║  Health:      /api/health                        ║
 ║  Migrate v3:  POST /api/v3/migrate-all           ║
 ╚══════════════════════════════════════════════════╝

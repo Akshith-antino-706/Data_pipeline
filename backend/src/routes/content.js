@@ -156,10 +156,8 @@ router.get('/templates/:id/preview', async (req, res, next) => {
 
     const dayMatch = (template.name || '').match(/^Day\s+(\d)\s*-/i);
     if (!dayMatch) {
-      return res.status(400).json({
-        success: false,
-        error: `Preview only supported for the 7 day-templates (Day 1..Day 7). Got: ${template.name}`,
-      });
+      // Non-Day templates: render body HTML directly
+      return res.json({ success: true, data: { html: template.body || '<p>No content</p>' } });
     }
     const html = await renderDayTemplatePreview(parseInt(dayMatch[1]));
     if (!html) {

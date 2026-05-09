@@ -283,6 +283,7 @@ export const getSegmentActivity = (params = {}) => {
   return request(`/api/v3/unified-contacts/segment-activity?${qs}`);
 };
 export const snapshotDailySegments = () => request('/api/v3/unified-contacts/snapshot-daily', { method: 'POST' });
+export const getSegmentChanges = () => request('/api/v3/unified-contacts/segment-changes');
 export const downloadSegmentActivity = async (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${BASE}/api/v3/unified-contacts/segment-activity/download?${qs}`);

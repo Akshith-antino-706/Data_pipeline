@@ -48,20 +48,20 @@ router.get('/general', async (req, res, next) => {
     const businessType = req.query.businessType === 'B2B' || req.query.businessType === 'B2C'
       ? req.query.businessType : null;
     const btParams = businessType ? [businessType] : [];
-    const btAnd = businessType ? `AND uc.business_type = $1` : '';
-    const btWhere = businessType ? `WHERE business_type = $1` : '';
+    const btAnd = businessType ? `AND uc.contact_type = $1` : '';
+    const btWhere = businessType ? `WHERE contact_type = $1` : '';
 
     const [emailRow, waRow, totalRow, journeysRow] = await Promise.all([
       query(`
         SELECT COUNT(*)::int AS n FROM unified_contacts uc
          WHERE uc.email IS NOT NULL AND uc.email <> ''
-           AND COALESCE(uc.email_unsubscribed,'No') <> 'Yes'
+           AND COALESCE(uc.email_unsubscribe,'No') <> 'Yes'
            AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$'
            ${btAnd}`, btParams),
       query(`
         SELECT COUNT(*)::int AS n FROM unified_contacts uc
-         WHERE uc.phone IS NOT NULL AND uc.phone <> ''
-           AND COALESCE(uc.wa_unsubscribed,'No') <> 'Yes'
+         WHERE uc.mobile IS NOT NULL AND uc.mobile <> ''
+           AND COALESCE(uc.wa_unsubscribe,'No') <> 'Yes'
            AND COALESCE(uc.is_indian,false) = true
            ${btAnd}`, btParams),
       query(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),

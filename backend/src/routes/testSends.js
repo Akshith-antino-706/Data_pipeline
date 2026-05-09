@@ -37,14 +37,14 @@ const TEMPLATE_DIR = path.join(ROOT, 'mail_templates');
 
 async function fetchTestRecipients() {
   const { rows } = await db.query(`
-    SELECT DISTINCT uc.unified_id, LOWER(uc.email) AS email
+    SELECT DISTINCT uc.id AS unified_id, LOWER(uc.email) AS email
       FROM segment_customers sc
       JOIN segment_definitions sd ON sd.segment_id = sc.segment_id
-      JOIN unified_contacts uc    ON uc.unified_id = sc.customer_id
+      JOIN unified_contacts uc    ON uc.id = sc.customer_id
      WHERE sd.segment_name = 'TEST_USERS'
        AND sc.is_active    = TRUE
        AND uc.email IS NOT NULL AND uc.email <> ''
-       AND COALESCE(uc.email_unsubscribed, 'No') <> 'Yes'
+       AND COALESCE(uc.email_unsubscribe, 'No') <> 'Yes'
   `);
   // Dedup by email (the unified_contacts table may have duplicate email rows
   // — pick the first unified_id encountered)

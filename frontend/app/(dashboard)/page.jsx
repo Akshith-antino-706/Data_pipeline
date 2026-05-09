@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { getSegmentationTree, getSegmentActivity } from '@/lib/api';
-import { RefreshCw, Target, TrendingUp, Users, Send, FileText, GitBranch, DollarSign, Megaphone, UserCheck, Activity } from 'lucide-react';
+import { RefreshCw, Target, TrendingUp, Users, Send, FileText, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Calendar } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useBusinessType } from '@/context/BusinessTypeContext';
@@ -31,10 +31,20 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const { businessType } = useBusinessType();
 
+  // const [dateFrom, setDateFrom] = useState(() => {
+  //   const d = new Date(); d.setDate(d.getDate() - 30);
+  //   return d.toISOString().split('T')[0];
+  // });
+  // const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+
   const loadData = () => {
     setLoading(true);
+    const params = {};
+    if (businessType !== 'All') params.businessType = businessType;
+    // if (dateFrom) params.dateFrom = dateFrom;
+    // if (dateTo) params.dateTo = dateTo;
     Promise.all([
-      getSegmentationTree(businessType === 'All' ? {} : { businessType }).catch(() => ({})),
+      getSegmentationTree(params).catch(() => ({})),
       getSegmentActivity({ days: 7 }).catch(() => ({})),
     ])
       .then(([t, a]) => { setTree(t); setActivity(a); })
@@ -44,7 +54,47 @@ export default function Dashboard() {
 
   useEffect(() => { loadData(); }, [businessType]);
 
-  if (loading) return <div className="spinner">Loading dashboard...</div>;
+  if (loading) return (
+    <div style={{ padding: '0' }}>
+      {/* Header skeleton */}
+      <div style={{ marginBottom: 24 }}>
+        <div className="skeleton" style={{ width: 160, height: 24, borderRadius: 6, marginBottom: 8 }} />
+        <div className="skeleton" style={{ width: 260, height: 14, borderRadius: 6 }} />
+      </div>
+
+      {/* KPI cards skeleton */}
+      <div className="card-grid card-grid-4 mb-24">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="card" style={{ padding: 20 }}>
+            <div className="skeleton" style={{ width: 36, height: 36, borderRadius: 8, marginBottom: 12 }} />
+            <div className="skeleton" style={{ width: 80, height: 28, borderRadius: 6, marginBottom: 8 }} />
+            <div className="skeleton" style={{ width: 120, height: 12, borderRadius: 6 }} />
+          </div>
+        ))}
+      </div>
+
+      {/* Chart skeleton */}
+      <div className="card mb-24" style={{ padding: 20 }}>
+        <div className="skeleton" style={{ width: 180, height: 18, borderRadius: 6, marginBottom: 20 }} />
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 200 }}>
+          {[65, 85, 45, 90, 55, 70].map((h, i) => (
+            <div key={i} className="skeleton" style={{ flex: 1, height: `${h}%`, borderRadius: '6px 6px 0 0' }} />
+          ))}
+        </div>
+      </div>
+
+      {/* Action cards skeleton */}
+      <div className="card-grid card-grid-4 mb-24">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="card" style={{ padding: 20 }}>
+            <div className="skeleton" style={{ width: 40, height: 40, borderRadius: 8, marginBottom: 12 }} />
+            <div className="skeleton" style={{ width: 100, height: 14, borderRadius: 6, marginBottom: 8 }} />
+            <div className="skeleton" style={{ width: 140, height: 12, borderRadius: 6 }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   const fmt = (n) => Number(n || 0).toLocaleString();
   const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -52,7 +102,7 @@ export default function Dashboard() {
 
   const totals = tree?.totals || {};
   const statusCounts = tree?.statusCounts || [];
-  const acicoRevenue = tree?.acicoRevenue;
+  const revenueByType = tree?.revenueByType;
   const logs = activity?.logs || [];
 
   // Totals from recent activity
@@ -75,7 +125,27 @@ export default function Dashboard() {
             <h2>Dashboard</h2>
             <div className="page-header-sub">Rayna Tours — {businessType === 'All' ? 'All' : businessType} Overview</div>
           </div>
-          <div className="page-actions">
+          <div className="page-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* Date filter — uncomment to enable
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+              <Calendar size={14} style={{ color: 'var(--text-tertiary)' }} />
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="btn btn-secondary"
+                style={{ padding: '4px 8px', fontSize: 12 }}
+              />
+              <span style={{ color: 'var(--text-tertiary)' }}>to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="btn btn-secondary"
+                style={{ padding: '4px 8px', fontSize: 12 }}
+              />
+            </div>
+            */}
             <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={14} /></button>
           </div>
         </div>
@@ -100,7 +170,7 @@ export default function Dashboard() {
         </Link>
         <Link href="/campaigns" className="card kpi no-underline color-inherit">
           <div className="icon-box"><DollarSign size={18} color="var(--orange)" /></div>
-          <div className="kpi-value kpi-orange">{fmtM(acicoRevenue?.total)}</div>
+          <div className="kpi-value kpi-orange">{fmtM(revenueByType?.total)}</div>
           <div className="kpi-label">Total Confirmed Revenue</div>
         </Link>
       </motion.div>
@@ -191,7 +261,7 @@ export default function Dashboard() {
               <table>
                 <thead>
                   <tr>
-                    <th>Segment</th><th style={{ textAlign: 'right' }}>Customers</th><th style={{ textAlign: 'right' }}>Revenue</th><th style={{ textAlign: 'right' }}>With Chats</th>
+                    <th>Segment</th><th style={{ textAlign: 'right' }}>Customers</th><th style={{ textAlign: 'right' }}>Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -205,7 +275,6 @@ export default function Dashboard() {
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(s.count)}</td>
                       <td style={{ textAlign: 'right', color: '#f59e0b' }}>{fmtAED(s.revenue)}</td>
-                      <td style={{ textAlign: 'right' }}>{fmt(s.with_chats)}</td>
                     </tr>
                   ))}
                 </tbody>

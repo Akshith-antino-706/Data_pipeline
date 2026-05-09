@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentActivity, snapshotDailySegments, getSegmentCustomers, downloadSegmentActivity, downloadSegmentCustomers, getUnifiedContact } from '@/lib/api';
+import { getSegmentActivity, snapshotDailySegments, getSegmentCustomers, downloadSegmentActivity, downloadSegmentCustomers, getUnifiedContact, getSegmentChanges } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
   Users, TrendingUp, TrendingDown, ArrowRightLeft, Mail, MessageCircle, Bell,
@@ -20,9 +20,8 @@ const fmtAED = (n) => `AED ${(n || 0).toLocaleString(undefined, { minimumFractio
 const STATUS_CONFIG = {
   ON_TRIP:         { label: 'On Trip',        color: '#22c55e' },
   FUTURE_TRAVEL:   { label: 'Future Travel',  color: '#3b82f6' },
-  ACTIVE_ENQUIRY:  { label: 'Active Enquiry', color: '#f59e0b' },
   PAST_BOOKING:    { label: 'Past Booking',   color: '#8b5cf6' },
-  PAST_ENQUIRY:    { label: 'Past Enquiry',   color: '#f97316' },
+  CANCELLED:       { label: 'Cancelled',      color: '#ef4444' },
   PROSPECT:        { label: 'Prospect',       color: '#64748b' },
 };
 
@@ -62,7 +61,7 @@ export default function SegmentActivity() {
 
   const handleSnapshot = async () => {
     setSnapshotting(true);
-    try { await snapshotDailySegments(); await loadData(); } catch (err) { console.error(err); }
+    try { await snapshotDailySegments(); await loadData(); getSegmentChanges().then(setChanges).catch(console.error); } catch (err) { console.error(err); }
     setSnapshotting(false);
   };
 
@@ -93,6 +92,11 @@ export default function SegmentActivity() {
   // Contact detail modal
   const [contactDetail, setContactDetail] = useState(null);
   const [contactLoading, setContactLoading] = useState(false);
+  const [changes, setChanges] = useState(null);
+
+  useEffect(() => {
+    getSegmentChanges().then(setChanges).catch(console.error);
+  }, []);
 
   const openContact = async (id) => {
     setContactLoading(true);
@@ -177,6 +181,53 @@ export default function SegmentActivity() {
           })}
         </div>
       </motion.div>
+
+      {/* Daily Changes — Before / After / Change */}
+      {changes?.changes?.length > 0 && (
+        <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ArrowRightLeft size={14} /> Segment Changes
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+              {changes.before?.date} → {changes.after?.date}
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: 'var(--secondary)' }}>
+                  <th style={thStyle}>Status</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Before ({changes.before?.date?.slice(5)})</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>After ({changes.after?.date?.slice(5)})</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {changes.changes.map(c => {
+                  const cfg = STATUS_CONFIG[c.segment] || { label: c.segment, color: '#64748b' };
+                  return (
+                    <tr key={c.segment} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={tdStyle}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: cfg.color, flexShrink: 0 }} />
+                          {cfg.label}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(c.before)}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{fmt(c.after)}</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600,
+                        color: c.change > 0 ? '#22c55e' : c.change < 0 ? '#ef4444' : 'var(--muted-foreground)' }}>
+                        {c.change > 0 ? `+${fmt(c.change)}` : c.change < 0 ? fmt(c.change) : '0'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
+      )}
 
       {/* Filters */}
       <motion.div variants={fadeInUp} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -312,34 +363,28 @@ export default function SegmentActivity() {
                       <tr style={{ background: 'var(--secondary)' }}>
                         <th style={thStyle}>Name</th>
                         <th style={thStyle}>Email</th>
-                        <th style={thStyle}>Phone</th>
-                        <th style={thStyle}>Company</th>
+                        <th style={thStyle}>Mobile</th>
                         <th style={thStyle}>Country</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Tours</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Hotels</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Visas</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Flights</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Revenue</th>
-                        <th style={thStyle}>Last Seen</th>
+                        <th style={thStyle}>Type</th>
+                        <th style={thStyle}>Tier</th>
+                        <th style={thStyle}>Geography</th>
+                        <th style={thStyle}>Sources</th>
                       </tr>
                     </thead>
                     <tbody>
                       {detailCustomers.data.map(c => (
-                        <tr key={c.unified_id} onClick={() => openContact(c.unified_id)}
+                        <tr key={c.id} onClick={() => openContact(c.id)}
                           style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.15s' }}
                           onMouseEnter={e => e.currentTarget.style.background = 'var(--secondary)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <td style={{ ...tdStyle, fontWeight: 500 }}>{c.name || '\u2014'}</td>
                           <td style={{ ...tdStyle, fontSize: 11 }}>{c.email || '\u2014'}</td>
-                          <td style={{ ...tdStyle, fontSize: 11 }}>{c.phone || '\u2014'}</td>
-                          <td style={tdStyle}>{c.company_name || '\u2014'}</td>
+                          <td style={{ ...tdStyle, fontSize: 11 }}>{c.mobile || '\u2014'}</td>
                           <td style={tdStyle}>{c.country || '\u2014'}</td>
-                          <td style={{ ...tdStyle, textAlign: 'right' }}>{c.total_tour_bookings || 0}</td>
-                          <td style={{ ...tdStyle, textAlign: 'right' }}>{c.total_hotel_bookings || 0}</td>
-                          <td style={{ ...tdStyle, textAlign: 'right' }}>{c.total_visa_bookings || 0}</td>
-                          <td style={{ ...tdStyle, textAlign: 'right' }}>{c.total_flight_bookings || 0}</td>
-                          <td style={{ ...tdStyle, textAlign: 'right', color: '#f59e0b', fontWeight: 500 }}>{fmtAED(c.total_booking_revenue)}</td>
-                          <td style={{ ...tdStyle, fontSize: 11 }}>{formatDate(c.last_seen_at)}</td>
+                          <td style={tdStyle}>{c.contact_type || '\u2014'}</td>
+                          <td style={tdStyle}>{c.product_tier || '\u2014'}</td>
+                          <td style={tdStyle}>{c.geography || '\u2014'}</td>
+                          <td style={{ ...tdStyle, fontSize: 11 }}>{c.sources || '\u2014'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -381,8 +426,8 @@ export default function SegmentActivity() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
                     <div>
                       <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{contactDetail.name || 'Unknown'}</h3>
-                      <span style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'monospace' }}>ID: {contactDetail.unified_id}</span>
-                      <div style={{ marginTop: 6 }}>{contactDetail.sources?.split(', ').map(s => <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 10, marginRight: 4 }}>{s}</span>)}</div>
+                      <span style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'monospace' }}>ID: {contactDetail.id}</span>
+                      <div style={{ marginTop: 6 }}>{contactDetail.sources?.split(',').map(s => <span key={s} className={`badge badge-blue`} style={{ fontSize: 10, marginRight: 4 }}>{s.trim()}</span>)}</div>
                     </div>
                     <button onClick={() => setContactDetail(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 4 }}><X size={16} /></button>
                   </div>
@@ -391,53 +436,40 @@ export default function SegmentActivity() {
                     <DetailRow icon={Hash} label="Status" value={contactDetail.booking_status} />
                     <DetailRow icon={Hash} label="Product Tier" value={contactDetail.product_tier || 'N/A'} />
                     <DetailRow icon={Globe} label="Geography" value={contactDetail.geography || 'Unknown'} />
-                    <DetailRow icon={Layers} label="Full Segment" value={contactDetail.segment_label} />
+                    <DetailRow icon={Layers} label="Full Segment" value={contactDetail.segments} />
                   </ModalSection>
 
                   <ModalSection title="Contact Information">
                     <DetailRow icon={Mail} label="Email" value={contactDetail.email} />
-                    <DetailRow icon={Phone} label="Phone" value={contactDetail.phone} />
-                    <DetailRow icon={Building2} label="Company" value={contactDetail.company_name} />
+                    <DetailRow icon={Phone} label="Mobile" value={contactDetail.mobile} />
                     <DetailRow icon={MapPin} label="City" value={contactDetail.city} />
                     <DetailRow icon={Globe} label="Country" value={contactDetail.country} />
                     <DetailRow icon={Hash} label="Type" value={contactDetail.contact_type} />
                   </ModalSection>
 
-                  <ModalSection title="Chat Activity">
-                    <DetailRow icon={MessageCircle} label="Total Chats" value={contactDetail.total_chats || 0} />
-                    <DetailRow icon={Hash} label="Departments" value={contactDetail.chat_departments} />
-                    <DetailRow icon={Clock} label="First Chat" value={formatDate(contactDetail.first_chat_at)} />
-                    <DetailRow icon={Clock} label="Last Chat" value={formatDate(contactDetail.last_chat_at)} />
-                  </ModalSection>
-
-                  {(contactDetail.total_tour_bookings > 0 || contactDetail.total_hotel_bookings > 0 || contactDetail.total_visa_bookings > 0 || contactDetail.total_flight_bookings > 0) && (
+                  {(contactDetail.total_tour_bookings > 0 || contactDetail.total_hotel_bookings > 0 || contactDetail.total_visa_bookings > 0 || contactDetail.total_package_bookings > 0 || contactDetail.total_other_bookings > 0) && (
                     <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', padding: 16, marginBottom: 12 }}>
                       <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--muted-foreground)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>Booking Summary</div>
                       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                         {contactDetail.total_tour_bookings > 0 && <MiniStat icon={Palmtree} label="Tours" value={contactDetail.total_tour_bookings} color="#10b981" />}
                         {contactDetail.total_hotel_bookings > 0 && <MiniStat icon={Hotel} label="Hotels" value={contactDetail.total_hotel_bookings} color="#6366f1" />}
                         {contactDetail.total_visa_bookings > 0 && <MiniStat icon={FileText} label="Visas" value={contactDetail.total_visa_bookings} color="#f59e0b" />}
-                        {contactDetail.total_flight_bookings > 0 && <MiniStat icon={Plane} label="Flights" value={contactDetail.total_flight_bookings} color="#3b82f6" />}
+                        {contactDetail.total_package_bookings > 0 && <MiniStat icon={Layers} label="Packages" value={contactDetail.total_package_bookings} color="#3b82f6" />}
+                        {contactDetail.total_other_bookings > 0 && <MiniStat icon={Hash} label="Others" value={contactDetail.total_other_bookings} color="#64748b" />}
                         <MiniStat icon={DollarSign} label="Revenue" value={fmtAED(contactDetail.total_booking_revenue)} color="var(--primary)" />
                       </div>
-                      {(contactDetail.first_booking_at || contactDetail.last_booking_at) && (
-                        <div style={{ display: 'flex', gap: 24, marginTop: 10, fontSize: 12, color: 'var(--muted-foreground)' }}>
-                          {contactDetail.first_booking_at && <span>First: {formatDate(contactDetail.first_booking_at)}</span>}
-                          {contactDetail.last_booking_at && <span>Last: {formatDate(contactDetail.last_booking_at)}</span>}
-                        </div>
-                      )}
                     </div>
                   )}
 
                   <BookingTable icon={Palmtree} title="Tour Bookings" color="#10b981" rows={contactDetail.rayna_tours} columns={tourColumns} />
                   <BookingTable icon={Hotel} title="Hotel Bookings" color="#6366f1" rows={contactDetail.rayna_hotels} columns={hotelColumns} />
                   <BookingTable icon={FileText} title="Visa Bookings" color="#f59e0b" rows={contactDetail.rayna_visas} columns={visaColumns} />
-                  <BookingTable icon={Plane} title="Flight Bookings" color="#3b82f6" rows={contactDetail.rayna_flights} columns={flightColumns} />
-                  <BookingTable icon={MessageCircle} title="Chats" color="#25D366" rows={contactDetail.chats_list} columns={chatColumns} />
+                  <BookingTable icon={Layers} title="Package Bookings" color="#3b82f6" rows={contactDetail.rayna_packages} columns={tourColumns} />
+                  <BookingTable icon={Hash} title="Other Bookings" color="#64748b" rows={contactDetail.rayna_others} columns={tourColumns} />
 
                   <ModalSection title="Timeline">
-                    <DetailRow icon={Calendar} label="First Seen" value={formatDate(contactDetail.first_seen_at)} />
-                    <DetailRow icon={Clock} label="Last Seen" value={formatDate(contactDetail.last_seen_at)} />
+                    <DetailRow icon={Calendar} label="Created" value={formatDate(contactDetail.created_at)} />
+                    <DetailRow icon={Clock} label="Updated" value={formatDate(contactDetail.updated_at)} />
                   </ModalSection>
                 </>
               )}
@@ -514,47 +546,29 @@ function BookingTable({ icon: Icon, title, color, rows, columns }) {
 function fmtCurrency(v) { return v == null ? '\u2014' : `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 
 const tourColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'tours_name', label: 'Tour', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
-  { key: 'tour_date', label: 'Tour Date', render: v => formatDate(v) },
+  { key: 'bill_serial', label: 'Bill #' },
+  { key: 'service_name', label: 'Service', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'travel_date', label: 'Travel Date', render: v => formatDate(v) },
   { key: 'guest_name', label: 'Guest' },
-  { key: 'adult', label: 'Pax', render: (_v, r) => `${r.adult || 0}A ${r.child || 0}C ${r.infant || 0}I` },
-  { key: 'total_sell', label: 'Amount', render: v => fmtCurrency(v) },
-  { key: 'status', label: 'Status' },
+  { key: 'selling_price', label: 'Amount', render: v => fmtCurrency(v) },
+  { key: 'is_cancel', label: 'Cancelled', render: v => v === '1' ? 'Yes' : 'No' },
 ];
 const hotelColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'hotel_name', label: 'Hotel', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
-  { key: 'check_in_date', label: 'Check-in', render: v => formatDate(v) },
+  { key: 'bill_serial', label: 'Bill #' },
+  { key: 'service_name', label: 'Hotel', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'travel_date', label: 'Travel Date', render: v => formatDate(v) },
   { key: 'guest_name', label: 'Guest' },
-  { key: 'no_of_rooms', label: 'Rooms' },
-  { key: 'total_sell', label: 'Amount', render: v => fmtCurrency(v) },
+  { key: 'selling_price', label: 'Amount', render: v => fmtCurrency(v) },
+  { key: 'is_cancel', label: 'Cancelled', render: v => v === '1' ? 'Yes' : 'No' },
 ];
 const visaColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'visa_type', label: 'Visa Type' },
-  { key: 'applicant_name', label: 'Applicant' },
-  { key: 'passport_number', label: 'Passport' },
-  { key: 'apply_date', label: 'Applied', render: v => formatDate(v) },
-  { key: 'status', label: 'Status' },
-  { key: 'total_sell', label: 'Amount', render: v => fmtCurrency(v) },
-];
-const flightColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'flight_no', label: 'Flight' },
-  { key: 'airport_name', label: 'Airport', render: v => v ? (v.length > 25 ? v.slice(0, 25) + '...' : v) : '\u2014' },
-  { key: 'from_datetime', label: 'Departure', render: v => formatDate(v) },
-  { key: 'passenger_name', label: 'Passenger' },
-  { key: 'status', label: 'Status' },
+  { key: 'bill_serial', label: 'Bill #' },
+  { key: 'service_name', label: 'Visa Type', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
+  { key: 'travel_date', label: 'Travel Date', render: v => formatDate(v) },
+  { key: 'guest_name', label: 'Guest' },
+  { key: 'nationality', label: 'Nationality' },
   { key: 'selling_price', label: 'Amount', render: v => fmtCurrency(v) },
-];
-const chatColumns = [
-  { key: 'wa_name', label: 'WA Name' },
-  { key: 'wa_id', label: 'WA ID' },
-  { key: 'country', label: 'Country' },
-  { key: 'status', label: 'Status', render: v => v === 0 ? 'Open' : v === 1 ? 'Resolved' : v },
-  { key: 'last_short', label: 'Last Msg', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
-  { key: 'last_msg_at', label: 'Last Msg At', render: v => formatDate(v) },
+  { key: 'is_cancel', label: 'Cancelled', render: v => v === '1' ? 'Yes' : 'No' },
 ];
 
 const thStyle = { padding: '10px 14px', textAlign: 'left', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', whiteSpace: 'nowrap' };

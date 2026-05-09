@@ -1,24 +1,39 @@
 import pool from '../config/database.js';
+import { cached, invalidate } from '../config/cache.js';
+
+/**
+ * UnifiedContactService — updated for the new 18-column unified_contacts schema:
+ *   id, email, mobile, name, country, city, sources, contact_type,
+ *   wa_unsubscribe, email_unsubscribe, booking_status, product_tier,
+ *   geography, is_indian, segments, synced_date, created_at, updated_at
+ *
+ * Booking counts & revenue are computed dynamically from rayna_* tables.
+ */
+
+const RAYNA_TABLES = ['rayna_tours', 'rayna_packages', 'rayna_hotels', 'rayna_visas', 'rayna_others', 'rayna_flights'];
+
+// rayna_flights uses 'status' column instead of 'is_cancel'
+const cancelFilter = (table) =>
+  table === 'rayna_flights' ? `(status IS NULL OR status != 'Cancelled')` : `is_cancel <> '1'`;
 
 export default class UnifiedContactService {
 
   static async getAll({ page = 1, limit = 50, search, sortBy, sortDir, source, country,
-    contactType, businessType, bookingStatus, productTier, geography, chatDepartment, hasChats, hasBookings, waStatus, emailStatus } = {}) {
+    contactType, businessType, bookingStatus, productTier, geography, hasBookings, waStatus, emailStatus } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
 
     if (search) {
       params.push(`%${search}%`);
-      // Detect search type for optimal index usage (trigram GIN indexes)
       const isPhone = /^\+?\d[\d\s\-]{5,}$/.test(search.trim());
       const isEmail = search.includes('@');
       if (isPhone) {
-        conditions.push(`(phone ILIKE $${idx} OR phone_key ILIKE $${idx})`);
+        conditions.push(`mobile ILIKE $${idx}`);
       } else if (isEmail) {
         conditions.push(`email ILIKE $${idx}`);
       } else {
-        conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx} OR company_name ILIKE $${idx})`);
+        conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx})`);
       }
       idx++;
     }
@@ -32,14 +47,9 @@ export default class UnifiedContactService {
       conditions.push(`country = $${idx}`);
       idx++;
     }
-    if (contactType) {
-      params.push(contactType);
+    if (contactType || businessType) {
+      params.push(contactType || businessType);
       conditions.push(`contact_type = $${idx}`);
-      idx++;
-    }
-    if (businessType) {
-      params.push(businessType);
-      conditions.push(`business_type = $${idx}`);
       idx++;
     }
     if (bookingStatus) {
@@ -57,25 +67,17 @@ export default class UnifiedContactService {
       conditions.push(`geography = $${idx}`);
       idx++;
     }
-    if (chatDepartment) {
-      params.push(`%${chatDepartment}%`);
-      conditions.push(`chat_departments LIKE $${idx}`);
-      idx++;
-    }
-    if (hasChats === 'yes') conditions.push(`total_chats > 0`);
-    else if (hasChats === 'no') conditions.push(`(total_chats = 0 OR total_chats IS NULL)`);
-    if (hasBookings === 'yes') conditions.push(`(total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0)`);
-    else if (hasBookings === 'no') conditions.push(`(COALESCE(total_tour_bookings,0) + COALESCE(total_hotel_bookings,0) + COALESCE(total_visa_bookings,0) + COALESCE(total_flight_bookings,0) = 0)`);
-    if (waStatus === 'unsubscribed') conditions.push(`wa_unsubscribed = 'Yes'`);
-    else if (waStatus === 'active') conditions.push(`(wa_unsubscribed IS NULL OR wa_unsubscribed = 'No')`);
-    if (emailStatus === 'unsubscribed') conditions.push(`email_unsubscribed = 'Yes'`);
-    else if (emailStatus === 'active') conditions.push(`(email_unsubscribed IS NULL OR email_unsubscribed = 'No')`);
+    if (hasBookings === 'yes') conditions.push(`booking_status NOT IN ('PROSPECT')`);
+    else if (hasBookings === 'no') conditions.push(`booking_status = 'PROSPECT'`);
+    if (waStatus === 'unsubscribed') conditions.push(`wa_unsubscribe = 'yes'`);
+    else if (waStatus === 'active') conditions.push(`(wa_unsubscribe IS NULL OR wa_unsubscribe = 'no')`);
+    if (emailStatus === 'unsubscribed') conditions.push(`email_unsubscribe = 'yes'`);
+    else if (emailStatus === 'active') conditions.push(`(email_unsubscribe IS NULL OR email_unsubscribe = 'no')`);
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const allowedSort = ['name', 'email', 'company_name', 'country', 'total_chats', 'total_tickets',
-      'total_tour_bookings', 'total_booking_revenue', 'last_seen_at', 'created_at'];
-    const col = allowedSort.includes(sortBy) ? sortBy : 'last_seen_at';
+    const allowedSort = ['name', 'email', 'country', 'contact_type', 'booking_status', 'created_at', 'updated_at'];
+    const col = allowedSort.includes(sortBy) ? sortBy : 'created_at';
     const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
 
     const offset = (page - 1) * limit;
@@ -83,13 +85,10 @@ export default class UnifiedContactService {
     const [countRes, dataRes] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total FROM unified_contacts ${where}`, params),
       pool.query(
-        `SELECT unified_id, phone_key, email_key, name, email, phone, company_name, city, country, contact_type,
-                total_chats,
-                total_tour_bookings, total_hotel_bookings, total_visa_bookings, total_flight_bookings,
-                total_booking_revenue, sources, chat_departments,
-                booking_status, product_tier, geography, is_indian, segment_label,
-                wa_unsubscribed, email_unsubscribed,
-                last_seen_at, created_at
+        `SELECT id, email, mobile, name, country, city, sources, contact_type,
+                wa_unsubscribe, email_unsubscribe,
+                booking_status, product_tier, geography, is_indian, segments,
+                created_at, updated_at
          FROM unified_contacts ${where}
          ORDER BY ${col} ${dir} NULLS LAST
          LIMIT $${idx} OFFSET $${idx + 1}`,
@@ -106,57 +105,71 @@ export default class UnifiedContactService {
   }
 
   static async getById(id) {
-    const { rows } = await pool.query('SELECT * FROM unified_contacts WHERE unified_id = $1', [id]);
+    const { rows } = await pool.query('SELECT * FROM unified_contacts WHERE id = $1', [id]);
     const contact = rows[0] || null;
     if (!contact) return null;
 
-    // Fetch detailed booking records linked by unified_id
-    const [tours, hotels, visas, flights] = await Promise.all([
+    // Fetch booking records linked by unified_id from all rayna tables
+    const [tours, packages, hotels, visas, others, flights] = await Promise.all([
       pool.query(`
-        SELECT billno, bill_date, tour_date, guest_name, tours_name, nationality,
-               agent_name, status, adult, child, infant, total_sell
-        FROM rayna_tours WHERE unified_id = $1 ORDER BY tour_date DESC NULLS LAST LIMIT 100
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM rayna_tours WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
       `, [id]),
       pool.query(`
-        SELECT billno, bill_date, check_in_date, guest_name, hotel_name, country_name,
-               agent_name, no_of_rooms, total_sell
-        FROM rayna_hotels WHERE unified_id = $1 ORDER BY check_in_date DESC NULLS LAST LIMIT 100
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM rayna_packages WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
       `, [id]),
       pool.query(`
-        SELECT billno, bill_date, guest_name, visa_type, nationality, country_name,
-               agent_name, status, total_sell, apply_date, applicant_name, passport_number
-        FROM rayna_visas WHERE unified_id = $1 ORDER BY bill_date DESC NULLS LAST LIMIT 100
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM rayna_hotels WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
       `, [id]),
       pool.query(`
-        SELECT billno, bill_date, guest_name, passenger_name, flight_no, airport_name,
-               from_datetime, agent_name, status, selling_price
-        FROM rayna_flights WHERE unified_id = $1 ORDER BY from_datetime DESC NULLS LAST LIMIT 100
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM rayna_visas WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+      `, [id]),
+      pool.query(`
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM rayna_others WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+      `, [id]),
+      pool.query(`
+        SELECT billno AS bill_no, bill_date, flight_no, passenger_name AS guest_name,
+               selling_price, status, nationality
+        FROM rayna_flights WHERE unified_id = $1 ORDER BY bill_date DESC NULLS LAST LIMIT 100
       `, [id]),
     ]);
 
     contact.rayna_tours = tours.rows;
+    contact.rayna_packages = packages.rows;
     contact.rayna_hotels = hotels.rows;
     contact.rayna_visas = visas.rows;
+    contact.rayna_others = others.rows;
     contact.rayna_flights = flights.rows;
 
-    // Fetch chats linked by phone_key
-    if (contact.phone_key) {
-      const { rows: chatRows } = await pool.query(`
-        SELECT id, wa_id, wa_name, country, status, tags,
-               last_msg_at, last_short, first_msg_text, created_at
-        FROM chats WHERE wa_id LIKE '%' || $1
-        ORDER BY last_msg_at DESC NULLS LAST LIMIT 50
-      `, [contact.phone_key]);
-      contact.chats_list = chatRows;
-    } else {
-      contact.chats_list = [];
-    }
+    // Compute totals dynamically
+    contact.total_tour_bookings = tours.rows.length;
+    contact.total_hotel_bookings = hotels.rows.length;
+    contact.total_visa_bookings = visas.rows.length;
+    contact.total_package_bookings = packages.rows.length;
+    contact.total_other_bookings = others.rows.length;
+    contact.total_flight_bookings = flights.rows.length;
+    contact.total_booking_revenue = [tours, packages, hotels, visas, others]
+      .flatMap(r => r.rows)
+      .filter(r => r.is_cancel !== '1')
+      .reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0)
+      + flights.rows
+        .filter(r => !r.status || r.status !== 'Cancelled')
+        .reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
 
     return contact;
   }
 
   static async getFilterOptions({ businessType } = {}) {
-    const btClause = businessType ? 'AND business_type = $1' : '';
+    const btClause = businessType ? 'AND contact_type = $1' : '';
     const btParam = businessType ? [businessType] : [];
     const [countries, statuses, tiers, geos] = await Promise.all([
       pool.query(`SELECT country, COUNT(*)::int as cnt FROM unified_contacts WHERE country IS NOT NULL AND country != '' ${btClause} GROUP BY country ORDER BY cnt DESC LIMIT 50`, btParam),
@@ -170,371 +183,228 @@ export default class UnifiedContactService {
       bookingStatuses: statuses.rows.map(r => r.booking_status),
       productTiers: tiers.rows.map(r => r.product_tier),
       geographies: geos.rows.map(r => r.geography),
-      sources: ['chat', 'contacts', 'rayna', 'ga4'],
+      sources: ['tours', 'packages', 'hotels', 'visas', 'others'],
     };
   }
 
   static async getStats({ businessType } = {}) {
-    const btClause = businessType ? 'WHERE business_type = $1' : '';
+    const btClause = businessType ? 'WHERE contact_type = $1' : '';
     const btParam = businessType ? [businessType] : [];
     const { rows } = await pool.query(`
       SELECT
         COUNT(*)::int AS total_contacts,
-        COUNT(*) FILTER (WHERE total_chats > 0)::int AS with_chats,
-        COUNT(*) FILTER (WHERE total_tour_bookings > 0 OR total_hotel_bookings > 0 OR total_visa_bookings > 0 OR total_flight_bookings > 0)::int AS with_travel,
+        COUNT(*) FILTER (WHERE booking_status NOT IN ('PROSPECT'))::int AS with_travel,
         COUNT(*) FILTER (WHERE sources LIKE '%,%')::int AS multi_source,
-        COUNT(DISTINCT country)::int AS countries,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric AS total_revenue
+        COUNT(DISTINCT country)::int AS countries
       FROM unified_contacts
       ${btClause}
     `, btParam);
-    return rows[0];
-  }
 
-  /**
-   * Refresh the segmentation materialized view only. Fast (~300ms on 1.6M rows),
-   * but does NOT recompute booking_status — just re-groups whatever's in unified_contacts.
-   */
-  static async refreshSegmentationMV() {
-    const started = Date.now();
-    await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
-    return { refreshed: true, durationMs: Date.now() - started };
-  }
+    // Compute total revenue from rayna tables
+    const revenueSQL = RAYNA_TABLES.map(t =>
+      `SELECT COALESCE(SUM(selling_price), 0) AS rev FROM ${t} WHERE ${cancelFilter(t)}`
+    ).join(' UNION ALL ');
+    const { rows: revRows } = await pool.query(`SELECT SUM(rev)::numeric AS total_revenue FROM (${revenueSQL}) t`);
 
-  /**
-   * Fast targeted recompute of booking_status transitions + MV refresh.
-   *
-   * The full UnifiedContactSync.computeSegments() wipes all statuses and rebuilds —
-   * on 1.6M rows it takes ~5 min and bloats the WAL. For the common case (just
-   * fixing day-boundary drift on ON_TRIP / FUTURE_TRAVEL), we only touch rows whose
-   * rule outcome actually changed today. Runs in seconds.
-   *
-   * If callers want a rebuild from scratch (e.g. new rules deployed), they should
-   * hit UnifiedContactSync.run() directly.
-   */
-  static async recomputeSegmentation() {
-    const started = Date.now();
-
-    // FUTURE_TRAVEL CTE: contacts with any booking after today
-    const futureTravelCTE = `
-      WITH future_travel AS (
-        SELECT DISTINCT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL
-          AND (status IS NULL OR status != 'Cancelled')
-          AND tour_date::date > CURRENT_DATE
-        UNION
-        SELECT DISTINCT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL
-          AND check_in_date::date > CURRENT_DATE
-        UNION
-        SELECT DISTINCT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL
-          AND (status IS NULL OR status != 'Cancelled')
-          AND from_datetime::date > CURRENT_DATE
-      )
-    `;
-
-    // ON_TRIP CTE: contacts with booking in last 7 days
-    const onTripCTE = `
-      WITH currently_on_trip AS (
-        SELECT DISTINCT unified_id FROM rayna_tours WHERE unified_id IS NOT NULL
-          AND (status IS NULL OR status != 'Cancelled')
-          AND tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
-        UNION
-        SELECT DISTINCT unified_id FROM rayna_hotels WHERE unified_id IS NOT NULL
-          AND check_in_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
-        UNION
-        SELECT DISTINCT unified_id FROM rayna_flights WHERE unified_id IS NOT NULL
-          AND (status IS NULL OR status != 'Cancelled')
-          AND from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
-      )
-    `;
-
-    // 0. Reset and recompute is_on_trip flag (independent of waterfall)
-    await pool.query(`UPDATE unified_contacts SET is_on_trip = false WHERE is_on_trip = true`);
-    await pool.query(`
-      ${onTripCTE}
-      UPDATE unified_contacts uc SET is_on_trip = true
-      FROM currently_on_trip c
-      WHERE uc.unified_id = c.unified_id
-    `);
-
-    // 1. Promote contacts with future bookings → FUTURE_TRAVEL (highest priority)
-    const { rowCount: futurePromoted } = await pool.query(`
-      ${futureTravelCTE}
-      UPDATE unified_contacts uc SET booking_status = 'FUTURE_TRAVEL', updated_at = NOW()
-      FROM future_travel ft
-      WHERE uc.unified_id = ft.unified_id AND uc.booking_status IS DISTINCT FROM 'FUTURE_TRAVEL'
-    `);
-
-    // 2a. Demote stale FUTURE_TRAVELs → PAST_BOOKING (has past bookings but no future ones)
-    const { rowCount: futureToPast } = await pool.query(`
-      ${futureTravelCTE}
-      UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
-      WHERE booking_status = 'FUTURE_TRAVEL'
-        AND NOT EXISTS (SELECT 1 FROM future_travel ft WHERE ft.unified_id = uc.unified_id)
-        AND (
-          COALESCE(uc.crm_bookings, 0) > 0
-          OR EXISTS (
-            SELECT 1 FROM rayna_tours WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled')
-            UNION ALL
-            SELECT 1 FROM rayna_hotels WHERE unified_id = uc.unified_id
-            UNION ALL
-            SELECT 1 FROM rayna_flights WHERE unified_id = uc.unified_id AND (status IS NULL OR status != 'Cancelled')
-          )
-        )
-    `);
-
-    // 2b. Catch-all: remaining stale FUTURE_TRAVELs with no bookings anywhere → PROSPECT
-    const { rowCount: futureToProspect } = await pool.query(`
-      ${futureTravelCTE}
-      UPDATE unified_contacts uc SET booking_status = 'PROSPECT', updated_at = NOW()
-      WHERE booking_status = 'FUTURE_TRAVEL'
-        AND NOT EXISTS (SELECT 1 FROM future_travel ft WHERE ft.unified_id = uc.unified_id)
-    `);
-
-    // 3. Promote on-trip contacts (only if NOT already FUTURE_TRAVEL)
-    const { rowCount: promoted } = await pool.query(`
-      ${onTripCTE}
-      UPDATE unified_contacts uc SET booking_status = 'ON_TRIP', updated_at = NOW()
-      FROM currently_on_trip c
-      WHERE uc.unified_id = c.unified_id
-        AND uc.booking_status IS DISTINCT FROM 'ON_TRIP'
-        AND uc.booking_status IS DISTINCT FROM 'FUTURE_TRAVEL'
-    `);
-
-    // 4. Demote stale ON_TRIPs (window ended) → PAST_BOOKING
-    const { rowCount: demoted } = await pool.query(`
-      ${onTripCTE}
-      UPDATE unified_contacts uc SET booking_status = 'PAST_BOOKING', updated_at = NOW()
-      WHERE booking_status = 'ON_TRIP'
-        AND NOT EXISTS (SELECT 1 FROM currently_on_trip c WHERE c.unified_id = uc.unified_id)
-    `);
-
-    await pool.query('REFRESH MATERIALIZED VIEW mv_segmentation_tree');
-
-    return {
-      recomputed: true,
-      transitions: {
-        future_travel_promoted: futurePromoted,
-        future_travel_to_past: futureToPast,
-        future_travel_to_prospect: futureToProspect,
-        on_trip_promoted: promoted,
-        on_trip_demoted: demoted,
-      },
-      durationMs: Date.now() - started,
-    };
+    return { ...rows[0], total_revenue: revRows[0].total_revenue || 0 };
   }
 
   /**
    * Segmentation dashboard: 3-step decision tree overview
+   * Computed directly from unified_contacts (no materialized view)
    */
-  static async getSegmentationTree({ businessType } = {}) {
-    // Business type filter — uses precomputed indexed column for fast queries
-    // btFilter removed — now uses materialized view with btWhere
+  static async getSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
+    const cacheKey = `dashboard:tree:${businessType || 'all'}:${dateFrom || ''}:${dateTo || ''}`;
+    return cached(cacheKey, () => this._computeSegmentationTree({ businessType, dateFrom, dateTo }), 1800);
+  }
 
-    // Uses materialized view for fast queries (refreshed after each sync)
-    const btWhere = businessType ? `WHERE business_type = '${businessType}'` : 'WHERE 1=1';
+  static async _computeSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
+    const btWhere = businessType ? `WHERE contact_type = '${businessType}'` : '';
 
-    // Step 1: Booking status counts (from materialized view — <1ms)
-    const { rows: statusCounts } = await pool.query(`
-      SELECT booking_status,
-        SUM(count)::int AS count,
-        SUM(revenue)::numeric AS revenue,
-        SUM(with_chats)::int AS with_chats,
-        SUM(indian_count)::int AS indian_count
-      FROM mv_segmentation_tree
-      ${btWhere}
-      GROUP BY booking_status
-      ORDER BY CASE booking_status
-        WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2 WHEN 'ACTIVE_ENQUIRY' THEN 3
-        WHEN 'PAST_BOOKING' THEN 4 WHEN 'PAST_ENQUIRY' THEN 5 WHEN 'PROSPECT' THEN 6 END
-    `);
+    // Date filter for revenue queries (applied to bill_date)
+    const dateClauses = [];
+    if (dateFrom) dateClauses.push(`bill_date >= '${dateFrom}'`);
+    if (dateTo) dateClauses.push(`bill_date <= '${dateTo}'::date + INTERVAL '1 day'`);
+    const dateAnd = dateClauses.length ? ' AND ' + dateClauses.join(' AND ') : '';
 
-    // Step 2+3: Full breakdown (already pre-aggregated in materialized view)
-    const { rows: breakdown } = await pool.query(`
-      SELECT booking_status, product_tier, geography,
-        count, revenue, avg_revenue, indian_count, with_chats,
-        total_tours, total_hotels, total_visas, total_flights
-      FROM mv_segmentation_tree
-      ${btWhere}
-      ORDER BY booking_status, product_tier NULLS LAST, geography NULLS LAST
-    `);
+    // Run all 7 queries in parallel for speed
+    const [
+      { rows: statusCounts },
+      { rows: breakdown },
+      { rows: [totals] },
+      { rows: revenueByType },
+      { rows: revenueByStatus },
+      { rows: [onTripBookings] },
+      { rows: [ftBookings] },
+    ] = await Promise.all([
+      // 1. Booking status counts
+      pool.query(`
+        SELECT booking_status, COUNT(*)::int AS count,
+          COUNT(*) FILTER (WHERE is_indian = true)::int AS indian_count
+        FROM unified_contacts ${btWhere}
+        GROUP BY booking_status
+        ORDER BY CASE booking_status
+          WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
+          WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 END
+      `),
+      // 2. Full breakdown
+      pool.query(`
+        SELECT booking_status, product_tier, geography,
+          COUNT(*)::int AS count,
+          COUNT(*) FILTER (WHERE is_indian = true)::int AS indian_count
+        FROM unified_contacts ${btWhere}
+        GROUP BY booking_status, product_tier, geography
+        ORDER BY booking_status, product_tier NULLS LAST, geography NULLS LAST
+      `),
+      // 3. Totals
+      pool.query(`
+        SELECT COUNT(*)::int AS total, COUNT(*)::int AS segmented,
+          COUNT(DISTINCT booking_status || COALESCE(product_tier,'') || COALESCE(geography,''))::int AS segment_count
+        FROM unified_contacts ${btWhere}
+      `),
+      // 4. Revenue by type (with date filter + flights)
+      pool.query(`
+        SELECT 'tours' as source, COUNT(*)::int as bookings, COALESCE(SUM(selling_price),0)::numeric as revenue FROM rayna_tours WHERE is_cancel <> '1'${dateAnd}
+        UNION ALL SELECT 'packages', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_packages WHERE is_cancel <> '1'${dateAnd}
+        UNION ALL SELECT 'hotels', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_hotels WHERE is_cancel <> '1'${dateAnd}
+        UNION ALL SELECT 'visas', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_visas WHERE is_cancel <> '1'${dateAnd}
+        UNION ALL SELECT 'others', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_others WHERE is_cancel <> '1'${dateAnd}
+        UNION ALL SELECT 'flights', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled')${dateAnd}
+      `),
+      // 5. Revenue per booking_status (with date filter + flights)
+      pool.query(`
+        SELECT uc.booking_status, COALESCE(SUM(r.selling_price), 0)::numeric AS revenue
+        FROM unified_contacts uc
+        JOIN (
+          SELECT unified_id, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled') AND unified_id IS NOT NULL${dateAnd}
+        ) r ON r.unified_id = uc.id
+        ${btWhere}
+        GROUP BY uc.booking_status
+      `),
+      // 6. ON_TRIP breakdown
+      pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as tours,
+          (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as hotels,
+          (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as visas
+      `),
+      // 7. FUTURE_TRAVEL breakdown
+      pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as tours,
+          (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as hotels,
+          (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as visas
+      `),
+    ]);
 
-    // Totals
-    const { rows: [totals] } = await pool.query(`
-      SELECT SUM(count)::int AS total,
-        SUM(count)::int AS segmented,
-        COUNT(DISTINCT booking_status || COALESCE(product_tier,'') || COALESCE(geography,''))::int AS segment_count,
-        SUM(revenue)::numeric AS total_revenue
-      FROM mv_segmentation_tree
-      ${btWhere}
-    `);
+    // Merge revenue into totals
+    const totalRevenue = revenueByType.reduce((s, r) => s + parseFloat(r.revenue || 0), 0);
+    totals.total_revenue = totalRevenue;
 
-    // ACICO revenue — all-time confirmed (excluding cancelled) from source tables
-    const { rows: acicoRevenue } = await pool.query(`
-      SELECT 'tours' as source, COUNT(*)::int as bookings, COALESCE(SUM(total_sell),0)::numeric as revenue
-      FROM rayna_tours WHERE (status IS NULL OR status != 'Cancelled')
-      UNION ALL
-      SELECT 'hotels', COUNT(*)::int, COALESCE(SUM(total_sell),0)::numeric
-      FROM rayna_hotels
-      UNION ALL
-      SELECT 'visas', COUNT(*)::int, COALESCE(SUM(total_sell),0)::numeric
-      FROM rayna_visas
-      UNION ALL
-      SELECT 'flights', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric
-      FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled')
-    `);
-    const acicoTotal = acicoRevenue.reduce((s, r) => s + parseFloat(r.revenue || 0), 0);
+    // Merge revenue per status into statusCounts
+    const revenueMap = Object.fromEntries(revenueByStatus.map(r => [r.booking_status, parseFloat(r.revenue)]));
+    for (const sc of statusCounts) {
+      sc.revenue = revenueMap[sc.booking_status] || 0;
+    }
 
-    // ON_TRIP count using is_on_trip flag (includes overlap with FUTURE_TRAVEL)
-    const btOnTripWhere = businessType ? `AND business_type = '${businessType}'` : '';
-    const { rows: [onTripLive] } = await pool.query(`
-      SELECT COUNT(*)::int as count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue,
-        COUNT(*) FILTER (WHERE total_chats > 0)::int as with_chats,
-        COUNT(*) FILTER (WHERE is_indian = true)::int as indian_count
-      FROM unified_contacts
-      WHERE is_on_trip = true ${btOnTripWhere}
-    `);
-
-    // ON_TRIP total bookings (unique bills) from source tables — UNION distinct for total
-    const { rows: [onTripBookings] } = await pool.query(`
-      SELECT (SELECT COUNT(DISTINCT billno) FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE)::int as tours,
-        (SELECT COUNT(DISTINCT billno) FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE)::int as hotels,
-        (SELECT COUNT(DISTINCT billno) FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE)::int as flights,
-        (SELECT COUNT(DISTINCT billno) FROM (
-          SELECT billno FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
-          UNION SELECT billno FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
-          UNION SELECT billno FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date BETWEEN CURRENT_DATE - INTERVAL '7 days' AND CURRENT_DATE
-        ) x)::int as total
-    `);
-
-    // FUTURE_TRAVEL total bookings (unique bills) from source tables — UNION distinct for total
-    const { rows: [ftBookings] } = await pool.query(`
-      SELECT (SELECT COUNT(DISTINCT billno) FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date > CURRENT_DATE)::int as tours,
-        (SELECT COUNT(DISTINCT billno) FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date > CURRENT_DATE)::int as hotels,
-        (SELECT COUNT(DISTINCT billno) FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date > CURRENT_DATE)::int as flights,
-        (SELECT COUNT(DISTINCT billno) FROM (
-          SELECT billno FROM rayna_tours WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND tour_date::date > CURRENT_DATE
-          UNION SELECT billno FROM rayna_hotels WHERE unified_id IS NOT NULL AND check_in_date::date > CURRENT_DATE
-          UNION SELECT billno FROM rayna_flights WHERE unified_id IS NOT NULL AND (status IS NULL OR status != 'Cancelled') AND from_datetime::date > CURRENT_DATE
-        ) x)::int as total
-    `);
-
-    // Override ON_TRIP row in statusCounts with the is_on_trip flag count
+    // Merge booking breakdowns
     const onTripIdx = statusCounts.findIndex(r => r.booking_status === 'ON_TRIP');
-    if (onTripIdx >= 0) {
-      statusCounts[onTripIdx].count = onTripLive.count;
-      statusCounts[onTripIdx].revenue = onTripLive.revenue;
-      statusCounts[onTripIdx].with_chats = onTripLive.with_chats;
-      statusCounts[onTripIdx].indian_count = onTripLive.indian_count;
-      statusCounts[onTripIdx].total_bookings = onTripBookings.total;
-      statusCounts[onTripIdx].booking_breakdown = { tours: onTripBookings.tours, hotels: onTripBookings.hotels, flights: onTripBookings.flights };
-    } else {
-      statusCounts.splice(0, 0, { booking_status: 'ON_TRIP', ...onTripLive, total_bookings: onTripBookings.total, booking_breakdown: { tours: onTripBookings.tours, hotels: onTripBookings.hotels, flights: onTripBookings.flights } });
-    }
-
-    // Add booking counts to FUTURE_TRAVEL
+    if (onTripIdx >= 0) statusCounts[onTripIdx].booking_breakdown = onTripBookings;
     const ftIdx = statusCounts.findIndex(r => r.booking_status === 'FUTURE_TRAVEL');
-    if (ftIdx >= 0) {
-      statusCounts[ftIdx].total_bookings = ftBookings.total;
-      statusCounts[ftIdx].booking_breakdown = { tours: ftBookings.tours, hotels: ftBookings.hotels, flights: ftBookings.flights };
-    }
+    if (ftIdx >= 0) statusCounts[ftIdx].booking_breakdown = ftBookings;
 
-    return { totals, statusCounts, breakdown, acicoRevenue: { label: 'All-Time Confirmed', sources: acicoRevenue, total: acicoTotal } };
+    return {
+      totals,
+      statusCounts,
+      breakdown,
+      revenueByType: { label: dateFrom || dateTo ? 'Filtered Revenue' : 'All-Time Confirmed', sources: revenueByType, total: totalRevenue },
+    };
   }
 
   /**
-   * Get customers for a specific segment combination
-   */
-  /**
    * Snapshot daily segment counts into segment_daily_log
-   * Called by cron after computeSegments() completes
+   * Computes revenue per segment and entered/exited from previous snapshot
    */
   static async snapshotDailySegments() {
-    const today = new Date().toISOString().slice(0, 10);
+    // Use Dubai timezone (UTC+4) for the date
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+    const snapshotTime = new Date();
 
-    // Current segment counts
+    // 1. Current segment counts
     const { rows: segments } = await pool.query(`
-      SELECT booking_status as segment_label, COUNT(*)::int as total_count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
+      SELECT booking_status as segment_label, COUNT(*)::int as total_count
       FROM unified_contacts
       WHERE booking_status IS NOT NULL
       GROUP BY booking_status
     `);
 
-    // Override ON_TRIP count with is_on_trip flag (includes overlap with FUTURE_TRAVEL)
-    const { rows: [onTripSnap] } = await pool.query(`
-      SELECT COUNT(*)::int as total_count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
-      FROM unified_contacts WHERE is_on_trip = true
+    // 2. Revenue per segment
+    const { rows: revenueRows } = await pool.query(`
+      SELECT uc.booking_status AS segment_label, COALESCE(SUM(r.selling_price), 0)::numeric AS revenue
+      FROM unified_contacts uc
+      JOIN (
+        SELECT unified_id, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+        UNION ALL SELECT unified_id, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+        UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+        UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+        UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+        UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled') AND unified_id IS NOT NULL
+      ) r ON r.unified_id = uc.id
+      GROUP BY uc.booking_status
     `);
-    const onTripRow = segments.find(s => s.segment_label === 'ON_TRIP');
-    if (onTripRow) {
-      onTripRow.total_count = onTripSnap.total_count;
-      onTripRow.revenue = onTripSnap.revenue;
-    } else if (onTripSnap.total_count > 0) {
-      segments.push({ segment_label: 'ON_TRIP', total_count: onTripSnap.total_count, revenue: onTripSnap.revenue });
-    }
+    const revenueMap = Object.fromEntries(revenueRows.map(r => [r.segment_label, parseFloat(r.revenue)]));
 
-    // Journey entries/exits/conversions today
-    const { rows: journeyStats } = await pool.query(`
-      SELECT
-        jf.nodes->0->'data'->>'segmentLabel' as segment_label,
-        COUNT(*) FILTER (WHERE je.entered_at::date = $1)::int as entered,
-        COUNT(*) FILTER (WHERE je.completed_at::date = $1 AND je.status = 'exited')::int as exited,
-        COUNT(*) FILTER (WHERE je.converted_at::date = $1)::int as converted,
-        COUNT(*) FILTER (WHERE je.status = 'active')::int as journey_active,
-        COUNT(*) FILTER (WHERE je.status = 'completed' OR je.status = 'converted')::int as journey_completed
-      FROM journey_entries je
-      JOIN journey_flows jf ON jf.journey_id = je.journey_id
-      GROUP BY jf.nodes->0->'data'->>'segmentLabel'
-    `, [today]);
-
-    // Messages sent today
-    const { rows: msgStats } = await pool.query(`
-      SELECT segment_label,
-        SUM(CASE WHEN channel = 'email' THEN sent_count ELSE 0 END)::int as emails_sent,
-        SUM(CASE WHEN channel = 'whatsapp' THEN sent_count ELSE 0 END)::int as whatsapp_sent,
-        SUM(CASE WHEN channel = 'push' THEN sent_count ELSE 0 END)::int as push_sent
-      FROM campaigns
-      GROUP BY segment_label
+    // 3. Previous snapshot for entered/exited calculation
+    const { rows: prevRows } = await pool.query(`
+      SELECT segment_label, total_count FROM segment_daily_log
+      WHERE snapshot_time = (
+        SELECT MAX(snapshot_time) FROM segment_daily_log
+        WHERE snapshot_time < NOW() - INTERVAL '1 minute'
+      )
     `);
+    const prevMap = Object.fromEntries(prevRows.map(r => [r.segment_label, r.total_count]));
 
-    const journeyMap = Object.fromEntries(journeyStats.map(r => [r.segment_label, r]));
-    const msgMap = Object.fromEntries(msgStats.map(r => [r.segment_label, r]));
-
+    // 4. Insert (always INSERT, no upsert — allows multiple snapshots per day)
     for (const seg of segments) {
-      const js = journeyMap[seg.segment_label] || {};
-      const ms = msgMap[seg.segment_label] || {};
-      const emailsSent = ms.emails_sent || 0;
-      const whatsappSent = ms.whatsapp_sent || 0;
-      const pushSent = ms.push_sent || 0;
+      const prev = prevMap[seg.segment_label] || 0;
+      const entered = Math.max(0, seg.total_count - prev);
+      const exited = Math.max(0, prev - seg.total_count);
+      const revenue = revenueMap[seg.segment_label] || 0;
 
       await pool.query(`
         INSERT INTO segment_daily_log (log_date, segment_label, total_count, entered, exited, converted,
-          emails_sent, whatsapp_sent, push_sent, total_reached, journey_active, journey_completed, revenue)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (log_date, segment_label) DO UPDATE SET
-          total_count = EXCLUDED.total_count, entered = EXCLUDED.entered, exited = EXCLUDED.exited,
-          converted = EXCLUDED.converted, emails_sent = EXCLUDED.emails_sent, whatsapp_sent = EXCLUDED.whatsapp_sent,
-          push_sent = EXCLUDED.push_sent, total_reached = EXCLUDED.total_reached,
-          journey_active = EXCLUDED.journey_active, journey_completed = EXCLUDED.journey_completed,
-          revenue = EXCLUDED.revenue
-      `, [today, seg.segment_label, seg.total_count,
-          js.entered || 0, js.exited || 0, js.converted || 0,
-          emailsSent, whatsappSent, pushSent,
-          emailsSent + whatsappSent + pushSent,
-          js.journey_active || 0, js.journey_completed || 0,
-          seg.revenue]);
+          emails_sent, whatsapp_sent, push_sent, total_reached, journey_active, journey_completed, revenue, snapshot_time)
+        VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 0, 0, 0, 0, $6, $7)
+      `, [today, seg.segment_label, seg.total_count, entered, exited, revenue, snapshotTime]);
     }
 
+    // Invalidate dashboard caches after snapshot
+    await invalidate('dashboard:*');
+
     console.log(`[SegmentLog] Snapshot for ${today}: ${segments.length} segments logged`);
-    return { date: today, segments: segments.length };
+    return { date: today, segments: segments.length, snapshotTime };
   }
 
   /**
    * Get segment daily activity log
    */
   static async getSegmentDailyLog({ days = 30, segment, businessType } = {}) {
+    const cacheKey = `dashboard:activity:${days}:${segment || 'all'}:${businessType || 'all'}`;
+    return cached(cacheKey, () => this._computeSegmentDailyLog({ days, segment, businessType }), 1800);
+  }
+
+  static async _computeSegmentDailyLog({ days = 30, segment, businessType } = {}) {
     const conditions = ['log_date >= CURRENT_DATE - $1::int'];
     const params = [days];
 
@@ -544,31 +414,93 @@ export default class UnifiedContactService {
     }
 
     const { rows } = await pool.query(`
-      SELECT * FROM segment_daily_log
+      SELECT *, log_date::text AS log_date FROM segment_daily_log
       WHERE ${conditions.join(' AND ')}
-      ORDER BY log_date DESC, segment_label
+      ORDER BY snapshot_time DESC NULLS LAST, segment_label
     `, params);
 
-    // Live counts filtered by business_type
-    const liveConds = ['booking_status IS NOT NULL'];
-    const liveParams = [];
-    if (businessType) {
-      liveParams.push(businessType);
-      liveConds.push(`business_type = $${liveParams.length}`);
-    }
-
+    // Live counts with revenue
+    const btClause = businessType ? `AND uc.contact_type = $1` : '';
+    const liveParams = businessType ? [businessType] : [];
     const { rows: liveToday } = await pool.query(`
-      SELECT booking_status as segment_label, COUNT(*)::int as total_count,
-        COALESCE(SUM(total_booking_revenue), 0)::numeric as revenue
-      FROM unified_contacts
-      WHERE ${liveConds.join(' AND ')}
-      GROUP BY booking_status
-      ORDER BY CASE booking_status
-        WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2 WHEN 'ACTIVE_ENQUIRY' THEN 3
-        WHEN 'PAST_BOOKING' THEN 4 WHEN 'PAST_ENQUIRY' THEN 5 WHEN 'PROSPECT' THEN 6 END
+      SELECT uc.booking_status AS segment_label,
+        COUNT(*)::int AS total_count,
+        COALESCE(rev.revenue, 0)::numeric AS revenue
+      FROM unified_contacts uc
+      LEFT JOIN (
+        SELECT uc2.booking_status,
+          SUM(r.selling_price)::numeric AS revenue
+        FROM unified_contacts uc2
+        JOIN (
+          SELECT unified_id, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+          UNION ALL SELECT unified_id, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+          UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+          UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+          UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled') AND unified_id IS NOT NULL
+        ) r ON r.unified_id = uc2.id
+        GROUP BY uc2.booking_status
+      ) rev ON rev.booking_status = uc.booking_status
+      WHERE uc.booking_status IS NOT NULL ${btClause}
+      GROUP BY uc.booking_status, rev.revenue
+      ORDER BY CASE uc.booking_status
+        WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
+        WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 END
     `, liveParams);
 
     return { logs: rows, liveToday };
+  }
+
+  /**
+   * Get before/after segment changes from the latest two snapshots
+   */
+  static async getSegmentChanges() {
+    // Find the two most recent distinct snapshot_time values
+    const { rows: times } = await pool.query(`
+      SELECT DISTINCT snapshot_time FROM segment_daily_log
+      ORDER BY snapshot_time DESC LIMIT 2
+    `);
+
+    if (times.length < 2) {
+      return { before: null, after: null, changes: [] };
+    }
+
+    const afterTime = times[0].snapshot_time;
+    const beforeTime = times[1].snapshot_time;
+
+    const { rows: afterRows } = await pool.query(
+      `SELECT segment_label, total_count, revenue FROM segment_daily_log WHERE snapshot_time = $1`,
+      [afterTime]
+    );
+    const { rows: beforeRows } = await pool.query(
+      `SELECT segment_label, total_count, revenue FROM segment_daily_log WHERE snapshot_time = $1`,
+      [beforeTime]
+    );
+
+    const beforeMap = Object.fromEntries(beforeRows.map(r => [r.segment_label, r]));
+    const allSegments = new Set([...afterRows.map(r => r.segment_label), ...beforeRows.map(r => r.segment_label)]);
+
+    const changes = [];
+    for (const seg of allSegments) {
+      const before = beforeMap[seg]?.total_count || 0;
+      const after = afterRows.find(r => r.segment_label === seg)?.total_count || 0;
+      changes.push({
+        segment: seg,
+        before,
+        after,
+        change: after - before,
+      });
+    }
+
+    // Sort by standard order
+    const order = { ON_TRIP: 1, FUTURE_TRAVEL: 2, PAST_BOOKING: 3, CANCELLED: 4, PROSPECT: 5 };
+    changes.sort((a, b) => (order[a.segment] || 99) - (order[b.segment] || 99));
+
+    return {
+      before: { date: new Date(beforeTime).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }), time: beforeTime },
+      after: { date: new Date(afterTime).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }), time: afterTime },
+      changes,
+    };
   }
 
   static async getSegmentCustomers({ bookingStatus, productTier, geography, businessType, page = 1, limit = 25, search } = {}) {
@@ -576,11 +508,11 @@ export default class UnifiedContactService {
     const params = [];
     let idx = 1;
 
-    if (businessType) { params.push(businessType); conditions.push(`business_type = $${idx++}`); }
+    if (businessType) { params.push(businessType); conditions.push(`contact_type = $${idx++}`); }
     if (bookingStatus) { params.push(bookingStatus); conditions.push(`booking_status = $${idx++}`); }
     if (productTier) { params.push(productTier); conditions.push(`product_tier = $${idx++}`); }
     if (geography) { params.push(geography); conditions.push(`geography = $${idx++}`); }
-    if (search) { params.push(`%${search}%`); conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx} OR phone ILIKE $${idx})`); idx++; }
+    if (search) { params.push(`%${search}%`); conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx} OR mobile ILIKE $${idx})`); idx++; }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (page - 1) * limit;
@@ -588,13 +520,11 @@ export default class UnifiedContactService {
     const [countRes, dataRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM unified_contacts ${where}`, params),
       pool.query(
-        `SELECT unified_id, name, email, phone, company_name, country, contact_type,
-                total_chats, total_tour_bookings, total_hotel_bookings,
-                total_visa_bookings, total_flight_bookings, total_booking_revenue,
-                booking_status, product_tier, geography, is_indian, segment_label,
-                last_seen_at
+        `SELECT id, name, email, mobile, country, city, contact_type, sources,
+                booking_status, product_tier, geography, is_indian, segments,
+                wa_unsubscribe, email_unsubscribe, created_at, updated_at
          FROM unified_contacts ${where}
-         ORDER BY total_booking_revenue DESC NULLS LAST, last_seen_at DESC NULLS LAST
+         ORDER BY created_at DESC NULLS LAST
          LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset]
       ),
@@ -606,5 +536,13 @@ export default class UnifiedContactService {
       page, limit,
       totalPages: Math.ceil(parseInt(countRes.rows[0].total, 10) / limit),
     };
+  }
+
+  /**
+   * Recompute segmentation — delegates to UnifiedContactBuilder
+   */
+  static async recomputeSegmentation() {
+    const { default: UnifiedContactBuilder } = await import('./UnifiedContactBuilder.js');
+    return UnifiedContactBuilder.computeSegmentation();
   }
 }

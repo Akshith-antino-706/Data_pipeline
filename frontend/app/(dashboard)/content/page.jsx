@@ -11,10 +11,17 @@ const CHANNEL_ICON = { email: Mail, whatsapp: MessageCircle, sms: Smartphone, pu
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
+// Strip HTML tags to show plain-text preview on cards
+const stripHtml = (html) => {
+  if (!html) return '';
+  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
 export default function Content() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState(null);          // { template, html, loading }
+  const [channelFilter, setChannelFilter] = useState('all');
 
   useEffect(() => {
     getTemplates({ limit: 50 })
@@ -34,17 +41,48 @@ export default function Content() {
 
   if (loading) return <div className="spinner">Loading templates...</div>;
 
+  const filtered = channelFilter === 'all'
+    ? templates
+    : templates.filter(t => t.channel === channelFilter);
+
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
       <motion.div variants={fadeInUp} style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Content Templates</h1>
-        <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-          {templates.length} day-templates · server-rendered from <code>mail_templates/</code>
-        </p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Content Templates</h1>
+            <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+              {filtered.length} of {templates.length} templates
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {[
+              { key: 'all', label: 'All' },
+              { key: 'email', label: 'Email', icon: Mail },
+              { key: 'sms', label: 'SMS', icon: Smartphone },
+              { key: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
+              { key: 'push', label: 'Push', icon: Bell },
+            ].map(ch => {
+              const Icon = ch.icon;
+              const active = channelFilter === ch.key;
+              return (
+                <button
+                  key={ch.key}
+                  onClick={() => setChannelFilter(ch.key)}
+                  className={`btn btn-sm ${active ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                >
+                  {Icon && <Icon size={13} />}
+                  {ch.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </motion.div>
 
       <motion.div variants={fadeInUp} className="grid-auto" style={{ gap: 16 }}>
-        {templates.map(t => {
+        {filtered.map(t => {
           const Icon = CHANNEL_ICON[t.channel] || Mail;
           return (
             <div key={t.id} style={{
@@ -62,9 +100,9 @@ export default function Content() {
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{t.name}</div>
                 {t.subject && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>Subject: {t.subject}</div>}
               </div>
-              {t.body && (
+              {(t.body_plain || t.body) && (
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {t.body}
+                  {t.body_plain || stripHtml(t.body)}
                 </div>
               )}
               {t.cta_text && (
