@@ -1,15 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation, getGeneralSegment } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
   Loader2, Globe, MapPin, MessageCircle, DollarSign, Gem, Eye, RefreshCw,
-  Clock, TrendingUp, Phone, Mail, Send, Play,
-  ExternalLink,
+  Clock, TrendingUp, Phone, Mail, Send,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -52,21 +50,16 @@ export default function CustomerSegmentation() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [generalSeg, setGeneralSeg] = useState(null);
-  const [testUsers, setTestUsers] = useState(null);
-
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const params = businessType === 'All' ? {} : { businessType };
-      const [tree, gen, testReq] = await Promise.all([
+      const [tree, gen] = await Promise.all([
         getSegmentationTree(params),
         getGeneralSegment(params).catch(() => ({ data: null })),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/v3/test-sends/recipients`)
-          .then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] })),
       ]);
       setData(tree);
       setGeneralSeg(gen?.data || null);
-      setTestUsers(testReq?.data || []);
     } catch (err) { console.error('Failed to load segmentation:', err); }
     setLoading(false);
   }, [businessType]);
@@ -239,34 +232,6 @@ export default function CustomerSegmentation() {
         </div>
         <motion.div variants={staggerContainer} initial="hidden" animate="visible"
           style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 32 }}>
-          {/* Test Users segment — internal QA only */}
-          {(() => {
-            const isExpanded = expandedStatus === '__test_users__';
-            return (
-              <motion.div variants={fadeInUp}
-                onClick={() => setExpandedStatus(isExpanded ? null : '__test_users__')}
-                style={{
-                  background: 'var(--card)', border: `1px solid ${isExpanded ? '#22c55e' : 'var(--border)'}`,
-                  borderRadius: 'var(--radius-xl)', padding: '18px 20px', cursor: 'pointer',
-                  transition: 'border-color 0.2s, box-shadow 0.2s',
-                  boxShadow: isExpanded ? '0 0 0 1px rgba(34,197,94,0.4)' : 'none',
-                }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 'var(--radius)', background: 'rgba(34,197,94,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Mail size={18} style={{ color: '#22c55e' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 600 }}>Test Users</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Internal QA segment</div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 28, fontWeight: 700, color: '#22c55e' }}>{testUsers ? testUsers.length : '—'}</span>
-                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>5 hardcoded testers</span>
-                </div>
-              </motion.div>
-            );
-          })()}
           {generalSeg && (() => {
             const isExpanded = expandedStatus === '__general__';
             return (
@@ -337,50 +302,6 @@ export default function CustomerSegmentation() {
 
         {/* Step 2+3: Breakdown for expanded status */}
         <AnimatePresence>
-          {expandedStatus === '__test_users__' && (
-            <motion.div key="test-users-expanded" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-              style={{ marginBottom: 32, overflow: 'hidden' }}>
-              <div style={{
-                background: 'var(--card)', border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-xl)', padding: '20px 24px',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
-                  <div>
-                    <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, marginBottom: 4 }}>Test Users Segment</h2>
-                    <p style={{ fontSize: 12, color: 'var(--muted-foreground)', margin: 0 }}>
-                      Internal QA only. Use this segment to test new email templates without reaching real customers.
-                    </p>
-                  </div>
-                  <Link href="/test-sends" style={{
-                    background: '#22c55e', color: '#0a0a0a',
-                    border: 'none', borderRadius: 'var(--radius)', padding: '10px 16px',
-                    fontSize: 12, fontWeight: 700, textDecoration: 'none',
-                    display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
-                    letterSpacing: 0.5, textTransform: 'uppercase',
-                  }}>
-                    <Play size={13} /> Run Test Sends <ExternalLink size={11} />
-                  </Link>
-                </div>
-                {testUsers && testUsers.length > 0 ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {testUsers.map((u) => (
-                      <div key={u.email} style={{
-                        fontSize: 12, padding: '8px 12px', borderRadius: 'var(--radius)',
-                        background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.25)',
-                        color: 'var(--foreground)',
-                      }}>
-                        <Mail size={11} style={{ display: 'inline', marginRight: 4, color: '#22c55e' }} />
-                        {u.email}
-                        <span style={{ color: 'var(--muted-foreground)', marginLeft: 6 }}>· uid {u.unified_id}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>No test users loaded.</div>
-                )}
-              </div>
-            </motion.div>
-          )}
           {expandedStatus === '__general__' && (
             <motion.div key="general-expanded" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
               style={{ marginBottom: 32, overflow: 'hidden' }}>

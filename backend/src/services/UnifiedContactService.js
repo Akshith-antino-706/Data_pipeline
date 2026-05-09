@@ -12,9 +12,7 @@ import { cached, invalidate } from '../config/cache.js';
 
 const RAYNA_TABLES = ['rayna_tours', 'rayna_packages', 'rayna_hotels', 'rayna_visas', 'rayna_others', 'rayna_flights'];
 
-// rayna_flights uses 'status' column instead of 'is_cancel'
-const cancelFilter = (table) =>
-  table === 'rayna_flights' ? `(status IS NULL OR status != 'Cancelled')` : `is_cancel <> '1'`;
+const cancelFilter = () => `is_cancel <> '1'`;
 
 export default class UnifiedContactService {
 
@@ -269,7 +267,7 @@ export default class UnifiedContactService {
         UNION ALL SELECT 'hotels', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_hotels WHERE is_cancel <> '1'${dateAnd}
         UNION ALL SELECT 'visas', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_visas WHERE is_cancel <> '1'${dateAnd}
         UNION ALL SELECT 'others', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_others WHERE is_cancel <> '1'${dateAnd}
-        UNION ALL SELECT 'flights', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled')${dateAnd}
+        UNION ALL SELECT 'flights', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_flights WHERE is_cancel <> '1'${dateAnd}
       `),
       // 5. Revenue per booking_status (with date filter + flights)
       pool.query(`
@@ -281,7 +279,7 @@ export default class UnifiedContactService {
           UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
           UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
           UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
-          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled') AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
         ) r ON r.unified_id = uc.id
         ${btWhere}
         GROUP BY uc.booking_status
@@ -359,7 +357,7 @@ export default class UnifiedContactService {
         UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
         UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
         UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-        UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled') AND unified_id IS NOT NULL
+        UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL
       ) r ON r.unified_id = uc.id
       GROUP BY uc.booking_status
     `);
@@ -437,7 +435,7 @@ export default class UnifiedContactService {
           UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
           UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
           UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE (status IS NULL OR status != 'Cancelled') AND unified_id IS NOT NULL
+          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL
         ) r ON r.unified_id = uc2.id
         GROUP BY uc2.booking_status
       ) rev ON rev.booking_status = uc.booking_status

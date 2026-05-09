@@ -7,19 +7,10 @@ import GupshupService from './GupshupService.js';
 import PopularityService from './PopularityService.js';
 import { enqueueBatch } from './queue/index.js';
 
-// Hardcoded test recipients — internal QA. Anything else seeded into the
-// TEST_USERS segment also matches by email here. Used by:
-//   - enrollAll({ mode: 'test_users' }) → restricts the enrollment query
-//   - processJourney action-node firing → forces email-only for these users
-//     so they never receive WhatsApp/SMS even if the action node specifies it.
-const TEST_EMAILS = new Set([
-  'akshith@antino.com',
-  'akshith@raynatours.com',
-  'anket@raynatours.com',
-  'vaibhav@raynatours.com',
-  'alok@raynatours.com',
-  'manoj@raynatours.com',
-]);
+// Test email guard — used by processJourney to force email-only for test
+// users (skip WhatsApp/SMS). Keep empty; test sends now use a separate
+// /api/v3/test-sends route with user-selected recipients.
+const TEST_EMAILS = new Set([]);
 function isTestUser(email) {
   return !!email && TEST_EMAILS.has(String(email).toLowerCase().trim());
 }

@@ -1,22 +1,18 @@
 /**
  * /api/v3/test-sends — internal QA endpoint to send any of the 7 day templates
- * to the TEST_USERS segment (segment_id=95) without going through journeys.
+ * to user-selected emails (searched from unified_contacts) without going
+ * through journeys.
  *
  * Behaviour:
- *   - Resolves the recipient list by reading segment_customers JOIN unified_contacts
- *     where segment_name='TEST_USERS'. Single source of truth.
+ *   - Frontend provides `emails` array in request body — these are the
+ *     recipients. No hardcoded segment needed.
+ *   - GET /search-contacts?q=... lets the UI search unified_contacts.
  *   - Runs the appropriate ranking once, then fans out per-recipient render+send.
  *   - Returns per-recipient MessageId so the UI can show the result.
  *
  * Endpoints:
- *   POST /api/v3/test-sends/day1
- *   POST /api/v3/test-sends/day2
- *   POST /api/v3/test-sends/day3
- *   POST /api/v3/test-sends/day4
- *   POST /api/v3/test-sends/day5
- *   POST /api/v3/test-sends/day6              (body: { destinationKey })
- *   POST /api/v3/test-sends/day7
- *   GET  /api/v3/test-sends/recipients         — list current TEST_USERS members
+ *   GET  /api/v3/test-sends/search-contacts?q=...  — search contacts by email/name
+ *   POST /api/v3/test-sends/day1  ..  day7         — body: { emails: [...] }
  */
 
 import express from 'express';
@@ -35,24 +31,33 @@ const TEMPLATE_DIR = path.join(ROOT, 'mail_templates');
 
 // ── shared helpers ────────────────────────────────────────────────────────
 
-async function fetchTestRecipients() {
-  const { rows } = await db.query(`
-    SELECT DISTINCT uc.id AS unified_id, LOWER(uc.email) AS email
-      FROM segment_customers sc
-      JOIN segment_definitions sd ON sd.segment_id = sc.segment_id
-      JOIN unified_contacts uc    ON uc.id = sc.customer_id
-     WHERE sd.segment_name = 'TEST_USERS'
-       AND sc.is_active    = TRUE
-       AND uc.email IS NOT NULL AND uc.email <> ''
-       AND COALESCE(uc.email_unsubscribe, 'No') <> 'Yes'
-  `);
-  // Dedup by email (the unified_contacts table may have duplicate email rows
-  // — pick the first unified_id encountered)
-  const seen = new Map();
-  for (const r of rows) {
-    if (!seen.has(r.email)) seen.set(r.email, r);
+/**
+ * Resolve recipients from an `emails` array in the request body.
+ * Looks up each email in unified_contacts to get the unified_id.
+ */
+async function resolveRecipients(emails) {
+  if (!Array.isArray(emails) || emails.length === 0) {
+    throw new Error('emails[] is required — select at least one recipient');
   }
-  return Array.from(seen.values());
+  const cleaned = [...new Set(emails.map(e => String(e).toLowerCase().trim()).filter(Boolean))];
+  if (cleaned.length === 0) throw new Error('No valid emails provided');
+
+  const { rows } = await db.query(`
+    SELECT DISTINCT ON (LOWER(email)) id AS unified_id, LOWER(email) AS email
+      FROM unified_contacts
+     WHERE LOWER(email) = ANY($1)
+       AND email IS NOT NULL AND email <> ''
+     ORDER BY LOWER(email), id
+  `, [cleaned]);
+
+  // Warn about emails not found in DB (but don't hard-fail — just skip them)
+  const found = new Set(rows.map(r => r.email));
+  const missing = cleaned.filter(e => !found.has(e));
+  if (missing.length > 0) {
+    console.warn(`[test-sends] emails not in unified_contacts: ${missing.join(', ')}`);
+  }
+
+  return rows;
 }
 
 async function loadEmailChannel() {
@@ -90,12 +95,26 @@ async function sendOne({ EmailChannel, recipient, subject, html }) {
   }
 }
 
-// ── recipient list ────────────────────────────────────────────────────────
+// ── contact search ───────────────────────────────────────────────────────
 
-router.get('/recipients', async (_req, res, next) => {
+router.get('/search-contacts', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    res.json({ data: recipients });
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ data: [] });
+
+    const { rows } = await db.query(`
+      SELECT id, email, name
+        FROM unified_contacts
+       WHERE email IS NOT NULL AND email <> ''
+         AND (
+           email ILIKE $1
+           OR name ILIKE $1
+         )
+       ORDER BY email
+       LIMIT 20
+    `, [`%${q}%`]);
+
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 
@@ -141,15 +160,30 @@ router.post('/schedule/tick', async (_req, res, next) => {
 
 router.post('/day1', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const { rankTrendingWelcome, _internals: rankInternals } = await import('../services/Day1WelcomeRankingService.js');
-    const { buildDay1WelcomeData } = await import('../services/Day1WelcomeDataService.js');
+    const { buildDay1WelcomeData, _internals: dataInternals } = await import('../services/Day1WelcomeDataService.js');
     const { renderDay1Welcome } = await import('../services/Day1WelcomeRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await rankTrendingWelcome() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+    let ranking;
+    if (useClaude) {
+      ranking = await rankTrendingWelcome();
+    } else {
+      const visaRows = await rankInternals.loadVisaCatalog();
+      const visaMap  = Object.fromEntries(visaRows.map(r => [r.key, r]));
+      ranking = {
+        ranking: rankInternals.buildFallbackRanking({
+          holidayMap:  dataInternals.HOLIDAY_DESTINATIONS,
+          cruiseMap:   dataInternals.CRUISE_DESTINATIONS,
+          activityMap: dataInternals.ACTIVITY_DESTINATIONS,
+          visaMap,
+        }),
+        source: 'fallback',
+      };
+    }
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day1-welcome-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Welcome to Rayna Tours — Your Dream Holiday Starts Here';
@@ -168,38 +202,30 @@ router.post('/day1', async (req, res, next) => {
 
 // ── DAY 2: Cruise Spotlight ───────────────────────────────────────────────
 
-// Day-2 uses a hardcoded ranking (no Anthropic). Verified product_ids in `products`.
-const DAY2_RANKING = {
-  saver_product_ids:    [900965, 900972, 900983],
-  regional_product_ids: [900981, 900983, 900984, 900986],
-  cruise_line_keys:     ['msc', 'costa', 'royal_caribbean', 'genting_dreams'],
-  departure_city_keys:  ['abu_dhabi', 'dubai', 'saudi_arabia', 'singapore', 'europe'],
-  hero_variant_key:           'horizon',
-  regional_copy_variant_key:  'mediterranean',
-  hero_product_id:            900965,
-};
-
 router.post('/day2', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
+    const { rankTrendingCruises, _internals: rankInternals } = await import('../services/Day2CruiseRankingService.js');
     const { buildDay2CruiseData } = await import('../services/Day2CruiseDataService.js');
     const { renderDay2Cruise } = await import('../services/Day2CruiseRenderer.js');
 
-    const ranking = DAY2_RANKING;
+    const useClaude = req.body?.noClaude !== true;
+    const ranking = useClaude ? await rankTrendingCruises() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day2-cruise-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Set Sail: Cruise Highlights from Rayna Tours';
 
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
-      const data = await buildDay2CruiseData({ contactId: r.unified_id, ranking });
+      const data = await buildDay2CruiseData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay2Cruise(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
       results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
     }
-    res.json({ data: { day: 2, recipients: recipients.length, results, ranking: { source: 'hardcoded' } } });
+    res.json({ data: { day: 2, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -207,8 +233,8 @@ router.post('/day2', async (req, res, next) => {
 
 router.post('/day3', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const { rankTrendingVisas, _internals: rankInternals } = await import('../services/VisaRankingService.js');
     const { buildDay3VisaData } = await import('../services/Day3VisaDataService.js');
@@ -216,6 +242,11 @@ router.post('/day3', async (req, res, next) => {
 
     const useClaude = req.body?.noClaude !== true;
     const ranking = useClaude ? await rankTrendingVisas() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+
+    // Day3VisaDataService expects ratings_keys but VisaRankingService doesn't produce it
+    if (!ranking.ranking.ratings_keys) {
+      ranking.ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
+    }
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day3-visa-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Your Visa, Sorted — Rayna Tours';
@@ -236,8 +267,8 @@ router.post('/day3', async (req, res, next) => {
 
 router.post('/day4', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const { rankTrendingHolidays, _internals: rankInternals } = await import('../services/Day4HolidaysRankingService.js');
     const { buildDay4HolidaysData } = await import('../services/Day4HolidaysDataService.js');
@@ -265,8 +296,8 @@ router.post('/day4', async (req, res, next) => {
 
 router.post('/day5', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const { rankTrendingActivities, _internals: rankInternals } = await import('../services/Day5ActivitiesRankingService.js');
     const { buildDay5ActivitiesData } = await import('../services/Day5ActivitiesDataService.js');
@@ -294,8 +325,8 @@ router.post('/day5', async (req, res, next) => {
 
 router.post('/day6', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const destinationKey = (req.body?.destinationKey || 'singapore').toLowerCase();
 
@@ -338,8 +369,8 @@ router.post('/day6', async (req, res, next) => {
 
 router.post('/day7', async (req, res, next) => {
   try {
-    const recipients = await fetchTestRecipients();
-    if (recipients.length === 0) return res.status(404).json({ error: 'No TEST_USERS recipients' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const { rankAbandonedCartFallback, _internals: rankInternals } = await import('../services/Day7AbandonedCartRankingService.js');
     const { buildDay7AbandonedCartData } = await import('../services/Day7AbandonedCartDataService.js');

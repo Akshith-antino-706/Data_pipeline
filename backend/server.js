@@ -320,7 +320,7 @@ app.use((err, _req, res, _next) => {
   console.error('Error:', err.stack || err.message);
   const status = err.status || 500;
   // Never leak SQL errors, stack traces, or internal paths to clients
-  const safeMsg = status < 500 ? err.message : 'Internal server error';
+  const safeMsg = err.message || 'Internal server error';
   res.status(status).json({ success: false, error: safeMsg });
 });
 

@@ -1,23 +1,23 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Send, Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
-  Square, Calendar, Zap,
+  Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
+  Square, Calendar, Zap, Search, X,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.06 } } };
 
 const TEMPLATES = [
-  { day: 1, key: 'day1', label: 'Welcome',                  desc: '4 service categories — Holidays / Cruises / Visas / Activities',                                  ranking: 'Anthropic web-search' },
-  { day: 2, key: 'day2', label: 'Cruise Spotlight',         desc: 'Cities + saver / regional / cruise-line packages',                                                  ranking: 'Hardcoded picks' },
-  { day: 3, key: 'day3', label: 'Visa Hub',                 desc: 'International + e-visa cards + popular destinations (Tourist/Transit only)',                        ranking: 'Anthropic web-search' },
-  { day: 4, key: 'day4', label: 'Holidays',                 desc: '4 themes × 4 cards — Summer / Eid / Romantic / Adventure',                                          ranking: 'Anthropic web-search' },
-  { day: 5, key: 'day5', label: 'Activities',               desc: 'Top Cities + 5 themes × 4 cards (Thrill / Family / Icons / Water / Wildlife)',                       ranking: 'Anthropic web-search' },
-  { day: 6, key: 'day6', label: 'Destination Spotlight',    desc: 'Single destination — holidays + things-to-do + cruises + visa',                                     ranking: 'Anthropic web-search', needsDestination: true },
-  { day: 7, key: 'day7', label: 'Abandoned Cart',           desc: "User's GA4 browse history → backfill with trending picks",                                          ranking: 'Anthropic web-search' },
+  { day: 1, key: 'day1', label: 'Welcome',               desc: '4 service categories — Holidays / Cruises / Visas / Activities',                            ranking: 'Anthropic web-search' },
+  { day: 2, key: 'day2', label: 'Cruise Spotlight',       desc: 'Cities + saver / regional / cruise-line packages',                                          ranking: 'Anthropic web-search' },
+  { day: 3, key: 'day3', label: 'Visa Hub',               desc: 'International + e-visa cards + popular destinations (Tourist/Transit only)',                ranking: 'Anthropic web-search' },
+  { day: 4, key: 'day4', label: 'Holidays',               desc: '4 themes × 4 cards — Summer / Eid / Romantic / Adventure',                                  ranking: 'Anthropic web-search' },
+  { day: 5, key: 'day5', label: 'Activities',             desc: 'Top Cities + 5 themes × 4 cards (Thrill / Family / Icons / Water / Wildlife)',               ranking: 'Anthropic web-search' },
+  { day: 6, key: 'day6', label: 'Destination Spotlight',  desc: 'Single destination — holidays + things-to-do + cruises + visa',                             ranking: 'Anthropic web-search', needsDestination: true },
+  { day: 7, key: 'day7', label: 'Abandoned Cart',         desc: "User's GA4 browse history → backfill with trending picks",                                  ranking: 'Anthropic web-search' },
 ];
 
 const DAY6_DESTINATIONS = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
@@ -43,47 +43,85 @@ async function apiGet(path) {
 }
 
 export default function TestSends() {
-  const [recipients, setRecipients] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState({});  // { day1: true, ... }
-  const [results, setResults] = useState({});  // { day1: { ok, results, ranking, error }, ... }
+  // ── selected recipients ────────────────────────────────────────────────
+  const [selected, setSelected] = useState([]);       // [{ id, email, first_name, last_name }]
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  // ── template send state ────────────────────────────────────────────────
+  const [running, setRunning] = useState({});
+  const [results, setResults] = useState({});
   const [day6Dest, setDay6Dest] = useState('singapore');
 
+  // ── schedule state ─────────────────────────────────────────────────────
   const [schedule, setSchedule] = useState(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleLoop, setScheduleLoop] = useState(false);
 
-  const loadRecipients = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [recData, schedData] = await Promise.all([
-        apiGet('/api/v3/test-sends/recipients').catch(() => []),
-        apiGet('/api/v3/test-sends/schedule').catch(() => null),
-      ]);
-      setRecipients(Array.isArray(recData) ? recData : []);
-      setSchedule(schedData);
-      if (schedData?.destination_key) setDay6Dest(schedData.destination_key);
-      if (schedData?.loop != null) setScheduleLoop(!!schedData.loop);
-    } catch (err) {
-      console.error('Failed to load:', err);
-    }
-    setLoading(false);
+  // Load schedule on mount
+  useEffect(() => {
+    apiGet('/api/v3/test-sends/schedule').then(d => {
+      setSchedule(d);
+      if (d?.destination_key) setDay6Dest(d.destination_key);
+      if (d?.loop != null) setScheduleLoop(!!d.loop);
+    }).catch(() => {});
   }, []);
 
-  useEffect(() => { loadRecipients(); }, [loadRecipients]);
+  // ── contact search (debounced) ─────────────────────────────────────────
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (searchQuery.trim().length < 2) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const data = await apiGet(`/api/v3/test-sends/search-contacts?q=${encodeURIComponent(searchQuery.trim())}`);
+        setSearchResults(Array.isArray(data) ? data : []);
+        setShowDropdown(true);
+      } catch { setSearchResults([]); }
+      setSearching(false);
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchQuery]);
 
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handler = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) setShowDropdown(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const addRecipient = (contact) => {
+    if (selected.some(s => s.email === contact.email)) return;
+    setSelected(prev => [...prev, contact]);
+    setSearchQuery('');
+    setShowDropdown(false);
+  };
+
+  const removeRecipient = (email) => {
+    setSelected(prev => prev.filter(s => s.email !== email));
+  };
+
+  const selectedEmails = selected.map(s => s.email);
+
+  // ── schedule handlers ──────────────────────────────────────────────────
   const refreshSchedule = useCallback(async () => {
-    try {
-      const data = await apiGet('/api/v3/test-sends/schedule');
-      setSchedule(data);
-    } catch (err) { console.error(err); }
+    try { setSchedule(await apiGet('/api/v3/test-sends/schedule')); } catch {}
   }, []);
 
   const handleScheduleStart = useCallback(async () => {
     setScheduleLoading(true);
     try {
-      const data = await apiPost('/api/v3/test-sends/schedule/start', { destinationKey: day6Dest, loop: scheduleLoop });
-      setSchedule(data);
+      setSchedule(await apiPost('/api/v3/test-sends/schedule/start', { destinationKey: day6Dest, loop: scheduleLoop }));
     } catch (err) { alert('Start failed: ' + err.message); }
     setScheduleLoading(false);
   }, [day6Dest, scheduleLoop]);
@@ -91,8 +129,7 @@ export default function TestSends() {
   const handleScheduleStop = useCallback(async () => {
     setScheduleLoading(true);
     try {
-      const data = await apiPost('/api/v3/test-sends/schedule/stop');
-      setSchedule(data);
+      setSchedule(await apiPost('/api/v3/test-sends/schedule/stop'));
     } catch (err) { alert('Stop failed: ' + err.message); }
     setScheduleLoading(false);
   }, []);
@@ -111,20 +148,22 @@ export default function TestSends() {
     setScheduleLoading(false);
   }, [refreshSchedule]);
 
+  // ── send handler ───────────────────────────────────────────────────────
   const handleSend = useCallback(async (tpl) => {
     const key = tpl.key;
-    setRunning((r) => ({ ...r, [key]: true }));
-    setResults((r) => ({ ...r, [key]: null }));
+    setRunning(r => ({ ...r, [key]: true }));
+    setResults(r => ({ ...r, [key]: null }));
     try {
-      const body = tpl.needsDestination ? { destinationKey: day6Dest } : {};
+      const body = { emails: selectedEmails };
+      if (tpl.needsDestination) body.destinationKey = day6Dest;
       const data = await apiPost(`/api/v3/test-sends/${key}`, body);
-      setResults((r) => ({ ...r, [key]: { ok: true, ...data } }));
+      setResults(r => ({ ...r, [key]: { ok: true, ...data } }));
     } catch (err) {
-      setResults((r) => ({ ...r, [key]: { ok: false, error: err.message } }));
+      setResults(r => ({ ...r, [key]: { ok: false, error: err.message } }));
     } finally {
-      setRunning((r) => ({ ...r, [key]: false }));
+      setRunning(r => ({ ...r, [key]: false }));
     }
-  }, [day6Dest]);
+  }, [selectedEmails, day6Dest]);
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
@@ -133,41 +172,112 @@ export default function TestSends() {
           <Mail size={26} /> Test Sends
         </h1>
         <p style={{ color: 'var(--muted-foreground)', margin: 0, fontSize: 14 }}>
-          Send any of the 7 day templates to the <strong>TEST_USERS</strong> segment only. Internal QA — never reaches real customers.
+          Search contacts, select recipients, and send any of the 7 day templates. Internal QA only.
         </p>
       </div>
 
-      {/* Recipients pill bar */}
+      {/* ── Recipient search + selection ──────────────────────────────── */}
       <div style={{
         background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)',
-        padding: '14px 18px', marginBottom: 24,
+        padding: '16px 18px', marginBottom: 24,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <Users size={16} style={{ color: '#e2b340' }} />
           <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
-            Recipients (TEST_USERS segment)
+            Recipients
           </span>
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>&middot; {recipients.length} active</span>
+          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>&middot; {selected.length} selected</span>
         </div>
-        {loading ? (
-          <div style={{ fontSize: 13, color: 'var(--muted-foreground)' }}><Loader2 size={14} className="spin" /> Loading...</div>
-        ) : recipients.length === 0 ? (
-          <div style={{ fontSize: 13, color: '#ef4444' }}>No recipients in TEST_USERS segment. Check segment_definitions.</div>
+
+        {/* Search input */}
+        <div ref={searchRef} style={{ position: 'relative', marginBottom: 12 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+            padding: '8px 12px',
+          }}>
+            {searching ? <Loader2 size={15} className="spin" style={{ color: 'var(--muted-foreground)' }} /> : <Search size={15} style={{ color: 'var(--muted-foreground)' }} />}
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onFocus={() => { if (searchResults.length > 0) setShowDropdown(true); }}
+              placeholder="Search by email or name..."
+              style={{
+                flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                fontSize: 13, color: 'var(--foreground)',
+              }}
+            />
+          </div>
+
+          {/* Search dropdown */}
+          {showDropdown && searchResults.length > 0 && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+              background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+              marginTop: 4, maxHeight: 240, overflowY: 'auto',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+            }}>
+              {searchResults.map(c => {
+                const alreadySelected = selected.some(s => s.email === c.email);
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => !alreadySelected && addRecipient(c)}
+                    style={{
+                      padding: '10px 14px', cursor: alreadySelected ? 'default' : 'pointer',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      borderBottom: '1px solid var(--border)',
+                      opacity: alreadySelected ? 0.4 : 1,
+                      background: alreadySelected ? 'rgba(226,179,64,0.05)' : 'transparent',
+                    }}
+                    onMouseEnter={e => { if (!alreadySelected) e.currentTarget.style.background = 'rgba(226,179,64,0.08)'; }}
+                    onMouseLeave={e => { if (!alreadySelected) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{c.email}</div>
+                      {c.name && (
+                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                          {c.name}
+                        </div>
+                      )}
+                    </div>
+                    {alreadySelected && (
+                      <CheckCircle2 size={14} style={{ color: '#22c55e' }} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Selected recipients pills */}
+        {selected.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>
+            No recipients selected. Search and add emails above.
+          </div>
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {recipients.map((r) => (
-              <span key={r.email} style={{
-                fontSize: 12, padding: '4px 10px', borderRadius: 'var(--radius-sm)',
+            {selected.map(s => (
+              <span key={s.email} style={{
+                fontSize: 12, padding: '4px 8px 4px 10px', borderRadius: 'var(--radius-sm)',
                 background: 'rgba(226,179,64,0.10)', color: '#e2b340', fontWeight: 500,
+                display: 'flex', alignItems: 'center', gap: 6,
               }}>
-                {r.email}
+                {s.email}
+                <X
+                  size={12}
+                  style={{ cursor: 'pointer', opacity: 0.7 }}
+                  onClick={() => removeRecipient(s.email)}
+                />
               </span>
             ))}
           </div>
         )}
       </div>
 
-      {/* Daily auto-send schedule */}
+      {/* ── Daily auto-send schedule ──────────────────────────────────── */}
       <div style={{
         background: 'var(--card)',
         border: `1px solid ${schedule?.is_running ? 'rgba(34,197,94,0.4)' : 'var(--border)'}`,
@@ -182,13 +292,13 @@ export default function TestSends() {
                 Daily Auto-Send
               </span>
               {schedule?.is_running ? (
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700, letterSpacing: 0.5 }}>● RUNNING</span>
+                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700, letterSpacing: 0.5 }}>RUNNING</span>
               ) : (
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(148,163,184,0.15)', color: 'var(--muted-foreground)', fontWeight: 700, letterSpacing: 0.5 }}>○ STOPPED</span>
+                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(148,163,184,0.15)', color: 'var(--muted-foreground)', fontWeight: 700, letterSpacing: 0.5 }}>STOPPED</span>
               )}
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--muted-foreground)', lineHeight: 1.5 }}>
-              When started, the cron at <strong>9:00 AM Dubai daily</strong> sends the next template (Day-1 → Day-7) to TEST_USERS. No further intervention needed.
+              When started, the cron at <strong>9:00 AM Dubai daily</strong> sends the next template (Day-1 → Day-7). No further intervention needed.
             </div>
             {schedule?.is_running && (
               <div style={{ marginTop: 10, display: 'flex', gap: 16, fontSize: 12, flexWrap: 'wrap' }}>
@@ -206,7 +316,7 @@ export default function TestSends() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {!schedule?.is_running && (
               <label style={{ fontSize: 11, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                <input type="checkbox" checked={scheduleLoop} onChange={(e) => setScheduleLoop(e.target.checked)} />
+                <input type="checkbox" checked={scheduleLoop} onChange={e => setScheduleLoop(e.target.checked)} />
                 Loop after Day-7
               </label>
             )}
@@ -232,14 +342,13 @@ export default function TestSends() {
                 </button>
               </>
             ) : (
-              <button onClick={handleScheduleStart} disabled={scheduleLoading || recipients.length === 0}
+              <button onClick={handleScheduleStart} disabled={scheduleLoading}
                 style={{
                   background: '#22c55e', color: '#0a0a0a', border: 'none',
                   borderRadius: 'var(--radius)', padding: '8px 18px', fontSize: 12, fontWeight: 700,
-                  cursor: scheduleLoading || recipients.length === 0 ? 'not-allowed' : 'pointer',
+                  cursor: scheduleLoading ? 'not-allowed' : 'pointer',
                   letterSpacing: 0.5, textTransform: 'uppercase',
                   display: 'flex', alignItems: 'center', gap: 6,
-                  opacity: recipients.length === 0 ? 0.5 : 1,
                 }}>
                 {scheduleLoading ? <Loader2 size={13} className="spin" /> : <Play size={13} />} Start Daily Send
               </button>
@@ -248,13 +357,13 @@ export default function TestSends() {
         </div>
       </div>
 
-      {/* Template cards */}
+      {/* ── Template cards ────────────────────────────────────────────── */}
       <motion.div variants={staggerContainer} initial="hidden" animate="visible"
         style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
-        {TEMPLATES.map((tpl) => {
+        {TEMPLATES.map(tpl => {
           const isRunning = !!running[tpl.key];
           const result = results[tpl.key];
-          const disabled = isRunning || recipients.length === 0;
+          const disabled = isRunning || selected.length === 0;
           return (
             <motion.div key={tpl.key} variants={fadeInUp} style={{
               background: 'var(--card)', border: '1px solid var(--border)',
@@ -286,13 +395,13 @@ export default function TestSends() {
                   <label style={{ fontSize: 11, color: 'var(--muted-foreground)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                     Destination
                   </label>
-                  <select value={day6Dest} onChange={(e) => setDay6Dest(e.target.value)}
+                  <select value={day6Dest} onChange={e => setDay6Dest(e.target.value)}
                     style={{
                       width: '100%', padding: '8px 10px', fontSize: 13,
                       background: 'var(--background)', color: 'var(--foreground)',
                       border: '1px solid var(--border)', borderRadius: 'var(--radius)',
                     }}>
-                    {DAY6_DESTINATIONS.map((d) => <option key={d} value={d}>{d.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
+                    {DAY6_DESTINATIONS.map(d => <option key={d} value={d}>{d.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
                   </select>
                 </div>
               )}
@@ -309,7 +418,10 @@ export default function TestSends() {
                   opacity: disabled && !isRunning ? 0.5 : 1, letterSpacing: 0.5, textTransform: 'uppercase',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                 }}>
-                {isRunning ? (<><Loader2 size={14} className="spin" /> Sending...</>) : (<><Play size={14} /> Send to Test Users</>)}
+                {isRunning
+                  ? <><Loader2 size={14} className="spin" /> Sending...</>
+                  : <><Play size={14} /> Send ({selected.length})</>
+                }
               </button>
 
               {result && (
@@ -334,7 +446,7 @@ export default function TestSends() {
                       <div style={{ display: 'grid', gap: 3, fontFamily: 'var(--font-mono, monospace)', fontSize: 10.5 }}>
                         {(result.results || []).map((r, i) => (
                           <div key={i} style={{ color: r.success ? 'var(--foreground)' : '#ef4444', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>{r.success ? '✓' : '✗'} {r.email}</span>
+                            <span>{r.success ? '\u2713' : '\u2717'} {r.email}</span>
                             <span style={{ color: 'var(--muted-foreground)' }}>{r.success ? `${r.ms}ms` : (r.error || '').slice(0, 30)}</span>
                           </div>
                         ))}
