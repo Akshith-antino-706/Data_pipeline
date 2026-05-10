@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/landing', '/rayna-logo.webp', '/favicon.ico'];
+const PUBLIC_PATHS = ['/', '/login', '/landing', '/rayna-logo.webp', '/favicon.ico'];
 
 export function middleware(request) {
   const { pathname } = request.nextUrl;
@@ -9,13 +9,18 @@ export function middleware(request) {
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
-    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))
+    PUBLIC_PATHS.some((p) => pathname === p || (p !== '/' && pathname.startsWith(p + '/')))
   ) {
     return NextResponse.next();
   }
 
   // Check for auth cookie (set by AuthContext on login)
   const hasAuth = request.cookies.get('rayna-auth');
+
+  // Authenticated users hitting landing page → redirect to dashboard
+  if (hasAuth && pathname === '/') {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
+  }
 
   if (!hasAuth) {
     const loginUrl = new URL('/login', request.url);

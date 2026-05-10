@@ -22,16 +22,13 @@ function formatAED(n) { return `AED ${(n || 0).toLocaleString(undefined, { minim
 const COLUMNS = [
   { key: 'name', label: 'Name', sortable: true },
   { key: 'email', label: 'Email', sortable: true },
-  { key: 'phone', label: 'Phone', sortable: false },
-  { key: 'company_name', label: 'Company', sortable: true },
+  { key: 'phone', label: 'Phone', sortable: true },
   { key: 'country', label: 'Country', sortable: true },
-  { key: 'booking_status', label: 'Status', sortable: false },
-  { key: 'product_tier', label: 'Tier', sortable: false },
-  { key: 'geography', label: 'Geo', sortable: false },
-  { key: 'chat_departments', label: 'Dept', sortable: false },
-  { key: 'total_chats', label: 'Chats', sortable: true },
-  { key: 'total_bookings', label: 'Bookings', sortable: false },
-  { key: 'last_seen_at', label: 'Last Seen', sortable: true },
+  { key: 'booking_status', label: 'Status', sortable: true },
+  { key: 'product_tier', label: 'Tier', sortable: true },
+  { key: 'geography', label: 'Geo', sortable: true },
+  { key: 'total_bookings', label: 'Bookings', sortable: true },
+  { key: 'total_booking_revenue', label: 'Revenue', sortable: true },
 ];
 
 export default function UnifiedContacts() {
@@ -125,7 +122,19 @@ export default function UnifiedContacts() {
       </motion.div>
 
       <motion.div variants={fadeInUp} className="kpi-strip">
-        {kpis.map(k => (
+        {!stats ? (
+          [...Array(5)].map((_, i) => (
+            <div key={i} className="card" style={{ padding: '14px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="skeleton" style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0 }} />
+                <div>
+                  <div className="skeleton" style={{ width: 70, height: 10, borderRadius: 4, marginBottom: 6 }} />
+                  <div className="skeleton" style={{ width: 50, height: 18, borderRadius: 4 }} />
+                </div>
+              </div>
+            </div>
+          ))
+        ) : kpis.map(k => (
           <div key={k.label} className="card" style={{ padding: '14px 18px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 36, height: 36, borderRadius: 8, background: `${k.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -222,15 +231,29 @@ export default function UnifiedContacts() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={COLUMNS.length + 1} style={{ textAlign: 'center', padding: 40 }}><Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} /> Loading...</td></tr>
+                [...Array(8)].map((_, i) => (
+                  <tr key={i}>
+                    {COLUMNS.map(col => (
+                      <td key={col.key} style={{ padding: '12px 10px' }}>
+                        <div className="skeleton" style={{
+                          width: col.key === 'name' ? 120 : col.key === 'email' ? 150 : col.key === 'phone' ? 100 :
+                            col.key === 'company_name' ? 90 : col.key === 'country' ? 60 : col.key === 'last_seen_at' ? 80 : 55,
+                          height: 14, borderRadius: 4
+                        }} />
+                      </td>
+                    ))}
+                    <td><div className="skeleton" style={{ width: 24, height: 24, borderRadius: 4 }} /></td>
+                  </tr>
+                ))
               ) : contacts.length === 0 ? (
                 <tr><td colSpan={COLUMNS.length + 1} style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>No contacts found{search ? ` for "${search}"` : ''}.</td></tr>
-              ) : contacts.map(c => (
-                <tr key={c.unified_id} onClick={() => openDetail(c.unified_id)} style={{ cursor: 'pointer' }}>
+              ) : contacts.map(c => {
+                const totalBookings = (c.total_tour_bookings||0)+(c.total_package_bookings||0)+(c.total_hotel_bookings||0)+(c.total_visa_bookings||0)+(c.total_other_bookings||0)+(c.total_flight_bookings||0);
+                return (
+                <tr key={c.id || c.unified_id} onClick={() => openDetail(c.id || c.unified_id)} style={{ cursor: 'pointer' }}>
                   <td style={{ fontWeight: 500 }}>{c.name || '\u2014'}</td>
                   <td style={{ fontSize: 12 }}>{c.email || '\u2014'}</td>
-                  <td style={{ fontSize: 12 }}>{c.phone || '\u2014'}</td>
-                  <td>{c.company_name || '\u2014'}</td>
+                  <td style={{ fontSize: 12 }}>{c.phone || c.mobile || '\u2014'}</td>
                   <td>{c.country ? <span className="badge badge-blue" style={{ fontSize: 11 }}>{c.country}</span> : '\u2014'}</td>
                   <td><span className={`badge ${
                     c.booking_status === 'ON_TRIP' ? 'badge-green' :
@@ -241,20 +264,19 @@ export default function UnifiedContacts() {
                   }`} style={{ fontSize: 9 }}>{c.booking_status || 'PROSPECT'}</span></td>
                   <td>{c.product_tier ? <span className={`badge ${c.product_tier === 'LUXURY' ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: 9 }}>{c.product_tier}</span> : '\u2014'}</td>
                   <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}</span> : '\u2014'}</td>
-                  <td>{c.chat_departments ? c.chat_departments.split(', ').map(d => <span key={d} className={`badge ${d === 'B2B' ? 'badge-orange' : d === 'B2C' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 9, marginRight: 2 }}>{d}</span>) : '\u2014'}</td>
-                  <td>{c.total_chats > 0 ? <span className="badge badge-green">{c.total_chats}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
-                  <td>{(() => { const b = (c.total_tour_bookings||0)+(c.total_hotel_bookings||0)+(c.total_visa_bookings||0)+(c.total_flight_bookings||0); return b > 0 ? <span className="badge badge-blue">{b}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>; })()}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{formatDate(c.last_seen_at)}</td>
-                  <td><button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.unified_id); }}><Eye size={14} /></button></td>
+                  <td>{totalBookings > 0 ? <span className="badge badge-blue">{totalBookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
+                  <td style={{ fontSize: 12, fontWeight: 500 }}>{parseFloat(c.total_booking_revenue) > 0 ? formatAED(c.total_booking_revenue) : <span style={{ color: 'var(--text-tertiary)' }}>\u2014</span>}</td>
+                  <td><button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.id || c.unified_id); }}><Eye size={14} /></button></td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
 
         {totalPages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Showing {((page - 1) * limit) + 1}\u2013{Math.min(page * limit, total)} of {formatNum(total)}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Showing {((page - 1) * limit) + 1} - {Math.min(page * limit, total)} of {formatNum(total)}</span>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={14} /> Prev</button>
               <span style={{ fontSize: 13, padding: '0 8px' }}>Page {page} of {totalPages}</span>
@@ -271,13 +293,51 @@ export default function UnifiedContacts() {
             <motion.div className="modal" initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
               onClick={e => e.stopPropagation()} style={{ maxWidth: 800, width: '92vw', maxHeight: '85vh', overflow: 'auto' }}>
               {detailLoading && !selected ? (
-                <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} /></div>
+                <div style={{ padding: 24 }}>
+                  {/* Header skeleton */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+                    <div>
+                      <div className="skeleton" style={{ width: 180, height: 20, borderRadius: 6, marginBottom: 8 }} />
+                      <div className="skeleton" style={{ width: 100, height: 12, borderRadius: 4, marginBottom: 8 }} />
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <div className="skeleton" style={{ width: 45, height: 18, borderRadius: 10 }} />
+                        <div className="skeleton" style={{ width: 45, height: 18, borderRadius: 10 }} />
+                      </div>
+                    </div>
+                    <div className="skeleton" style={{ width: 28, height: 28, borderRadius: 6 }} />
+                  </div>
+                  {/* Segment skeleton */}
+                  <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+                    <div className="skeleton" style={{ width: 70, height: 10, borderRadius: 4, marginBottom: 12 }} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
+                      {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 14, borderRadius: 4 }} />)}
+                    </div>
+                  </div>
+                  {/* Contact Info skeleton */}
+                  <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+                    <div className="skeleton" style={{ width: 130, height: 10, borderRadius: 4, marginBottom: 12 }} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
+                      {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: 14, borderRadius: 4 }} />)}
+                    </div>
+                  </div>
+                  {/* Booking Overview skeleton */}
+                  <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+                    <div className="skeleton" style={{ width: 110, height: 10, borderRadius: 4, marginBottom: 12 }} />
+                    <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                      <div className="skeleton" style={{ width: 120, height: 50, borderRadius: 8 }} />
+                      <div className="skeleton" style={{ width: 120, height: 50, borderRadius: 8 }} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                      {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: 70, borderRadius: 8 }} />)}
+                    </div>
+                  </div>
+                </div>
               ) : selected && (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
                     <div>
                       <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{selected.name || 'Unknown'}</h3>
-                      <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>ID: {selected.unified_id}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>ID: {selected.id || selected.unified_id}</span>
                       <div style={{ marginTop: 6 }}>{selected.sources?.split(', ').map(s => <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'ticket' ? 'badge-orange' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 10, marginRight: 4 }}>{s}</span>)}</div>
                     </div>
                     <button className="btn btn-ghost btn-icon btn-sm" onClick={() => setSelected(null)}><X size={16} /></button>
@@ -291,18 +351,18 @@ export default function UnifiedContacts() {
                       selected.booking_status === 'ACTIVE_ENQUIRY' ? 'var(--orange)' : 'var(--text-secondary)'} />
                     <DetailRow icon={Hash} label="Product Tier" value={selected.product_tier || 'N/A'} color={selected.product_tier === 'LUXURY' ? 'var(--orange)' : undefined} />
                     <DetailRow icon={Globe} label="Geography" value={selected.geography || 'Unknown'} />
-                    <DetailRow icon={Layers} label="Full Segment" value={selected.segment_label} />
+                    {selected.segment_label && <DetailRow icon={Layers} label="Full Segment" value={selected.segment_label} />}
                   </Section>
 
-                  {/* Contact Info */}
+                  {/* Contact Info — only show fields that have data */}
                   <Section title="Contact Information">
-                    <DetailRow icon={Mail} label="Email" value={selected.email} />
-                    <DetailRow icon={Phone} label="Phone" value={selected.phone} />
-                    <DetailRow icon={Building2} label="Company" value={selected.company_name} />
-                    <DetailRow icon={Hash} label="Designation" value={selected.designation} />
-                    <DetailRow icon={MapPin} label="City" value={selected.city} />
-                    <DetailRow icon={Globe} label="Country" value={selected.country} />
-                    <DetailRow icon={Hash} label="Type" value={selected.contact_type} />
+                    {selected.email && <DetailRow icon={Mail} label="Email" value={selected.email} />}
+                    {(selected.phone || selected.mobile) && <DetailRow icon={Phone} label="Phone" value={selected.phone || selected.mobile} />}
+                    {selected.company_name && <DetailRow icon={Building2} label="Company" value={selected.company_name} />}
+                    {selected.designation && <DetailRow icon={Hash} label="Designation" value={selected.designation} />}
+                    {selected.city && <DetailRow icon={MapPin} label="City" value={selected.city} />}
+                    {selected.country && <DetailRow icon={Globe} label="Country" value={selected.country} />}
+                    {selected.contact_type && <DetailRow icon={Hash} label="Type" value={selected.contact_type} />}
                     <DetailRow icon={Mail} label="Email Status" value={selected.email_unsubscribed === 'Yes' ? 'Unsubscribed' : 'Active'} color={selected.email_unsubscribed === 'Yes' ? 'var(--red)' : 'var(--green)'} />
                     <DetailRow icon={MessageSquare} label="WA Status" value={selected.wa_unsubscribed === 'Yes' ? 'Unsubscribed' : 'Active'} color={selected.wa_unsubscribed === 'Yes' ? 'var(--red)' : 'var(--green)'} />
                   </Section>
@@ -327,46 +387,97 @@ export default function UnifiedContacts() {
                     </Section>
                   )}
 
-                  {/* Chat Activity */}
-                  <Section title="Chat Activity">
-                    <DetailRow icon={MessageSquare} label="Total Chats" value={selected.total_chats || 0} color="#25D366" />
-                    <DetailRow icon={Hash} label="Departments" value={selected.chat_departments} />
-                    <DetailRow icon={Clock} label="First Chat" value={formatDateTime(selected.first_chat_at)} />
-                    <DetailRow icon={Clock} label="Last Chat" value={formatDateTime(selected.last_chat_at)} />
-                  </Section>
-
-                  {/* Booking Summary + Detail Tables */}
-                  {(selected.total_tour_bookings > 0 || selected.total_hotel_bookings > 0 || selected.total_visa_bookings > 0 || selected.total_flight_bookings > 0) && (
-                    <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-                      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>Booking Summary</div>
-                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                        {selected.total_tour_bookings > 0 && <MiniStat icon={Palmtree} label="Tours" value={selected.total_tour_bookings} color="#10b981" />}
-                        {selected.total_hotel_bookings > 0 && <MiniStat icon={Hotel} label="Hotels" value={selected.total_hotel_bookings} color="#6366f1" />}
-                        {selected.total_visa_bookings > 0 && <MiniStat icon={FileText} label="Visas" value={selected.total_visa_bookings} color="#f59e0b" />}
-                        {selected.total_flight_bookings > 0 && <MiniStat icon={Plane} label="Flights" value={selected.total_flight_bookings} color="#3b82f6" />}
-                        <MiniStat icon={DollarSign} label="Revenue" value={formatAED(selected.total_booking_revenue)} color="var(--primary)" />
-                      </div>
-                      {(selected.first_booking_at || selected.last_booking_at) && (
-                        <div style={{ display: 'flex', gap: 24, marginTop: 10, fontSize: 12, color: 'var(--text-tertiary)' }}>
-                          {selected.first_booking_at && <span>First: {formatDate(selected.first_booking_at)}</span>}
-                          {selected.last_booking_at && <span>Last: {formatDate(selected.last_booking_at)}</span>}
-                        </div>
-                      )}
-                    </div>
+                  {/* Chat Activity — only show if has chats */}
+                  {selected.total_chats > 0 && (
+                    <Section title="Chat Activity">
+                      <DetailRow icon={MessageSquare} label="Total Chats" value={selected.total_chats} color="#25D366" />
+                      {selected.chat_departments && <DetailRow icon={Hash} label="Departments" value={selected.chat_departments} />}
+                      {selected.first_chat_at && <DetailRow icon={Clock} label="First Chat" value={formatDateTime(selected.first_chat_at)} />}
+                      {selected.last_chat_at && <DetailRow icon={Clock} label="Last Chat" value={formatDateTime(selected.last_chat_at)} />}
+                    </Section>
                   )}
 
-                  {/* Expandable Booking Tables */}
-                  <BookingTable icon={Palmtree} title="Tour Bookings" color="#10b981" rows={selected.rayna_tours} columns={tourColumns} />
-                  <BookingTable icon={Hotel} title="Hotel Bookings" color="#6366f1" rows={selected.rayna_hotels} columns={hotelColumns} />
-                  <BookingTable icon={FileText} title="Visa Bookings" color="#f59e0b" rows={selected.rayna_visas} columns={visaColumns} />
-                  <BookingTable icon={Plane} title="Flight Bookings" color="#3b82f6" rows={selected.rayna_flights} columns={flightColumns} />
+                  {/* Booking Summary with per-type breakdown */}
+                  {(() => {
+                    const types = [
+                      { key: 'tour', label: 'Tours', icon: Palmtree, color: '#10b981', count: selected.total_tour_bookings || 0, rows: selected.rayna_tours },
+                      { key: 'package', label: 'Packages', icon: Layers, color: '#8b5cf6', count: selected.total_package_bookings || 0, rows: selected.rayna_packages },
+                      { key: 'hotel', label: 'Hotels', icon: Hotel, color: '#6366f1', count: selected.total_hotel_bookings || 0, rows: selected.rayna_hotels },
+                      { key: 'visa', label: 'Visas', icon: FileText, color: '#f59e0b', count: selected.total_visa_bookings || 0, rows: selected.rayna_visas },
+                      { key: 'other', label: 'Others', icon: Ticket, color: '#ec4899', count: selected.total_other_bookings || 0, rows: selected.rayna_others },
+                      { key: 'flight', label: 'Flights', icon: Plane, color: '#3b82f6', count: selected.total_flight_bookings || 0, rows: selected.rayna_flights },
+                    ];
+                    const totalBookings = types.reduce((s, t) => s + t.count, 0);
+                    const totalRevenue = selected.total_booking_revenue || 0;
+                    const allRows = types.flatMap(t => t.rows || []);
+                    const cancelledCount = allRows.filter(r => r.is_cancel === '1').length;
+                    const cancelledRevenue = allRows.filter(r => r.is_cancel === '1').reduce((s, r) => s + (parseFloat(r.selling_price) || 0), 0);
+                    const hasBookings = totalBookings > 0;
+
+                    return hasBookings ? (
+                      <>
+                        <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+                          <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 12, letterSpacing: 0.5, fontWeight: 600 }}>Booking Overview</div>
+                          <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                            <div style={{ padding: '10px 16px', borderRadius: 8, background: 'var(--brand-primary-alpha, rgba(201,169,110,0.1))', border: '1px solid var(--brand-primary, #C9A96E)' }}>
+                              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Total Bookings</div>
+                              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--brand-primary, #C9A96E)' }}>{totalBookings}</div>
+                            </div>
+                            <div style={{ padding: '10px 16px', borderRadius: 8, background: 'rgba(16,185,129,0.08)', border: '1px solid #10b981' }}>
+                              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Total Revenue</div>
+                              <div style={{ fontSize: 22, fontWeight: 700, color: '#10b981' }}>{formatAED(totalRevenue)}</div>
+                            </div>
+                            {cancelledCount > 0 && (
+                              <div style={{ padding: '10px 16px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444' }}>
+                                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Cancelled</div>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                                  <span style={{ fontSize: 22, fontWeight: 700, color: '#ef4444' }}>{cancelledCount}</span>
+                                  <span style={{ fontSize: 11, color: '#ef4444', opacity: 0.7 }}>{formatAED(cancelledRevenue)}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                            {types.map(t => {
+                              const rev = (t.rows || []).filter(r => r.is_cancel !== '1').reduce((s, r) => s + (parseFloat(r.selling_price) || 0), 0);
+                              const pct = totalRevenue > 0 ? (rev / totalRevenue * 100) : 0;
+                              return (
+                                <div key={t.key} style={{ padding: '10px 12px', borderRadius: 8, background: `${t.color}08`, border: `1px solid ${t.color}30` }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                                    <t.icon size={14} style={{ color: t.color }} />
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: t.color }}>{t.label}</span>
+                                  </div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                    <span style={{ fontSize: 16, fontWeight: 700 }}>{t.count}</span>
+                                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{formatAED(rev)}</span>
+                                  </div>
+                                  <div style={{ height: 4, borderRadius: 2, background: `${t.color}20`, marginTop: 6 }}>
+                                    <div style={{ height: '100%', borderRadius: 2, background: t.color, width: `${Math.min(pct, 100)}%`, transition: 'width 0.3s ease' }} />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Expandable Booking Tables */}
+                        {types.filter(t => t.count > 0).map(t => (
+                          <BookingTable key={t.key} icon={t.icon} title={`${t.label} Bookings`} color={t.color} rows={t.rows} columns={bookingColumns} />
+                        ))}
+                      </>
+                    ) : null;
+                  })()}
+
                   <BookingTable icon={MessageSquare} title="Chats" color="#25D366" rows={selected.chats_list} columns={chatTableColumns} />
 
-                  {/* Timeline */}
-                  <Section title="Timeline">
-                    <DetailRow icon={Calendar} label="First Seen" value={formatDateTime(selected.first_seen_at)} />
-                    <DetailRow icon={Clock} label="Last Seen" value={formatDateTime(selected.last_seen_at)} />
-                  </Section>
+                  {/* Timeline — only show if has dates */}
+                  {(selected.first_seen_at || selected.last_seen_at || selected.created_at) && (
+                    <Section title="Timeline">
+                      {selected.first_seen_at && <DetailRow icon={Calendar} label="First Seen" value={formatDateTime(selected.first_seen_at)} />}
+                      {selected.last_seen_at && <DetailRow icon={Clock} label="Last Seen" value={formatDateTime(selected.last_seen_at)} />}
+                      {selected.created_at && <DetailRow icon={Calendar} label="Created" value={formatDateTime(selected.created_at)} />}
+                    </Section>
+                  )}
                 </>
               )}
             </motion.div>
@@ -525,43 +636,15 @@ function formatCurrency(v) {
   return `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
-const tourColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'tours_name', label: 'Tour', render: (v) => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
-  { key: 'tour_date', label: 'Tour Date', render: v => formatDate(v) },
+const bookingColumns = [
+  { key: 'bill_no', label: 'Bill #' },
+  { key: 'service_name', label: 'Service', render: v => v ? (v.length > 35 ? v.slice(0, 35) + '...' : v) : '\u2014' },
+  { key: 'travel_date', label: 'Travel Date', render: v => formatDate(v) },
+  { key: 'booking_date', label: 'Booked', render: v => formatDate(v) },
   { key: 'guest_name', label: 'Guest' },
-  { key: 'adult', label: 'Pax', render: (_v, r) => `${r.adult || 0}A ${r.child || 0}C ${r.infant || 0}I` },
-  { key: 'total_sell', label: 'Amount', render: v => formatCurrency(v) },
-  { key: 'status', label: 'Status' },
-];
-
-const hotelColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'hotel_name', label: 'Hotel', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
-  { key: 'check_in_date', label: 'Check-in', render: v => formatDate(v) },
-  { key: 'guest_name', label: 'Guest' },
-  { key: 'no_of_rooms', label: 'Rooms' },
-  { key: 'total_sell', label: 'Amount', render: v => formatCurrency(v) },
-];
-
-const visaColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'visa_type', label: 'Visa Type' },
-  { key: 'applicant_name', label: 'Applicant' },
-  { key: 'passport_number', label: 'Passport' },
-  { key: 'apply_date', label: 'Applied', render: v => formatDate(v) },
-  { key: 'status', label: 'Status' },
-  { key: 'total_sell', label: 'Amount', render: v => formatCurrency(v) },
-];
-
-const flightColumns = [
-  { key: 'billno', label: 'Bill #' },
-  { key: 'flight_no', label: 'Flight' },
-  { key: 'airport_name', label: 'Airport', render: v => v ? (v.length > 25 ? v.slice(0, 25) + '...' : v) : '\u2014' },
-  { key: 'from_datetime', label: 'Departure', render: v => formatDateTime(v) },
-  { key: 'passenger_name', label: 'Passenger' },
-  { key: 'status', label: 'Status' },
+  { key: 'nationality', label: 'Nationality' },
   { key: 'selling_price', label: 'Amount', render: v => formatCurrency(v) },
+  { key: 'is_cancel', label: 'Status', render: v => v === '1' ? '\u274C Cancelled' : '\u2705 Active' },
 ];
 
 const chatTableColumns = [

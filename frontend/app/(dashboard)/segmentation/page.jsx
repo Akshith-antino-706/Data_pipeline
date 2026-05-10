@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, getSegmentCustomers, recomputeSegmentation, getGeneralSegment, getUnifiedContact } from '@/lib/api';
+import { getSegmentationTree, recomputeSegmentation, getGeneralSegment, getUnifiedContact } from '@/lib/api';
+import { comboToSlug } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
-  Users, Plane, Hotel, Map, Ticket, Search, X, ChevronLeft, ChevronRight,
-  Loader2, Globe, MapPin, MessageCircle, DollarSign, Gem, Eye, RefreshCw,
+  Users, Plane, Hotel, Map, Ticket, Search, X,
+  Loader2, Globe, MapPin, MessageCircle, DollarSign, Eye, RefreshCw,
   Clock, TrendingUp, Phone, Mail, Send, Package, ShieldCheck, MoreHorizontal,
 } from 'lucide-react';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -39,13 +41,9 @@ const GEO_COLORS = { LOCAL: '#06b6d4', INTERNATIONAL: '#a78bfa' };
 const PIE_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#f97316', '#64748b', '#06b6d4', '#e2b340'];
 
 export default function CustomerSegmentation() {
+  const router = useRouter();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedCombo, setSelectedCombo] = useState(null);
-  const [customers, setCustomers] = useState(null);
-  const [custLoading, setCustLoading] = useState(false);
-  const [custPage, setCustPage] = useState(1);
-  const [custSearch, setCustSearch] = useState('');
   const [expandedStatus, setExpandedStatus] = useState(null);
   const [breakdownModal, setBreakdownModal] = useState(null);
   const [userDetail, setUserDetail] = useState(null);
@@ -86,29 +84,9 @@ export default function CustomerSegmentation() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const loadCustomers = useCallback(async (combo, page = 1, search = '') => {
-    setCustLoading(true);
-    try {
-      const params = { page, limit: 25 };
-      if (businessType !== 'All') params.businessType = businessType;
-      if (combo.bookingStatus) params.bookingStatus = combo.bookingStatus;
-      if (combo.productTier) params.productTier = combo.productTier;
-      if (combo.geography) params.geography = combo.geography;
-      if (search) params.search = search;
-      const res = await getSegmentCustomers(params);
-      setCustomers(res);
-    } catch (err) { console.error(err); }
-    setCustLoading(false);
-  }, [businessType]);
-
-  const openCombo = (combo) => {
-    setSelectedCombo(combo);
-    setCustPage(1);
-    setCustSearch('');
-    loadCustomers(combo, 1, '');
+  const navigateToSegment = (combo) => {
+    router.push('/segmentation/' + comboToSlug(combo));
   };
-
-  const closePanel = () => { setSelectedCombo(null); setCustomers(null); };
 
   const openUserDetail = async (contactId) => {
     setUserDetailLoading(true);
@@ -117,7 +95,7 @@ export default function CustomerSegmentation() {
       const res = await getUnifiedContact(contactId);
       const d = res.data;
       // Filter bookings based on the current status context
-      const statusCtx = selectedCombo?.bookingStatus;
+      const statusCtx = null;
       if (statusCtx === 'ON_TRIP' || statusCtx === 'FUTURE_TRAVEL') {
         const now = new Date(); now.setHours(0,0,0,0);
         const filterFn = statusCtx === 'ON_TRIP'
@@ -183,9 +161,7 @@ export default function CustomerSegmentation() {
   const pieData = statusCounts.map(s => ({ name: STATUS_CONFIG[s.booking_status]?.label || s.booking_status, value: s.count }));
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      {/* Main content */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', transition: 'all 0.3s' }}>
+    <div style={{ padding: '28px 32px' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
@@ -343,12 +319,12 @@ export default function CustomerSegmentation() {
                 style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
                 {getGeneralBreakdown().map((b, i) => {
                   const label = comboLabel(b);
-                  const isSelected = selectedCombo && selectedCombo.bookingStatus === null && selectedCombo.productTier === b.product_tier && selectedCombo.geography === b.geography;
+                  const isSelected = false;
                   const tierColor = TIER_COLORS[b.product_tier] || '#94a3b8';
                   const geoColor = GEO_COLORS[b.geography] || '#94a3b8';
                   return (
                     <motion.div key={i} variants={fadeInUp}
-                      onClick={() => openCombo({ bookingStatus: null, productTier: b.product_tier, geography: b.geography, label })}
+                      onClick={() => navigateToSegment({ bookingStatus: null, productTier: b.product_tier, geography: b.geography, label })}
                       style={{
                         background: 'var(--card)', border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
                         borderRadius: 'var(--radius-xl)', padding: '18px 20px', cursor: 'pointer',
@@ -399,12 +375,12 @@ export default function CustomerSegmentation() {
                 style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
                 {getBreakdownForStatus(expandedStatus).map((b, i) => {
                   const label = comboLabel(b);
-                  const isSelected = selectedCombo && selectedCombo.bookingStatus === b.booking_status && selectedCombo.productTier === b.product_tier && selectedCombo.geography === b.geography;
+                  const isSelected = false;
                   const tierColor = TIER_COLORS[b.product_tier] || '#94a3b8';
                   const geoColor = GEO_COLORS[b.geography] || '#94a3b8';
                   return (
                     <motion.div key={i} variants={fadeInUp}
-                      onClick={() => openCombo({ bookingStatus: b.booking_status, productTier: b.product_tier, geography: b.geography, label })}
+                      onClick={() => navigateToSegment({ bookingStatus: b.booking_status, productTier: b.product_tier, geography: b.geography, label })}
                       style={{
                         background: 'var(--card)', border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
                         borderRadius: 'var(--radius-xl)', padding: '18px 20px', cursor: 'pointer',
@@ -477,137 +453,6 @@ export default function CustomerSegmentation() {
             </div>
           </div>
         )}
-      </div>
-
-      {/* Right Panel — Customer Detail */}
-      <AnimatePresence>
-        {selectedCombo && (
-          <motion.div
-            initial={{ width: 0, opacity: 0 }} animate={{ width: 480, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-            style={{ borderLeft: '1px solid var(--border)', background: 'var(--card)', overflowY: 'auto', overflowX: 'hidden', flexShrink: 0 }}>
-            <div style={{ padding: '24px 20px' }}>
-              {/* Panel header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-                <div>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{selectedCombo.label}</h3>
-                  <p style={{ fontSize: 12, color: 'var(--muted-foreground)', marginTop: 4 }}>
-                    {customers ? `${fmt(customers.total)} customers` : 'Loading...'}
-                  </p>
-                </div>
-                <button onClick={closePanel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 4 }}>
-                  <X size={18} />
-                </button>
-              </div>
-
-              {/* Panel KPIs */}
-              {customers && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
-                  <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', padding: '12px 14px' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>Customers</div>
-                    <div style={{ fontSize: 20, fontWeight: 700 }}>{fmt(customers.total)}</div>
-                  </div>
-                  <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', padding: '12px 14px' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>Total Revenue</div>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>
-                      {fmtAED(customers.data?.reduce((sum, c) => sum + (parseFloat(c.total_booking_revenue) || 0), 0))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Revenue bar chart */}
-              {customers?.data?.length > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--muted-foreground)' }}>Top Revenue</div>
-                  <div style={{ height: 120 }}>
-                    <ResponsiveContainer>
-                      <BarChart data={customers.data.slice(0, 8).map(c => ({ name: (c.name || 'Unknown').split(' ')[0], rev: parseFloat(c.total_booking_revenue) || 0 }))}>
-                        <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} axisLine={false} tickLine={false} />
-                        <YAxis hide />
-                        <Tooltip formatter={(v) => fmtAED(v)} contentStyle={{ background: 'var(--popover)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: 12 }} />
-                        <Bar dataKey="rev" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              )}
-
-              {/* Search */}
-              <div style={{ position: 'relative', marginBottom: 16 }}>
-                <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)' }} />
-                <input
-                  value={custSearch}
-                  onChange={(e) => setCustSearch(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { setCustPage(1); loadCustomers(selectedCombo, 1, custSearch); } }}
-                  placeholder="Search name, email, phone..."
-                  style={{ width: '100%', padding: '8px 10px 8px 32px', background: 'var(--secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--foreground)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              {/* Customer list */}
-              {custLoading ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Loader2 size={20} className="spin" /></div>
-              ) : customers?.data?.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {customers.data.map((c) => (
-                    <div key={c.id}
-                      style={{ background: 'var(--secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 14px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{c.name || 'Unknown'}</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {c.is_indian && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: 'rgba(249,115,22,0.15)', color: '#f97316', fontWeight: 500 }}>INDIAN</span>}
-                          <div
-                            onClick={() => openUserDetail(c.id)}
-                            style={{
-                              width: 24, height: 24, borderRadius: 'var(--radius)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              background: 'var(--background)', border: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.2s',
-                            }}
-                            title="View user details"
-                          >
-                            <Eye size={12} style={{ color: 'var(--muted-foreground)' }} />
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--muted-foreground)', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {c.email && <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Mail size={11} />{c.email}</div>}
-                        {c.phone && <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Phone size={11} />{c.phone}</div>}
-                      </div>
-                      <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: 'var(--muted-foreground)' }}>
-                        {c.total_tour_bookings > 0 && <span><Plane size={11} /> {c.total_tour_bookings} tours</span>}
-                        {c.total_hotel_bookings > 0 && <span><Hotel size={11} /> {c.total_hotel_bookings} hotels</span>}
-                        {c.total_visa_bookings > 0 && <span><Ticket size={11} /> {c.total_visa_bookings} visas</span>}
-                        {c.total_flight_bookings > 0 && <span><Globe size={11} /> {c.total_flight_bookings} flights</span>}
-                        {c.total_chats > 0 && <span><MessageCircle size={11} /> {c.total_chats} chats</span>}
-                      </div>
-                      {parseFloat(c.total_booking_revenue) > 0 && (
-                        <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>{fmtAED(c.total_booking_revenue)}</div>
-                      )}
-                    </div>
-                  ))}
-
-                  {/* Pagination */}
-                  {customers.totalPages > 1 && (
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 13 }}>
-                      <button disabled={custPage <= 1} onClick={() => { setCustPage(custPage - 1); loadCustomers(selectedCombo, custPage - 1, custSearch); }}
-                        style={{ background: 'none', border: 'none', cursor: custPage <= 1 ? 'default' : 'pointer', color: custPage <= 1 ? 'var(--muted)' : 'var(--foreground)', padding: 4 }}>
-                        <ChevronLeft size={16} />
-                      </button>
-                      <span style={{ color: 'var(--muted-foreground)' }}>{custPage} / {customers.totalPages}</span>
-                      <button disabled={custPage >= customers.totalPages} onClick={() => { setCustPage(custPage + 1); loadCustomers(selectedCombo, custPage + 1, custSearch); }}
-                        style={{ background: 'none', border: 'none', cursor: custPage >= customers.totalPages ? 'default' : 'pointer', color: custPage >= customers.totalPages ? 'var(--muted)' : 'var(--foreground)', padding: 4 }}>
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ textAlign: 'center', padding: 32, color: 'var(--muted-foreground)', fontSize: 13 }}>No customers found</div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Booking Breakdown Modal */}
       <AnimatePresence>
@@ -634,7 +479,7 @@ export default function CustomerSegmentation() {
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   background: 'var(--card)', borderRadius: 'var(--radius-xl)', padding: '24px 28px',
-                  width: 420, maxWidth: '90vw', border: `1px solid ${m.color}40`,
+                  width: 720, maxWidth: '92vw', border: `1px solid ${m.color}40`,
                   boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
                 }}>
                 {/* Header */}
@@ -653,43 +498,70 @@ export default function CustomerSegmentation() {
                   </button>
                 </div>
 
-                {/* Summary */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-                  <div style={{ padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 2 }}>Total Bookings</div>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: m.color }}>{fmt(m.total_bookings)}</div>
-                  </div>
-                  <div style={{ padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 2 }}>Total Revenue</div>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: m.color }}>{fmtAED(m.revenue)}</div>
-                  </div>
-                </div>
-
-                {/* Breakdown rows */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {types.map(t => {
-                    const count = bb[t.key] || 0;
-                    const rev = parseFloat(bb[`${t.key}_revenue`]) || 0;
-                    const pctOfTotal = m.total_bookings > 0 ? (count / m.total_bookings * 100) : 0;
-                    return (
-                      <div key={t.key} style={{ padding: '10px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <t.icon size={14} style={{ color: m.color }} />
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
+                {/* Two-column layout */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                  {/* Left — Booking type breakdown */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)', marginBottom: 2 }}>Booking Breakdown</div>
+                    {types.map(t => {
+                      const count = bb[t.key] || 0;
+                      const rev = parseFloat(bb[`${t.key}_revenue`]) || 0;
+                      const pctOfTotal = m.total_bookings > 0 ? (count / m.total_bookings * 100) : 0;
+                      return (
+                        <div key={t.key} style={{ padding: '10px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <t.icon size={14} style={{ color: m.color }} />
+                              <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
+                            </div>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: m.color }}>{fmt(count)}</span>
                           </div>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: m.color }}>{fmt(count)}</span>
+                          <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2, marginBottom: 4 }}>
+                            <div style={{ width: `${pctOfTotal}%`, height: '100%', background: m.color, borderRadius: 2, transition: 'width 0.3s' }} />
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted-foreground)' }}>
+                            <span>{pctOfTotal.toFixed(1)}%</span>
+                            <span>{fmtAED(rev)}</span>
+                          </div>
                         </div>
-                        <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2, marginBottom: 4 }}>
-                          <div style={{ width: `${pctOfTotal}%`, height: '100%', background: m.color, borderRadius: 2, transition: 'width 0.3s' }} />
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted-foreground)' }}>
-                          <span>{pctOfTotal.toFixed(1)}% of bookings</span>
-                          <span>{fmtAED(rev)}</span>
-                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Right — Totals */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)', marginBottom: 2 }}>Summary</div>
+                    <div style={{ padding: '16px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>Total Bookings</div>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: m.color }}>{fmt(m.total_bookings)}</div>
+                    </div>
+                    <div style={{ padding: '16px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>Total Revenue</div>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: m.color }}>{fmtAED(m.revenue)}</div>
+                    </div>
+                    {/* Per-type summary list */}
+                    <div style={{ padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', flex: 1 }}>
+                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 10 }}>By Type</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {types.map(t => {
+                          const count = bb[t.key] || 0;
+                          const rev = parseFloat(bb[`${t.key}_revenue`]) || 0;
+                          return (
+                            <div key={t.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <t.icon size={12} style={{ color: m.color }} />
+                                <span style={{ fontWeight: 500 }}>{t.label}</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                <span style={{ fontWeight: 600 }}>{fmt(count)}</span>
+                                <span style={{ color: 'var(--muted-foreground)', fontSize: 11, minWidth: 80, textAlign: 'right' }}>{fmtAED(rev)}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             </motion.div>
@@ -723,7 +595,7 @@ export default function CustomerSegmentation() {
                 onClick={(e) => e.stopPropagation()}
                 style={{
                   background: 'var(--card)', borderRadius: 'var(--radius-xl)', padding: '24px 28px',
-                  width: 520, maxWidth: '90vw', maxHeight: '85vh', overflowY: 'auto',
+                  width: 760, maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto',
                   border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
                 }}>
 
@@ -736,7 +608,6 @@ export default function CustomerSegmentation() {
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                           <span style={{ fontSize: 18, fontWeight: 700 }}>{u.name || 'Unknown'}</span>
-                          {selectedCombo?.bookingStatus && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: STATUS_CONFIG[selectedCombo.bookingStatus]?.bg || 'var(--secondary)', color: STATUS_CONFIG[selectedCombo.bookingStatus]?.color || 'var(--foreground)', fontWeight: 600 }}>{STATUS_CONFIG[selectedCombo.bookingStatus]?.label || selectedCombo.bookingStatus} bookings only</span>}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: 'var(--muted-foreground)' }}>
                           {u.email && <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}><Mail size={12} />{u.email}</div>}
@@ -755,72 +626,102 @@ export default function CustomerSegmentation() {
                       </button>
                     </div>
 
-                    {/* Summary */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-                      <div style={{ padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 2 }}>Total Bookings</div>
-                        <div style={{ fontSize: 22, fontWeight: 700 }}>{fmt(totalBookings)}</div>
-                      </div>
-                      <div style={{ padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 2 }}>Total Revenue</div>
-                        <div style={{ fontSize: 22, fontWeight: 700, color: '#22c55e' }}>{fmtAED(u.total_booking_revenue)}</div>
-                      </div>
-                    </div>
-
-                    {/* Booking Type Breakdown */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {BOOKING_TYPES.filter(t => (u[t.countKey] || 0) > 0).map(t => {
-                        const count = u[t.countKey] || 0;
-                        const bookings = u[t.key] || [];
-                        const rev = bookings.filter(b => b.is_cancel !== '1' && b.status !== 'Cancelled').reduce((s, b) => s + (parseFloat(b.selling_price) || 0), 0);
-                        const isExpanded = expandedBookingType === t.key;
-                        return (
-                          <div key={t.key}>
-                            <div
-                              onClick={() => setExpandedBookingType(isExpanded ? null : t.key)}
-                              style={{
-                                padding: '10px 14px', background: 'var(--background)', borderRadius: 'var(--radius)',
-                                border: `1px solid ${isExpanded ? t.color + '60' : 'var(--border)'}`, cursor: 'pointer', transition: 'border-color 0.2s',
-                              }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <t.icon size={14} style={{ color: t.color }} />
-                                  <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
-                                  <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>({count})</span>
+                    {/* Two-column layout */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                      {/* Left — Booking type breakdown (expandable) */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)', marginBottom: 2 }}>Booking Breakdown</div>
+                        {BOOKING_TYPES.filter(t => (u[t.countKey] || 0) > 0).map(t => {
+                          const count = u[t.countKey] || 0;
+                          const bookings = u[t.key] || [];
+                          const rev = bookings.filter(b => b.is_cancel !== '1' && b.status !== 'Cancelled').reduce((s, b) => s + (parseFloat(b.selling_price) || 0), 0);
+                          const isExpanded = expandedBookingType === t.key;
+                          return (
+                            <div key={t.key}>
+                              <div
+                                onClick={() => setExpandedBookingType(isExpanded ? null : t.key)}
+                                style={{
+                                  padding: '10px 14px', background: 'var(--background)', borderRadius: 'var(--radius)',
+                                  border: `1px solid ${isExpanded ? t.color + '60' : 'var(--border)'}`, cursor: 'pointer', transition: 'border-color 0.2s',
+                                }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <t.icon size={14} style={{ color: t.color }} />
+                                    <span style={{ fontSize: 13, fontWeight: 600 }}>{t.label}</span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'right' }}>
+                                    <span style={{ fontSize: 13, fontWeight: 700 }}>{fmt(count)}</span>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: t.color, minWidth: 80 }}>{fmtAED(rev)}</span>
+                                  </div>
                                 </div>
-                                <span style={{ fontSize: 12, fontWeight: 600, color: t.color }}>{fmtAED(rev)}</span>
                               </div>
-                            </div>
 
-                            {/* Expanded bookings list */}
-                            <AnimatePresence>
-                              {isExpanded && bookings.length > 0 && (
-                                <motion.div
-                                  initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                                  style={{ overflow: 'hidden' }}>
-                                  <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4, marginLeft: 12, borderLeft: `2px solid ${t.color}30`, paddingLeft: 12 }}>
-                                    {bookings.map((b, i) => (
-                                      <div key={i} style={{ padding: '8px 10px', background: 'var(--secondary)', borderRadius: 'var(--radius)', fontSize: 12 }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                                          <div style={{ fontWeight: 500, flex: 1 }}>{b.service_name || b.guest_name || `Booking #${b.bill_no || i + 1}`}</div>
-                                          <div style={{ fontWeight: 600, whiteSpace: 'nowrap', color: b.is_cancel === '1' || b.status === 'Cancelled' ? '#ef4444' : '#22c55e' }}>
-                                            {fmtAED(b.selling_price)}
+                              {/* Expanded bookings list */}
+                              <AnimatePresence>
+                                {isExpanded && bookings.length > 0 && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                                    style={{ overflow: 'hidden' }}>
+                                    <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4, marginLeft: 12, borderLeft: `2px solid ${t.color}30`, paddingLeft: 12 }}>
+                                      {bookings.map((b, i) => (
+                                        <div key={i} style={{ padding: '8px 10px', background: 'var(--secondary)', borderRadius: 'var(--radius)', fontSize: 12 }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                                            <div style={{ fontWeight: 500, flex: 1 }}>{b.service_name || b.guest_name || `Booking #${b.bill_no || i + 1}`}</div>
+                                            <div style={{ fontWeight: 600, whiteSpace: 'nowrap', color: b.is_cancel === '1' || b.status === 'Cancelled' ? '#ef4444' : '#22c55e' }}>
+                                              {fmtAED(b.selling_price)}
+                                            </div>
+                                          </div>
+                                          <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: 'var(--muted-foreground)' }}>
+                                            {(b.travel_date || b.bill_date) && <span>Travel: {(b.travel_date || b.bill_date || '').slice(0, 10)}</span>}
+                                            {b.booking_date && <span>Booked: {b.booking_date}</span>}
+                                            {(b.is_cancel === '1' || b.status === 'Cancelled') && <span style={{ color: '#ef4444', fontWeight: 500 }}>CANCELLED</span>}
                                           </div>
                                         </div>
-                                        <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: 'var(--muted-foreground)' }}>
-                                          {(b.travel_date || b.bill_date) && <span>Travel: {(b.travel_date || b.bill_date || '').slice(0, 10)}</span>}
-                                          {b.booking_date && <span>Booked: {b.booking_date}</span>}
-                                          {(b.is_cancel === '1' || b.status === 'Cancelled') && <span style={{ color: '#ef4444', fontWeight: 500 }}>CANCELLED</span>}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </motion.div>
+                                      ))}
+                                    </div>
+                                  </motion.div>
                               )}
                             </AnimatePresence>
                           </div>
                         );
                       })}
+                      </div>
+
+                      {/* Right — Totals */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)', marginBottom: 2 }}>Summary</div>
+                        <div style={{ padding: '16px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>Total Bookings</div>
+                          <div style={{ fontSize: 28, fontWeight: 700 }}>{fmt(totalBookings)}</div>
+                        </div>
+                        <div style={{ padding: '16px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>Total Revenue</div>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: '#22c55e' }}>{fmtAED(u.total_booking_revenue)}</div>
+                        </div>
+                        {/* Per-type summary */}
+                        <div style={{ padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', flex: 1 }}>
+                          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 10 }}>By Type</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {BOOKING_TYPES.filter(t => (u[t.countKey] || 0) > 0).map(t => {
+                              const count = u[t.countKey] || 0;
+                              const bookings = u[t.key] || [];
+                              const rev = bookings.filter(b => b.is_cancel !== '1' && b.status !== 'Cancelled').reduce((s, b) => s + (parseFloat(b.selling_price) || 0), 0);
+                              return (
+                                <div key={t.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <t.icon size={12} style={{ color: t.color }} />
+                                    <span style={{ fontWeight: 500 }}>{t.label}</span>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                    <span style={{ fontWeight: 600 }}>{fmt(count)}</span>
+                                    <span style={{ color: 'var(--muted-foreground)', fontSize: 11, minWidth: 75, textAlign: 'right' }}>{fmtAED(rev)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </>
                 )}

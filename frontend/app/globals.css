@@ -533,6 +533,64 @@ nav {
   flex-shrink: 0;
 }
 
+/* ── Sidebar Collapse Toggle ───────────────────────────── */
+.sidebar-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 0 4px;
+}
+.sidebar.collapsed .sidebar-top-row {
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.sidebar-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+.sidebar-collapse-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+.sidebar.collapsed {
+  min-width: 68px !important;
+  padding: 20px 8px;
+  align-items: center;
+}
+.sidebar.collapsed .logo {
+  margin-bottom: 0;
+}
+.sidebar.collapsed .sidebar-footer {
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 4px;
+}
+.sidebar.collapsed .sidebar-footer-divider {
+  width: 80%;
+  height: 1px;
+}
+.sidebar.collapsed .sidebar-footer-btn {
+  padding: 8px;
+  justify-content: center;
+}
+.sidebar.collapsed .nav-item.active::after {
+  display: none;
+}
+
 /* ── Theme Toggle (legacy) ──────────────────────────────── */
 .theme-toggle {
   margin-top: auto;

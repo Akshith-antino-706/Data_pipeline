@@ -22,7 +22,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) router.replace('/');
+    if (isAuthenticated) router.replace('/dashboard');
   }, [isAuthenticated, router]);
 
   if (isAuthenticated) return null;
@@ -39,7 +39,7 @@ export default function LoginPage() {
     try {
       await login(email, password);
       toast.success('Welcome back!');
-      router.replace('/');
+      router.replace('/dashboard');
     } catch (err) {
       toast.error(err.message || 'Login failed. Please try again.');
     } finally {
@@ -122,7 +122,7 @@ export default function LoginPage() {
         </form>
 
         {/* Back link */}
-        <Link href="/landing" className="login-back" style={{ color: '#999' }}>
+        <Link href="/" className="login-back" style={{ color: '#999' }}>
           <ArrowLeft size={14} />
           Back to home
         </Link>

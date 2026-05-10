@@ -27,68 +27,101 @@ export default class UnifiedContactService {
       const isPhone = /^\+?\d[\d\s\-]{5,}$/.test(search.trim());
       const isEmail = search.includes('@');
       if (isPhone) {
-        conditions.push(`mobile ILIKE $${idx}`);
+        conditions.push(`uc.mobile ILIKE $${idx}`);
       } else if (isEmail) {
-        conditions.push(`email ILIKE $${idx}`);
+        conditions.push(`uc.email ILIKE $${idx}`);
       } else {
-        conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx})`);
+        conditions.push(`(uc.name ILIKE $${idx} OR uc.email ILIKE $${idx})`);
       }
       idx++;
     }
     if (source) {
       params.push(`%${source}%`);
-      conditions.push(`sources LIKE $${idx}`);
+      conditions.push(`uc.sources LIKE $${idx}`);
       idx++;
     }
     if (country) {
       params.push(country);
-      conditions.push(`country = $${idx}`);
+      conditions.push(`uc.country = $${idx}`);
       idx++;
     }
     if (contactType || businessType) {
       params.push(contactType || businessType);
-      conditions.push(`contact_type = $${idx}`);
+      conditions.push(`uc.contact_type = $${idx}`);
       idx++;
     }
     if (bookingStatus) {
       params.push(bookingStatus);
-      conditions.push(`booking_status = $${idx}`);
+      conditions.push(`uc.booking_status = $${idx}`);
       idx++;
     }
     if (productTier) {
       params.push(productTier);
-      conditions.push(`product_tier = $${idx}`);
+      conditions.push(`uc.product_tier = $${idx}`);
       idx++;
     }
     if (geography) {
       params.push(geography);
-      conditions.push(`geography = $${idx}`);
+      conditions.push(`uc.geography = $${idx}`);
       idx++;
     }
-    if (hasBookings === 'yes') conditions.push(`booking_status NOT IN ('PROSPECT')`);
-    else if (hasBookings === 'no') conditions.push(`booking_status = 'PROSPECT'`);
-    if (waStatus === 'unsubscribed') conditions.push(`wa_unsubscribe = 'yes'`);
-    else if (waStatus === 'active') conditions.push(`(wa_unsubscribe IS NULL OR wa_unsubscribe = 'no')`);
-    if (emailStatus === 'unsubscribed') conditions.push(`email_unsubscribe = 'yes'`);
-    else if (emailStatus === 'active') conditions.push(`(email_unsubscribe IS NULL OR email_unsubscribe = 'no')`);
+    if (hasBookings === 'yes') conditions.push(`uc.booking_status NOT IN ('PROSPECT')`);
+    else if (hasBookings === 'no') conditions.push(`uc.booking_status = 'PROSPECT'`);
+    if (waStatus === 'unsubscribed') conditions.push(`uc.wa_unsubscribe = 'yes'`);
+    else if (waStatus === 'active') conditions.push(`(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe = 'no')`);
+    if (emailStatus === 'unsubscribed') conditions.push(`uc.email_unsubscribe = 'yes'`);
+    else if (emailStatus === 'active') conditions.push(`(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe = 'no')`);
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const allowedSort = ['name', 'email', 'country', 'contact_type', 'booking_status', 'created_at', 'updated_at'];
+    const allowedSort = ['name', 'email', 'phone', 'country', 'contact_type', 'booking_status', 'product_tier', 'geography', 'created_at', 'updated_at', 'total_bookings', 'total_booking_revenue'];
     const col = allowedSort.includes(sortBy) ? sortBy : 'created_at';
     const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
 
     const offset = (page - 1) * limit;
 
     const [countRes, dataRes] = await Promise.all([
-      pool.query(`SELECT COUNT(*) AS total FROM unified_contacts ${where}`, params),
+      pool.query(`SELECT COUNT(*) AS total FROM unified_contacts uc ${where}`, params),
       pool.query(
-        `SELECT id, email, mobile, name, country, city, sources, contact_type,
-                wa_unsubscribe, email_unsubscribe,
-                booking_status, product_tier, geography, is_indian, segments,
-                created_at, updated_at
-         FROM unified_contacts ${where}
-         ORDER BY ${col} ${dir} NULLS LAST
+        `SELECT uc.id, uc.email, uc.mobile, uc.name, uc.country, uc.city, uc.sources, uc.contact_type,
+                uc.wa_unsubscribe, uc.email_unsubscribe,
+                uc.booking_status, uc.product_tier, uc.geography, uc.is_indian, uc.segments,
+                uc.created_at, uc.updated_at,
+                COALESCE(bc.tour_cnt, 0)::int AS total_tour_bookings,
+                COALESCE(bc.pkg_cnt, 0)::int AS total_package_bookings,
+                COALESCE(bc.htl_cnt, 0)::int AS total_hotel_bookings,
+                COALESCE(bc.vis_cnt, 0)::int AS total_visa_bookings,
+                COALESCE(bc.oth_cnt, 0)::int AS total_other_bookings,
+                COALESCE(bc.flt_cnt, 0)::int AS total_flight_bookings,
+                COALESCE(bc.revenue, 0) AS total_booking_revenue
+         FROM unified_contacts uc
+         LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*) FILTER (WHERE src = 'tours') AS tour_cnt,
+             COUNT(*) FILTER (WHERE src = 'packages') AS pkg_cnt,
+             COUNT(*) FILTER (WHERE src = 'hotels') AS htl_cnt,
+             COUNT(*) FILTER (WHERE src = 'visas') AS vis_cnt,
+             COUNT(*) FILTER (WHERE src = 'others') AS oth_cnt,
+             COUNT(*) FILTER (WHERE src = 'flights') AS flt_cnt,
+             COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1'), 0) AS revenue
+           FROM (
+             SELECT 'tours' AS src, selling_price, is_cancel FROM rayna_tours WHERE unified_id = uc.id
+             UNION ALL SELECT 'packages', selling_price, is_cancel FROM rayna_packages WHERE unified_id = uc.id
+             UNION ALL SELECT 'hotels', selling_price, is_cancel FROM rayna_hotels WHERE unified_id = uc.id
+             UNION ALL SELECT 'visas', selling_price, is_cancel FROM rayna_visas WHERE unified_id = uc.id
+             UNION ALL SELECT 'others', selling_price, is_cancel FROM rayna_others WHERE unified_id = uc.id
+             UNION ALL SELECT 'flights', selling_price, is_cancel FROM rayna_flights WHERE unified_id = uc.id
+           ) sub
+         ) bc ON true
+         ${where.replace(/WHERE/i, 'WHERE')}
+         ORDER BY ${
+           col === 'total_bookings' ? '(COALESCE(bc.tour_cnt,0)+COALESCE(bc.pkg_cnt,0)+COALESCE(bc.htl_cnt,0)+COALESCE(bc.vis_cnt,0)+COALESCE(bc.oth_cnt,0)+COALESCE(bc.flt_cnt,0))' :
+           col === 'total_booking_revenue' ? 'COALESCE(bc.revenue,0)' :
+           col === 'phone' ? 'uc.mobile' :
+           col === 'created_at' ? 'uc.created_at' :
+           col === 'updated_at' ? 'uc.updated_at' :
+           'uc.' + col
+         } ${dir} NULLS LAST
          LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset]
       ),
@@ -107,37 +140,60 @@ export default class UnifiedContactService {
     const contact = rows[0] || null;
     if (!contact) return null;
 
-    // Fetch booking records linked by unified_id from all rayna tables
+    // Get accurate counts & revenue via aggregation (not limited)
+    const statsRes = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE src = 'tours')::int AS tour_cnt,
+        COUNT(*) FILTER (WHERE src = 'packages')::int AS pkg_cnt,
+        COUNT(*) FILTER (WHERE src = 'hotels')::int AS htl_cnt,
+        COUNT(*) FILTER (WHERE src = 'visas')::int AS vis_cnt,
+        COUNT(*) FILTER (WHERE src = 'others')::int AS oth_cnt,
+        COUNT(*) FILTER (WHERE src = 'flights')::int AS flt_cnt,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1'), 0) AS revenue,
+        COUNT(*) FILTER (WHERE is_cancel = '1')::int AS cancelled_cnt,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel = '1'), 0) AS cancelled_revenue
+      FROM (
+        SELECT 'tours' AS src, selling_price, is_cancel FROM rayna_tours WHERE unified_id = $1
+        UNION ALL SELECT 'packages', selling_price, is_cancel FROM rayna_packages WHERE unified_id = $1
+        UNION ALL SELECT 'hotels', selling_price, is_cancel FROM rayna_hotels WHERE unified_id = $1
+        UNION ALL SELECT 'visas', selling_price, is_cancel FROM rayna_visas WHERE unified_id = $1
+        UNION ALL SELECT 'others', selling_price, is_cancel FROM rayna_others WHERE unified_id = $1
+        UNION ALL SELECT 'flights', selling_price, is_cancel FROM rayna_flights WHERE unified_id = $1
+      ) sub
+    `, [id]);
+    const stats = statsRes.rows[0];
+
+    // Fetch booking detail rows (latest 500 per type for display)
     const [tours, packages, hotels, visas, others, flights] = await Promise.all([
       pool.query(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_tours WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+        FROM rayna_tours WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
       pool.query(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_packages WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+        FROM rayna_packages WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
       pool.query(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_hotels WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+        FROM rayna_hotels WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
       pool.query(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_visas WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+        FROM rayna_visas WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
       pool.query(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_others WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+        FROM rayna_others WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
       pool.query(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_flights WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
+        FROM rayna_flights WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
     ]);
 
@@ -148,17 +204,16 @@ export default class UnifiedContactService {
     contact.rayna_others = others.rows;
     contact.rayna_flights = flights.rows;
 
-    // Compute totals dynamically
-    contact.total_tour_bookings = tours.rows.length;
-    contact.total_hotel_bookings = hotels.rows.length;
-    contact.total_visa_bookings = visas.rows.length;
-    contact.total_package_bookings = packages.rows.length;
-    contact.total_other_bookings = others.rows.length;
-    contact.total_flight_bookings = flights.rows.length;
-    contact.total_booking_revenue = [tours, packages, hotels, visas, others, flights]
-      .flatMap(r => r.rows)
-      .filter(r => r.is_cancel !== '1')
-      .reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+    // Use accurate aggregated counts (not limited by row fetch)
+    contact.total_tour_bookings = stats.tour_cnt;
+    contact.total_hotel_bookings = stats.htl_cnt;
+    contact.total_visa_bookings = stats.vis_cnt;
+    contact.total_package_bookings = stats.pkg_cnt;
+    contact.total_other_bookings = stats.oth_cnt;
+    contact.total_flight_bookings = stats.flt_cnt;
+    contact.total_booking_revenue = parseFloat(stats.revenue) || 0;
+    contact.cancelled_count = stats.cancelled_cnt;
+    contact.cancelled_revenue = parseFloat(stats.cancelled_revenue) || 0;
 
     return contact;
   }
@@ -242,39 +297,30 @@ export default class UnifiedContactService {
           WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
           WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 END
       `),
-      // 2. Full breakdown
+      // 2. Full breakdown (revenue from rayna tables directly)
       pool.query(`
+          WITH contact_rev AS (
+            SELECT unified_id, SUM(selling_price) AS rev FROM (
+              SELECT unified_id, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+            ) all_bookings GROUP BY unified_id
+          )
           SELECT
               uc.booking_status,
               uc.product_tier,
               uc.geography,
-
               COUNT(*)::int AS count,
               COUNT(*) FILTER (WHERE uc.is_indian = true)::int AS indian_count,
-
-              COALESCE(usr.revenue, 0) AS revenue
-
+              COALESCE(SUM(cr.rev), 0) AS revenue
           FROM unified_contacts uc
-
-          LEFT JOIN user_segment_revenue usr
-              ON usr.segments_title = CONCAT_WS(' / ',
-                  uc.booking_status,
-                  uc.product_tier,
-                  uc.geography
-              )
-
+          LEFT JOIN contact_rev cr ON cr.unified_id = uc.id
           ${btWhere}
-
-          GROUP BY
-              uc.booking_status,
-              uc.product_tier,
-              uc.geography,
-              usr.revenue
-
-          ORDER BY
-              uc.booking_status,
-              uc.product_tier NULLS LAST,
-              uc.geography NULLS LAST;
+          GROUP BY uc.booking_status, uc.product_tier, uc.geography
+          ORDER BY uc.booking_status, uc.product_tier NULLS LAST, uc.geography NULLS LAST
       `),
       // 3. Totals
       pool.query(`
