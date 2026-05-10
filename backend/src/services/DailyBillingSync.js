@@ -261,8 +261,9 @@ class DailyBillingSync {
     const affectedIds = affected.map(r => r.unified_id);
     console.log(`[DailySync]   Affected contacts for segmentation: ${affectedIds.length}`);
 
-    // 3E: Recompute segmentation only for affected contacts
-    await this.recomputeSegmentation(affectedIds.length > 0 ? affectedIds : null);
+    // 3E: Recompute segmentation for ALL contacts (not just affected)
+    // because time-sensitive statuses (ON_TRIP, FUTURE_TRAVEL) expire daily
+    await this.recomputeSegmentation(null);
 
     const total = newEmails + newPhones;
     console.log(`[DailySync]   New contacts: ${total} (${newEmails} email, ${newPhones} phone)`);

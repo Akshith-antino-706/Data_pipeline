@@ -135,9 +135,9 @@ export default class UnifiedContactService {
         FROM rayna_others WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
       `, [id]),
       pool.query(`
-        SELECT billno AS bill_no, bill_date, flight_no, passenger_name AS guest_name,
-               selling_price, status, nationality
-        FROM rayna_flights WHERE unified_id = $1 ORDER BY bill_date DESC NULLS LAST LIMIT 100
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM rayna_flights WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 100
       `, [id]),
     ]);
 
@@ -155,13 +155,10 @@ export default class UnifiedContactService {
     contact.total_package_bookings = packages.rows.length;
     contact.total_other_bookings = others.rows.length;
     contact.total_flight_bookings = flights.rows.length;
-    contact.total_booking_revenue = [tours, packages, hotels, visas, others]
+    contact.total_booking_revenue = [tours, packages, hotels, visas, others, flights]
       .flatMap(r => r.rows)
       .filter(r => r.is_cancel !== '1')
-      .reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0)
-      + flights.rows
-        .filter(r => !r.status || r.status !== 'Cancelled')
-        .reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+      .reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
 
     return contact;
   }
@@ -309,25 +306,53 @@ export default class UnifiedContactService {
         ${btWhere}
         GROUP BY uc.booking_status
       `),
-      // 6. ON_TRIP breakdown
+      // 6. ON_TRIP breakdown (counts + revenue per type)
       pool.query(`
         SELECT
           (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as tours,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::numeric as tours_revenue,
+          (SELECT COUNT(*) FROM rayna_packages WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as packages,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_packages WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::numeric as packages_revenue,
           (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL AND is_cancel <> '1'
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as hotels,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_hotels WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::numeric as hotels_revenue,
           (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL AND is_cancel <> '1'
-            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as visas
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as visas,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_visas WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::numeric as visas_revenue,
+          (SELECT COUNT(*) FROM rayna_others WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as others,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_others WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::numeric as others_revenue
       `),
-      // 7. FUTURE_TRAVEL breakdown
+      // 7. FUTURE_TRAVEL breakdown (counts + revenue per type)
       pool.query(`
         SELECT
           (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as tours,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::numeric as tours_revenue,
+          (SELECT COUNT(*) FROM rayna_packages WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as packages,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_packages WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::numeric as packages_revenue,
           (SELECT COUNT(*) FROM rayna_hotels WHERE unified_id IS NOT NULL AND is_cancel <> '1'
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as hotels,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_hotels WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::numeric as hotels_revenue,
           (SELECT COUNT(*) FROM rayna_visas WHERE unified_id IS NOT NULL AND is_cancel <> '1'
-            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as visas
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as visas,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_visas WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::numeric as visas_revenue,
+          (SELECT COUNT(*) FROM rayna_others WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as others,
+          (SELECT COALESCE(SUM(selling_price),0) FROM rayna_others WHERE unified_id IS NOT NULL AND is_cancel <> '1'
+            AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::numeric as others_revenue
       `),
     ]);
 
@@ -341,11 +366,27 @@ export default class UnifiedContactService {
       sc.revenue = revenueMap[sc.booking_status] || 0;
     }
 
-    // Merge booking breakdowns
-    const onTripIdx = statusCounts.findIndex(r => r.booking_status === 'ON_TRIP');
-    if (onTripIdx >= 0) statusCounts[onTripIdx].booking_breakdown = onTripBookings;
-    const ftIdx = statusCounts.findIndex(r => r.booking_status === 'FUTURE_TRAVEL');
-    if (ftIdx >= 0) statusCounts[ftIdx].booking_breakdown = ftBookings;
+    // Merge booking breakdowns with total_bookings and revenue per type
+    const mergeBreakdown = (idx, bookings) => {
+      if (idx < 0) return;
+      const total = (bookings.tours || 0) + (bookings.packages || 0) + (bookings.hotels || 0)
+        + (bookings.visas || 0) + (bookings.others || 0);
+      statusCounts[idx].total_bookings = total;
+      statusCounts[idx].booking_breakdown = {
+        tours: bookings.tours || 0,
+        tours_revenue: parseFloat(bookings.tours_revenue) || 0,
+        packages: bookings.packages || 0,
+        packages_revenue: parseFloat(bookings.packages_revenue) || 0,
+        hotels: bookings.hotels || 0,
+        hotels_revenue: parseFloat(bookings.hotels_revenue) || 0,
+        visas: bookings.visas || 0,
+        visas_revenue: parseFloat(bookings.visas_revenue) || 0,
+        others: bookings.others || 0,
+        others_revenue: parseFloat(bookings.others_revenue) || 0,
+      };
+    };
+    mergeBreakdown(statusCounts.findIndex(r => r.booking_status === 'ON_TRIP'), onTripBookings);
+    mergeBreakdown(statusCounts.findIndex(r => r.booking_status === 'FUTURE_TRAVEL'), ftBookings);
 
     return {
       totals,
@@ -531,23 +572,38 @@ export default class UnifiedContactService {
     const params = [];
     let idx = 1;
 
-    if (businessType) { params.push(businessType); conditions.push(`contact_type = $${idx++}`); }
-    if (bookingStatus) { params.push(bookingStatus); conditions.push(`booking_status = $${idx++}`); }
-    if (productTier) { params.push(productTier); conditions.push(`product_tier = $${idx++}`); }
-    if (geography) { params.push(geography); conditions.push(`geography = $${idx++}`); }
-    if (search) { params.push(`%${search}%`); conditions.push(`(name ILIKE $${idx} OR email ILIKE $${idx} OR mobile ILIKE $${idx})`); idx++; }
+    if (businessType) { params.push(businessType); conditions.push(`uc.contact_type = $${idx++}`); }
+    if (bookingStatus) { params.push(bookingStatus); conditions.push(`uc.booking_status = $${idx++}`); }
+    if (productTier) { params.push(productTier); conditions.push(`uc.product_tier = $${idx++}`); }
+    if (geography) { params.push(geography); conditions.push(`uc.geography = $${idx++}`); }
+    if (search) { params.push(`%${search}%`); conditions.push(`(uc.name ILIKE $${idx} OR uc.email ILIKE $${idx} OR uc.mobile ILIKE $${idx})`); idx++; }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (page - 1) * limit;
 
+    // Filter revenue by travel_date for time-sensitive statuses
+    const dateFilter = bookingStatus === 'ON_TRIP'
+      ? "AND travel_date::date >= CURRENT_DATE - INTERVAL '7 days' AND travel_date::date <= CURRENT_DATE"
+      : bookingStatus === 'FUTURE_TRAVEL'
+        ? 'AND travel_date::date > CURRENT_DATE'
+        : '';
+    const revSubquery = ['rayna_tours','rayna_packages','rayna_hotels','rayna_visas','rayna_others','rayna_flights']
+      .map(t => `SELECT selling_price FROM ${t} WHERE unified_id = uc.id AND is_cancel != '1' ${dateFilter}`)
+      .join(' UNION ALL ');
+
     const [countRes, dataRes] = await Promise.all([
-      pool.query(`SELECT COUNT(*)::int AS total FROM unified_contacts ${where}`, params),
+      pool.query(`SELECT COUNT(*)::int AS total FROM unified_contacts uc ${where}`, params),
       pool.query(
-        `SELECT id, name, email, mobile, country, city, contact_type, sources,
-                booking_status, product_tier, geography, is_indian, segments,
-                wa_unsubscribe, email_unsubscribe, created_at, updated_at
-         FROM unified_contacts ${where}
-         ORDER BY created_at DESC NULLS LAST
+        `SELECT uc.id, uc.name, uc.email, uc.mobile, uc.country, uc.city, uc.contact_type, uc.sources,
+                uc.booking_status, uc.product_tier, uc.geography, uc.is_indian, uc.segments,
+                uc.wa_unsubscribe, uc.email_unsubscribe, uc.created_at, uc.updated_at,
+                COALESCE(rev.total, 0) AS total_booking_revenue
+         FROM unified_contacts uc
+         LEFT JOIN LATERAL (
+           SELECT SUM(selling_price) AS total FROM (${revSubquery}) sub
+         ) rev ON true
+         ${where}
+         ORDER BY total_booking_revenue DESC NULLS LAST
          LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset]
       ),
