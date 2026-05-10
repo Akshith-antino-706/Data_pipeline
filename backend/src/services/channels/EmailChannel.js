@@ -18,6 +18,10 @@ import { query } from '../../config/database.js';
 
 let _transporter = null;
 
+// 5-minute in-memory cache for isBlocked — unsubscribe list changes rarely
+const _blockCache = new Map(); // email → { blocked: bool, expiresAt: number }
+const BLOCK_CACHE_TTL = 5 * 60 * 1000;
+
 function getTransporter() {
   if (_transporter) return _transporter;
 
@@ -62,14 +66,20 @@ export class EmailChannel {
     };
   }
 
-  /** Check if email is unsubscribed or hard bounced */
+  /** Check if email is unsubscribed or hard bounced (cached 5 min) */
   static async isBlocked(email) {
     if (!email) return true;
+    const key = email.toLowerCase().trim();
+    const cached = _blockCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.blocked;
+
     const { rows } = await query(
       `SELECT 1 FROM unsubscribed WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND (unsubscribe = 1 OR hard_bounces::int > 0) LIMIT 1`,
       [email]
     );
-    return rows.length > 0;
+    const blocked = rows.length > 0;
+    _blockCache.set(key, { blocked, expiresAt: Date.now() + BLOCK_CACHE_TTL });
+    return blocked;
   }
 
   /** Send a single email */

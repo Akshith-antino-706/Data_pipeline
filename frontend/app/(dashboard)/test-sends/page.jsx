@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
   Square, Calendar, Zap, Search, X, ClipboardList, ChevronLeft, ChevronRight,
+  MousePointer, Eye, ArrowRight, Link2,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
@@ -61,6 +62,30 @@ export default function TestSends() {
   const [schedule, setSchedule] = useState(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleLoop, setScheduleLoop] = useState(false);
+
+  // ── flow tracker stats ────────────────────────────────────────────────
+  const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, failed: 0, utmCaptures: 0 });
+
+  useEffect(() => {
+    async function loadFlowStats() {
+      try {
+        const [summary, utmLog] = await Promise.all([
+          apiGet('/api/v3/test-sends/send-log/summary'),
+          apiGet('/api/v3/test-sends/utm-log?limit=1'),
+        ]);
+        const byStatus = summary?.byStatus || [];
+        const get = (s) => parseInt(byStatus.find(r => r.status === s)?.count || 0);
+        setFlowStats({
+          sent:        get('sent') + get('opened') + get('clicked'),
+          opened:      get('opened') + get('clicked'),
+          clicked:     get('clicked'),
+          failed:      get('failed'),
+          utmCaptures: utmLog?.total || 0,
+        });
+      } catch {}
+    }
+    loadFlowStats();
+  }, []);
 
   // ── send log modal state ───────────────────────────────────────────────
   const [showLogs, setShowLogs] = useState(false);
@@ -282,16 +307,28 @@ export default function TestSends() {
                     onMouseEnter={e => { if (!alreadySelected) e.currentTarget.style.background = 'rgba(226,179,64,0.08)'; }}
                     onMouseLeave={e => { if (!alreadySelected) e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500 }}>{c.email}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>{c.email}</span>
+                        {c.contact_type && (
+                          <span style={{
+                            fontSize: 9, padding: '1px 6px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
+                            letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
+                            background: c.contact_type === 'B2B' ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)',
+                            color:      c.contact_type === 'B2B' ? '#3b82f6'               : '#a855f7',
+                          }}>
+                            {c.contact_type}
+                          </span>
+                        )}
+                      </div>
                       {c.name && (
-                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 1 }}>
                           {c.name}
                         </div>
                       )}
                     </div>
                     {alreadySelected && (
-                      <CheckCircle2 size={14} style={{ color: '#22c55e' }} />
+                      <CheckCircle2 size={14} style={{ color: '#22c55e', flexShrink: 0 }} />
                     )}
                   </div>
                 );
@@ -314,6 +351,16 @@ export default function TestSends() {
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
                 {s.email}
+                {s.contact_type && (
+                  <span style={{
+                    fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)',
+                    fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+                    background: s.contact_type === 'B2B' ? 'rgba(59,130,246,0.2)' : 'rgba(168,85,247,0.2)',
+                    color:      s.contact_type === 'B2B' ? '#3b82f6'              : '#a855f7',
+                  }}>
+                    {s.contact_type}
+                  </span>
+                )}
                 <X
                   size={12}
                   style={{ cursor: 'pointer', opacity: 0.7 }}
@@ -402,6 +449,57 @@ export default function TestSends() {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* ── Email Flow Tracker ───────────────────────────────────────── */}
+      <div style={{
+        background: 'var(--card)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 24,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <Mail size={15} style={{ color: '#e2b340' }} />
+          <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
+            Email Tracking Flow
+          </span>
+          <button onClick={() => setShowLogs(true)} style={{
+            marginLeft: 'auto', fontSize: 11, color: '#e2b340', background: 'transparent',
+            border: '1px solid rgba(226,179,64,0.3)', borderRadius: 'var(--radius-sm)',
+            padding: '3px 10px', cursor: 'pointer', fontWeight: 600,
+          }}>View Logs</button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 0, alignItems: 'center' }}>
+          {[
+            { label: 'Sent',         value: flowStats.sent,        color: '#3b82f6', icon: Mail },
+            { label: 'Opened',       value: flowStats.opened,      color: '#22c55e', icon: Eye },
+            { label: 'Clicked',      value: flowStats.clicked,     color: '#a855f7', icon: MousePointer },
+            { label: 'UTM Captured', value: flowStats.utmCaptures, color: '#e2b340', icon: Link2 },
+            { label: 'Failed',       value: flowStats.failed,      color: '#ef4444', icon: XCircle },
+          ].map(({ label, value, color, icon: Icon }, i, arr) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center' }}>
+              <div style={{
+                flex: 1, textAlign: 'center', padding: '10px 8px',
+                background: `color-mix(in srgb, ${color} 6%, transparent)`,
+                borderRadius: 10, border: `1px solid color-mix(in srgb, ${color} 20%, transparent)`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${color} 12%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon size={15} color={color} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 3 }}>{label}</div>
+                {i > 0 && i < 4 && flowStats.sent > 0 && (
+                  <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>
+                    {Math.round((value / flowStats.sent) * 100)}%
+                  </div>
+                )}
+              </div>
+              {i < arr.length - 1 && (
+                <ArrowRight size={14} style={{ color: 'var(--muted-foreground)', flexShrink: 0, margin: '0 4px' }} />
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -618,7 +716,7 @@ export default function TestSends() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                        {['Status', 'Email', 'Template', 'Sent At', 'Received', 'Duration'].map(h => (
+                        {['Status', 'Email', 'Template', 'Sent At', 'Opened', 'Clicked', 'Duration'].map(h => (
                           <th key={h} style={{
                             padding: '8px 10px', textAlign: 'left', fontSize: 11,
                             fontWeight: 600, color: 'var(--muted-foreground)',
@@ -668,10 +766,17 @@ export default function TestSends() {
                                 <span style={{ color: '#22c55e', fontWeight: 600 }}>
                                   ✓ {new Date(row.opened_at).toLocaleString()}
                                 </span>
-                              ) : row.status === 'failed' ? (
-                                <span style={{ color: '#ef4444' }}>✗ Failed</span>
                               ) : (
-                                <span style={{ color: 'var(--muted-foreground)' }}>Pending</span>
+                                <span style={{ color: 'var(--muted-foreground)' }}>—</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', fontSize: 12 }}>
+                              {row.clicked_at ? (
+                                <span style={{ color: '#a855f7', fontWeight: 600 }}>
+                                  ✓ {new Date(row.clicked_at).toLocaleString()}
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--muted-foreground)' }}>—</span>
                               )}
                             </td>
                             <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', color: 'var(--muted-foreground)', fontSize: 12 }}>

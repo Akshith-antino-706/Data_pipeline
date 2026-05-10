@@ -49,6 +49,19 @@ export class SendTrackService {
   }
 
   /**
+   * Called by the click-tracking redirect endpoint.
+   */
+  static async markClicked(id) {
+    await db.query(`
+      UPDATE email_send_log
+      SET status = 'clicked',
+          opened_at  = COALESCE(opened_at, NOW()),
+          clicked_at = COALESCE(clicked_at, NOW())
+      WHERE id = $1
+    `, [id]);
+  }
+
+  /**
    * Paginated list of all sends with optional filters.
    *
    * @param {object} opts
@@ -143,5 +156,87 @@ export class SendTrackService {
       `),
     ]);
     return { byStatus, byDay };
+  }
+
+  /**
+   * Save a UTM visit captured at the click-tracking redirect.
+   */
+  static async logUtmVisit({ logId, unifiedId, email, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, rid, destinationUrl }) {
+    await db.query(`
+      INSERT INTO utm_visits
+        (log_id, unified_id, email, utm_source, utm_medium, utm_campaign, utm_content, utm_term, rid, destination_url)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    `, [logId || null, unifiedId || null, email || null, utmSource || null, utmMedium || null,
+        utmCampaign || null, utmContent || null, utmTerm || null, rid || null, destinationUrl || null]);
+  }
+
+  /**
+   * Paginated UTM visit log with optional filters.
+   */
+  static async getUtmLog({ page = 1, limit = 50, utmSource, utmMedium, utmCampaign, utmContent, email, dateFrom, dateTo } = {}) {
+    const conditions = [];
+    const params = [];
+    let idx = 1;
+
+    if (utmSource)   { conditions.push(`uv.utm_source = $${idx++}`);              params.push(utmSource); }
+    if (utmMedium)   { conditions.push(`uv.utm_medium = $${idx++}`);              params.push(utmMedium); }
+    if (utmCampaign) { conditions.push(`uv.utm_campaign ILIKE $${idx++}`);        params.push(`%${utmCampaign}%`); }
+    if (utmContent)  { conditions.push(`uv.utm_content ILIKE $${idx++}`);         params.push(`%${utmContent}%`); }
+    if (email)       { conditions.push(`uv.email ILIKE $${idx++}`);               params.push(`%${email}%`); }
+    if (dateFrom)    { conditions.push(`uv.created_at >= $${idx++}`);             params.push(dateFrom); }
+    if (dateTo)      { conditions.push(`uv.created_at <= $${idx++}`);             params.push(dateTo); }
+
+    const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const offset = (page - 1) * limit;
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(`
+        SELECT
+          uv.id, uv.log_id, uv.unified_id, uv.email,
+          uv.utm_source, uv.utm_medium, uv.utm_campaign, uv.utm_content, uv.utm_term,
+          uv.rid, uv.destination_url, uv.created_at,
+          uc.name AS contact_name
+        FROM utm_visits uv
+        LEFT JOIN unified_contacts uc ON uc.id = uv.unified_id
+        ${where}
+        ORDER BY uv.created_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}
+      `, [...params, limit, offset]),
+
+      db.query(`SELECT COUNT(*) AS total FROM utm_visits uv ${where}`, params),
+    ]);
+
+    return { rows, total: parseInt(countRows[0].total), page, limit };
+  }
+
+  /**
+   * UTM summary: clicks grouped by campaign, source, medium.
+   */
+  static async getUtmSummary() {
+    const [{ rows: byCampaign }, { rows: bySource }] = await Promise.all([
+      db.query(`
+        SELECT
+          utm_campaign,
+          utm_source,
+          utm_medium,
+          COUNT(*)                        AS total_clicks,
+          COUNT(DISTINCT unified_id)      AS unique_visitors,
+          COUNT(DISTINCT email)           AS unique_emails
+        FROM utm_visits
+        WHERE utm_campaign IS NOT NULL
+        GROUP BY utm_campaign, utm_source, utm_medium
+        ORDER BY total_clicks DESC
+      `),
+      db.query(`
+        SELECT
+          utm_source,
+          COUNT(*)                   AS total_clicks,
+          COUNT(DISTINCT email)      AS unique_emails
+        FROM utm_visits
+        GROUP BY utm_source
+        ORDER BY total_clicks DESC
+      `),
+    ]);
+    return { byCampaign, bySource };
   }
 }

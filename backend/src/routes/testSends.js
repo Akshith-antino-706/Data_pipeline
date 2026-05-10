@@ -66,6 +66,12 @@ async function loadEmailChannel() {
   return EmailChannel;
 }
 
+// Cache ranking results per day for 10 minutes — avoids calling Claude on every send
+async function cachedRanking(key, computeFn) {
+  const { cached } = await import('../config/cache.js');
+  return cached(`test-send:ranking:${key}`, computeFn, 600);
+}
+
 function leftoversCheck(html) {
   const v = [...html.matchAll(/\{\{[\w.]+\}\}/g)];
   const b = [...html.matchAll(/\{\{[#/](list|if)/g)];
@@ -76,6 +82,42 @@ function leftoversCheck(html) {
  * Like sendOne but persists every attempt to email_send_log and injects an
  * open-tracking pixel so we know when the recipient actually reads the email.
  */
+/**
+ * Replace every href link in the HTML with a click-tracking redirect that:
+ *  1. Records the click against this send-log row
+ *  2. Appends UTM params + rid to the destination URL
+ *  3. Redirects the recipient to the real page
+ */
+function injectUTMAndClickTracking(html, { logId, baseUrl, dayNumber, templateLabel, unifiedId }) {
+  const campaignSlug = `day${dayNumber}_${templateLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+  const contentSlug  = `test_send_day${dayNumber}`;
+
+  return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, originalUrl) => {
+    // Skip our own tracking URLs and mailto links
+    if (
+      originalUrl.includes('/api/track/') ||
+      originalUrl.includes('/api/v3/utm/') ||
+      originalUrl.startsWith('mailto:')
+    ) return match;
+
+    try {
+      // Append UTM params + rid to the real destination
+      const dest = new URL(originalUrl);
+      dest.searchParams.set('utm_source',   'AI_marketer');
+      dest.searchParams.set('utm_medium',   'email');
+      dest.searchParams.set('utm_campaign', campaignSlug);
+      dest.searchParams.set('utm_content',  contentSlug);
+      if (unifiedId) dest.searchParams.set('rid', String(unifiedId));
+
+      // Wrap with our click-tracker redirect
+      const trackUrl = `${baseUrl}/api/track/email-send/click/${logId}?url=${encodeURIComponent(dest.toString())}`;
+      return `href="${trackUrl}"`;
+    } catch {
+      return match; // malformed URL — leave it as-is
+    }
+  });
+}
+
 async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber }) {
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 
@@ -88,11 +130,16 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
     source: 'test-send',
   });
 
-  // Inject open-tracking pixel before sending
+  // 1. Inject UTM params + click-tracking redirect into every link
+  const utmHtml = injectUTMAndClickTracking(html, {
+    logId, baseUrl, dayNumber, templateLabel, unifiedId: recipient.unified_id,
+  });
+
+  // 2. Inject open-tracking pixel
   const pixel = `<img src="${baseUrl}/api/track/email-send/open/${logId}" width="1" height="1" style="display:none" alt="" />`;
-  const trackedHtml = html.includes('</body>')
-    ? html.replace('</body>', `${pixel}</body>`)
-    : html + pixel;
+  const trackedHtml = utmHtml.includes('</body>')
+    ? utmHtml.replace('</body>', `${pixel}</body>`)
+    : utmHtml + pixel;
 
   const start = Date.now();
   let result;
@@ -103,10 +150,11 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
   }
   const ms = Date.now() - start;
 
+  // Fire-and-forget — don't block the API response on the status update
   if (result?.success) {
-    await SendTrackService.markSent(logId, { externalId: result.externalId || null, provider: result.provider || null, durationMs: ms });
+    SendTrackService.markSent(logId, { externalId: result.externalId || null, provider: result.provider || null, durationMs: ms }).catch(() => {});
   } else {
-    await SendTrackService.markFailed(logId, { error: result?.error || result?.reason || 'unknown', provider: result?.provider || null, durationMs: ms });
+    SendTrackService.markFailed(logId, { error: result?.error || result?.reason || 'unknown', provider: result?.provider || null, durationMs: ms }).catch(() => {});
   }
 
   return {
@@ -127,19 +175,33 @@ router.get('/search-contacts', async (req, res, next) => {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json({ data: [] });
 
-    const { rows } = await db.query(`
-      SELECT id, email, name
-        FROM unified_contacts
-       WHERE email IS NOT NULL AND email <> ''
-         AND (
-           email ILIKE $1
-           OR name ILIKE $1
-         )
-       ORDER BY email
-       LIMIT 20
-    `, [`%${q}%`]);
+    const prefix    = `${q.toLowerCase()}%`;   // 'rock%'   — uses B-tree index on lower(email)
+    const substring = `%${q.toLowerCase()}%`;  // '%rock%'  — seq scan fallback
 
-    res.json({ data: rows });
+    // UNION: prefix matches come first (fast, index-friendly),
+    // then substring fallback for mid-string / name hits.
+    const { rows } = await db.query(`
+      (
+        SELECT id, email, name, contact_type, 0 AS rank
+          FROM unified_contacts
+         WHERE email IS NOT NULL AND email <> ''
+           AND lower(email) LIKE $1
+         LIMIT 20
+      )
+      UNION ALL
+      (
+        SELECT id, email, name, contact_type, 1 AS rank
+          FROM unified_contacts
+         WHERE email IS NOT NULL AND email <> ''
+           AND (lower(name) LIKE $2 OR lower(email) LIKE $2)
+           AND lower(email) NOT LIKE $1
+         LIMIT 20
+      )
+      ORDER BY rank, email
+      LIMIT 20
+    `, [prefix, substring]);
+
+    res.json({ data: rows.map(({ rank: _r, ...r }) => r) });
   } catch (err) { next(err); }
 });
 
@@ -195,7 +257,7 @@ router.post('/day1', async (req, res, next) => {
     const useClaude = req.body?.noClaude !== true;
     let ranking;
     if (useClaude) {
-      ranking = await rankTrendingWelcome();
+      ranking = await cachedRanking('day1', rankTrendingWelcome);
     } else {
       const visaRows = await rankInternals.loadVisaCatalog();
       const visaMap  = Object.fromEntries(visaRows.map(r => [r.key, r]));
@@ -237,7 +299,7 @@ router.post('/day2', async (req, res, next) => {
     const { renderDay2Cruise } = await import('../services/Day2CruiseRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await rankTrendingCruises() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+    const ranking = useClaude ? await cachedRanking('day2', rankTrendingCruises) : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day2-cruise-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Set Sail: Cruise Highlights from Rayna Tours';
@@ -266,7 +328,7 @@ router.post('/day3', async (req, res, next) => {
     const { renderDay3Visa } = await import('../services/Day3VisaRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await rankTrendingVisas() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+    const ranking = useClaude ? await cachedRanking('day3', rankTrendingVisas) : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
 
     // Day3VisaDataService expects ratings_keys but VisaRankingService doesn't produce it
     if (!ranking.ranking.ratings_keys) {
@@ -300,7 +362,7 @@ router.post('/day4', async (req, res, next) => {
     const { renderDay4Holidays } = await import('../services/Day4HolidaysRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await rankTrendingHolidays() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+    const ranking = useClaude ? await cachedRanking('day4', rankTrendingHolidays) : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day4-holidays-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Dream Holiday Destinations — Rayna Tours';
@@ -329,7 +391,7 @@ router.post('/day5', async (req, res, next) => {
     const { renderDay5Activities } = await import('../services/Day5ActivitiesRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await rankTrendingActivities() : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
+    const ranking = useClaude ? await cachedRanking('day5', rankTrendingActivities) : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day5-activities-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'World-Class Activities, Instantly Booked — Rayna Tours';
@@ -365,7 +427,7 @@ router.post('/day6', async (req, res, next) => {
     const useClaude = req.body?.noClaude !== true;
     let ranking;
     if (useClaude) {
-      ranking = await rankDestinationSpotlight({ destinationKey });
+      ranking = await cachedRanking(`day6:${destinationKey}`, () => rankDestinationSpotlight({ destinationKey }));
     } else {
       const [holidayCandidates, activityCandidates, cruiseCandidates] = await Promise.all([
         rankInternals.fetchHolidayCandidates(dest.productCity),
@@ -404,7 +466,7 @@ router.post('/day7', async (req, res, next) => {
     const useClaude = req.body?.noClaude !== true;
     let ranking;
     if (useClaude) {
-      ranking = await rankAbandonedCartFallback();
+      ranking = await cachedRanking('day7', rankAbandonedCartFallback);
     } else {
       const [activities, holidays, cruises, visas] = await Promise.all([
         rankInternals.fetchCandidates('activities'),
@@ -484,6 +546,33 @@ router.get('/send-log/user/:unifiedId', async (req, res, next) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '30')));
     const rows  = await SendTrackService.getByUnifiedId(unifiedId, { limit });
     res.json({ data: { unifiedId, count: rows.length, rows } });
+  } catch (err) { next(err); }
+});
+
+// ── UTM Visit Log ────────────────────────────────────────────────────────────
+
+router.get('/utm-log', async (req, res, next) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page  || '1'));
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
+    const result = await SendTrackService.getUtmLog({
+      page, limit,
+      utmSource:   req.query.utm_source   || undefined,
+      utmMedium:   req.query.utm_medium   || undefined,
+      utmCampaign: req.query.utm_campaign || undefined,
+      utmContent:  req.query.utm_content  || undefined,
+      email:       req.query.email        || undefined,
+      dateFrom:    req.query.dateFrom     || undefined,
+      dateTo:      req.query.dateTo       || undefined,
+    });
+    res.json({ data: result });
+  } catch (err) { next(err); }
+});
+
+router.get('/utm-log/summary', async (_req, res, next) => {
+  try {
+    const summary = await SendTrackService.getUtmSummary();
+    res.json({ data: summary });
   } catch (err) { next(err); }
 });
 

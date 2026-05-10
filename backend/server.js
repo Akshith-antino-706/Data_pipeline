@@ -284,6 +284,60 @@ app.get('/api/track/email-send/open/:id', async (req, res) => {
   }
 });
 
+// Click-tracking redirect for test-send emails
+// Every link in the email points here first, then redirects to the real URL with UTM params.
+app.get('/api/track/email-send/click/:id', async (req, res) => {
+  let destination = req.query.url;
+  if (!destination) return res.status(400).send('Missing url');
+
+  // Gmail double-encodes the url param through its safety redirect wrapper.
+  try {
+    if (destination.includes('%3A%2F%2F') || destination.includes('%253A')) {
+      destination = decodeURIComponent(destination);
+    }
+  } catch { /* keep original if decode fails */ }
+
+  // Redirect first — don't keep the recipient waiting
+  res.redirect(302, destination);
+
+  const id = parseInt(req.params.id);
+  if (!isNaN(id)) {
+    try {
+      const { SendTrackService } = await import('./src/services/SendTrackService.js');
+
+      // Extract UTM params from the destination URL
+      let utmData = {};
+      try {
+        const destUrl = new URL(destination);
+        utmData = {
+          utmSource:   destUrl.searchParams.get('utm_source'),
+          utmMedium:   destUrl.searchParams.get('utm_medium'),
+          utmCampaign: destUrl.searchParams.get('utm_campaign'),
+          utmContent:  destUrl.searchParams.get('utm_content'),
+          utmTerm:     destUrl.searchParams.get('utm_term'),
+          rid:         destUrl.searchParams.get('rid'),
+        };
+      } catch { /* skip if URL invalid */ }
+
+      // Fetch email/unified_id from the log row to denormalize into utm_visits
+      const logRows = await import('./src/config/database.js')
+        .then(m => m.default.query('SELECT unified_id, email FROM email_send_log WHERE id = $1', [id]))
+        .then(r => r.rows[0] || {});
+
+      await Promise.all([
+        SendTrackService.markClicked(id),
+        SendTrackService.logUtmVisit({
+          logId: id,
+          unifiedId: logRows.unified_id,
+          email: logRows.email,
+          destinationUrl: destination,
+          ...utmData,
+        }),
+      ]);
+    } catch (e) { console.error('[Track] email-send click error:', e.message); }
+  }
+});
+
 // ── First Message Sync ────────────────────────────────────
 app.post('/api/v3/sync-first-messages', async (req, res) => {
   try {

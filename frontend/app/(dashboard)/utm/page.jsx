@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getUTMAnalytics, getUTMSegments, buildUTM, generateSegmentUTM, generateAllUTM, generateUserLinks, getUserLinks, getUserLinkStats, getCampaigns } from '@/lib/api';
 // recharts available for future UTM analytics charts
-import { Link2, Copy, Zap, RefreshCw, Target, MousePointer, TrendingUp, ExternalLink, Check, Globe, Mail, MessageSquare, Phone, Bell, Hash, Users, User, Search, ChevronDown, Eye } from 'lucide-react';
+import { Link2, Copy, Zap, RefreshCw, Target, MousePointer, TrendingUp, ExternalLink, Check, Globe, Mail, MessageSquare, Phone, Bell, Hash, Users, User, Search, Eye } from 'lucide-react';
+import { getEmailUtmLog, getEmailUtmSummary } from '@/lib/api';
 
 const CHANNEL_COLORS = { email: 'var(--brand-primary)', whatsapp: 'var(--green)', sms: 'var(--orange)', push: 'var(--red)', rcs: 'var(--brand-primary)', web: 'var(--purple)' };
 const CHANNEL_ICONS = { email: Mail, whatsapp: MessageSquare, sms: Phone, push: Bell, rcs: Hash, web: Globe };
@@ -19,7 +20,7 @@ export default function UTMTracking() {
   const [generating, setGenerating] = useState(false);
   const [generatingOne, setGeneratingOne] = useState(null);
   const [filterSegment, setFilterSegment] = useState('');
-  const [activeTab, setActiveTab] = useState('campaigns');
+  const [activeTab, setActiveTab] = useState('emailvisits');
   const [copiedId, setCopiedId] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -34,9 +35,20 @@ export default function UTMTracking() {
   const [campaigns, setCampaigns] = useState([]);
   const [generatingUserLinks, setGeneratingUserLinks] = useState(null);
   const [selectedCampaignForGen, setSelectedCampaignForGen] = useState('');
-  const [userLinksLoading, setUserLinksLoading] = useState(false);
 
-  useEffect(() => { loadAll(); }, []);
+  // Email UTM Visits
+  const [emailVisits, setEmailVisits] = useState([]);
+  const [emailVisitsTotal, setEmailVisitsTotal] = useState(0);
+  const [emailVisitsPage, setEmailVisitsPage] = useState(1);
+  const [emailVisitsSummary, setEmailVisitsSummary] = useState({ byCampaign: [], bySource: [] });
+  const [emailVisitsLoading, setEmailVisitsLoading] = useState(false);
+  const [emailVisitsFilter, setEmailVisitsFilter] = useState({ email: '', utm_campaign: '', dateFrom: '', dateTo: '' });
+
+  useEffect(() => {
+    loadAll();
+    loadEmailVisits(1);
+    loadEmailVisitsSummary();
+  }, []);
 
   async function loadAll() {
     setLoading(true);
@@ -137,6 +149,31 @@ export default function UTMTracking() {
     if (activeTab === 'userlinks') loadUserLinks();
   }, [userLinkFilter.campaignId, userLinkFilter.clicked]);
 
+  async function loadEmailVisits(page = 1) {
+    setEmailVisitsLoading(true);
+    try {
+      const params = { page, limit: 50 };
+      if (emailVisitsFilter.email) params.email = emailVisitsFilter.email;
+      if (emailVisitsFilter.utm_campaign) params.utm_campaign = emailVisitsFilter.utm_campaign;
+      if (emailVisitsFilter.dateFrom) params.dateFrom = emailVisitsFilter.dateFrom;
+      if (emailVisitsFilter.dateTo) params.dateTo = emailVisitsFilter.dateTo;
+      const res = await getEmailUtmLog(params);
+      const d = res?.data || {};
+      setEmailVisits(d.rows || []);
+      setEmailVisitsTotal(d.total || 0);
+      setEmailVisitsPage(page);
+    } catch (err) { console.error(err); }
+    setEmailVisitsLoading(false);
+  }
+
+  async function loadEmailVisitsSummary() {
+    try {
+      const res = await getEmailUtmSummary();
+      const d = res?.data || {};
+      setEmailVisitsSummary({ byCampaign: d.byCampaign || [], bySource: d.bySource || [] });
+    } catch (err) { console.error(err); }
+  }
+
   function copyUrl(url, id) {
     navigator.clipboard.writeText(url);
     setCopiedId(id);
@@ -172,15 +209,21 @@ export default function UTMTracking() {
         </div>
       </motion.div>
 
-      {/* KPI Strip */}
+      {/* KPI Strip — shows email UTM stats when on emailvisits tab, campaign stats otherwise */}
       <motion.div variants={fadeInUp} className="grid-5 mb-24">
-        {[
-          { label: 'Campaign Links', value: totalLinks, color: 'var(--brand-primary)', icon: Link2 },
-          { label: 'Segments Tracked', value: `${segmentsWithUtm}/${segments.length}`, color: 'var(--purple)', icon: Target },
-          { label: 'Total Clicks', value: totalClicks, color: 'var(--green)', icon: MousePointer },
-          { label: 'Conversions', value: totalConversions, color: 'var(--orange)', icon: TrendingUp },
-          { label: 'Revenue', value: `AED ${totalRevenue.toLocaleString()}`, color: 'var(--brand-primary)', icon: Globe },
-        ].map(({ label, value, color, icon: Icon }) => (
+        {(activeTab === 'emailvisits' ? [
+          { label: 'Email Visits',     value: emailVisitsTotal,                             color: 'var(--brand-primary)', icon: Mail },
+          { label: 'Unique Contacts',  value: new Set(emailVisits.map(v => v.email)).size,  color: 'var(--purple)',        icon: Users },
+          { label: 'Campaigns',        value: emailVisitsSummary.byCampaign.length,         color: 'var(--green)',         icon: Target },
+          { label: 'Sources',          value: emailVisitsSummary.bySource.length,           color: 'var(--orange)',        icon: TrendingUp },
+          { label: 'Total Clicks',     value: emailVisitsTotal,                             color: 'var(--brand-primary)', icon: MousePointer },
+        ] : [
+          { label: 'Campaign Links',   value: totalLinks,                                   color: 'var(--brand-primary)', icon: Link2 },
+          { label: 'Segments Tracked', value: `${segmentsWithUtm}/${segments.length}`,      color: 'var(--purple)',        icon: Target },
+          { label: 'Total Clicks',     value: totalClicks,                                  color: 'var(--green)',         icon: MousePointer },
+          { label: 'Conversions',      value: totalConversions,                             color: 'var(--orange)',        icon: TrendingUp },
+          { label: 'Revenue',          value: `AED ${totalRevenue.toLocaleString()}`,       color: 'var(--brand-primary)', icon: Globe },
+        ]).map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="card" style={{ padding: '16px 20px', borderTop: `3px solid ${color}` }}>
             <div className="flex justify-between" style={{ alignItems: 'flex-start' }}>
               <div>
@@ -195,8 +238,8 @@ export default function UTMTracking() {
         ))}
       </motion.div>
 
-      {/* Channel Distribution + Segment Filter */}
-      <motion.div variants={fadeInUp} className="mb-24" style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
+      {/* Channel Distribution + Segment Filter — only shown on campaign/segment tabs */}
+      <motion.div variants={fadeInUp} className="mb-24" style={{ display: activeTab === 'emailvisits' || activeTab === 'builder' ? 'none' : 'grid', gridTemplateColumns: '1fr 320px', gap: 16 }}>
         {/* Channel Pills */}
         <div className="card p-20">
           <div className="text-sm font-semibold text-secondary mb-16">Links by Channel</div>
@@ -256,6 +299,7 @@ export default function UTMTracking() {
       {/* Tabs */}
       <motion.div variants={fadeInUp} className="flex gap-4 mb-16" style={{ borderBottom: '2px solid var(--border-color)', paddingBottom: 0 }}>
         {[
+          { key: 'emailvisits', label: 'Email Visits', count: emailVisitsTotal || null },
           { key: 'campaigns', label: 'Campaign Links', count: analytics.links?.length || 0 },
           { key: 'userlinks', label: 'User Links', count: parseInt(userLinkStats.totals?.total_links || 0) || null },
           { key: 'segments', label: 'Segment Overview', count: segments.length },
@@ -640,6 +684,177 @@ export default function UTMTracking() {
                 </div>
               ))}
             </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Tab: Email Visits */}
+      {activeTab === 'emailvisits' && (
+        <motion.div variants={fadeInUp} className="flex flex-col gap-16">
+
+          {/* KPI strip */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+            {[
+              { label: 'Total Visits', value: emailVisitsTotal, color: 'var(--brand-primary)', icon: MousePointer },
+              { label: 'Unique Contacts', value: new Set(emailVisits.map(v => v.email)).size, color: 'var(--purple)', icon: Users },
+              { label: 'Campaigns', value: emailVisitsSummary.byCampaign.length, color: 'var(--green)', icon: Target },
+              { label: 'Sources', value: emailVisitsSummary.bySource.length, color: 'var(--orange)', icon: Globe },
+            ].map(({ label, value, color, icon: Icon }) => (
+              <div key={label} className="card" style={{ padding: '16px 20px', borderTop: `3px solid ${color}` }}>
+                <div className="flex justify-between" style={{ alignItems: 'flex-start' }}>
+                  <div>
+                    <div className="text-xs text-secondary uppercase tracking-wide mb-4">{label}</div>
+                    <div className="font-bold" style={{ fontSize: 22, color }}>{value}</div>
+                  </div>
+                  <div className="flex items-center justify-center" style={{ width: 36, height: 36, borderRadius: 10, background: `color-mix(in srgb, ${color} 7%, transparent)` }}>
+                    <Icon size={18} color={color} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Campaign breakdown */}
+          {emailVisitsSummary.byCampaign.length > 0 && (
+            <div className="card" style={{ overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: 13 }}>
+                Clicks by Campaign
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg-secondary)' }}>
+                      {['Campaign', 'Source', 'Medium', 'Total Clicks', 'Unique Visitors', 'Unique Emails'].map(h => (
+                        <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emailVisitsSummary.byCampaign.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                        <td style={{ padding: '10px 14px', fontWeight: 600 }}>{r.utm_campaign}</td>
+                        <td style={{ padding: '10px 14px' }}><span className="badge badge-blue" style={{ fontSize: 10 }}>{r.utm_source}</span></td>
+                        <td style={{ padding: '10px 14px' }}><span className="badge badge-gray" style={{ fontSize: 10 }}>{r.utm_medium}</span></td>
+                        <td style={{ padding: '10px 14px' }}><span className="font-bold" style={{ color: 'var(--green)' }}>{r.total_clicks}</span></td>
+                        <td style={{ padding: '10px 14px' }}>{r.unique_visitors}</td>
+                        <td style={{ padding: '10px 14px' }}>{r.unique_emails}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Filters */}
+          <div className="card p-16" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 12, alignItems: 'end' }}>
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-4">Email</div>
+              <div style={{ position: 'relative' }}>
+                <Search size={13} style={{ position: 'absolute', left: 9, top: 10, color: 'var(--text-tertiary)' }} />
+                <input value={emailVisitsFilter.email}
+                  onChange={e => setEmailVisitsFilter(f => ({ ...f, email: e.target.value }))}
+                  placeholder="Filter by email..."
+                  style={{ width: '100%', padding: '9px 12px 9px 28px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12 }} />
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-4">Campaign</div>
+              <input value={emailVisitsFilter.utm_campaign}
+                onChange={e => setEmailVisitsFilter(f => ({ ...f, utm_campaign: e.target.value }))}
+                placeholder="e.g. day1_welcome"
+                style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12 }} />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-4">From Date</div>
+              <input type="date" value={emailVisitsFilter.dateFrom}
+                onChange={e => setEmailVisitsFilter(f => ({ ...f, dateFrom: e.target.value }))}
+                style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12 }} />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-secondary mb-4">To Date</div>
+              <input type="date" value={emailVisitsFilter.dateTo}
+                onChange={e => setEmailVisitsFilter(f => ({ ...f, dateTo: e.target.value }))}
+                style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12 }} />
+            </div>
+            <button className="btn btn-primary flex items-center gap-4" onClick={() => loadEmailVisits(1)}>
+              <Search size={13} /> Search
+            </button>
+          </div>
+
+          {/* Visits table */}
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div className="flex justify-between items-center" style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-color)' }}>
+              <div className="font-semibold text-sm flex items-center gap-6">
+                <Mail size={15} color="var(--brand-primary)" />
+                Email UTM Visits
+                <span className="badge badge-blue" style={{ fontSize: 10 }}>{emailVisitsTotal}</span>
+              </div>
+              <button className="btn btn-sm btn-secondary flex items-center gap-4" onClick={() => loadEmailVisits(emailVisitsPage)}>
+                <RefreshCw size={12} /> Refresh
+              </button>
+            </div>
+
+            {emailVisitsLoading ? (
+              <div className="p-24 text-center text-secondary text-sm">Loading...</div>
+            ) : emailVisits.length > 0 ? (
+              <>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-secondary)', position: 'sticky', top: 0 }}>
+                        {['Contact', 'Email', 'Campaign', 'Source', 'Medium', 'Destination', 'Visited At'].map(h => (
+                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {emailVisits.map(v => (
+                        <tr key={v.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 600, whiteSpace: 'nowrap' }}>{v.contact_name || '—'}</td>
+                          <td style={{ padding: '10px 14px', color: 'var(--text-secondary)' }}>{v.email}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span className="badge badge-blue" style={{ fontSize: 10 }}>{v.utm_campaign || '—'}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>{v.utm_source || '—'}</td>
+                          <td style={{ padding: '10px 14px' }}>{v.utm_medium || '—'}</td>
+                          <td style={{ padding: '10px 14px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <a href={v.destination_url} target="_blank" rel="noreferrer"
+                              style={{ color: 'var(--brand-primary)', textDecoration: 'none', fontSize: 11 }}
+                              title={v.destination_url}>
+                              <ExternalLink size={10} style={{ marginRight: 4 }} />
+                              {v.destination_url ? new URL(v.destination_url).pathname : '—'}
+                            </a>
+                          </td>
+                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                            {new Date(v.created_at).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {emailVisitsTotal > 50 && (
+                  <div className="flex justify-between items-center" style={{ padding: '12px 18px', borderTop: '1px solid var(--border-color)' }}>
+                    <div className="text-xs text-secondary">
+                      Showing {(emailVisitsPage - 1) * 50 + 1}–{Math.min(emailVisitsPage * 50, emailVisitsTotal)} of {emailVisitsTotal}
+                    </div>
+                    <div className="flex gap-6">
+                      <button className="btn btn-sm btn-secondary" disabled={emailVisitsPage === 1} onClick={() => loadEmailVisits(emailVisitsPage - 1)}>← Prev</button>
+                      <button className="btn btn-sm btn-secondary" disabled={emailVisitsPage * 50 >= emailVisitsTotal} onClick={() => loadEmailVisits(emailVisitsPage + 1)}>Next →</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="p-32 text-center">
+                <Mail size={40} color="var(--text-tertiary)" style={{ opacity: 0.3 }} className="mb-8" />
+                <div className="font-semibold mb-4" style={{ fontSize: 15 }}>No email visits yet</div>
+                <div className="text-sm text-secondary">Send a test email and click a link in it — the visit will appear here.</div>
+              </div>
+            )}
           </div>
         </motion.div>
       )}
