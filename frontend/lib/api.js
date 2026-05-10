@@ -313,6 +313,13 @@ export const getSegmentCustomers = (params = {}) => {
   return request(`/api/v3/unified-contacts/segment-customers?${qs}`);
 };
 
+// ── Email UTM Visit Tracking ──────────────────────────────────────────────────
+export const getEmailUtmLog = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/test-sends/utm-log${qs ? '?' + qs : ''}`);
+};
+export const getEmailUtmSummary = () => request('/api/v3/test-sends/utm-log/summary');
+
 export async function downloadReportAll(from, to) {
   const res = await fetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
