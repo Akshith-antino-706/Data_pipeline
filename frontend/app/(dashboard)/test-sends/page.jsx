@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
-  Square, Calendar, Zap, Search, X,
+  Square, Calendar, Zap, Search, X, ClipboardList, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
@@ -61,6 +61,16 @@ export default function TestSends() {
   const [schedule, setSchedule] = useState(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleLoop, setScheduleLoop] = useState(false);
+
+  // ── send log modal state ───────────────────────────────────────────────
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [logTotal, setLogTotal] = useState(0);
+  const [logPage, setLogPage] = useState(1);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logSearch, setLogSearch] = useState('');
+  const [logStatusFilter, setLogStatusFilter] = useState('');
+  const logDebounceRef = useRef(null);
 
   // Load schedule on mount
   useEffect(() => {
@@ -148,6 +158,30 @@ export default function TestSends() {
     setScheduleLoading(false);
   }, [refreshSchedule]);
 
+  // ── send log loader + debounce ────────────────────────────────────────
+  const loadLogs = useCallback(async (page = 1, search = '', status = '') => {
+    setLogsLoading(true);
+    try {
+      const params = new URLSearchParams({ page, limit: 20 });
+      if (search.trim()) params.set('email', search.trim());
+      if (status) params.set('status', status);
+      const data = await apiGet(`/api/v3/test-sends/send-log?${params}`);
+      setLogs(data.rows || []);
+      setLogTotal(data.total || 0);
+      setLogPage(data.page || 1);
+    } catch { setLogs([]); }
+    setLogsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!showLogs) return;
+    if (logDebounceRef.current) clearTimeout(logDebounceRef.current);
+    logDebounceRef.current = setTimeout(() => {
+      loadLogs(1, logSearch, logStatusFilter);
+    }, 300);
+    return () => clearTimeout(logDebounceRef.current);
+  }, [showLogs, logSearch, logStatusFilter, loadLogs]);
+
   // ── send handler ───────────────────────────────────────────────────────
   const handleSend = useCallback(async (tpl) => {
     const key = tpl.key;
@@ -167,13 +201,27 @@ export default function TestSends() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Mail size={26} /> Test Sends
-        </h1>
-        <p style={{ color: 'var(--muted-foreground)', margin: 0, fontSize: 14 }}>
-          Search contacts, select recipients, and send any of the 7 day templates. Internal QA only.
-        </p>
+      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Mail size={26} /> Test Sends
+          </h1>
+          <p style={{ color: 'var(--muted-foreground)', margin: 0, fontSize: 14 }}>
+            Search contacts, select recipients, and send any of the 7 day templates. Internal QA only.
+          </p>
+        </div>
+        <button
+          onClick={() => setShowLogs(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0,
+            background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+            padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          <ClipboardList size={15} style={{ color: '#e2b340' }} />
+          View Email Logs
+        </button>
       </div>
 
       {/* ── Recipient search + selection ──────────────────────────────── */}
@@ -463,6 +511,222 @@ export default function TestSends() {
           );
         })}
       </motion.div>
+
+      {/* ── Email Send Logs Modal ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {showLogs && (
+          <motion.div
+            className="modal-overlay"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowLogs(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.2 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: 'var(--card)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-xl)', padding: '24px 28px',
+                width: '90vw', maxWidth: 920, maxHeight: '85vh',
+                display: 'flex', flexDirection: 'column', gap: 0,
+                boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+              }}
+            >
+              {/* Modal header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <ClipboardList size={18} style={{ color: '#e2b340' }} />
+                  <span style={{ fontSize: 17, fontWeight: 700 }}>Email Send Logs</span>
+                  {logTotal > 0 && (
+                    <span style={{ fontSize: 12, color: 'var(--muted-foreground)', fontWeight: 400 }}>
+                      {logTotal} record{logTotal !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => setShowLogs(false)} style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: 'var(--muted-foreground)', padding: 4, display: 'flex',
+                }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Filters row */}
+              <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+                <div style={{
+                  flex: 1, minWidth: 200, display: 'flex', alignItems: 'center', gap: 8,
+                  background: 'var(--background)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)', padding: '7px 12px',
+                }}>
+                  <Search size={13} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} />
+                  <input
+                    type="text"
+                    value={logSearch}
+                    onChange={e => setLogSearch(e.target.value)}
+                    placeholder="Search by email..."
+                    style={{
+                      flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                      fontSize: 13, color: 'var(--foreground)',
+                    }}
+                  />
+                  {logSearch && (
+                    <X size={12} style={{ cursor: 'pointer', color: 'var(--muted-foreground)' }}
+                      onClick={() => setLogSearch('')} />
+                  )}
+                </div>
+                <select
+                  value={logStatusFilter}
+                  onChange={e => setLogStatusFilter(e.target.value)}
+                  style={{
+                    padding: '7px 12px', fontSize: 13, minWidth: 130,
+                    background: 'var(--background)', color: 'var(--foreground)',
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                  }}
+                >
+                  <option value="">All Statuses</option>
+                  <option value="queued">Queued</option>
+                  <option value="sent">Sent</option>
+                  <option value="opened">Opened</option>
+                  <option value="clicked">Clicked</option>
+                  <option value="failed">Failed</option>
+                </select>
+                <button
+                  onClick={() => loadLogs(logPage, logSearch, logStatusFilter)}
+                  style={{
+                    background: 'transparent', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)', padding: '7px 14px',
+                    fontSize: 13, color: 'var(--muted-foreground)', cursor: 'pointer',
+                  }}
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {/* Table */}
+              <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                {logsLoading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: 48 }}>
+                    <Loader2 size={22} className="spin" style={{ color: 'var(--muted-foreground)' }} />
+                  </div>
+                ) : logs.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted-foreground)', fontSize: 14 }}>
+                    No send logs found.
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                        {['Status', 'Email', 'Template', 'Sent At', 'Received', 'Duration'].map(h => (
+                          <th key={h} style={{
+                            padding: '8px 10px', textAlign: 'left', fontSize: 11,
+                            fontWeight: 600, color: 'var(--muted-foreground)',
+                            textTransform: 'uppercase', letterSpacing: 0.5,
+                            whiteSpace: 'nowrap',
+                          }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {logs.map((row, i) => {
+                        const statusCfg = {
+                          queued:  { bg: 'rgba(148,163,184,0.15)', color: '#94a3b8' },
+                          sent:    { bg: 'rgba(59,130,246,0.15)',  color: '#3b82f6' },
+                          failed:  { bg: 'rgba(239,68,68,0.15)',   color: '#ef4444' },
+                          opened:  { bg: 'rgba(34,197,94,0.15)',   color: '#22c55e' },
+                          clicked: { bg: 'rgba(168,85,247,0.15)',  color: '#a855f7' },
+                        }[row.status] || { bg: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
+                        return (
+                          <tr key={row.id} style={{
+                            borderBottom: '1px solid var(--border)',
+                            background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
+                          }}>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
+                              <span style={{
+                                fontSize: 10, padding: '2px 8px', borderRadius: 'var(--radius-sm)',
+                                background: statusCfg.bg, color: statusCfg.color,
+                                fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+                              }}>
+                                {row.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '9px 10px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <div style={{ fontWeight: 500 }}>{row.email}</div>
+                              {row.contact_name && (
+                                <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{row.contact_name}</div>
+                              )}
+                            </td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', color: 'var(--muted-foreground)' }}>
+                              {row.template_label || '—'}
+                            </td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', color: 'var(--muted-foreground)', fontSize: 12 }}>
+                              {row.sent_at ? new Date(row.sent_at).toLocaleString() : '—'}
+                            </td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', fontSize: 12 }}>
+                              {row.opened_at ? (
+                                <span style={{ color: '#22c55e', fontWeight: 600 }}>
+                                  ✓ {new Date(row.opened_at).toLocaleString()}
+                                </span>
+                              ) : row.status === 'failed' ? (
+                                <span style={{ color: '#ef4444' }}>✗ Failed</span>
+                              ) : (
+                                <span style={{ color: 'var(--muted-foreground)' }}>Pending</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', color: 'var(--muted-foreground)', fontSize: 12 }}>
+                              {row.duration_ms != null ? `${row.duration_ms}ms` : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Pagination */}
+              {logTotal > 20 && (
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  paddingTop: 14, marginTop: 4, borderTop: '1px solid var(--border)',
+                  fontSize: 13, color: 'var(--muted-foreground)',
+                }}>
+                  <span>Page {logPage} of {Math.ceil(logTotal / 20)}</span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={() => loadLogs(logPage - 1, logSearch, logStatusFilter)}
+                      disabled={logPage <= 1}
+                      style={{
+                        background: 'transparent', border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius)', padding: '5px 10px',
+                        cursor: logPage <= 1 ? 'not-allowed' : 'pointer',
+                        opacity: logPage <= 1 ? 0.4 : 1, color: 'var(--foreground)',
+                        display: 'flex', alignItems: 'center', gap: 4,
+                      }}
+                    >
+                      <ChevronLeft size={14} /> Prev
+                    </button>
+                    <button
+                      onClick={() => loadLogs(logPage + 1, logSearch, logStatusFilter)}
+                      disabled={logPage >= Math.ceil(logTotal / 20)}
+                      style={{
+                        background: 'transparent', border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius)', padding: '5px 10px',
+                        cursor: logPage >= Math.ceil(logTotal / 20) ? 'not-allowed' : 'pointer',
+                        opacity: logPage >= Math.ceil(logTotal / 20) ? 0.4 : 1, color: 'var(--foreground)',
+                        display: 'flex', alignItems: 'center', gap: 4,
+                      }}
+                    >
+                      Next <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

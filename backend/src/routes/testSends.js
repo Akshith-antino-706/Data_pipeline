@@ -20,6 +20,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import db from '../config/database.js';
+import { SendTrackService } from '../services/SendTrackService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -71,28 +72,52 @@ function leftoversCheck(html) {
   return v.length === 0 && b.length === 0;
 }
 
-async function sendOne({ EmailChannel, recipient, subject, html }) {
+/**
+ * Like sendOne but persists every attempt to email_send_log and injects an
+ * open-tracking pixel so we know when the recipient actually reads the email.
+ */
+async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber }) {
+  const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+
+  const logId = await SendTrackService.logSend({
+    unifiedId:     recipient.unified_id,
+    email:         recipient.email,
+    subject,
+    templateLabel,
+    dayNumber,
+    source: 'test-send',
+  });
+
+  // Inject open-tracking pixel before sending
+  const pixel = `<img src="${baseUrl}/api/track/email-send/open/${logId}" width="1" height="1" style="display:none" alt="" />`;
+  const trackedHtml = html.includes('</body>')
+    ? html.replace('</body>', `${pixel}</body>`)
+    : html + pixel;
+
   const start = Date.now();
+  let result;
   try {
-    const result = await EmailChannel.send({ to: recipient.email, subject, html });
-    return {
-      email: recipient.email,
-      unifiedId: recipient.unified_id,
-      success: !!result?.success,
-      externalId: result?.externalId || null,
-      error: result?.error || null,
-      ms: Date.now() - start,
-    };
+    result = await EmailChannel.send({ to: recipient.email, subject, html: trackedHtml });
   } catch (err) {
-    return {
-      email: recipient.email,
-      unifiedId: recipient.unified_id,
-      success: false,
-      externalId: null,
-      error: err.message || String(err),
-      ms: Date.now() - start,
-    };
+    result = { success: false, error: err.message || String(err), provider: null };
   }
+  const ms = Date.now() - start;
+
+  if (result?.success) {
+    await SendTrackService.markSent(logId, { externalId: result.externalId || null, provider: result.provider || null, durationMs: ms });
+  } else {
+    await SendTrackService.markFailed(logId, { error: result?.error || result?.reason || 'unknown', provider: result?.provider || null, durationMs: ms });
+  }
+
+  return {
+    email:      recipient.email,
+    unifiedId:  recipient.unified_id,
+    sendLogId:  logId,
+    success:    !!result?.success,
+    externalId: result?.externalId || null,
+    error:      result?.error || result?.reason || null,
+    ms,
+  };
 }
 
 // ── contact search ───────────────────────────────────────────────────────
@@ -194,7 +219,7 @@ router.post('/day1', async (req, res, next) => {
       const data = await buildDay1WelcomeData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay1Welcome(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', dayNumber: 1 }));
     }
     res.json({ data: { day: 1, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -223,7 +248,7 @@ router.post('/day2', async (req, res, next) => {
       const data = await buildDay2CruiseData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay2Cruise(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', dayNumber: 2 }));
     }
     res.json({ data: { day: 2, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -257,7 +282,7 @@ router.post('/day3', async (req, res, next) => {
       const data = await buildDay3VisaData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay3Visa(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', dayNumber: 3 }));
     }
     res.json({ data: { day: 3, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -286,7 +311,7 @@ router.post('/day4', async (req, res, next) => {
       const data = await buildDay4HolidaysData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay4Holidays(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', dayNumber: 4 }));
     }
     res.json({ data: { day: 4, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -315,7 +340,7 @@ router.post('/day5', async (req, res, next) => {
       const data = await buildDay5ActivitiesData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay5Activities(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', dayNumber: 5 }));
     }
     res.json({ data: { day: 5, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -359,7 +384,7 @@ router.post('/day6', async (req, res, next) => {
       const data = await buildDay6DestinationData({ contactId: r.unified_id, destinationKey, ranking: ranking.ranking });
       const html = renderDay6Destination(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', dayNumber: 6 }));
     }
     res.json({ data: { day: 6, destinationKey, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -399,9 +424,66 @@ router.post('/day7', async (req, res, next) => {
       const data = await buildDay7AbandonedCartData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay7AbandonedCart(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendOne({ EmailChannel, recipient: r, subject, html }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', dayNumber: 7 }));
     }
     res.json({ data: { day: 7, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
+  } catch (err) { next(err); }
+});
+
+// ── Send Tracking — read routes ───────────────────────────────────────────
+
+/**
+ * GET /api/v3/test-sends/send-log
+ *
+ * Paginated list of all tracked sends.
+ *
+ * Query params:
+ *   page      – page number (default 1)
+ *   limit     – rows per page (default 50, max 200)
+ *   status    – queued | sent | failed | opened | clicked
+ *   email     – partial match on recipient email
+ *   dayNumber – 1-7
+ *   source    – test-send | campaign | journey
+ *   dateFrom  – ISO 8601 (e.g. 2025-01-01)
+ *   dateTo    – ISO 8601
+ */
+router.get('/send-log', async (req, res, next) => {
+  try {
+    const page      = Math.max(1, parseInt(req.query.page  || '1'));
+    const limit     = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
+    const { status, email, dayNumber, source, dateFrom, dateTo } = req.query;
+
+    const result = await SendTrackService.getLog({ page, limit, status, email, dayNumber, source, dateFrom, dateTo });
+    res.json({ data: result });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/v3/test-sends/send-log/summary
+ *
+ * Aggregate stats: counts by status + open-rate breakdown per day template.
+ */
+router.get('/send-log/summary', async (_req, res, next) => {
+  try {
+    const summary = await SendTrackService.getSummary();
+    res.json({ data: summary });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/v3/test-sends/send-log/user/:unifiedId
+ *
+ * All sends to a specific contact (most recent first).
+ * Optional query param: limit (default 30)
+ */
+router.get('/send-log/user/:unifiedId', async (req, res, next) => {
+  try {
+    const unifiedId = parseInt(req.params.unifiedId);
+    if (isNaN(unifiedId)) return res.status(400).json({ error: 'unifiedId must be a number' });
+
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '30')));
+    const rows  = await SendTrackService.getByUnifiedId(unifiedId, { limit });
+    res.json({ data: { unifiedId, count: rows.length, rows } });
   } catch (err) { next(err); }
 });
 
