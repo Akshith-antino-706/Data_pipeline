@@ -270,6 +270,20 @@ app.get('/api/track/click/:messageId', async (req, res) => {
   } catch (e) { console.error('[Track] Click error:', e.message); }
 });
 
+// Open-tracking pixel for email_send_log (test-send routes)
+app.get('/api/track/email-send/open/:id', async (req, res) => {
+  const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+  res.set({ 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, no-cache' });
+  res.send(pixel);
+  const id = parseInt(req.params.id);
+  if (!isNaN(id)) {
+    try {
+      const { SendTrackService } = await import('./src/services/SendTrackService.js');
+      await SendTrackService.markOpened(id);
+    } catch (e) { console.error('[Track] email-send open error:', e.message); }
+  }
+});
+
 // ── First Message Sync ────────────────────────────────────
 app.post('/api/v3/sync-first-messages', async (req, res) => {
   try {

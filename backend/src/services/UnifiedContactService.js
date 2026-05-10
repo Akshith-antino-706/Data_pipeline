@@ -247,12 +247,37 @@ export default class UnifiedContactService {
       `),
       // 2. Full breakdown
       pool.query(`
-        SELECT booking_status, product_tier, geography,
-          COUNT(*)::int AS count,
-          COUNT(*) FILTER (WHERE is_indian = true)::int AS indian_count
-        FROM unified_contacts ${btWhere}
-        GROUP BY booking_status, product_tier, geography
-        ORDER BY booking_status, product_tier NULLS LAST, geography NULLS LAST
+          SELECT
+              uc.booking_status,
+              uc.product_tier,
+              uc.geography,
+
+              COUNT(*)::int AS count,
+              COUNT(*) FILTER (WHERE uc.is_indian = true)::int AS indian_count,
+
+              COALESCE(usr.revenue, 0) AS revenue
+
+          FROM unified_contacts uc
+
+          LEFT JOIN user_segment_revenue usr
+              ON usr.segments_title = CONCAT_WS(' / ',
+                  uc.booking_status,
+                  uc.product_tier,
+                  uc.geography
+              )
+
+          ${btWhere}
+
+          GROUP BY
+              uc.booking_status,
+              uc.product_tier,
+              uc.geography,
+              usr.revenue
+
+          ORDER BY
+              uc.booking_status,
+              uc.product_tier NULLS LAST,
+              uc.geography NULLS LAST;
       `),
       // 3. Totals
       pool.query(`
