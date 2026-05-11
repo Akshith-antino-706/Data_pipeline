@@ -1,9 +1,9 @@
 /**
  * TestSendScheduler — drives the auto-send of Day-1 through Day-7 templates.
  *
- * Production mode:
+ * Testing mode (current):
  *   Click "Start Daily Send" → pre-warms all 7 Claude rankings,
- *   sends Day 1 immediately after, then every 24 hours auto-sends Day 2→7.
+ *   sends Day 1 immediately after, then every 30 seconds auto-sends Day 2→7.
  *
  * State machine:
  *   - is_running=false, next_day_to_send=1   → idle
@@ -26,7 +26,7 @@ const DAY_LABELS = {
 };
 
 const SCHEDULE_ID = 1;
-const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours between sends
+const INTERVAL_MS = 30 * 1000; // 30 seconds between sends (testing) — change to 2 * 60 * 1000 for production
 
 let autoTimer = null; // holds the setInterval reference
 
