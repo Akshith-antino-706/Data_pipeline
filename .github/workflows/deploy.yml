@@ -23,7 +23,7 @@ jobs:
             git reset --hard origin/main
 
             # Create .env for docker-compose (root level)
-            printf 'DB_PASS=${{ secrets.DB_PASS }}\nNEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}\nDB_PORT_EXTERNAL=5433\n' > .env
+            printf 'NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}\n' > .env
 
             # Rebuild and restart containers
             docker compose build --no-cache
