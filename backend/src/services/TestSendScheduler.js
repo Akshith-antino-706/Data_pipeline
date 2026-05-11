@@ -1,9 +1,9 @@
 /**
  * TestSendScheduler — drives the auto-send of Day-1 through Day-7 templates.
  *
- * Testing mode (current):
- *   Click "Start Daily Send" → sends Day 1 immediately,
- *   then every 2 minutes auto-sends Day 2, Day 3 ... Day 7.
+ * Production mode:
+ *   Click "Start Daily Send" → pre-warms all 7 Claude rankings,
+ *   sends Day 1 immediately after, then every 24 hours auto-sends Day 2→7.
  *
  * State machine:
  *   - is_running=false, next_day_to_send=1   → idle
@@ -26,9 +26,16 @@ const DAY_LABELS = {
 };
 
 const SCHEDULE_ID = 1;
-const INTERVAL_MS = 2 * 60 * 1000; // 2 minutes between sends
+const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours between sends
 
 let autoTimer = null; // holds the setInterval reference
+
+// In-memory prewarm state — reset each time start() is called
+let prewarmState = { status: 'idle', startedAt: null, completedAt: null, summary: null, readyCount: 0, error: null };
+
+export function getPrewarmState() {
+  return { ...prewarmState };
+}
 
 // ── state accessors ──────────────────────────────────────────────────────
 
@@ -36,10 +43,11 @@ export async function getStatus() {
   const { rows: [row] } = await db.query(
     'SELECT * FROM test_segment_schedule WHERE id = $1', [SCHEDULE_ID]
   );
-  return row || null;
+  if (!row) return null;
+  return { ...row, prewarm: prewarmState };
 }
 
-export async function start({ destinationKey = 'singapore', loop = false, emails = [] } = {}) {
+export async function start({ destinationKey = 'singapore', loop = false, emails = [], baseUrl = `http://localhost:${process.env.PORT || 3001}` } = {}) {
   if (!Array.isArray(emails) || emails.length === 0) {
     throw new Error('Select at least one recipient email before starting');
   }
@@ -59,14 +67,40 @@ export async function start({ destinationKey = 'singapore', loop = false, emails
     [SCHEDULE_ID, destinationKey, loop, JSON.stringify(emails)]
   );
 
-  // Send Day 1 immediately, then auto-tick every 2 min
-  startAutoSend();
+  // Reset prewarm state
+  prewarmState = { status: 'idle', startedAt: null, completedAt: null, summary: null, readyCount: 0, error: null };
 
-  return row;
+  // Pre-warm all 7 day rankings in background, then start sending
+  _prewarmThenSend({ destinationKey, baseUrl });
+
+  return { ...row, prewarm: prewarmState };
+}
+
+export async function removeEmail(email) {
+  const clean = String(email).toLowerCase().trim();
+  const { rows: [row] } = await db.query(
+    `UPDATE test_segment_schedule
+        SET emails     = (SELECT COALESCE(jsonb_agg(e), '[]'::jsonb)
+                            FROM jsonb_array_elements_text(emails::jsonb) AS e
+                           WHERE LOWER(e) <> $2),
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING *`,
+    [SCHEDULE_ID, clean]
+  );
+  if (!row) throw new Error('Schedule not found');
+  // If no emails remain, stop the schedule
+  const remaining = Array.isArray(row.emails) ? row.emails : [];
+  if (remaining.length === 0) {
+    await stop();
+    return { ...row, emails: [], is_running: false, prewarm: prewarmState };
+  }
+  return { ...row, prewarm: prewarmState };
 }
 
 export async function stop() {
   stopAutoSend();
+  prewarmState = { status: 'idle', startedAt: null, completedAt: null, summary: null, readyCount: 0, error: null };
   const { rows: [row] } = await db.query(
     `UPDATE test_segment_schedule SET
        is_running = FALSE,
@@ -75,7 +109,42 @@ export async function stop() {
      RETURNING *`,
     [SCHEDULE_ID]
   );
-  return row;
+  return { ...row, prewarm: prewarmState };
+}
+
+// ── background prewarm + send ────────────────────────────────────────────
+
+async function _prewarmThenSend({ destinationKey, baseUrl }) {
+  prewarmState = { status: 'prewarming', startedAt: new Date().toISOString(), completedAt: null, summary: null, readyCount: 0, error: null };
+  console.log('[AutoSend] Pre-warming all 7 day rankings in parallel...');
+
+  try {
+    const res = await fetch(`${baseUrl}/api/v3/test-sends/prewarm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destinationKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    prewarmState = {
+      status:      'ready',
+      startedAt:   prewarmState.startedAt,
+      completedAt: new Date().toISOString(),
+      summary:     data?.data?.summary || [],
+      readyCount:  data?.data?.ready  || 0,
+      error:       null,
+    };
+    console.log(`[AutoSend] Pre-warm complete — ${prewarmState.readyCount}/7 days ready`);
+  } catch (err) {
+    prewarmState = {
+      ...prewarmState,
+      status:      'failed',
+      completedAt: new Date().toISOString(),
+      error:       err.message,
+    };
+    console.error('[AutoSend] Pre-warm failed:', err.message, '— proceeding anyway (cache may be warm)');
+  }
+
+  startAutoSend();
 }
 
 // ── auto-send timer ─────────────────────────────────────────────────────
