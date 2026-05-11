@@ -188,6 +188,7 @@ router.post('/schedule/start', async (req, res, next) => {
     const status = await start({
       destinationKey: req.body?.destinationKey || 'singapore',
       loop: req.body?.loop === true,
+      emails: req.body?.emails || [],
     });
     res.json({ data: status });
   } catch (err) { next(err); }
