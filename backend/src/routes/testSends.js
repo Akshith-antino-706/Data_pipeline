@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import db from '../config/database.js';
 import { SendTrackService } from '../services/SendTrackService.js';
+import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -62,6 +63,8 @@ async function resolveRecipients(emails) {
 }
 
 async function loadEmailChannel() {
+  const { ChatheadEmailChannel } = await import('../services/channels/ChatheadEmailChannel.js');
+  if (ChatheadEmailChannel.isConfigured()) return ChatheadEmailChannel;
   const { EmailChannel } = await import('../services/channels/EmailChannel.js');
   return EmailChannel;
 }
@@ -82,41 +85,6 @@ function leftoversCheck(html) {
  * Like sendOne but persists every attempt to email_send_log and injects an
  * open-tracking pixel so we know when the recipient actually reads the email.
  */
-/**
- * Replace every href link in the HTML with a click-tracking redirect that:
- *  1. Records the click against this send-log row
- *  2. Appends UTM params + rid to the destination URL
- *  3. Redirects the recipient to the real page
- */
-function injectUTMAndClickTracking(html, { logId, baseUrl, dayNumber, templateLabel, unifiedId }) {
-  const campaignSlug = `day${dayNumber}_${templateLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
-  const contentSlug  = `test_send_day${dayNumber}`;
-
-  return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, originalUrl) => {
-    // Skip our own tracking URLs and mailto links
-    if (
-      originalUrl.includes('/api/track/') ||
-      originalUrl.includes('/api/v3/utm/') ||
-      originalUrl.startsWith('mailto:')
-    ) return match;
-
-    try {
-      // Append UTM params + rid to the real destination
-      const dest = new URL(originalUrl);
-      dest.searchParams.set('utm_source',   'AI_marketer');
-      dest.searchParams.set('utm_medium',   'email');
-      dest.searchParams.set('utm_campaign', campaignSlug);
-      dest.searchParams.set('utm_content',  contentSlug);
-      if (unifiedId) dest.searchParams.set('rid', String(unifiedId));
-
-      // Wrap with our click-tracker redirect
-      const trackUrl = `${baseUrl}/api/track/email-send/click/${logId}?url=${encodeURIComponent(dest.toString())}`;
-      return `href="${trackUrl}"`;
-    } catch {
-      return match; // malformed URL — leave it as-is
-    }
-  });
-}
 
 async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber }) {
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
@@ -131,15 +99,14 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
   });
 
   // 1. Inject UTM params + click-tracking redirect into every link
-  const utmHtml = injectUTMAndClickTracking(html, {
-    logId, baseUrl, dayNumber, templateLabel, unifiedId: recipient.unified_id,
+  const campaignSlug = `day${dayNumber}_${templateLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+  const contentSlug  = `test_send_day${dayNumber}`;
+  const utmHtml = injectClickTracking(html, {
+    logId, baseUrl, campaign: campaignSlug, content: contentSlug, unifiedId: recipient.unified_id,
   });
 
   // 2. Inject open-tracking pixel
-  const pixel = `<img src="${baseUrl}/api/track/email-send/open/${logId}" width="1" height="1" style="display:none" alt="" />`;
-  const trackedHtml = utmHtml.includes('</body>')
-    ? utmHtml.replace('</body>', `${pixel}</body>`)
-    : utmHtml + pixel;
+  const trackedHtml = injectOpenPixel(utmHtml, logId, baseUrl);
 
   const start = Date.now();
   let result;

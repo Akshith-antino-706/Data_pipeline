@@ -23,6 +23,8 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import { EmailChannel } from '../channels/EmailChannel.js';
+import { SendTrackService } from '../SendTrackService.js';
+import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -101,12 +103,44 @@ async function processEmail(job) {
     runId: d.runId,
   });
 
+  // ── Inject click/open tracking (same as test-sends) ──
+  const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+  const subject = rendered.subject || 'Rayna Tours';
+
+  const logId = await SendTrackService.logSend({
+    unifiedId: d.customerId,
+    email: d.email,
+    subject,
+    templateLabel: d.nodeId || 'journey',
+    dayNumber: 0,
+    source: 'journey',
+  });
+
+  const campaignSlug = `j${d.journeyId}_${(d.nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
+  let trackedHtml = injectClickTracking(rendered.html, {
+    logId,
+    baseUrl,
+    campaign: campaignSlug,
+    content: `journey_${d.journeyId}`,
+    source: 'email',
+    medium: 'journey',
+    unifiedId: d.customerId,
+  });
+  trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
+
   const sendResult = await EmailChannel.send({
     to: d.email,
-    subject: rendered.subject || 'Rayna Tours',
-    html: rendered.html,
+    subject,
+    html: trackedHtml,
     text: rendered.plainText,
   });
+
+  // Update send log status
+  if (sendResult.success || sendResult.simulated) {
+    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
+  } else if (sendResult.blocked) {
+    SendTrackService.markFailed(logId, { error: sendResult.reason || 'blocked' }).catch(() => {});
+  }
 
   // EmailChannel returns { blocked: true } for unsubscribed/bounced contacts —
   // not a retryable failure; record as action_blocked and advance.

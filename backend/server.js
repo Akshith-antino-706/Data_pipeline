@@ -62,7 +62,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
 }));
 
 // Always echo Access-Control-Allow-Credentials: true on every response — required for
@@ -189,10 +189,35 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
 
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
-    for (const file of ['003_complete_data_schema.sql', '010_rfm_utm_coupons_approval.sql', '012_lifecycle_winback_segmentation.sql', '014_product_affinity_engine.sql', '015_sync_metadata.sql', '021_fresh_mysql_tables.sql', '017_full_segment_content_journeys_campaigns.sql', '047_missing_infrastructure.sql', '048_dept_contact_type.sql', '049_users_from_rayna.sql', '053_auth_users.sql']) {
+    for (const file of [
+      '003_complete_data_schema.sql',
+      '010_rfm_utm_coupons_approval.sql',
+      '012_lifecycle_winback_segmentation.sql',
+      '014_product_affinity_engine.sql',
+      '015_sync_metadata.sql',
+      '017_full_segment_content_journeys_campaigns.sql',
+      '021_fresh_mysql_tables.sql',
+      '032_user_utm_links.sql',
+      '034_fresh_strategies_journeys.sql',
+      '036_fresh_campaigns_utm.sql',
+      '045_journey_audience.sql',
+      '046_journey_entry_track.sql',
+      '047_missing_infrastructure.sql',
+      '048_dept_contact_type.sql',
+      '049_users_from_rayna.sql',
+      '050_crm_booking_columns.sql',
+      '051_hotels_unified_id.sql',
+      '052_visas_flights_unified_id.sql',
+      '053_auth_users.sql',
+      '058_wire_journeys_to_segments.sql',
+      '062_create_user_segment_revenue.sql',
+      '063_email_send_tracking.sql',
+      '064_utm_visits.sql',
+      '065_gtm_events_unified_id.sql',
+    ]) {
       await runMigrationFile(file);
     }
-    res.json({ success: true, message: 'All v3 migrations (003, 010, 012) completed successfully' });
+    res.json({ success: true, message: 'All v3 migrations completed successfully' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
