@@ -153,7 +153,7 @@ class UTMService {
     const { rows } = await db.query(`
       SELECT sd.segment_name,
         (SELECT COUNT(*) FROM campaigns c WHERE c.segment_label = sd.segment_name) AS campaign_count,
-        (SELECT COUNT(*) FROM content_templates ct WHERE ct.segment_label = sd.segment_name AND ct.status = 'approved') AS template_count,
+        (SELECT COUNT(*) FROM content_templates ct WHERE ct.name ILIKE '%' || sd.segment_name || '%' AND ct.status = 'approved') AS template_count,
         COUNT(DISTINCT ut.utm_id) AS utm_count,
         COALESCE(SUM(ut.clicks), 0) AS total_clicks,
         COALESCE(SUM(ut.conversions), 0) AS total_conversions,

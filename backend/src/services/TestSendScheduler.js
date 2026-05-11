@@ -1,20 +1,16 @@
 /**
- * TestSendScheduler — drives the auto-send of Day-1 through Day-7 templates
- * to the TEST_USERS segment on a daily schedule, with no manual intervention
- * after start.
+ * TestSendScheduler — drives the auto-send of Day-1 through Day-7 templates.
+ *
+ * Testing mode (current):
+ *   Click "Start Daily Send" → sends Day 1 immediately,
+ *   then every 2 minutes auto-sends Day 2, Day 3 ... Day 7.
  *
  * State machine:
  *   - is_running=false, next_day_to_send=1   → idle
- *   - is_running=true,  next_day_to_send=N   → cron fires today: send Day-N,
- *                                              increment to N+1
+ *   - is_running=true,  next_day_to_send=N   → next tick sends Day-N
  *   - next_day_to_send=8 (after Day-7 sent)  →
  *       loop=true   → reset to 1
  *       loop=false  → set is_running=false (sequence complete)
- *
- * Day-6 uses the destination_key field (default singapore).
- *
- * The cron tick is gated by last_sent_at — if the last send was within
- * the last 22 hours we skip (idempotent guard against double-firing).
  */
 
 import db from '../config/database.js';
@@ -30,6 +26,9 @@ const DAY_LABELS = {
 };
 
 const SCHEDULE_ID = 1;
+const INTERVAL_MS = 2 * 60 * 1000; // 2 minutes between sends
+
+let autoTimer = null; // holds the setInterval reference
 
 // ── state accessors ──────────────────────────────────────────────────────
 
@@ -40,7 +39,10 @@ export async function getStatus() {
   return row || null;
 }
 
-export async function start({ destinationKey = 'singapore', loop = false } = {}) {
+export async function start({ destinationKey = 'singapore', loop = false, emails = [] } = {}) {
+  if (!Array.isArray(emails) || emails.length === 0) {
+    throw new Error('Select at least one recipient email before starting');
+  }
   const { rows: [row] } = await db.query(
     `UPDATE test_segment_schedule SET
        is_running       = TRUE,
@@ -50,15 +52,21 @@ export async function start({ destinationKey = 'singapore', loop = false } = {})
        last_sent_at     = NULL,
        destination_key  = $2,
        loop             = $3,
+       emails           = $4,
        updated_at       = NOW()
      WHERE id = $1
      RETURNING *`,
-    [SCHEDULE_ID, destinationKey, loop]
+    [SCHEDULE_ID, destinationKey, loop, JSON.stringify(emails)]
   );
+
+  // Send Day 1 immediately, then auto-tick every 2 min
+  startAutoSend();
+
   return row;
 }
 
 export async function stop() {
+  stopAutoSend();
   const { rows: [row] } = await db.query(
     `UPDATE test_segment_schedule SET
        is_running = FALSE,
@@ -70,34 +78,59 @@ export async function stop() {
   return row;
 }
 
-// ── cron tick ────────────────────────────────────────────────────────────
+// ── auto-send timer ─────────────────────────────────────────────────────
 
-/**
- * Called once per day by the cron. Idempotent — safe to call multiple times
- * within a 22-hour window without duplicating sends.
- *
- * @returns { skipped: boolean, reason?: string, day?: number, results?: any[] }
- */
+function startAutoSend() {
+  stopAutoSend(); // clear any existing timer
+
+  // Fire Day 1 immediately (slight delay to let DB commit settle)
+  setTimeout(() => autoTick(), 500);
+
+  // Then fire every 2 minutes for Day 2→7
+  autoTimer = setInterval(() => autoTick(), INTERVAL_MS);
+}
+
+function stopAutoSend() {
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+async function autoTick() {
+  try {
+    const result = await tick();
+    console.log(`[AutoSend] Day ${result.day || '?'}: ${result.skipped ? `skipped (${result.reason})` : `sent to ${result.sentTo}`}`);
+    if (result.sequenceDone || (result.skipped && result.reason === 'Not running')) {
+      console.log('[AutoSend] Sequence complete — stopping timer');
+      stopAutoSend();
+    }
+  } catch (err) {
+    console.error('[AutoSend] Error:', err.message);
+    stopAutoSend();
+  }
+}
+
+// ── tick (single send) ──────────────────────────────────────────────────
+
 export async function tick({ baseUrl = `http://localhost:${process.env.PORT || 3001}` } = {}) {
   const status = await getStatus();
   if (!status) return { skipped: true, reason: 'No schedule row' };
   if (!status.is_running) return { skipped: true, reason: 'Not running' };
-
-  // Idempotency: skip if we already fired in the last 22h.
-  if (status.last_sent_at) {
-    const ageMs = Date.now() - new Date(status.last_sent_at).getTime();
-    if (ageMs < 22 * 60 * 60 * 1000) {
-      return { skipped: true, reason: `Last sent ${Math.round(ageMs / 3600000)}h ago — too recent` };
-    }
-  }
 
   const day = status.next_day_to_send;
   if (day < 1 || day > 7) {
     return { skipped: true, reason: `Invalid next_day_to_send=${day}` };
   }
 
+  const emails = Array.isArray(status.emails) ? status.emails : [];
+  if (emails.length === 0) {
+    return { skipped: true, reason: 'No recipient emails stored in schedule' };
+  }
+
   const path = `/api/v3/test-sends/day${day}`;
-  const body = day === 6 ? { destinationKey: status.destination_key || 'singapore' } : {};
+  const body = { emails };
+  if (day === 6) body.destinationKey = status.destination_key || 'singapore';
 
   const res = await fetch(baseUrl + path, {
     method: 'POST',
@@ -112,7 +145,7 @@ export async function tick({ baseUrl = `http://localhost:${process.env.PORT || 3
   const sendResults = data?.data?.results || [];
   const successCount = sendResults.filter(r => r.success).length;
 
-  // Advance state — pre-compute the next day, handling loop / completion.
+  // Advance state
   let nextDay = day + 1;
   let stillRunning = true;
   if (nextDay > 7) {
@@ -120,7 +153,7 @@ export async function tick({ baseUrl = `http://localhost:${process.env.PORT || 3
       nextDay = 1;
     } else {
       stillRunning = false;
-      nextDay = 1; // reset for next manual start
+      nextDay = 1;
     }
   }
 

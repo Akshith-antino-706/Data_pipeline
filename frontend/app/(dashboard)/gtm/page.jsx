@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getSpecialOccasions, getGTMExport, getEmailUtmLog, getEmailUtmSummary } from '@/lib/api';
+import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getGTMEventDetail, getSpecialOccasions, getGTMExport, getEmailUtmLog, getEmailUtmSummary } from '@/lib/api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Code, Calendar, Download, Activity, Layers, Copy, Mail, MousePointer, Users, Target, ExternalLink, RefreshCw, Search } from 'lucide-react';
 
@@ -17,6 +17,11 @@ export default function GTMIntegration() {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedScript, setSelectedScript] = useState('page_view');
   const [copied, setCopied] = useState('');
+
+  // Event detail state
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [eventDetails, setEventDetails] = useState([]);
+  const [eventDetailLoading, setEventDetailLoading] = useState(false);
 
   // Email UTM tracking state
   const [utmVisits, setUtmVisits] = useState([]);
@@ -39,6 +44,17 @@ export default function GTMIntegration() {
       setAnalytics(ana?.data || ana || { daily: [], top_events: [] });
       setOccasions(Array.isArray(occ) ? occ : (occ?.data || []));
     } catch (err) { console.error(err); }
+  }
+
+  async function loadEventDetail(eventName) {
+    if (selectedEvent === eventName) { setSelectedEvent(null); setEventDetails([]); return; }
+    setSelectedEvent(eventName);
+    setEventDetailLoading(true);
+    try {
+      const res = await getGTMEventDetail(eventName);
+      setEventDetails(res?.data || []);
+    } catch (err) { console.error(err); }
+    setEventDetailLoading(false);
   }
 
   async function loadUtmData(page = 1, search = '', campaign = '') {
@@ -122,14 +138,79 @@ export default function GTMIntegration() {
         <motion.div variants={fadeInUp}>
           <div className="kpi-strip" style={{ marginBottom: 24 }}>
             {analytics.top_events?.map(e => (
-              <div key={e.event_name} className="card">
+              <div key={e.event_name} className="card" onClick={() => loadEventDetail(e.event_name)}
+                style={{ cursor: 'pointer', border: selectedEvent === e.event_name ? '2px solid var(--brand-primary)' : undefined, transition: 'border 0.2s' }}>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{e.event_name}</div>
                 <div style={{ fontSize: 28, fontWeight: 700 }}>{parseInt(e.count).toLocaleString()}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{parseInt(e.unique_users).toLocaleString()} unique users</div>
                 {parseFloat(e.total_value) > 0 && <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>AED {parseFloat(e.total_value).toFixed(0)}</div>}
+                <div style={{ fontSize: 10, color: 'var(--brand-primary)', marginTop: 4 }}>Click to view details →</div>
               </div>
             ))}
           </div>
+
+          {/* Event Detail Table */}
+          {selectedEvent && (
+            <div className="card" style={{ overflow: 'hidden', marginBottom: 24 }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Activity size={16} color="var(--brand-primary)" />
+                  {selectedEvent} — Activity Details
+                  <span className="badge badge-blue" style={{ fontSize: 10 }}>{eventDetails.length}</span>
+                </div>
+                <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedEvent(null); setEventDetails([]); }}>✕ Close</button>
+              </div>
+              {eventDetailLoading ? (
+                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)', fontSize: 13 }}>Loading...</div>
+              ) : eventDetails.length > 0 ? (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-secondary)' }}>
+                        {['Product / Label', 'Value (AED)', 'Category', 'Page', 'Device', 'Browser', 'Location', 'UTM Source', 'Campaign', 'Time'].map(h => (
+                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {eventDetails.map((e, i) => (
+                        <tr key={e.event_id || i} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 600, maxWidth: 200 }}>{e.event_label || '—'}</td>
+                          <td style={{ padding: '10px 14px', color: 'var(--green)', fontWeight: 700 }}>
+                            {e.event_value ? `AED ${parseFloat(e.event_value).toFixed(0)}` : '—'}
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span className="badge badge-gray" style={{ fontSize: 10 }}>{e.event_category || '—'}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {e.page_url ? (
+                              <a href={e.page_url} target="_blank" rel="noreferrer" style={{ color: 'var(--brand-primary)', textDecoration: 'none', fontSize: 11 }}>
+                                {(() => { try { return new URL(e.page_url).pathname; } catch { return e.page_url; } })()}
+                              </a>
+                            ) : '—'}
+                          </td>
+                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
+                            <span className="badge badge-blue" style={{ fontSize: 10 }}>{e.device_type || '—'}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px', fontSize: 11 }}>{e.browser || '—'}</td>
+                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', fontSize: 11 }}>
+                            {[e.city, e.country].filter(Boolean).join(', ') || '—'}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontSize: 11 }}>{e.utm_source || '—'}</td>
+                          <td style={{ padding: '10px 14px', fontSize: 11 }}>{e.utm_campaign || '—'}</td>
+                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--text-secondary)', fontSize: 11 }}>
+                            {new Date(e.created_at).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>No detail rows found.</div>
+              )}
+            </div>
+          )}
 
           <div className="card" style={{ padding: 24 }}>
             <h3 style={{ margin: '0 0 16px' }}>Daily Event Volume</h3>

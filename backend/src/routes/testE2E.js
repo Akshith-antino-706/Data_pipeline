@@ -28,7 +28,7 @@ router.post('/send-journey-emails', async (_req, res, next) => {
       // Find the first email template for this segment
       const { rows: [tpl] } = await query(`
         SELECT ct.* FROM content_templates ct
-        WHERE ct.segment_label = $1 AND ct.channel = 'email' AND ct.html_template_id IS NOT NULL
+        WHERE ct.name ILIKE '%' || $1 || '%' AND ct.channel = 'email' AND ct.html_template_id IS NOT NULL
         ORDER BY ct.id LIMIT 1
       `, [uc.booking_status]);
 

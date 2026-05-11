@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS test_segment_schedule (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Add emails column (stores recipient email list as JSONB array)
+ALTER TABLE test_segment_schedule ADD COLUMN IF NOT EXISTS emails JSONB DEFAULT '[]';
+
 -- Seed a single inactive row so the service can always do an UPDATE
 INSERT INTO test_segment_schedule (id, is_running, next_day_to_send)
 VALUES (1, FALSE, 1)

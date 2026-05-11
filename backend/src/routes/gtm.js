@@ -6,17 +6,26 @@ import GTMService from '../services/GTMService.js';
 const router = Router();
 
 // Allow any origin to POST events (GTM tags fire from raynatours.com)
-router.use('/events', cors({ origin: true }));
+router.use('/events', cors({
+  origin: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
+}));
 
 // GET /api/v3/gtm/snippet — Get GTM container snippet
 router.get('/snippet', (req, res) => {
-  const containerId = req.query.containerId || 'GTM-RAYNA001';
+  const containerId = req.query.containerId || process.env.GTM_CONTAINER_ID || 'GTM-RAYNA001';
   res.json(GTMService.getContainerSnippet(containerId));
 });
 
 // GET /api/v3/gtm/datalayer — Get all dataLayer scripts
 router.get('/datalayer', (req, res) => {
   res.json(GTMService.getDataLayerScripts());
+});
+
+// GET /api/v3/gtm/tracking-bundle — Get ready-to-deploy tracking bundle for raynatours.com
+router.get('/tracking-bundle', (req, res) => {
+  res.json(GTMService.getTrackingBundle());
 });
 
 // POST /api/v3/gtm/events — Record a GTM event
