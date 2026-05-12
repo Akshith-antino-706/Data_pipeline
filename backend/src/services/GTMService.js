@@ -286,6 +286,210 @@ window.__rayna.trackViewItem = function(product) {
   }).catch(function() {});
 };`,
 
+      add_payment_info: `// ═══ Add Payment Info — call window.__rayna.trackAddPaymentInfo(payment) ═══
+// payment = { total, paymentMethod, coupon, items: [{ id, name, category, price, quantity }] }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackAddPaymentInfo = function(payment) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var p = payment || {};
+  var payload = {
+    'event': 'add_payment_info',
+    'rayna_user_id': rid,
+    'ecommerce': {
+      'currency': 'AED',
+      'value': Number(p.total) || 0,
+      'payment_type': p.paymentMethod || '',
+      'coupon': p.coupon || '',
+      'items': Array.isArray(p.items) ? p.items.map(function(i) {
+        return { item_id: String(i.id || ''), item_name: i.name || '', item_category: i.category || '', price: Number(i.price) || 0, quantity: Number(i.quantity) || 1 };
+      }) : []
+    }
+  };
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push(payload);
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'add_payment_info', rid: rid, pageUrl: window.location.href,
+      ecommerceData: payload.ecommerce, sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      add_to_wishlist: `// ═══ Add To Wishlist — call window.__rayna.trackAddToWishlist(product) ═══
+// product = { id, name, category, price, currency }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackAddToWishlist = function(product) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var p = product || {};
+  var payload = {
+    'event': 'add_to_wishlist',
+    'rayna_user_id': rid,
+    'ecommerce': {
+      'currency': p.currency || 'AED',
+      'value': Number(p.price) || 0,
+      'items': [{
+        'item_id': String(p.id || ''),
+        'item_name': p.name || '',
+        'item_category': p.category || '',
+        'price': Number(p.price) || 0
+      }]
+    }
+  };
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push(payload);
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'add_to_wishlist', rid: rid, pageUrl: window.location.href,
+      ecommerceData: payload.ecommerce, sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      check_availability: `// ═══ Check Availability — call window.__rayna.trackCheckAvailability(product) ═══
+// product = { id, name, category, date, adults, children }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackCheckAvailability = function(product) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var p = product || {};
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({
+    'event': 'check_availability',
+    'rayna_user_id': rid,
+    'item_name': p.name || '',
+    'item_id': String(p.id || ''),
+    'item_category': p.category || '',
+    'selected_date': p.date || '',
+    'adult_count': p.adults || 0,
+    'children_count': p.children || 0
+  });
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'check_availability', rid: rid, pageUrl: window.location.href,
+      eventCategory: 'engagement', eventAction: 'check_availability', eventLabel: p.name || '',
+      sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      click_call: `// ═══ Click Call — call window.__rayna.trackClickCall(context) ═══
+// context = { location, phoneNumber }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackClickCall = function(context) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var ctx = context || {};
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({
+    'event': 'click_call',
+    'rayna_user_id': rid,
+    'click_location': ctx.location || window.location.pathname,
+    'phone_number': ctx.phoneNumber || ''
+  });
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'click_call', rid: rid, pageUrl: window.location.href,
+      eventCategory: 'engagement', eventAction: 'click_call', eventLabel: ctx.phoneNumber || '',
+      sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      click_email: `// ═══ Click Email — call window.__rayna.trackClickEmail(context) ═══
+// context = { location, emailAddress }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackClickEmail = function(context) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var ctx = context || {};
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({
+    'event': 'click_email',
+    'rayna_user_id': rid,
+    'click_location': ctx.location || window.location.pathname,
+    'email_address': ctx.emailAddress || ''
+  });
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'click_email', rid: rid, pageUrl: window.location.href,
+      eventCategory: 'engagement', eventAction: 'click_email', eventLabel: ctx.emailAddress || '',
+      sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      event_date: `// ═══ Event Date — call window.__rayna.trackEventDate(data) ═══
+// data = { productName, selectedDate, adults, children }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackEventDate = function(data) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var d = data || {};
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({
+    'event': 'event_date',
+    'rayna_user_id': rid,
+    'product_name': d.productName || '',
+    'selected_date': d.selectedDate || '',
+    'adult_count': d.adults || 0,
+    'children_count': d.children || 0
+  });
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'event_date', rid: rid, pageUrl: window.location.href,
+      eventCategory: 'engagement', eventAction: 'event_date', eventLabel: d.productName || '',
+      sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      payment_failed: `// ═══ Payment Failed — call window.__rayna.trackPaymentFailed(data) ═══
+// data = { total, paymentMethod, errorMessage, items: [{ id, name, price }] }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackPaymentFailed = function(data) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var d = data || {};
+  var payload = {
+    'event': 'payment_failed',
+    'rayna_user_id': rid,
+    'ecommerce': {
+      'currency': 'AED',
+      'value': Number(d.total) || 0,
+      'payment_type': d.paymentMethod || '',
+      'error_message': d.errorMessage || ''
+    }
+  };
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push(payload);
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'payment_failed', rid: rid, pageUrl: window.location.href,
+      eventCategory: 'ecommerce', eventAction: 'payment_failed', eventLabel: d.errorMessage || '',
+      eventValue: d.total || 0, sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
+      share: `// ═══ Share — call window.__rayna.trackShare(data) ═══
+// data = { method, contentType, itemId, itemName }
+window.__rayna = window.__rayna || {};
+window.__rayna.trackShare = function(data) {
+  var rid = window.__rayna_rid || sessionStorage.getItem('rayna_rid') || null;
+  var d = data || {};
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({
+    'event': 'share',
+    'rayna_user_id': rid,
+    'method': d.method || '',
+    'content_type': d.contentType || '',
+    'item_id': String(d.itemId || ''),
+    'item_name': d.itemName || ''
+  });
+
+  fetch('${backendUrl}/api/v3/gtm/events', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventName: 'share', rid: rid, pageUrl: window.location.href,
+      eventCategory: 'engagement', eventAction: 'share', eventLabel: d.itemName || '',
+      sessionId: sessionStorage.getItem('rayna_session') || null })
+  }).catch(function() {});
+};`,
+
       email_open: `// Pixel-based tracking — automatically injected into email HTML by the backend.
 // No script needed on the website. The open pixel is:
 // <img src="${backendUrl}/api/track/email-send/open/{logId}" width="1" height="1" />`,
@@ -362,6 +566,22 @@ ${scripts.lead_submit}
 ${scripts.whatsapp_click}
 
 ${scripts.view_item}
+
+${scripts.add_payment_info}
+
+${scripts.add_to_wishlist}
+
+${scripts.check_availability}
+
+${scripts.click_call}
+
+${scripts.click_email}
+
+${scripts.event_date}
+
+${scripts.payment_failed}
+
+${scripts.share}
 </script>`;
 
     return {
@@ -420,8 +640,8 @@ ${scripts.view_item}
     const numericCustomerId = /^\d+$/.test(customerId) ? parseInt(customerId) : null;
 
     const { rows: [event] } = await db.query(`
-      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
       RETURNING *
     `, [eventName, numericCustomerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body)]);
     return event;

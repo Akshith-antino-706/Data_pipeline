@@ -3,5 +3,6 @@
 
 ALTER TABLE gtm_events ADD COLUMN IF NOT EXISTS unified_id BIGINT;
 ALTER TABLE gtm_events ADD COLUMN IF NOT EXISTS raw_payload JSONB DEFAULT '{}';
+ALTER TABLE gtm_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_gtm_events_unified ON gtm_events(unified_id);

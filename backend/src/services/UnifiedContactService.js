@@ -485,7 +485,7 @@ export default class UnifiedContactService {
     `);
     const prevMap = Object.fromEntries(prevRows.map(r => [r.segment_label, r.total_count]));
 
-    // 4. Insert (always INSERT, no upsert — allows multiple snapshots per day)
+    // 4. Upsert — one row per (log_date, segment_label), update if already exists
     for (const seg of segments) {
       const prev = prevMap[seg.segment_label] || 0;
       const entered = Math.max(0, seg.total_count - prev);
@@ -496,6 +496,12 @@ export default class UnifiedContactService {
         INSERT INTO segment_daily_log (log_date, segment_label, total_count, entered, exited, converted,
           emails_sent, whatsapp_sent, push_sent, total_reached, journey_active, journey_completed, revenue, snapshot_time)
         VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 0, 0, 0, 0, $6, $7)
+        ON CONFLICT (log_date, segment_label) DO UPDATE SET
+          total_count = EXCLUDED.total_count,
+          entered = EXCLUDED.entered,
+          exited = EXCLUDED.exited,
+          revenue = EXCLUDED.revenue,
+          snapshot_time = EXCLUDED.snapshot_time
       `, [today, seg.segment_label, seg.total_count, entered, exited, revenue, snapshotTime]);
     }
 
