@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { getSegmentationTree, getSegmentActivity } from '@/lib/api';
-import { RefreshCw, Target, TrendingUp, Users, Send, FileText, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Calendar } from 'lucide-react';
+import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
@@ -30,6 +32,25 @@ export default function Dashboard() {
   const [activity, setActivity] = useState(null);
   const [loading, setLoading] = useState(true);
   const { businessType } = useBusinessType();
+
+  // ── email schedule summary ─────────────────────────────────────────
+  const [schedSummary, setSchedSummary] = useState({ running: 0, total: 0, lastSentDay: null, lastSentAt: null });
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v3/test-sends/schedule/list`)
+      .then(r => r.json())
+      .then(d => {
+        const list = Array.isArray(d?.data) ? d.data : [];
+        const running = list.filter(s => s.is_running);
+        const last = list.find(s => s.last_sent_at);
+        setSchedSummary({
+          running:     running.length,
+          total:       list.length,
+          lastSentDay: last?.last_sent_day ?? null,
+          lastSentAt:  last?.last_sent_at  ?? null,
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   // const [dateFrom, setDateFrom] = useState(() => {
   //   const d = new Date(); d.setDate(d.getDate() - 30);
@@ -222,6 +243,52 @@ export default function Dashboard() {
           <div className="action-title">Segment Activity</div>
           <div className="action-desc">Daily entries, exits & reach</div>
         </Link>
+      </motion.div>
+
+      {/* Email Schedule Status */}
+      <motion.div variants={fadeInUp}>
+        <div className="card mb-24">
+          <div className="card-header">
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Mail size={16} color="#e2b340" /> Email Schedules
+            </h3>
+            <Link href="/test-sends" className="btn btn-sm btn-ghost">Manage</Link>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '4px 0' }}>
+            <div style={{ textAlign: 'center', padding: '14px 8px' }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: schedSummary.running > 0 ? '#22c55e' : 'var(--text-primary)' }}>
+                {schedSummary.running}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                {schedSummary.running > 0 && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 2s infinite' }} />}
+                Active Schedules
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '14px 8px' }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)' }}>
+                {schedSummary.total}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Total Schedules</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '14px 8px' }}>
+              {schedSummary.lastSentDay ? (
+                <>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: '#e2b340', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <CheckCircle2 size={20} /> Day {schedSummary.lastSentDay}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                    Last sent · {new Date(schedSummary.lastSentAt).toLocaleTimeString()}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-tertiary)' }}>—</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>No sends yet</div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       </motion.div>
 
       {/* Recent Activity Summary */}

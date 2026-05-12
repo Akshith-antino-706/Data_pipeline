@@ -69,10 +69,10 @@ async function loadEmailChannel() {
   return EmailChannel;
 }
 
-// Cache ranking results per day for 10 minutes — avoids calling Claude on every send
+// Cache ranking results per day — 1800s (30 min) covers full 7-day sequence (7×2min=14min + buffer)
 async function cachedRanking(key, computeFn) {
   const { cached } = await import('../config/cache.js');
-  return cached(`test-send:ranking:${key}`, computeFn, 600);
+  return cached(`test-send:ranking:${key}`, computeFn, 1800);
 }
 
 function leftoversCheck(html) {
@@ -86,7 +86,7 @@ function leftoversCheck(html) {
  * open-tracking pixel so we know when the recipient actually reads the email.
  */
 
-async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber }) {
+async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber, source = 'test-send' }) {
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 
   const logId = await SendTrackService.logSend({
@@ -95,8 +95,9 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
     subject,
     templateLabel,
     dayNumber,
-    source: 'test-send',
+    source,
   });
+  console.log(`[SendQueue] QUEUED  Day${dayNumber} → ${recipient.email} (log#${logId})`);
 
   // 1. Inject UTM params + click-tracking redirect into every link
   const campaignSlug = `day${dayNumber}_${templateLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
@@ -119,8 +120,10 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
 
   // Fire-and-forget — don't block the API response on the status update
   if (result?.success) {
+    console.log(`[SendQueue] SENT    Day${dayNumber} → ${recipient.email} (log#${logId}, ${ms}ms, provider:${result.provider || '?'})`);
     SendTrackService.markSent(logId, { externalId: result.externalId || null, provider: result.provider || null, durationMs: ms }).catch(() => {});
   } else {
+    console.log(`[SendQueue] FAILED  Day${dayNumber} → ${recipient.email} (log#${logId}) — ${result?.error || result?.reason || 'unknown'}`);
     SendTrackService.markFailed(logId, { error: result?.error || result?.reason || 'unknown', provider: result?.provider || null, durationMs: ms }).catch(() => {});
   }
 
@@ -134,6 +137,35 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
     ms,
   };
 }
+
+// ── contact list (paginated, optional filter) ────────────────────────────
+
+router.get('/contacts', async (req, res, next) => {
+  try {
+    const q      = String(req.query.q || '').trim();
+    const limit  = Math.min(100, parseInt(req.query.limit  || '50'));
+    const offset = Math.max(0,   parseInt(req.query.offset || '0'));
+    const hasQ   = q.length >= 2;
+    const like   = hasQ ? `%${q.toLowerCase()}%` : null;
+
+    const [{ rows }, { rows: [cnt] }] = await Promise.all([
+      db.query(
+        `SELECT id, email, name, contact_type FROM unified_contacts
+         WHERE email IS NOT NULL AND email <> ''
+         ${hasQ ? "AND (lower(email) LIKE $3 OR lower(name) LIKE $3)" : ''}
+         ORDER BY email LIMIT $1 OFFSET $2`,
+        hasQ ? [limit, offset, like] : [limit, offset]
+      ),
+      db.query(
+        `SELECT COUNT(*)::int AS total FROM unified_contacts
+         WHERE email IS NOT NULL AND email <> ''
+         ${hasQ ? "AND (lower(email) LIKE $1 OR lower(name) LIKE $1)" : ''}`,
+        hasQ ? [like] : []
+      ),
+    ]);
+    res.json({ data: { contacts: rows, total: cnt.total, limit, offset } });
+  } catch (err) { next(err); }
+});
 
 // ── contact search ───────────────────────────────────────────────────────
 
@@ -174,40 +206,86 @@ router.get('/search-contacts', async (req, res, next) => {
 
 // ── daily auto-send schedule ──────────────────────────────────────────────
 
-router.get('/schedule', async (_req, res, next) => {
+// List all schedules (static routes must come before /:id routes)
+router.get('/schedule/list', async (_req, res, next) => {
   try {
-    const { getStatus } = await import('../services/TestSendScheduler.js');
-    const status = await getStatus();
-    res.json({ data: status });
+    const { listSchedules } = await import('../services/TestSendScheduler.js');
+    res.json({ data: await listSchedules() });
   } catch (err) { next(err); }
 });
 
+// Create + start a new schedule
 router.post('/schedule/start', async (req, res, next) => {
   try {
     const { start } = await import('../services/TestSendScheduler.js');
     const status = await start({
       destinationKey: req.body?.destinationKey || 'singapore',
-      loop: req.body?.loop === true,
-      emails: req.body?.emails || [],
+      loop:           req.body?.loop === true,
+      emails:         req.body?.emails || [],
+      baseUrl:        `http://localhost:${process.env.PORT || 3001}`,
     });
     res.json({ data: status });
   } catch (err) { next(err); }
 });
 
-router.post('/schedule/stop', async (_req, res, next) => {
+// Per-schedule operations — :id must come after all static sub-paths
+router.post('/schedule/:id/stop', async (req, res, next) => {
   try {
     const { stop } = await import('../services/TestSendScheduler.js');
-    const status = await stop();
-    res.json({ data: status });
+    res.json({ data: await stop(parseInt(req.params.id)) });
   } catch (err) { next(err); }
 });
 
-// Manual tick — useful for "Send today's email now" without waiting for cron
-router.post('/schedule/tick', async (_req, res, next) => {
+router.post('/schedule/:id/tick', async (req, res, next) => {
   try {
     const { tick } = await import('../services/TestSendScheduler.js');
-    const result = await tick();
-    res.json({ data: result });
+    res.json({ data: await tick(parseInt(req.params.id)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/schedule/:id/remove-email', async (req, res, next) => {
+  try {
+    const { removeEmail } = await import('../services/TestSendScheduler.js');
+    const email = req.body?.email;
+    if (!email) return res.status(400).json({ error: 'email is required' });
+    res.json({ data: await removeEmail(parseInt(req.params.id), email) });
+  } catch (err) { next(err); }
+});
+
+// Per-schedule send queue (recent email_send_log entries filtered by time + emails)
+router.get('/schedule/:id/queue', async (req, res, next) => {
+  try {
+    const limit = Math.min(200, parseInt(req.query.limit || '100'));
+    const { rows } = await db.query(`
+      SELECT
+        esl.id, esl.email, esl.contact_name, esl.day_number, esl.template_label,
+        esl.source, esl.status, esl.error_message,
+        esl.sent_at, esl.opened_at, esl.clicked_at, esl.duration_ms, esl.created_at
+      FROM email_send_log esl
+      WHERE esl.source IN ('test-send', 'scheduled-send')
+      ORDER BY esl.created_at DESC
+      LIMIT $1
+    `, [limit]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+// Per-schedule logs — all email_send_log entries for this schedule's recipients
+// since the schedule started_at (approximate but correct for QA use)
+router.get('/schedule/:id/logs', async (req, res, next) => {
+  try {
+    const scheduleId = parseInt(req.params.id);
+    const { rows } = await db.query(`
+      SELECT DISTINCT ON (email, day_number)
+        id, email, contact_name, day_number, template_label, source,
+        status, error_message, sent_at, opened_at, clicked_at, duration_ms, created_at
+      FROM email_send_log
+      WHERE source = $1
+      ORDER BY email, day_number, created_at DESC
+      LIMIT 500
+    `, [`schedule-${scheduleId}`]);
+
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 
@@ -241,15 +319,16 @@ router.post('/day1', async (req, res, next) => {
     }
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day1-welcome-dynamic.html'), 'utf8');
-    const subject  = req.body?.subject || 'Welcome to Rayna Tours — Your Dream Holiday Starts Here';
+    const subject  = req.body?.subject || 'Your Rayna Tours Journey Starts Here';
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay1WelcomeData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay1Welcome(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', dayNumber: 1 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', source, dayNumber:1 }));
     }
     res.json({ data: { day: 1, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -272,13 +351,14 @@ router.post('/day2', async (req, res, next) => {
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day2-cruise-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Set Sail: Cruise Highlights from Rayna Tours';
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay2CruiseData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay2Cruise(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', dayNumber: 2 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', source, dayNumber:2 }));
     }
     res.json({ data: { day: 2, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -304,15 +384,16 @@ router.post('/day3', async (req, res, next) => {
     }
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day3-visa-dynamic.html'), 'utf8');
-    const subject  = req.body?.subject || 'Your Visa, Sorted — Rayna Tours';
+    const subject  = req.body?.subject || 'Your Visa, Sorted | Rayna Tours';
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay3VisaData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay3Visa(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', dayNumber: 3 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', source, dayNumber:3 }));
     }
     res.json({ data: { day: 3, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -333,15 +414,16 @@ router.post('/day4', async (req, res, next) => {
     const ranking = useClaude ? await cachedRanking('day4', rankTrendingHolidays) : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day4-holidays-dynamic.html'), 'utf8');
-    const subject  = req.body?.subject || 'Dream Holiday Destinations — Rayna Tours';
+    const subject  = req.body?.subject || 'Curated Trips Selected for You | Rayna Tours';
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay4HolidaysData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay4Holidays(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', dayNumber: 4 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', source, dayNumber:4 }));
     }
     res.json({ data: { day: 4, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -362,15 +444,16 @@ router.post('/day5', async (req, res, next) => {
     const ranking = useClaude ? await cachedRanking('day5', rankTrendingActivities) : { ranking: rankInternals.buildFallbackRanking(), source: 'fallback' };
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day5-activities-dynamic.html'), 'utf8');
-    const subject  = req.body?.subject || 'World-Class Activities, Instantly Booked — Rayna Tours';
+    const subject  = req.body?.subject || 'World-Class Activities, Instantly Booked | Rayna Tours';
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay5ActivitiesData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay5Activities(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', dayNumber: 5 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', source, dayNumber:5 }));
     }
     res.json({ data: { day: 5, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -406,15 +489,16 @@ router.post('/day6', async (req, res, next) => {
     }
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day6-destination-dynamic.html'), 'utf8');
-    const subject  = req.body?.subject || `${dest.name}, Your Way — Rayna Tours`;
+    const subject  = req.body?.subject || `${dest.name}, Your Way | Rayna Tours`;
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay6DestinationData({ contactId: r.unified_id, destinationKey, ranking: ranking.ranking });
       const html = renderDay6Destination(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', dayNumber: 6 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', source, dayNumber:6 }));
     }
     res.json({ data: { day: 6, destinationKey, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -446,15 +530,16 @@ router.post('/day7', async (req, res, next) => {
     }
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day7-abandoned-cart-dynamic.html'), 'utf8');
-    const subject  = req.body?.subject || 'You Left Something Behind — Rayna Tours';
+    const subject  = req.body?.subject || 'You Left Something Behind | Rayna Tours';
 
+    const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
     const results = [];
     for (const r of recipients) {
       const data = await buildDay7AbandonedCartData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay7AbandonedCart(template, data);
       if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', dayNumber: 7 }));
+      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', source, dayNumber:7 }));
     }
     res.json({ data: { day: 7, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
@@ -543,5 +628,54 @@ router.get('/utm-log/summary', async (_req, res, next) => {
     res.json({ data: summary });
   } catch (err) { next(err); }
 });
+
+// ── Pre-warm: generate all 7 day rankings in parallel before schedule starts ──
+
+router.post('/prewarm', async (req, res, next) => {
+  try {
+    const destinationKey = req.body?.destinationKey || 'singapore';
+    console.log('[Prewarm] Starting pre-generation of all 7 day rankings in parallel...');
+
+    const [
+      { rankTrendingWelcome },
+      { rankTrendingCruises },
+      { rankTrendingVisas },
+      { rankTrendingHolidays },
+      { rankTrendingActivities },
+      { rankDestinationSpotlight },
+      { rankAbandonedCartFallback },
+    ] = await Promise.all([
+      import('../services/Day1WelcomeRankingService.js'),
+      import('../services/Day2CruiseRankingService.js'),
+      import('../services/VisaRankingService.js'),
+      import('../services/Day4HolidaysRankingService.js'),
+      import('../services/Day5ActivitiesRankingService.js'),
+      import('../services/Day6DestinationRankingService.js'),
+      import('../services/Day7AbandonedCartRankingService.js'),
+    ]);
+
+    const results = await Promise.allSettled([
+      cachedRanking('day1', rankTrendingWelcome),
+      cachedRanking('day2', rankTrendingCruises),
+      cachedRanking('day3', rankTrendingVisas),
+      cachedRanking('day4', rankTrendingHolidays),
+      cachedRanking('day5', rankTrendingActivities),
+      cachedRanking(`day6:${destinationKey}`, () => rankDestinationSpotlight({ destinationKey })),
+      cachedRanking('day7', rankAbandonedCartFallback),
+    ]);
+
+    const summary = results.map((r, i) => ({
+      day:    i + 1,
+      label:  ['Welcome','Cruise Spotlight','Visa Hub','Holidays','Activities','Destination Spotlight','Abandoned Cart'][i],
+      status: r.status === 'fulfilled' ? 'ready' : 'failed',
+      source: r.status === 'fulfilled' ? (r.value?.source || 'cache') : null,
+      error:  r.status === 'rejected'  ? r.reason?.message : null,
+    }));
+
+    console.log('[Prewarm] Complete:', summary.map(s => `Day${s.day}(${s.status})`).join(' '));
+    res.json({ data: { summary, ready: summary.filter(s => s.status === 'ready').length, total: 7 } });
+  } catch (err) { next(err); }
+});
+
 
 export default router;
