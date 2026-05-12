@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import {
   Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
   Square, Calendar, Zap, Search, X, ClipboardList,
-  MousePointer, Eye, ArrowRight, Link2,
+  MousePointer, Eye, ArrowRight, Link2, Cpu, RefreshCw,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -64,6 +64,11 @@ export default function TestSends() {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleLoop, setScheduleLoop] = useState(false);
 
+  // ── queue + prewarm state ─────────────────────────────────────────────
+  const [queue, setQueue]           = useState([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const pollRef = useRef(null);
+
   // ── flow tracker stats ────────────────────────────────────────────────
   const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, failed: 0, utmCaptures: 0 });
 
@@ -89,14 +94,44 @@ export default function TestSends() {
   }, []);
 
 
+  const loadQueue = useCallback(async () => {
+    setQueueLoading(true);
+    try {
+      const data = await apiGet('/api/v3/test-sends/schedule/queue?limit=50');
+      setQueue(Array.isArray(data) ? data : []);
+    } catch {}
+    setQueueLoading(false);
+  }, []);
+
+  // Poll schedule status + queue while running
+  useEffect(() => {
+    if (!schedule?.is_running) {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      return;
+    }
+    if (pollRef.current) return; // already polling
+    pollRef.current = setInterval(async () => {
+      try {
+        const d = await apiGet('/api/v3/test-sends/schedule');
+        setSchedule(d);
+        loadQueue();
+        if (!d?.is_running) { clearInterval(pollRef.current); pollRef.current = null; }
+      } catch {}
+    }, 3000);
+    loadQueue();
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [schedule?.is_running, loadQueue]);
+
   // Load schedule on mount
   useEffect(() => {
     apiGet('/api/v3/test-sends/schedule').then(d => {
       setSchedule(d);
       if (d?.destination_key) setDay6Dest(d.destination_key);
-      if (d?.loop != null) setScheduleLoop(!!d.loop);
+      // Never restore loop=true from DB — user must opt in explicitly each time
+      setScheduleLoop(false);
+      if (d?.is_running) loadQueue();
     }).catch(() => {});
-  }, []);
+  }, [loadQueue]);
 
   // ── contact search (debounced) ─────────────────────────────────────────
   useEffect(() => {
@@ -161,6 +196,13 @@ export default function TestSends() {
       setSchedule(await apiPost('/api/v3/test-sends/schedule/stop'));
     } catch (err) { alert('Stop failed: ' + err.message); }
     setScheduleLoading(false);
+  }, []);
+
+  const handleRemoveEmail = useCallback(async (email) => {
+    try {
+      const data = await apiPost('/api/v3/test-sends/schedule/remove-email', { email });
+      setSchedule(data);
+    } catch (err) { alert('Remove failed: ' + err.message); }
   }, []);
 
   const handleScheduleTick = useCallback(async () => {
@@ -378,7 +420,24 @@ export default function TestSends() {
                   <div><span style={{ color: 'var(--muted-foreground)' }}>Day-6 dest:</span> {schedule.destination_key}</div>
                 )}
                 {Array.isArray(schedule.emails) && schedule.emails.length > 0 && (
-                  <div><span style={{ color: 'var(--muted-foreground)' }}>To:</span> {schedule.emails.join(', ')}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ color: 'var(--muted-foreground)', flexShrink: 0 }}>To:</span>
+                    {schedule.emails.map(email => (
+                      <span key={email} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        fontSize: 11, padding: '2px 8px 2px 10px', borderRadius: 'var(--radius-sm)',
+                        background: 'rgba(226,179,64,0.10)', color: '#e2b340', fontWeight: 500,
+                      }}>
+                        {email}
+                        <X
+                          size={11}
+                          style={{ cursor: 'pointer', opacity: 0.7, flexShrink: 0 }}
+                          title={`Remove ${email} from queue`}
+                          onClick={() => handleRemoveEmail(email)}
+                        />
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -428,6 +487,113 @@ export default function TestSends() {
           </div>
         </div>
       </div>
+
+      {/* ── Prewarm status panel ─────────────────────────────────────── */}
+      {schedule?.prewarm && schedule.prewarm.status !== 'idle' && (
+        <div style={{
+          background: 'var(--card)',
+          border: `1px solid ${schedule.prewarm.status === 'prewarming' ? 'rgba(226,179,64,0.4)' : schedule.prewarm.status === 'ready' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+          borderRadius: 'var(--radius-xl)', padding: '14px 18px', marginBottom: 16,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {schedule.prewarm.status === 'prewarming'
+              ? <Loader2 size={15} className="spin" style={{ color: '#e2b340', flexShrink: 0 }} />
+              : schedule.prewarm.status === 'ready'
+                ? <Cpu size={15} style={{ color: '#22c55e', flexShrink: 0 }} />
+                : <XCircle size={15} style={{ color: '#ef4444', flexShrink: 0 }} />}
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              {schedule.prewarm.status === 'prewarming' && 'Pre-generating AI content for all 7 days…'}
+              {schedule.prewarm.status === 'ready' && `AI content ready — ${schedule.prewarm.readyCount}/7 days pre-warmed`}
+              {schedule.prewarm.status === 'failed' && `Pre-warm failed: ${schedule.prewarm.error}`}
+            </span>
+            {schedule.prewarm.status === 'prewarming' && (
+              <span style={{ fontSize: 11, color: 'var(--muted-foreground)', marginLeft: 4 }}>
+                Emails will send once all Claude rankings are cached
+              </span>
+            )}
+          </div>
+          {schedule.prewarm.status === 'ready' && schedule.prewarm.summary?.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+              {schedule.prewarm.summary.map(s => (
+                <span key={s.day} style={{
+                  fontSize: 10, padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontWeight: 600,
+                  background: s.status === 'ready' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                  color: s.status === 'ready' ? '#22c55e' : '#ef4444',
+                  border: `1px solid ${s.status === 'ready' ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                }}>
+                  Day {s.day} {s.status === 'ready' ? '✓' : '✗'} {s.label}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Send Queue Log ────────────────────────────────────────────── */}
+      {(schedule?.is_running || queue.length > 0) && (
+        <div style={{
+          background: 'var(--card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-xl)', padding: '14px 18px', marginBottom: 24,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <RefreshCw size={14} style={{ color: '#e2b340', animation: queueLoading ? 'spin 1s linear infinite' : 'none' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
+              Send Queue
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>&middot; {queue.length} entries</span>
+            {schedule?.is_running && (
+              <span style={{ fontSize: 10, color: '#22c55e', marginLeft: 4 }}>auto-refreshing</span>
+            )}
+            <button onClick={loadQueue} disabled={queueLoading}
+              style={{ marginLeft: 'auto', fontSize: 11, background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '3px 10px', cursor: 'pointer', color: 'var(--muted-foreground)' }}>
+              Refresh
+            </button>
+          </div>
+          {queue.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--muted-foreground)', textAlign: 'center', padding: '12px 0' }}>
+              No sends yet — queue will populate once emails start sending
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    {['Day', 'Email', 'Status', 'Sent At', 'ms'].map(h => (
+                      <th key={h} style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--muted-foreground)', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {queue.map(row => {
+                    const statusColor = row.status === 'sent' || row.status === 'opened' || row.status === 'clicked' ? '#22c55e' : row.status === 'failed' ? '#ef4444' : row.status === 'queued' ? '#e2b340' : 'var(--muted-foreground)';
+                    return (
+                      <tr key={row.id} style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 50%, transparent)' }}>
+                        <td style={{ padding: '5px 8px', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: 'rgba(226,179,64,0.12)', color: '#e2b340', fontWeight: 700 }}>
+                            Day {row.day_number}
+                          </span>
+                        </td>
+                        <td style={{ padding: '5px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.email}</td>
+                        <td style={{ padding: '5px 8px' }}>
+                          <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 'var(--radius-sm)', fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase', background: `color-mix(in srgb, ${statusColor} 12%, transparent)`, color: statusColor }}>
+                            {row.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '5px 8px', color: 'var(--muted-foreground)', whiteSpace: 'nowrap' }}>
+                          {row.sent_at ? new Date(row.sent_at).toLocaleTimeString() : row.status === 'queued' ? '—' : '—'}
+                        </td>
+                        <td style={{ padding: '5px 8px', color: 'var(--muted-foreground)', textAlign: 'right' }}>
+                          {row.duration_ms ? `${row.duration_ms}ms` : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Email Flow Tracker ───────────────────────────────────────── */}
       <div style={{
