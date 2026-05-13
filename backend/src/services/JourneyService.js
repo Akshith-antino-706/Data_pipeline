@@ -33,12 +33,19 @@ class JourneyService {
 
   // ── CRUD ──────────────────────────────────────────────────
 
-  static async getAll({ status, audience, page = 1, limit = 20 } = {}) {
+  static async getAll({ status, audience, page = 1, limit = 20, parentId = null, onlyRoot = false } = {}) {
     const offset = (page - 1) * limit;
     let where = '1=1';
     const params = [];
 
-    if (status) {
+    if (parentId !== null && parentId !== undefined) {
+      params.push(parentId);
+      where += ` AND jf.parent_journey_id = $${params.length}`;
+    } else if (onlyRoot) {
+      where += ` AND jf.parent_journey_id IS NULL`;
+    }
+
+    if (status && status !== 'all') {
       params.push(status);
       where += ` AND jf.status = $${params.length}`;
     }
@@ -65,6 +72,10 @@ class JourneyService {
     `, [...params, limit, offset]);
 
     return { data: rows, total: parseInt(count), page, limit };
+  }
+
+  static async getSubJourneys(parentId, { status } = {}) {
+    return this.getAll({ parentId, status, limit: 100 });
   }
 
   static async getById(journeyId) {
@@ -104,12 +115,12 @@ class JourneyService {
     return { ...journey, entryStats, nodeAnalytics };
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, parentJourneyId }) {
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, parent_journey_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
-    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all']);
+    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', parentJourneyId || null]);
     return journey;
   }
 

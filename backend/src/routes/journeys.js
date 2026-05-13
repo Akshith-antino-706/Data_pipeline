@@ -3,11 +3,19 @@ import JourneyService from '../services/JourneyService.js';
 import ConversionDetector from '../services/ConversionDetector.js';
 const router = Router();
 
-// List journeys (supports ?audience=indian|rest|all)
+// List journeys — returns only root journeys (parent_journey_id IS NULL) by default.
+// Pass ?parentId=<id> to fetch sub-journeys for a specific parent.
 router.get('/', async (req, res, next) => {
   try {
-    const { status, audience, page, limit } = req.query;
-    const data = await JourneyService.getAll({ status, audience, page: parseInt(page) || 1, limit: parseInt(limit) || 20 });
+    const { status, audience, page, limit, parentId } = req.query;
+    const onlyRoot = parentId === undefined;
+    const data = await JourneyService.getAll({
+      status, audience,
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 20,
+      parentId: parentId !== undefined ? parseInt(parentId) : null,
+      onlyRoot,
+    });
     res.json(data);
   } catch (err) { next(err); }
 });
@@ -18,6 +26,33 @@ router.get('/:id', async (req, res, next) => {
     const data = await JourneyService.getById(parseInt(req.params.id));
     if (!data) return res.status(404).json({ error: 'Journey not found' });
     res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// List sub-journeys for a parent journey (supports ?status=active|draft|completed)
+router.get('/:id/sub-journeys', async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    const data = await JourneyService.getSubJourneys(parseInt(req.params.id), { status });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+// Create a sub-journey under a parent
+router.post('/:id/sub-journeys', async (req, res, next) => {
+  try {
+    const defaultNodes = [{
+      id: 'trigger-1', type: 'trigger',
+      data: { triggerType: 'segment_entry', label: 'Entry Point' },
+      position: { x: 300, y: 50 },
+    }];
+    const data = await JourneyService.create({
+      ...req.body,
+      parentJourneyId: parseInt(req.params.id),
+      nodes: req.body.nodes?.length ? req.body.nodes : defaultNodes,
+      edges: req.body.edges || [],
+    });
+    res.status(201).json({ data });
   } catch (err) { next(err); }
 });
 

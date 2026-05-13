@@ -7,7 +7,7 @@ import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  testSendJourneyNode
+  testSendJourneyNode, getSubJourneys, createSubJourney, getTemplates
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -31,6 +31,38 @@ const NODE_LABELS = {
   trigger: 'Entry Trigger', action: 'Send Message', condition: 'Branch',
   wait: 'Wait / Delay', goal: 'Conversion Goal'
 };
+
+// Pre-built node templates for the "Create Sub Journey" node picker
+const NODE_TEMPLATES = [
+  // Trigger
+  { id: 'tpl-trigger',        type: 'trigger',   group: 'trigger',   label: 'Entry Trigger',        data: { triggerType: 'segment_entry', label: 'Entry Point' } },
+  // Actions
+  { id: 'tpl-action-email',   type: 'action',    group: 'action',    label: 'Send Email',           data: { channel: 'email',     label: 'Send Email' } },
+  { id: 'tpl-action-wa',      type: 'action',    group: 'action',    label: 'Send WhatsApp',        data: { channel: 'whatsapp',  label: 'Send WhatsApp' } },
+  { id: 'tpl-action-sms',     type: 'action',    group: 'action',    label: 'Send SMS',             data: { channel: 'sms',       label: 'Send SMS' } },
+  // Waits
+  { id: 'tpl-wait-1',         type: 'wait',      group: 'wait',      label: 'Wait 1 Day',           data: { waitDays: 1, label: 'Wait 1 Day' } },
+  { id: 'tpl-wait-2',         type: 'wait',      group: 'wait',      label: 'Wait 2 Days',          data: { waitDays: 2, label: 'Wait 2 Days' } },
+  { id: 'tpl-wait-3',         type: 'wait',      group: 'wait',      label: 'Wait 3 Days',          data: { waitDays: 3, label: 'Wait 3 Days' } },
+  { id: 'tpl-wait-7',         type: 'wait',      group: 'wait',      label: 'Wait 7 Days',          data: { waitDays: 7, label: 'Wait 7 Days' } },
+  // Conditions
+  { id: 'tpl-cond-booked',    type: 'condition', group: 'condition', label: 'Has Booked?',          data: { condition: 'booked',        label: 'Has Booked?' } },
+  { id: 'tpl-cond-opened',    type: 'condition', group: 'condition', label: 'Opened Email?',        data: { condition: 'opened_email',  label: 'Opened Email?' } },
+  { id: 'tpl-cond-clicked',   type: 'condition', group: 'condition', label: 'Clicked Link?',        data: { condition: 'clicked_link',  label: 'Clicked Link?' } },
+  // Goals
+  { id: 'tpl-goal-booking',   type: 'goal',      group: 'goal',      label: 'Goal: Booking',        data: { goalType: 'booking',      label: 'Booking Goal' } },
+  { id: 'tpl-goal-enquiry',   type: 'goal',      group: 'goal',      label: 'Goal: Enquiry',        data: { goalType: 'enquiry',      label: 'Enquiry Goal' } },
+  { id: 'tpl-goal-register',  type: 'goal',      group: 'goal',      label: 'Goal: Registration',   data: { goalType: 'registration', label: 'Registration Goal' } },
+];
+
+const NODE_TEMPLATE_GROUPS = [
+  { key: 'trigger',   label: 'Trigger' },
+  { key: 'action',    label: 'Actions' },
+  { key: 'wait',      label: 'Wait' },
+  { key: 'condition', label: 'Conditions' },
+  { key: 'goal',      label: 'Goals' },
+];
+
 const CHANNEL_CONFIG = {
   whatsapp: { color: '#25d366', icon: MessageCircle, label: 'WhatsApp' },
   email: { color: 'var(--red)', icon: Mail, label: 'Email' },
@@ -109,10 +141,25 @@ export default function Journeys() {
   const [flowEditMode, setFlowEditMode] = useState(false);
   const [editingNode, setEditingNode] = useState(null); // node being edited
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
-  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', track: 'all' });
+  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null });
+  const [showNodeModal, setShowNodeModal] = useState(false);
+  const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
+  const [allTemplates, setAllTemplates] = useState({ email: [], whatsapp: [], sms: [] });
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [trackFilter, setTrackFilter] = useState('all'); // 'all' | 'indian' | 'rest'
   // Test-send-from-node modal state: null when closed, { node, recipient, sending, result } when open
   const [testSendNode, setTestSendNode] = useState(null);
+
+  // ── Sub-journey list state ─────────────────────────────────
+  const [parentSelected, setParentSelected] = useState(null);  // parent journey id
+  const [parentDetail, setParentDetail] = useState(null);       // parent journey object
+  const [subJourneys, setSubJourneys] = useState([]);
+  const [subJourneyLoading, setSubJourneyLoading] = useState(false);
+  const [subJourneyFilter, setSubJourneyFilter] = useState('all');
+  const [showCreateSub, setShowCreateSub] = useState(false);
+  const [createSubForm, setCreateSubForm] = useState({ name: '', description: '', selectedNodes: [], customNodes: [] });
+  const [showCustomNodeForm, setShowCustomNodeForm] = useState(false);
+  const [customNodeForm, setCustomNodeForm] = useState({ type: 'action', channel: 'email', label: '', waitDays: 1, goalType: 'booking', condition: 'booked', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null });
 
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState({
@@ -162,6 +209,119 @@ export default function Journeys() {
       setCampaignData(cd.data);
     } catch (err) { showToast('Failed to load journey', 'error'); }
     setDetailLoading(false);
+  };
+
+  const openParentJourney = async (journeyId) => {
+    setParentSelected(journeyId);
+    setSubJourneys([]);
+    setSubJourneyFilter('all');
+    setSubJourneyLoading(true);
+    const parent = journeys.find(x => x.journey_id === journeyId);
+    setParentDetail(parent || null);
+    try {
+      const res = await getSubJourneys(journeyId);
+      setSubJourneys(res.data || []);
+    } catch { showToast('Failed to load sub-journeys', 'error'); }
+    setSubJourneyLoading(false);
+  };
+
+  const reloadSubJourneys = async (parentId) => {
+    try {
+      const res = await getSubJourneys(parentId);
+      setSubJourneys(res.data || []);
+    } catch { /* ignore */ }
+  };
+
+  const handleCreateSubJourney = async () => {
+    if (!createSubForm.name.trim()) return showToast('Name is required', 'error');
+    setShowCreateSub(false);
+    try {
+      // Always start with trigger if user didn't pick one
+      const hasTrigger = createSubForm.selectedNodes.some(
+        id => NODE_TEMPLATES.find(t => t.id === id)?.type === 'trigger'
+      ) || createSubForm.customNodes.some(n => n.type === 'trigger');
+
+      const finalIds = hasTrigger ? createSubForm.selectedNodes : ['tpl-trigger', ...createSubForm.selectedNodes];
+
+      // Expand template nodes
+      const templateNodes = finalIds.map((id, idx) => {
+        const t = NODE_TEMPLATES.find(tmpl => tmpl.id === id);
+        if (!t) return null;
+        return { id: `${t.type}-t${idx + 1}`, type: t.type, data: { ...t.data }, position: { x: 300, y: idx * 160 } };
+      }).filter(Boolean);
+
+      // Build custom nodes
+      const baseOffset = templateNodes.length;
+      const customBuilt = createSubForm.customNodes.map((cn, idx) => {
+        const resolvedTemplateId =
+          cn.channel === 'email'    ? (cn.emailTemplateId    || null) :
+          cn.channel === 'whatsapp' ? (cn.whatsappTemplateId || null) :
+          cn.channel === 'sms'      ? (cn.smsTemplateId      || null) : null;
+        return {
+          id: `${cn.type}-c${idx + 1}`,
+          type: cn.type,
+          data: {
+            label: cn.label || `Custom ${cn.type}`,
+            ...(cn.type === 'action'    && { channel: cn.channel, templateId: resolvedTemplateId, restChannel: cn.restChannel, restTemplateId: cn.restTemplateId }),
+            ...(cn.type === 'wait'      && { waitDays: cn.waitDays }),
+            ...(cn.type === 'condition' && { condition: cn.condition }),
+            ...(cn.type === 'goal'      && { goalType: cn.goalType }),
+          },
+          position: { x: 300, y: (baseOffset + idx) * 160 },
+        };
+      });
+
+      const nodes = [...templateNodes, ...customBuilt];
+      const edges = nodes.slice(1).map((n, i) => ({
+        id: `e_${nodes[i].id}_${n.id}`, source: nodes[i].id, target: n.id,
+      }));
+
+      const goalNode = [...finalIds.map(id => NODE_TEMPLATES.find(t => t.id === id)), ...createSubForm.customNodes].find(t => t?.type === 'goal');
+      const goalType = goalNode?.data?.goalType || goalNode?.goalType || 'booking';
+
+      await createSubJourney(parentSelected, {
+        name: createSubForm.name,
+        description: createSubForm.description,
+        goalType,
+        nodes,
+        edges,
+      });
+      showToast(`"${createSubForm.name}" created`, 'success');
+      setCreateSubForm({ name: '', description: '', selectedNodes: [], customNodes: [] });
+      setShowCustomNodeForm(false);
+      await reloadSubJourneys(parentSelected);
+    } catch (err) { showToast(err.message, 'error'); }
+  };
+
+  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null };
+  const BLANK_CUSTOM_NODE = { type: 'action', channel: 'email', label: '', waitDays: 1, goalType: 'booking', condition: 'booked', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null };
+
+  const handleAddCustomNode = () => {
+    if (!customNodeForm.label.trim()) return showToast('Node name is required', 'error');
+    setCreateSubForm(f => ({ ...f, customNodes: [...f.customNodes, { ...customNodeForm }] }));
+    setCustomNodeForm({ ...BLANK_CUSTOM_NODE });
+    setShowCustomNodeForm(false);
+  };
+
+  const loadTemplates = async () => {
+    if (templatesLoaded) return;
+    try {
+      const res = await getTemplates({ limit: 200 });
+      const all = res.data || [];
+      setAllTemplates({
+        email:     all.filter(t => t.channel === 'email'),
+        whatsapp:  all.filter(t => t.channel === 'whatsapp'),
+        sms:       all.filter(t => t.channel === 'sms'),
+      });
+      setTemplatesLoaded(true);
+    } catch { /* ignore */ }
+  };
+
+  const openNodeModal = (afterIdx = null) => {
+    setNodeModalAfterIdx(afterIdx);
+    setNodeForm({ ...BLANK_NODE_FORM });
+    setShowNodeModal(true);
+    loadTemplates();
   };
 
   const handleGenerate = async (strategyId) => {
@@ -260,6 +420,11 @@ export default function Journeys() {
   const handleAddNode = (afterIndex) => {
     const nodes = detail.nodes || [];
     const newId = `node_${Date.now()}`;
+    // Resolve template ID for the active channel
+    const resolvedTemplateId =
+      nodeForm.channel === 'email'     ? (nodeForm.emailTemplateId     || null) :
+      nodeForm.channel === 'whatsapp'  ? (nodeForm.whatsappTemplateId  || null) :
+      nodeForm.channel === 'sms'       ? (nodeForm.smsTemplateId       || null) : null;
     const newNode = {
       id: newId,
       type: nodeForm.type,
@@ -269,21 +434,23 @@ export default function Journeys() {
         ...(nodeForm.type === 'action' && {
           channel: nodeForm.channel,
           message: nodeForm.message,
-          // Save rest auto-pair settings when this is a WhatsApp node
+          templateId: resolvedTemplateId,
           ...(nodeForm.channel === 'whatsapp' && {
             restChannel: nodeForm.restChannel || 'email',
             restTemplateId: nodeForm.restTemplateId || null,
           }),
         }),
-        ...(nodeForm.type === 'wait' && { waitDays: nodeForm.waitDays }),
-        ...(nodeForm.type === 'condition' && { label: nodeForm.label }),
-        ...(nodeForm.type === 'goal' && { goalType: nodeForm.goalType }),
-      }
+        ...(nodeForm.type === 'wait'      && { waitDays:  nodeForm.waitDays }),
+        ...(nodeForm.type === 'condition' && { condition: nodeForm.condition }),
+        ...(nodeForm.type === 'goal'      && { goalType:  nodeForm.goalType }),
+      },
+      position: { x: 300, y: (afterIndex + 1) * 160 },
     };
     const updated = [...nodes.slice(0, afterIndex + 1), newNode, ...nodes.slice(afterIndex + 1)];
     saveNodeChanges(updated);
     setAddNodeAfter(null);
-    setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' });
+    setShowNodeModal(false);
+    setNodeForm({ ...BLANK_NODE_FORM });
   };
 
   const handleEditNode = (nodeId) => {
@@ -475,7 +642,7 @@ export default function Journeys() {
         {/* ── Back + Header ─────────────────────────────────────── */}
         <motion.div variants={fadeInUp}>
         <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); }}>
-          <ArrowLeft size={14} /> All Journeys
+          <ArrowLeft size={14} /> {parentSelected ? (parentDetail?.name || 'Sub-Journeys') : 'All Journeys'}
         </button>
 
         <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
@@ -690,6 +857,13 @@ export default function Journeys() {
                     ))}
                   </div>
                   <button
+                    onClick={() => openNodeModal(detail?.nodes?.length ? detail.nodes.length - 1 : 0)}
+                    className="btn btn-sm btn-secondary"
+                    style={{ fontSize: 11, padding: '4px 12px' }}
+                  >
+                    <Plus size={11} /> Add Node
+                  </button>
+                  <button
                     onClick={() => setFlowEditMode(!flowEditMode)}
                     className={`btn btn-sm ${flowEditMode ? 'btn-primary' : 'btn-ghost'}`}
                     style={{ fontSize: 11, padding: '4px 12px' }}
@@ -843,7 +1017,7 @@ export default function Journeys() {
                                     </div>
                                   </div>
                                 ) : (
-                                  <button onClick={() => { setAddNodeAfter(i - 1); setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' }); }}
+                                  <button onClick={() => openNodeModal(i - 1)}
                                     className="flex items-center justify-center"
                                     style={{ width: 22, height: 22, borderRadius: '50%', border: '2px dashed var(--red)', background: 'var(--bg-card)', color: 'var(--red)',
                                       cursor: 'pointer', fontSize: 14, fontWeight: 700, margin: '2px 0' }}>
@@ -1155,7 +1329,7 @@ export default function Journeys() {
                             </div>
                           </div>
                         ) : (
-                          <button onClick={() => { setAddNodeAfter(nodes.length - 1); setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' }); }}
+                          <button onClick={() => openNodeModal(nodes.length - 1)}
                             className="flex items-center justify-center"
                             style={{ width: 28, height: 28, borderRadius: '50%', border: '2px dashed var(--red)', background: 'var(--bg-card)', color: 'var(--red)',
                               cursor: 'pointer', fontSize: 16, fontWeight: 700 }}>
@@ -1448,6 +1622,237 @@ export default function Journeys() {
           </div>
         )}
 
+        {/* ── Create / Add Node Modal ──────────────────────────── */}
+        {showNodeModal && (
+          <div className="modal-overlay" onClick={() => setShowNodeModal(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}
+              style={{ maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
+
+              {/* Header */}
+              <div className="modal-header" style={{ paddingBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: NODE_COLORS[nodeForm.type] + '18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {(() => { const Icon = NODE_ICONS[nodeForm.type]; return <Icon size={18} color={NODE_COLORS[nodeForm.type]} />; })()}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>Create Node</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
+                      Inserting after position {(nodeModalAfterIdx ?? 0) + 1}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                {/* Node Type */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Node Type</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {['trigger', 'action', 'wait', 'condition', 'goal'].map(t => {
+                      const Icon = NODE_ICONS[t];
+                      const color = NODE_COLORS[t];
+                      const active = nodeForm.type === t;
+                      return (
+                        <button key={t} onClick={() => setNodeForm(f => ({ ...f, type: t }))}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s', border: active ? `1.5px solid ${color}` : '1.5px solid var(--border)', background: active ? color + '14' : 'transparent', color: active ? color : 'var(--text-secondary)' }}>
+                          <Icon size={12} /> {NODE_LABELS[t]}
+                          {active && <CheckCircle2 size={11} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Name / Label */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                    Name
+                  </label>
+                  <input className="form-input" placeholder={`e.g. ${nodeForm.type === 'wait' ? 'Wait 3 days' : nodeForm.type === 'action' ? 'Send welcome email' : 'Node label'}`}
+                    value={nodeForm.label}
+                    onChange={e => setNodeForm(f => ({ ...f, label: e.target.value }))} />
+                </div>
+
+                {/* Track */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>
+                    Audience Track
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[{ v: 'all', label: 'Shared', c: 'var(--text-secondary)' }, { v: 'indian', label: '🇮🇳 Indian', c: '#FF9933' }, { v: 'rest', label: '🌍 Rest of World', c: '#3B82F6' }].map(t => (
+                      <button key={t.v} onClick={() => setNodeForm(f => ({ ...f, track: t.v }))}
+                        style={{ padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: nodeForm.track === t.v ? `1.5px solid ${t.c}` : '1.5px solid var(--border)', background: nodeForm.track === t.v ? t.c + '14' : 'transparent', color: nodeForm.track === t.v ? t.c : 'var(--text-secondary)' }}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── ACTION fields ── */}
+                {nodeForm.type === 'action' && (
+                  <>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Channel</label>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {[
+                          { v: 'email',     label: 'Email',     color: 'var(--red)',    Icon: Mail },
+                          { v: 'whatsapp',  label: 'WhatsApp',  color: '#25d366',       Icon: MessageCircle },
+                          { v: 'sms',       label: 'SMS',       color: 'var(--orange)', Icon: Smartphone },
+                        ].map(ch => (
+                          <button key={ch.v} onClick={() => setNodeForm(f => ({ ...f, channel: ch.v }))}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: nodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: nodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
+                            <ch.Icon size={12} /> {ch.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Email template */}
+                    {(nodeForm.channel === 'email' || (nodeForm.channel === 'whatsapp' && nodeForm.restChannel === 'email')) && (
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}
+                        </label>
+                        <select className="form-input"
+                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
+                          onChange={e => {
+                            const val = e.target.value ? parseInt(e.target.value) : null;
+                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val } : { ...f, emailTemplateId: val });
+                          }}>
+                          <option value="">— Select email template —</option>
+                          {allTemplates.email.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>
+                          ))}
+                        </select>
+                        {allTemplates.email.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No email templates found</div>}
+                      </div>
+                    )}
+
+                    {/* WhatsApp template */}
+                    {nodeForm.channel === 'whatsapp' && (
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                          WhatsApp Template
+                        </label>
+                        <select className="form-input"
+                          value={nodeForm.whatsappTemplateId || ''}
+                          onChange={e => setNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                          <option value="">— Select WhatsApp template —</option>
+                          {allTemplates.whatsapp.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}{t.wa_template_name ? ` (${t.wa_template_name})` : ''}</option>
+                          ))}
+                        </select>
+                        {allTemplates.whatsapp.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No WhatsApp templates found</div>}
+
+                        {/* Rest-of-world auto-pair */}
+                        <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#3B82F6', marginBottom: 8 }}>🌍 Rest-of-World auto-pair channel</div>
+                          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                            {['email', 'sms'].map(ch => (
+                              <button key={ch} onClick={() => setNodeForm(f => ({ ...f, restChannel: ch }))}
+                                style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: nodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: nodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>
+                                {ch}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SMS template */}
+                    {(nodeForm.channel === 'sms' || (nodeForm.channel === 'whatsapp' && nodeForm.restChannel === 'sms')) && (
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World SMS Template' : 'SMS Template'}
+                        </label>
+                        <select className="form-input"
+                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.smsTemplateId || '')}
+                          onChange={e => {
+                            const val = e.target.value ? parseInt(e.target.value) : null;
+                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val } : { ...f, smsTemplateId: val });
+                          }}>
+                          <option value="">— Select SMS template —</option>
+                          {allTemplates.sms.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                        {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* ── WAIT fields ── */}
+                {nodeForm.type === 'wait' && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <input type="number" min={1} max={365} className="form-input"
+                        style={{ width: 100 }}
+                        value={nodeForm.waitDays}
+                        onChange={e => setNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                        {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                      {[1, 2, 3, 5, 7, 14].map(d => (
+                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d }))}
+                          style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── CONDITION fields ── */}
+                {nodeForm.type === 'condition' && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Condition Type</label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {[
+                        { v: 'booked',        label: 'Has Booked' },
+                        { v: 'opened_email',  label: 'Opened Email' },
+                        { v: 'clicked_link',  label: 'Clicked Link' },
+                      ].map(c => (
+                        <button key={c.v} onClick={() => setNodeForm(f => ({ ...f, condition: c.v }))}
+                          style={{ padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: nodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── GOAL fields ── */}
+                {nodeForm.type === 'goal' && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Goal Type</label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {[{ v: 'booking', label: 'Booking' }, { v: 'enquiry', label: 'Enquiry' }, { v: 'registration', label: 'Registration' }].map(g => (
+                        <button key={g.v} onClick={() => setNodeForm(f => ({ ...f, goalType: g.v }))}
+                          style={{ padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border)', background: nodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: nodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              <div className="modal-footer">
+                <button className="btn btn-ghost" onClick={() => setShowNodeModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => handleAddNode(nodeModalAfterIdx ?? (detail?.nodes?.length ? detail.nodes.length - 1 : 0))}>
+                  <Plus size={14} /> Add Node
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Confirmation Dialog ──────────────────────────────── */}
         {confirmAction && (
           <div className="confirm-overlay" onClick={() => setConfirmAction(null)}>
@@ -1579,6 +1984,527 @@ export default function Journeys() {
           );
         })()}
         </motion.div>
+      </motion.div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SUB-JOURNEY LIST VIEW
+  // ══════════════════════════════════════════════════════════════
+  if (parentSelected) {
+    const SUB_FILTERS = ['all', 'active', 'draft', 'paused', 'completed'];
+    const filteredSubs = subJourneys.filter(j =>
+      subJourneyFilter === 'all' || j.status === subJourneyFilter
+    );
+
+    return (
+      <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
+        {/* ── Back + Header ─────────────────────────────────── */}
+        <motion.div variants={fadeInUp}>
+          <button className="btn btn-ghost mb-4"
+            onClick={() => { setParentSelected(null); setParentDetail(null); setSubJourneys([]); }}>
+            <ArrowLeft size={14} /> All Journeys
+          </button>
+          <div className="page-header">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center justify-center" style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: 'var(--green-dim)'
+                }}>
+                  <GitBranch size={18} color="var(--green)" />
+                </div>
+                <h2 style={{ margin: 0 }}>{parentDetail?.name || 'Sub-Journeys'}</h2>
+              </div>
+              {parentDetail?.description && (
+                <div className="page-header-sub">{parentDetail.description}</div>
+              )}
+            </div>
+            <div className="page-actions">
+              <button className="btn btn-secondary" onClick={() => reloadSubJourneys(parentSelected)}>
+                <RefreshCw size={14} />
+              </button>
+              <button className="btn btn-primary" onClick={() => setShowCreateSub(true)}>
+                <Plus size={14} /> Create Sub Journey
+              </button>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── Filter Tabs ───────────────────────────────────── */}
+        <motion.div variants={fadeInUp}>
+          <div className="flex gap-2 mb-6" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+            {SUB_FILTERS.map(f => (
+              <button key={f} onClick={() => setSubJourneyFilter(f)}
+                style={{
+                  padding: '8px 16px', fontSize: 13, fontWeight: 600,
+                  border: 'none', background: 'none', cursor: 'pointer',
+                  borderBottom: subJourneyFilter === f ? '2px solid var(--brand-primary)' : '2px solid transparent',
+                  color: subJourneyFilter === f ? 'var(--brand-primary)' : 'var(--text-secondary)',
+                  textTransform: 'capitalize', marginBottom: -1,
+                }}>
+                {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                {f === 'all' && <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-tertiary)' }}>{subJourneys.length}</span>}
+                {f !== 'all' && (
+                  <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-tertiary)' }}>
+                    {subJourneys.filter(j => j.status === f).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* ── Sub-Journey Cards ─────────────────────────────── */}
+        <motion.div variants={fadeInUp}>
+          {subJourneyLoading ? (
+            <div className="card-grid card-grid-2">
+              {[1, 2, 3, 4].map(i => <div key={i} className="card skeleton" style={{ height: 140 }} />)}
+            </div>
+          ) : filteredSubs.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
+              <GitBranch size={32} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>No sub-journeys yet</div>
+              <div className="text-secondary" style={{ fontSize: 13, marginBottom: 20 }}>
+                Create a sub-journey to run a specific campaign under this journey.
+              </div>
+              <button className="btn btn-primary" onClick={() => setShowCreateSub(true)}>
+                <Plus size={14} /> Create Sub Journey
+              </button>
+            </div>
+          ) : (
+            <div className="card-grid card-grid-2">
+              {filteredSubs.map(j => {
+                const statusConf = STATUS_CONFIG[j.status] || STATUS_CONFIG.draft;
+                const channels = getJourneyChannels(j.nodes);
+                const entryStats = j.entryStats || {};
+                return (
+                  <div key={j.journey_id} className="card"
+                    role="button" tabIndex={0}
+                    onClick={() => openJourney(j.journey_id)}
+                    onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openJourney(j.journey_id)}
+                    style={{ cursor: 'pointer', padding: '20px' }}>
+
+                    {/* Name + status */}
+                    <div className="flex justify-between items-start mb-3">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="flex items-center justify-center shrink-0" style={{
+                            width: 32, height: 32, borderRadius: 8, background: statusConf.bg
+                          }}>
+                            <GitBranch size={16} color={statusConf.color} />
+                          </div>
+                          <div className="font-semibold" style={{ fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {j.name}
+                          </div>
+                        </div>
+                        {j.description && (
+                          <div className="text-secondary" style={{ fontSize: 12, marginTop: 4, paddingLeft: 40 }}>
+                            {j.description}
+                          </div>
+                        )}
+                      </div>
+                      <span className="shrink-0" style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                        background: statusConf.bg, color: statusConf.color
+                      }}>
+                        <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusConf.color }} />
+                        {statusConf.label}
+                      </span>
+                    </div>
+
+                    {/* Channel pills */}
+                    {channels.length > 0 && (
+                      <div className="flex gap-1 flex-wrap mb-3" style={{ paddingLeft: 2 }}>
+                        {channels.map(ch => {
+                          const conf = CHANNEL_CONFIG[ch] || {};
+                          const Icon = conf.icon || MessageSquare;
+                          return (
+                            <span key={ch} style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 3,
+                              padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
+                              background: (conf.color || '#78716c') + '10', color: conf.color || '#78716c'
+                            }}>
+                              <Icon size={10} /> {conf.label || ch}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Stats row */}
+                    <div className="flex items-center gap-4" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                      <span className="flex items-center gap-1">
+                        <Layers size={11} /> {j.node_count || 0} nodes
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Users size={11} /> {fmt(entryStats.total_entries || j.total_entries || 0)} entries
+                      </span>
+                      {j.conversion_rate > 0 && (
+                        <span className="flex items-center gap-1" style={{ color: 'var(--green)', fontWeight: 600 }}>
+                          <TrendingUp size={11} /> {pct(j.conversion_rate)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Conversion bar */}
+                    <div style={{ marginTop: 12 }}>
+                      <div className="flex justify-between" style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+                        <span>Conversion</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{pct(j.conversion_rate)}</span>
+                      </div>
+                      <div style={{ height: 3, borderRadius: 2, background: 'var(--border)' }}>
+                        <div style={{ height: '100%', borderRadius: 2, background: 'var(--green)', width: `${Math.min(parseFloat(j.conversion_rate) || 0, 100)}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </motion.div>
+
+        {/* ── Create Sub Journey Modal ──────────────────────── */}
+        {showCreateSub && (
+          <div className="modal-overlay" onClick={() => setShowCreateSub(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}
+              style={{ maxWidth: 520, maxHeight: '88vh', overflowY: 'auto' }}>
+
+              {/* Header */}
+              <div className="modal-header" style={{ paddingBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                    background: 'var(--green-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    <GitBranch size={18} color="var(--green)" />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>Create Sub Journey</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
+                      Under: <span style={{ fontWeight: 600 }}>{parentDetail?.name}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 4 }}>
+
+                {/* Name */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>
+                    Journey Name *
+                  </label>
+                  <input className="form-input" placeholder="e.g. Diwali 2026 Campaign"
+                    value={createSubForm.name}
+                    onChange={e => setCreateSubForm(f => ({ ...f, name: e.target.value }))} />
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>
+                    Description
+                  </label>
+                  <input className="form-input" placeholder="What is this campaign for?"
+                    value={createSubForm.description}
+                    onChange={e => setCreateSubForm(f => ({ ...f, description: e.target.value }))} />
+                </div>
+
+                {/* Node picker */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                      Journey Nodes
+                    </label>
+                    {createSubForm.selectedNodes.length > 0 && (
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                        {createSubForm.selectedNodes.length} selected
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Selected nodes — ordered pills (templates + custom) */}
+                  {(createSubForm.selectedNodes.length > 0 || createSubForm.customNodes.length > 0) && (
+                    <div style={{
+                      display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12,
+                      padding: '10px 12px', background: 'var(--bg-secondary)', borderRadius: 10,
+                      border: '1px solid var(--border)'
+                    }}>
+                      {/* Template node pills */}
+                      {createSubForm.selectedNodes.map((id, idx) => {
+                        const t = NODE_TEMPLATES.find(n => n.id === id);
+                        if (!t) return null;
+                        const color = NODE_COLORS[t.type];
+                        const Icon = NODE_ICONS[t.type];
+                        return (
+                          <span key={id} style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                            background: color + '15', color, border: `1.5px solid ${color}30`
+                          }}>
+                            <Icon size={11} />
+                            <span style={{ opacity: 0.55, fontSize: 10 }}>{idx + 1}.</span>
+                            {t.label}
+                            <button onClick={() => setCreateSubForm(f => ({
+                              ...f, selectedNodes: f.selectedNodes.filter(n => n !== id)
+                            }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 0 2px', lineHeight: 1, color: 'inherit', opacity: 0.6, fontSize: 14 }}>×</button>
+                          </span>
+                        );
+                      })}
+                      {/* Custom node pills */}
+                      {createSubForm.customNodes.map((cn, idx) => {
+                        const color = NODE_COLORS[cn.type];
+                        const Icon = NODE_ICONS[cn.type];
+                        const baseIdx = createSubForm.selectedNodes.length + idx;
+                        return (
+                          <span key={`custom-${idx}`} style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                            background: color + '15', color, border: `1.5px solid ${color}`,
+                          }}>
+                            <Icon size={11} />
+                            <span style={{ opacity: 0.55, fontSize: 10 }}>{baseIdx + 1}.</span>
+                            {cn.label}
+                            <span style={{ fontSize: 9, opacity: 0.6, fontWeight: 400, marginLeft: 1 }}>custom</span>
+                            <button onClick={() => setCreateSubForm(f => ({
+                              ...f, customNodes: f.customNodes.filter((_, i) => i !== idx)
+                            }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 0 2px', lineHeight: 1, color: 'inherit', opacity: 0.6, fontSize: 14 }}>×</button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Node option groups */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {NODE_TEMPLATE_GROUPS.map(({ key, label }) => {
+                      const groupNodes = NODE_TEMPLATES.filter(n => n.group === key);
+                      const color = NODE_COLORS[key];
+                      const Icon = NODE_ICONS[key];
+                      return (
+                        <div key={key}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 7 }}>
+                            <Icon size={11} color={color} />
+                            <span style={{ fontSize: 11, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                            {groupNodes.map(t => {
+                              const sel = createSubForm.selectedNodes.includes(t.id);
+                              return (
+                                <button key={t.id} onClick={() => setCreateSubForm(f => ({
+                                  ...f,
+                                  selectedNodes: sel
+                                    ? f.selectedNodes.filter(n => n !== t.id)
+                                    : [...f.selectedNodes, t.id]
+                                }))} style={{
+                                  padding: '5px 13px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+                                  cursor: 'pointer', transition: 'all 0.15s',
+                                  border: sel ? `1.5px solid ${color}` : '1.5px solid var(--border)',
+                                  background: sel ? color + '12' : 'transparent',
+                                  color: sel ? color : 'var(--text-secondary)',
+                                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                                }}>
+                                  <Icon size={11} />
+                                  {t.label}
+                                  {sel && <CheckCircle2 size={10} />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
+                    Entry Trigger is added automatically. Template nodes first, then custom nodes.
+                  </div>
+
+                  {/* ── Create Node section ── */}
+                  <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                    {!showCustomNodeForm ? (
+                      <button onClick={() => { setShowCustomNodeForm(true); loadTemplates(); setCustomNodeForm({ ...BLANK_CUSTOM_NODE }); }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 16px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1.5px dashed var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
+                        <Plus size={12} /> Create Node
+                      </button>
+                    ) : (
+                      <div style={{ border: '1.5px solid var(--brand-primary)', borderRadius: 12, padding: 16, background: 'var(--brand-primary)08' }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Plus size={13} /> Create Custom Node
+                        </div>
+
+                        {/* Name */}
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Node Name *</label>
+                          <input className="form-input" style={{ fontSize: 12, padding: '6px 10px' }}
+                            placeholder="e.g. Send welcome email"
+                            value={customNodeForm.label}
+                            onChange={e => setCustomNodeForm(f => ({ ...f, label: e.target.value }))} />
+                        </div>
+
+                        {/* Node Type */}
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Node Type</label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {['action', 'wait', 'condition', 'goal'].map(t => {
+                              const Icon = NODE_ICONS[t]; const color = NODE_COLORS[t]; const active = customNodeForm.type === t;
+                              return (
+                                <button key={t} onClick={() => setCustomNodeForm(f => ({ ...f, type: t }))}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: active ? `1.5px solid ${color}` : '1.5px solid var(--border)', background: active ? color + '14' : 'transparent', color: active ? color : 'var(--text-secondary)' }}>
+                                  <Icon size={11} /> {NODE_LABELS[t]}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* ACTION: channel + template dropdowns */}
+                        {customNodeForm.type === 'action' && (
+                          <>
+                            <div style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Channel</label>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                {[{ v: 'email', label: 'Email', color: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', color: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', color: 'var(--orange)', Icon: Smartphone }].map(ch => (
+                                  <button key={ch.v} onClick={() => setCustomNodeForm(f => ({ ...f, channel: ch.v }))}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: customNodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: customNodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: customNodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
+                                    <ch.Icon size={11} /> {ch.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Email template dropdown */}
+                            {customNodeForm.channel === 'email' && (
+                              <div style={{ marginBottom: 10 }}>
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Mail Template</label>
+                                <select className="form-input" style={{ fontSize: 12 }}
+                                  value={customNodeForm.emailTemplateId || ''}
+                                  onChange={e => setCustomNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                  <option value="">— Select email template —</option>
+                                  {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
+                                </select>
+                              </div>
+                            )}
+
+                            {/* WhatsApp template dropdown */}
+                            {customNodeForm.channel === 'whatsapp' && (
+                              <>
+                                <div style={{ marginBottom: 10 }}>
+                                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
+                                  <select className="form-input" style={{ fontSize: 12 }}
+                                    value={customNodeForm.whatsappTemplateId || ''}
+                                    onChange={e => setCustomNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                    <option value="">— Select WhatsApp template —</option>
+                                    {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                  </select>
+                                </div>
+                                <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 6 }}>🌍 Rest-of-World fallback</div>
+                                  <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                    {['email', 'sms'].map(ch => (
+                                      <button key={ch} onClick={() => setCustomNodeForm(f => ({ ...f, restChannel: ch }))}
+                                        style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: customNodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: customNodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: customNodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>{ch}</button>
+                                    ))}
+                                  </div>
+                                  <select className="form-input" style={{ fontSize: 12 }}
+                                    value={customNodeForm.restTemplateId || ''}
+                                    onChange={e => setCustomNodeForm(f => ({ ...f, restTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                    <option value="">— Select {customNodeForm.restChannel} template —</option>
+                                    {(customNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                  </select>
+                                </div>
+                              </>
+                            )}
+
+                            {/* SMS template dropdown */}
+                            {customNodeForm.channel === 'sms' && (
+                              <div style={{ marginBottom: 10 }}>
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
+                                <select className="form-input" style={{ fontSize: 12 }}
+                                  value={customNodeForm.smsTemplateId || ''}
+                                  onChange={e => setCustomNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                  <option value="">— Select SMS template —</option>
+                                  {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </select>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* WAIT: days */}
+                        {customNodeForm.type === 'wait' && (
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Days to Wait</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <input type="number" min={1} className="form-input" style={{ width: 80, fontSize: 12, padding: '6px 10px' }}
+                                value={customNodeForm.waitDays}
+                                onChange={e => setCustomNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                              <div style={{ display: 'flex', gap: 5 }}>
+                                {[1, 2, 3, 7].map(d => (
+                                  <button key={d} onClick={() => setCustomNodeForm(f => ({ ...f, waitDays: d }))}
+                                    style={{ padding: '3px 8px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: customNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: customNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: customNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>
+                                    {d}d
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* CONDITION: type */}
+                        {customNodeForm.type === 'condition' && (
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Condition</label>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {[{ v: 'booked', l: 'Has Booked' }, { v: 'opened_email', l: 'Opened Email' }, { v: 'clicked_link', l: 'Clicked Link' }].map(c => (
+                                <button key={c.v} onClick={() => setCustomNodeForm(f => ({ ...f, condition: c.v }))}
+                                  style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: customNodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: customNodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: customNodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>
+                                  {c.l}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* GOAL: type */}
+                        {customNodeForm.type === 'goal' && (
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Goal Type</label>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              {[{ v: 'booking', l: 'Booking' }, { v: 'enquiry', l: 'Enquiry' }, { v: 'registration', l: 'Registration' }].map(g => (
+                                <button key={g.v} onClick={() => setCustomNodeForm(f => ({ ...f, goalType: g.v }))}
+                                  style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: customNodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border)', background: customNodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: customNodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>
+                                  {g.l}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                          <button className="btn btn-sm btn-primary" onClick={handleAddCustomNode}
+                            disabled={!customNodeForm.label.trim()}>
+                            <Plus size={11} /> Add Node
+                          </button>
+                          <button className="btn btn-sm btn-ghost" onClick={() => setShowCustomNodeForm(false)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-footer justify-end mt-4">
+                <button className="btn btn-ghost" onClick={() => setShowCreateSub(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={handleCreateSubJourney}
+                  disabled={!createSubForm.name.trim()}>
+                  <Plus size={14} /> Create Journey
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </motion.div>
     );
   }
@@ -1733,8 +2659,8 @@ export default function Journeys() {
                 className="card"
                 role="button"
                 tabIndex={0}
-                onClick={() => openJourney(j.journey_id)}
-                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openJourney(j.journey_id)}
+                onClick={() => openParentJourney(j.journey_id)}
+                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openParentJourney(j.journey_id)}
                 style={{ cursor: 'pointer', padding: '20px' }}
               >
                 {/* Top row: name + status */}
@@ -1837,7 +2763,7 @@ export default function Journeys() {
                     <tr
                       key={j.journey_id}
                       style={{ cursor: 'pointer' }}
-                      onClick={() => openJourney(j.journey_id)}
+                      onClick={() => openParentJourney(j.journey_id)}
                     >
                       <td>
                         <div className="flex items-center gap-2">
@@ -1999,8 +2925,8 @@ export default function Journeys() {
                 <option value="engagement">Engagement</option>
               </select>
             </div>
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+            <div className="modal-actions mt-10">
+              <button className="btn btn-secondary mt-10" onClick={() => setShowCreate(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleCreate}>
                 <Plus size={14} /> Create Journey
               </button>
