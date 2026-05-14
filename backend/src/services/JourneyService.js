@@ -33,19 +33,12 @@ class JourneyService {
 
   // ── CRUD ──────────────────────────────────────────────────
 
-  static async getAll({ status, audience, page = 1, limit = 20, parentId = null, onlyRoot = false } = {}) {
+  static async getAll({ status, audience, page = 1, limit = 20 } = {}) {
     const offset = (page - 1) * limit;
     let where = '1=1';
     const params = [];
 
-    if (parentId !== null && parentId !== undefined) {
-      params.push(parentId);
-      where += ` AND jf.parent_journey_id = $${params.length}`;
-    } else if (onlyRoot) {
-      where += ` AND jf.parent_journey_id IS NULL`;
-    }
-
-    if (status && status !== 'all') {
+    if (status) {
       params.push(status);
       where += ` AND jf.status = $${params.length}`;
     }
@@ -72,10 +65,6 @@ class JourneyService {
     `, [...params, limit, offset]);
 
     return { data: rows, total: parseInt(count), page, limit };
-  }
-
-  static async getSubJourneys(parentId, { status } = {}) {
-    return this.getAll({ parentId, status, limit: 100 });
   }
 
   static async getById(journeyId) {
@@ -115,12 +104,12 @@ class JourneyService {
     return { ...journey, entryStats, nodeAnalytics };
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, parentJourneyId }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience }) {
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, parent_journey_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
-    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', parentJourneyId || null]);
+    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all']);
     return journey;
   }
 
@@ -229,14 +218,14 @@ class JourneyService {
     const resolveRecipient = async (to) => {
       if (channel === 'email') {
         const { rows: [u] } = await db.query(
-          'SELECT unified_id, name, email FROM unified_contacts WHERE email_key = LOWER(TRIM($1)) LIMIT 1',
+          'SELECT id AS unified_id, name, email FROM unified_contacts WHERE LOWER(email) = LOWER(TRIM($1)) LIMIT 1',
           [to]
         );
         return u || null;
       }
       const { rows: [u] } = await db.query(
-        `SELECT unified_id, name, phone FROM unified_contacts
-         WHERE phone_key = RIGHT(REGEXP_REPLACE($1, '[^0-9]', '', 'g'), 10) LIMIT 1`,
+        `SELECT id AS unified_id, name, mobile AS phone FROM unified_contacts
+         WHERE RIGHT(REGEXP_REPLACE(mobile, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE($1, '[^0-9]', '', 'g'), 10) LIMIT 1`,
         [to]
       );
       return u || null;
@@ -303,6 +292,32 @@ class JourneyService {
     }
 
     throw new Error(`Unsupported channel '${channel}'`);
+  }
+
+  /**
+   * Send a test to multiple recipients in one call.
+   * Runs all sends in parallel and returns per-recipient results so the
+   * UI can show a full log without making N separate HTTP requests.
+   */
+  static async testSendNodeBatch(journeyId, nodeId, recipients) {
+    if (!Array.isArray(recipients) || recipients.length === 0) throw new Error('No recipients provided');
+
+    const settled = await Promise.allSettled(
+      recipients.map(recipient => this.testSendNode(journeyId, nodeId, recipient))
+    );
+
+    const results = settled.map((r, i) => ({
+      recipient: recipients[i],
+      ok: r.status === 'fulfilled',
+      ...(r.status === 'fulfilled' ? r.value : { error: r.reason?.message || 'Send failed' }),
+    }));
+
+    return {
+      total: results.length,
+      sent: results.filter(r => r.ok).length,
+      failed: results.filter(r => !r.ok).length,
+      results,
+    };
   }
 
   // ── Auto-generate journey from strategy flow_steps ──────────

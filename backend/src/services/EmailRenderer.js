@@ -36,7 +36,7 @@ export default class EmailRenderer {
     // 2. Load user data for personalization
     let user = {};
     if (unifiedId) {
-      const { rows: [u] } = await query('SELECT * FROM unified_contacts WHERE unified_id = $1', [unifiedId]);
+      const { rows: [u] } = await query('SELECT * FROM unified_contacts WHERE id = $1', [unifiedId]);
       user = u || {};
     }
 

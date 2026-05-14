@@ -19,6 +19,7 @@
  */
 import { Worker } from 'bullmq';
 import { getConnection } from './index.js';
+import JourneyService from '../JourneyService.js';
 import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
@@ -62,7 +63,12 @@ export function startWorkers() {
     limiter: { max: 10, duration: 1000 },
   });
 
-  for (const w of [email, wa, sms]) {
+  const testSend = new Worker('journey-test-send', async (job) => {
+    const { journeyId, nodeId, recipient } = job.data;
+    return JourneyService.testSendNode(journeyId, nodeId, recipient);
+  }, { connection, concurrency: 10 });
+
+  for (const w of [email, wa, sms, testSend]) {
     w.on('failed', (job, err) => {
       console.error(`[Worker:${w.name}] job ${job?.id} failed (attempt ${job?.attemptsMade}/${job?.opts?.attempts || 1}): ${err.message}`);
     });
@@ -71,14 +77,14 @@ export function startWorkers() {
     });
   }
 
-  _workers = { email, wa, sms };
+  _workers = { email, wa, sms, testSend };
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
 
 export async function stopWorkers() {
   if (!_workers) return;
-  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close()]);
+  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.testSend.close()]);
   _workers = null;
 }
 

@@ -43,9 +43,10 @@ function _initQueues() {
   if (_queues) return _queues;
   const conn = getConnection();
   _queues = {
-    email: new Queue('journey-email', { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
-    wa:    new Queue('journey-wa',    { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
-    sms:   new Queue('journey-sms',   { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    email:    new Queue('journey-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    wa:       new Queue('journey-wa',        { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    sms:      new Queue('journey-sms',       { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    testSend: new Queue('journey-test-send', { connection: conn, defaultJobOptions: { ...QUEUE_DEFAULTS, attempts: 2 } }),
   };
   return _queues;
 }
@@ -56,6 +57,10 @@ export function getQueue(channel) {
   if (channel === 'whatsapp') return q.wa;
   if (channel === 'sms')      return q.sms;
   throw new Error(`Unknown channel for queue: ${channel}`);
+}
+
+export function getTestSendQueue() {
+  return _initQueues().testSend;
 }
 
 /**
@@ -86,6 +91,7 @@ export async function closeQueues() {
     _queues.email.close(),
     _queues.wa.close(),
     _queues.sms.close(),
+    _queues.testSend.close(),
   ]);
   _queues = null;
   if (_connection) {

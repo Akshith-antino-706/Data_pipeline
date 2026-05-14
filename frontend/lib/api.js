@@ -115,12 +115,6 @@ export const getJourneyAnalytics = (id) => request(`/api/v3/journeys/${id}/analy
 export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${id}/campaign-analytics`);
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
-export const getSubJourneys = (parentId, params = {}) => {
-  const qs = new URLSearchParams(params).toString();
-  return request(`/api/v3/journeys/${parentId}/sub-journeys${qs ? '?' + qs : ''}`);
-};
-export const createSubJourney = (parentId, data) =>
-  request(`/api/v3/journeys/${parentId}/sub-journeys`, { method: 'POST', body: JSON.stringify(data) });
 // Node-level CRUD inside a journey
 export const addJourneyNode = (id, node, afterNodeId = null) =>
   request(`/api/v3/journeys/${id}/nodes`, { method: 'POST', body: JSON.stringify({ node, afterNodeId }) });
@@ -130,6 +124,9 @@ export const deleteJourneyNode = (id, nodeId) =>
   request(`/api/v3/journeys/${id}/nodes/${nodeId}`, { method: 'DELETE' });
 export const testSendJourneyNode = (id, nodeId, recipient) =>
   request(`/api/v3/journeys/${id}/nodes/${nodeId}/test`, { method: 'POST', body: JSON.stringify({ recipient }) });
+
+export const testSendJourneyNodeBatch = (id, nodeId, recipients) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/test-batch`, { method: 'POST', body: JSON.stringify({ recipients }) });
 
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });
