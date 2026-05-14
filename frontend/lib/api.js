@@ -125,6 +125,9 @@ export const deleteJourneyNode = (id, nodeId) =>
 export const testSendJourneyNode = (id, nodeId, recipient) =>
   request(`/api/v3/journeys/${id}/nodes/${nodeId}/test`, { method: 'POST', body: JSON.stringify({ recipient }) });
 
+export const testSendJourneyNodeBatch = (id, nodeId, recipients) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/test-batch`, { method: 'POST', body: JSON.stringify({ recipients }) });
+
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });
 export const aiSegmentAnalysis = () => request('/api/v3/agents/segment-assist/analyze');

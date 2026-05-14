@@ -7,7 +7,7 @@ import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  testSendJourneyNode
+  testSendJourneyNodeBatch, getTemplates, getSegmentationTree, getSegmentCustomers
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -31,6 +31,7 @@ const NODE_LABELS = {
   trigger: 'Entry Trigger', action: 'Send Message', condition: 'Branch',
   wait: 'Wait / Delay', goal: 'Conversion Goal'
 };
+
 const CHANNEL_CONFIG = {
   whatsapp: { color: '#25d366', icon: MessageCircle, label: 'WhatsApp' },
   email: { color: 'var(--red)', icon: Mail, label: 'Email' },
@@ -46,6 +47,11 @@ const STATUS_CONFIG = {
   completed: { color: 'var(--purple)', bg: 'var(--purple-dim)', label: 'Completed' }
 };
 const PIE_COLORS = ['var(--green)', 'var(--red)', 'var(--orange)', 'var(--purple)', 'var(--brand-primary)', 'var(--yellow)'];
+
+const MOCK_TEST_CONTACTS = [
+  { id: '641522', name: 'Rocky',   email: 'rocky.86agency@gmail.com',  phone: '' },
+  { id: '641500', name: 'Avinash', email: 'avinash@antino.com',         phone: '' },
+];
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -109,15 +115,27 @@ export default function Journeys() {
   const [flowEditMode, setFlowEditMode] = useState(false);
   const [editingNode, setEditingNode] = useState(null); // node being edited
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
-  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', track: 'all' });
+  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null });
+  const [showNodeModal, setShowNodeModal] = useState(false);
+  const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
+  const [allTemplates, setAllTemplates] = useState({ email: [], whatsapp: [], sms: [] });
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [trackFilter, setTrackFilter] = useState('all'); // 'all' | 'indian' | 'rest'
-  // Test-send-from-node modal state: null when closed, { node, recipient, sending, result } when open
+  // Test-send-from-node modal state: null when closed, { node, recipients[], scheduledAt, sending, results[] } when open
   const [testSendNode, setTestSendNode] = useState(null);
+  const [segmentContacts, setSegmentContacts] = useState([]);
+  const [segmentContactsLoading, setSegmentContactsLoading] = useState(false);
+  const [contactSearch, setContactSearch] = useState('');
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({
-    name: '', description: '', goalType: 'booking'
-  });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '' });
+  const [createNodes, setCreateNodes] = useState([]);
+  const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
+  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null };
+  const [createNodeForm, setCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
+  const [allSegments, setAllSegments] = useState([]);
+  const [segmentsLoaded, setSegmentsLoaded] = useState(false);
+  const [segmentsLoading, setSegmentsLoading] = useState(false);
 
   // ── Toast helper ──────────────────────────────────────────────
   const showToast = (msg, type = 'info') => {
@@ -164,6 +182,29 @@ export default function Journeys() {
     setDetailLoading(false);
   };
 
+  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null };
+
+  const loadTemplates = async () => {
+    if (templatesLoaded) return;
+    try {
+      const res = await getTemplates({ limit: 200 });
+      const all = res.data || [];
+      setAllTemplates({
+        email:     all.filter(t => t.channel === 'email'),
+        whatsapp:  all.filter(t => t.channel === 'whatsapp'),
+        sms:       all.filter(t => t.channel === 'sms'),
+      });
+      setTemplatesLoaded(true);
+    } catch { /* ignore */ }
+  };
+
+  const openNodeModal = (afterIdx = null) => {
+    setNodeModalAfterIdx(afterIdx);
+    setNodeForm({ ...BLANK_NODE_FORM });
+    setShowNodeModal(true);
+    loadTemplates();
+  };
+
   const handleGenerate = async (strategyId) => {
     setShowGenerate(false);
     setGenerating(true);
@@ -175,23 +216,72 @@ export default function Journeys() {
     setGenerating(false);
   };
 
+  const loadSegments = async () => {
+    if (segmentsLoaded || segmentsLoading) return;
+    setSegmentsLoading(true);
+    try {
+      const res = await getSegmentationTree();
+      const STATUS_LABELS = { ON_TRIP: 'On Trip', FUTURE_TRAVEL: 'Future Travel', ACTIVE_ENQUIRY: 'Active Enquiry', PAST_BOOKING: 'Past Booking', PAST_ENQUIRY: 'Past Enquiry', PROSPECT: 'Prospect' };
+      const breakdown = res?.breakdown || [];
+      const statusCounts = res?.statusCounts || [];
+      const flat = [];
+      // Use statusCounts for top-level groups (guaranteed to exist)
+      for (const s of statusCounts) {
+        const st = s.booking_status;
+        if (st) flat.push({ value: st, label: `${STATUS_LABELS[st] || st} (${Number(s.count || 0).toLocaleString()})` });
+      }
+      // Then breakdown rows with tier + geo
+      for (const b of breakdown) {
+        if (!b.booking_status) continue;
+        const parts = [STATUS_LABELS[b.booking_status] || b.booking_status];
+        if (b.product_tier) parts.push(b.product_tier === 'LUXURY' ? 'Luxury' : 'Standard');
+        if (b.geography) parts.push(b.geography === 'LOCAL' ? 'Local' : 'International');
+        if (parts.length > 1) {
+          flat.push({ value: `${b.booking_status}|${b.product_tier || ''}|${b.geography || ''}`, label: `${parts.join(' · ')} (${Number(b.count || 0).toLocaleString()})` });
+        }
+      }
+      setAllSegments(flat);
+      setSegmentsLoaded(true);
+    } catch (err) { console.error('Failed to load segments', err); }
+    setSegmentsLoading(false);
+  };
+
+  // Load segments whenever the create modal opens
+  useEffect(() => { if (showCreate) loadSegments(); }, [showCreate]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleCreate = async () => {
     if (!createForm.name.trim()) return showToast('Journey name is required', 'error');
     setShowCreate(false);
     try {
+      const trigger = {
+        id: 'node_0', type: 'trigger',
+        data: { triggerType: 'segment_entry', label: 'Entry Point', segmentId: createForm.segmentId || null },
+        position: { x: 300, y: 50 }
+      };
+      const extraNodes = createNodes.map((n, i) => ({
+        id: `node_${i + 1}`, type: n.type,
+        data: {
+          label: n.label, channel: n.channel || undefined,
+          waitDays: n.waitDays || undefined, condition: n.condition || undefined,
+          goalType: n.goalType || undefined,
+          emailTemplateId: n.emailTemplateId || undefined,
+          whatsappTemplateId: n.whatsappTemplateId || undefined,
+          smsTemplateId: n.smsTemplateId || undefined,
+          restChannel: n.restChannel || undefined,
+          restTemplateId: n.restTemplateId || undefined,
+        },
+        position: { x: 300, y: 50 + (i + 1) * 120 }
+      }));
       const res = await createJourney({
         name: createForm.name,
         description: createForm.description,
-        goalType: createForm.goalType,
-        nodes: [{
-          id: 'node_0', type: 'trigger',
-          data: { triggerType: 'segment_entry', label: 'Entry Point' },
-          position: { x: 300, y: 50 }
-        }],
+        nodes: [trigger, ...extraNodes],
         edges: []
       });
       showToast(`Journey "${res.data?.name}" created`, 'success');
-      setCreateForm({ name: '', description: '', goalType: 'booking' });
+      setCreateForm({ name: '', description: '', segmentId: '' });
+      setCreateNodes([]);
+      setShowCreateNodeForm(false);
       await loadData();
     } catch (err) { showToast(err.message, 'error'); }
   };
@@ -260,6 +350,11 @@ export default function Journeys() {
   const handleAddNode = (afterIndex) => {
     const nodes = detail.nodes || [];
     const newId = `node_${Date.now()}`;
+    // Resolve template ID for the active channel
+    const resolvedTemplateId =
+      nodeForm.channel === 'email'     ? (nodeForm.emailTemplateId     || null) :
+      nodeForm.channel === 'whatsapp'  ? (nodeForm.whatsappTemplateId  || null) :
+      nodeForm.channel === 'sms'       ? (nodeForm.smsTemplateId       || null) : null;
     const newNode = {
       id: newId,
       type: nodeForm.type,
@@ -269,21 +364,23 @@ export default function Journeys() {
         ...(nodeForm.type === 'action' && {
           channel: nodeForm.channel,
           message: nodeForm.message,
-          // Save rest auto-pair settings when this is a WhatsApp node
+          templateId: resolvedTemplateId,
           ...(nodeForm.channel === 'whatsapp' && {
             restChannel: nodeForm.restChannel || 'email',
             restTemplateId: nodeForm.restTemplateId || null,
           }),
         }),
-        ...(nodeForm.type === 'wait' && { waitDays: nodeForm.waitDays }),
-        ...(nodeForm.type === 'condition' && { label: nodeForm.label }),
-        ...(nodeForm.type === 'goal' && { goalType: nodeForm.goalType }),
-      }
+        ...(nodeForm.type === 'wait'      && { waitDays:  nodeForm.waitDays }),
+        ...(nodeForm.type === 'condition' && { condition: nodeForm.condition }),
+        ...(nodeForm.type === 'goal'      && { goalType:  nodeForm.goalType }),
+      },
+      position: { x: 300, y: (afterIndex + 1) * 160 },
     };
     const updated = [...nodes.slice(0, afterIndex + 1), newNode, ...nodes.slice(afterIndex + 1)];
     saveNodeChanges(updated);
     setAddNodeAfter(null);
-    setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' });
+    setShowNodeModal(false);
+    setNodeForm({ ...BLANK_NODE_FORM });
   };
 
   const handleEditNode = (nodeId) => {
@@ -690,6 +787,13 @@ export default function Journeys() {
                     ))}
                   </div>
                   <button
+                    onClick={() => openNodeModal(detail?.nodes?.length ? detail.nodes.length - 1 : 0)}
+                    className="btn btn-sm btn-secondary"
+                    style={{ fontSize: 11, padding: '4px 12px' }}
+                  >
+                    <Plus size={11} /> Add Node
+                  </button>
+                  <button
                     onClick={() => setFlowEditMode(!flowEditMode)}
                     className={`btn btn-sm ${flowEditMode ? 'btn-primary' : 'btn-ghost'}`}
                     style={{ fontSize: 11, padding: '4px 12px' }}
@@ -724,7 +828,6 @@ export default function Journeys() {
                       const channelConf = node.data?.channel ? CHANNEL_CONFIG[node.data.channel.toLowerCase()] : null;
                       const ChannelIcon = channelConf?.icon || null;
                       const nodeStats = nodeAnalyticsMap[node.id] || {};
-                      const isExpanded = expandedNode === node.id;
                       const hasSent = nodeStats.action_sent > 0;
 
                       // ── Track-aware grid placement ──
@@ -756,7 +859,9 @@ export default function Journeys() {
                               ]
                             : [{ gc: nodeTrack === 'indian' ? '1' : '2', badge: nodeTrack === 'indian' ? '🇮🇳 IN' : '🌍 ROW', accent: nodeTrack === 'indian' ? '#FF9933' : '#3B82F6', key: node.id }];
 
-                      return renders.map(({ gc, badge, accent, centered, key, channelOverride, restPair }) => (
+                      return renders.map(({ gc, badge, accent, centered, key, channelOverride, restPair }) => {
+                        const isExpanded = expandedNode === key;
+                        return (
                         <div key={key} style={{ gridColumn: gc, width: '100%', maxWidth: centered ? 520 : '100%', justifySelf: centered ? 'center' : 'stretch', position: 'relative' }}>
                           {/* Track label on each non-trigger node */}
                           {badge && (
@@ -843,7 +948,7 @@ export default function Journeys() {
                                     </div>
                                   </div>
                                 ) : (
-                                  <button onClick={() => { setAddNodeAfter(i - 1); setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' }); }}
+                                  <button onClick={() => openNodeModal(i - 1)}
                                     className="flex items-center justify-center"
                                     style={{ width: 22, height: 22, borderRadius: '50%', border: '2px dashed var(--red)', background: 'var(--bg-card)', color: 'var(--red)',
                                       cursor: 'pointer', fontSize: 14, fontWeight: 700, margin: '2px 0' }}>
@@ -851,7 +956,16 @@ export default function Journeys() {
                                   </button>
                                 )
                               ) : (
-                                <ArrowDown size={14} color={color + '80'} />
+                                <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', height: 28 }}>
+                                  <div style={{ width: 2, height: '100%', background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
+                                  <button
+                                    onClick={e => { e.stopPropagation(); openNodeModal(i - 1); }}
+                                    title="Add node here"
+                                    style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, borderRadius: '50%', border: `1.5px dashed ${color}`, background: 'var(--bg-card)', color, cursor: 'pointer', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, opacity: 0.7, transition: 'opacity 0.15s', zIndex: 1 }}
+                                    onMouseEnter={e => e.currentTarget.style.opacity = 1}
+                                    onMouseLeave={e => e.currentTarget.style.opacity = 0.7}
+                                  >+</button>
+                                </div>
                               )}
                               <div style={{ width: 2, height: 4, background: color + '40' }} />
                             </div>
@@ -859,7 +973,7 @@ export default function Journeys() {
 
                           {/* Node Card */}
                           <div
-                            onClick={() => setExpandedNode(isExpanded ? null : node.id)}
+                            onClick={() => setExpandedNode(isExpanded ? null : key)}
                             style={{
                               background: 'var(--bg-card)',
                               border: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
@@ -1054,7 +1168,8 @@ export default function Journeys() {
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            setTestSendNode({ node, recipient: '', sending: false, result: null });
+                                            setSegmentContacts([]); setContactSearch('');
+                                            setTestSendNode({ node, recipients: [], sending: false, results: [] });
                                           }}
                                           style={{
                                             display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -1096,10 +1211,11 @@ export default function Journeys() {
                             )}
                           </div>
                         </div>
-                      ));
+                      ); }
+                      );
                     })}
-                    {/* Add node at end when in edit mode */}
-                    {flowEditMode && (
+                    {/* Add node at end */}
+                    {(
                       <div className="flex flex-col items-center mt-2">
                         <div style={{ width: 2, height: 12, background: 'var(--border-color)' }} />
                         {addNodeAfter === nodes.length - 1 ? (
@@ -1155,10 +1271,12 @@ export default function Journeys() {
                             </div>
                           </div>
                         ) : (
-                          <button onClick={() => { setAddNodeAfter(nodes.length - 1); setNodeForm({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking' }); }}
+                          <button onClick={() => openNodeModal(nodes.length - 1)}
                             className="flex items-center justify-center"
-                            style={{ width: 28, height: 28, borderRadius: '50%', border: '2px dashed var(--red)', background: 'var(--bg-card)', color: 'var(--red)',
-                              cursor: 'pointer', fontSize: 16, fontWeight: 700 }}>
+                            title="Add node at end"
+                            style={{ width: 32, height: 32, borderRadius: '50%', border: '2px dashed var(--brand-primary)', background: 'var(--bg-card)', color: 'var(--brand-primary)', cursor: 'pointer', fontSize: 18, fontWeight: 700, transition: 'all 0.15s' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--brand-primary)'; e.currentTarget.style.color = '#fff'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--brand-primary)'; }}>
                             +
                           </button>
                         )}
@@ -1448,6 +1566,237 @@ export default function Journeys() {
           </div>
         )}
 
+        {/* ── Create / Add Node Modal ──────────────────────────── */}
+        {showNodeModal && (
+          <div className="modal-overlay" onClick={() => setShowNodeModal(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}
+              style={{ maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
+
+              {/* Header */}
+              <div className="modal-header" style={{ paddingBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: NODE_COLORS[nodeForm.type] + '18', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {(() => { const Icon = NODE_ICONS[nodeForm.type]; return <Icon size={18} color={NODE_COLORS[nodeForm.type]} />; })()}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>Create Node</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
+                      Inserting after position {(nodeModalAfterIdx ?? 0) + 1}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                {/* Node Type */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Node Type</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {['trigger', 'action', 'wait', 'condition', 'goal'].map(t => {
+                      const Icon = NODE_ICONS[t];
+                      const color = NODE_COLORS[t];
+                      const active = nodeForm.type === t;
+                      return (
+                        <button key={t} onClick={() => setNodeForm(f => ({ ...f, type: t }))}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s', border: active ? `1.5px solid ${color}` : '1.5px solid var(--border)', background: active ? color + '14' : 'transparent', color: active ? color : 'var(--text-secondary)' }}>
+                          <Icon size={12} /> {NODE_LABELS[t]}
+                          {active && <CheckCircle2 size={11} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Name / Label */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                    Name
+                  </label>
+                  <input className="form-input" placeholder={`e.g. ${nodeForm.type === 'wait' ? 'Wait 3 days' : nodeForm.type === 'action' ? 'Send welcome email' : 'Node label'}`}
+                    value={nodeForm.label}
+                    onChange={e => setNodeForm(f => ({ ...f, label: e.target.value }))} />
+                </div>
+
+                {/* Track */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>
+                    Audience Track
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[{ v: 'all', label: 'Shared', c: 'var(--text-secondary)' }, { v: 'indian', label: '🇮🇳 Indian', c: '#FF9933' }, { v: 'rest', label: '🌍 Rest of World', c: '#3B82F6' }].map(t => (
+                      <button key={t.v} onClick={() => setNodeForm(f => ({ ...f, track: t.v }))}
+                        style={{ padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: nodeForm.track === t.v ? `1.5px solid ${t.c}` : '1.5px solid var(--border)', background: nodeForm.track === t.v ? t.c + '14' : 'transparent', color: nodeForm.track === t.v ? t.c : 'var(--text-secondary)' }}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── ACTION fields ── */}
+                {nodeForm.type === 'action' && (
+                  <>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Channel</label>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {[
+                          { v: 'email',     label: 'Email',     color: 'var(--red)',    Icon: Mail },
+                          { v: 'whatsapp',  label: 'WhatsApp',  color: '#25d366',       Icon: MessageCircle },
+                          { v: 'sms',       label: 'SMS',       color: 'var(--orange)', Icon: Smartphone },
+                        ].map(ch => (
+                          <button key={ch.v} onClick={() => setNodeForm(f => ({ ...f, channel: ch.v }))}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: nodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: nodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
+                            <ch.Icon size={12} /> {ch.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Email template */}
+                    {(nodeForm.channel === 'email' || (nodeForm.channel === 'whatsapp' && nodeForm.restChannel === 'email')) && (
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}
+                        </label>
+                        <select className="form-input"
+                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
+                          onChange={e => {
+                            const val = e.target.value ? parseInt(e.target.value) : null;
+                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val } : { ...f, emailTemplateId: val });
+                          }}>
+                          <option value="">— Select email template —</option>
+                          {allTemplates.email.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>
+                          ))}
+                        </select>
+                        {allTemplates.email.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No email templates found</div>}
+                      </div>
+                    )}
+
+                    {/* WhatsApp template */}
+                    {nodeForm.channel === 'whatsapp' && (
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                          WhatsApp Template
+                        </label>
+                        <select className="form-input"
+                          value={nodeForm.whatsappTemplateId || ''}
+                          onChange={e => setNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                          <option value="">— Select WhatsApp template —</option>
+                          {allTemplates.whatsapp.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}{t.wa_template_name ? ` (${t.wa_template_name})` : ''}</option>
+                          ))}
+                        </select>
+                        {allTemplates.whatsapp.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No WhatsApp templates found</div>}
+
+                        {/* Rest-of-world auto-pair */}
+                        <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: '#3B82F6', marginBottom: 8 }}>🌍 Rest-of-World auto-pair channel</div>
+                          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                            {['email', 'sms'].map(ch => (
+                              <button key={ch} onClick={() => setNodeForm(f => ({ ...f, restChannel: ch }))}
+                                style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: nodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: nodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>
+                                {ch}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SMS template */}
+                    {(nodeForm.channel === 'sms' || (nodeForm.channel === 'whatsapp' && nodeForm.restChannel === 'sms')) && (
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World SMS Template' : 'SMS Template'}
+                        </label>
+                        <select className="form-input"
+                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.smsTemplateId || '')}
+                          onChange={e => {
+                            const val = e.target.value ? parseInt(e.target.value) : null;
+                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val } : { ...f, smsTemplateId: val });
+                          }}>
+                          <option value="">— Select SMS template —</option>
+                          {allTemplates.sms.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                        {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* ── WAIT fields ── */}
+                {nodeForm.type === 'wait' && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <input type="number" min={1} max={365} className="form-input"
+                        style={{ width: 100 }}
+                        value={nodeForm.waitDays}
+                        onChange={e => setNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                        {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                      {[1, 2, 3, 5, 7, 14].map(d => (
+                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d }))}
+                          style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── CONDITION fields ── */}
+                {nodeForm.type === 'condition' && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Condition Type</label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {[
+                        { v: 'booked',        label: 'Has Booked' },
+                        { v: 'opened_email',  label: 'Opened Email' },
+                        { v: 'clicked_link',  label: 'Clicked Link' },
+                      ].map(c => (
+                        <button key={c.v} onClick={() => setNodeForm(f => ({ ...f, condition: c.v }))}
+                          style={{ padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: nodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── GOAL fields ── */}
+                {nodeForm.type === 'goal' && (
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Goal Type</label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {[{ v: 'booking', label: 'Booking' }, { v: 'enquiry', label: 'Enquiry' }, { v: 'registration', label: 'Registration' }].map(g => (
+                        <button key={g.v} onClick={() => setNodeForm(f => ({ ...f, goalType: g.v }))}
+                          style={{ padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border)', background: nodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: nodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              <div className="modal-footer">
+                <button className="btn btn-ghost" onClick={() => setShowNodeModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => handleAddNode(nodeModalAfterIdx ?? (detail?.nodes?.length ? detail.nodes.length - 1 : 0))}>
+                  <Plus size={14} /> Add Node
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Confirmation Dialog ──────────────────────────────── */}
         {confirmAction && (
           <div className="confirm-overlay" onClick={() => setConfirmAction(null)}>
@@ -1480,25 +1829,82 @@ export default function Journeys() {
 
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
 
-        {/* ═══ Test-send modal — channel-aware recipient input ═══ */}
+        {/* ═══ Test-send modal — multi-select contacts + scheduling ═══ */}
         {testSendNode && (() => {
           const n = testSendNode.node;
           const ch = (n.data?.channel || '').toLowerCase();
-          const isEmail = ch === 'email';
-          const placeholder = isEmail ? 'name@example.com' : '+971501234567';
-          const inputType = isEmail ? 'email' : 'tel';
           const tplId = n.data?.templateId;
+          const recipients = testSendNode.recipients || [];
+
+          const triggerNode = detail?.nodes?.find(nd => nd.type === 'trigger');
+          const segmentId = triggerNode?.data?.segmentId;
+
+          const loadContacts = async () => {
+            if (segmentContactsLoading || segmentContacts.length > 0) return;
+            if (!segmentId) return;
+            setSegmentContactsLoading(true);
+            try {
+              const res = await getSegmentCustomers({ segmentId, limit: 200 });
+              const list = res?.data || res?.customers || (Array.isArray(res) ? res : []);
+              const merged = [...MOCK_TEST_CONTACTS, ...list];
+              setSegmentContacts(merged);
+              const allAddrs = merged.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
+              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
+            } catch {
+              setSegmentContacts(MOCK_TEST_CONTACTS);
+              const allAddrs = MOCK_TEST_CONTACTS.map(c => ch === 'email' ? c.email : c.phone).filter(Boolean);
+              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
+            }
+            setSegmentContactsLoading(false);
+          };
+
+          // If no segmentId, fall back to mock contacts immediately
+          if (!segmentContactsLoading && segmentContacts.length === 0) {
+            if (segmentId) {
+              loadContacts();
+            } else {
+              setSegmentContacts(MOCK_TEST_CONTACTS);
+              const allAddrs = MOCK_TEST_CONTACTS.map(c => ch === 'email' ? c.email : c.phone).filter(Boolean);
+              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
+            }
+          }
+
+          const displayContacts = segmentContacts.length > 0 ? segmentContacts : MOCK_TEST_CONTACTS;
+          const filtered = displayContacts.filter(c => {
+            const q = contactSearch.toLowerCase();
+            return !q || (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
+          });
+
+          const filteredAddrs = filtered.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
+          const allFilteredSelected = filteredAddrs.length > 0 && filteredAddrs.every(a => recipients.includes(a));
+
+          const toggleContact = (addr) => {
+            setTestSendNode(s => ({
+              ...s,
+              recipients: s.recipients.includes(addr) ? s.recipients.filter(r => r !== addr) : [...s.recipients, addr],
+              results: [],
+            }));
+          };
+
+          const toggleAll = () => {
+            if (allFilteredSelected) {
+              setTestSendNode(s => ({ ...s, recipients: s.recipients.filter(r => !filteredAddrs.includes(r)), results: [] }));
+            } else {
+              setTestSendNode(s => ({ ...s, recipients: [...new Set([...s.recipients, ...filteredAddrs])], results: [] }));
+            }
+          };
 
           const submit = async () => {
-            if (!testSendNode.recipient.trim()) return;
-            setTestSendNode(s => ({ ...s, sending: true, result: null }));
+            if (recipients.length === 0) return;
+            setTestSendNode(s => ({ ...s, sending: true, results: [] }));
             try {
-              const res = await testSendJourneyNode(selected, n.id, testSendNode.recipient.trim());
-              setTestSendNode(s => ({ ...s, sending: false, result: { ok: true, data: res.data } }));
-              setToast({ type: 'success', msg: `Test ${ch} sent to ${testSendNode.recipient}` });
-              setTimeout(() => setToast(null), 3000);
+              const res = await testSendJourneyNodeBatch(selected, n.id, recipients);
+              const batch = res?.data || {};
+              setTestSendNode(s => ({ ...s, sending: false, results: batch.results || [] }));
+              setToast({ type: 'success', msg: `Sent ${batch.sent}/${batch.total} test ${ch}s` });
+              setTimeout(() => setToast(null), 5000);
             } catch (err) {
-              setTestSendNode(s => ({ ...s, sending: false, result: { ok: false, error: err.message || 'Send failed' } }));
+              setTestSendNode(s => ({ ...s, sending: false, results: [{ recipient: 'all', ok: false, error: err.message }] }));
             }
           };
 
@@ -1509,70 +1915,140 @@ export default function Journeys() {
             >
               <div
                 onClick={e => e.stopPropagation()}
-                style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 24, width: 460, maxWidth: '92vw', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid var(--border-color)' }}
+                style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 24, width: 520, maxWidth: '95vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: 0, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid var(--border-color)' }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                {/* Header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                   <Send size={18} color={NODE_COLORS.action} />
-                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Send test</h3>
+                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Send test</h3>
+                  <button onClick={() => { setTestSendNode(null); setSegmentContacts([]); setContactSearch(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-                  <div><strong style={{ color: 'var(--text-primary)' }}>{n.data?.label || n.id}</strong></div>
-                  <div style={{ marginTop: 2 }}>Channel: <span style={{ color: NODE_COLORS.action, fontWeight: 600 }}>{ch}</span> · Template: {tplId || '(none)'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>{n.data?.label || n.id}</strong>
+                  <span style={{ marginLeft: 8 }}>· Channel: <span style={{ color: NODE_COLORS.action, fontWeight: 600 }}>{ch}</span></span>
+                  {tplId && <span style={{ marginLeft: 8 }}>· Template: {tplId}</span>}
                 </div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                  {isEmail ? 'Email address' : 'Phone number (E.164)'}
-                </label>
+
+                {/* Contact list header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', flex: 1 }}>
+                    Contacts
+                    {!segmentId && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>(test users)</span>}
+                    {recipients.length > 0 && (
+                      <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 10, background: 'rgba(34,197,94,0.12)', color: 'var(--green)', fontSize: 11, fontWeight: 700 }}>
+                        {recipients.length} selected
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    onClick={toggleAll}
+                    style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: allFilteredSelected ? 'var(--red)' : 'var(--text-secondary)', cursor: 'pointer' }}
+                  >
+                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
+                  </button>
+                </div>
+
+                {/* Search */}
                 <input
-                  type={inputType}
-                  autoFocus
-                  placeholder={placeholder}
-                  value={testSendNode.recipient}
-                  disabled={testSendNode.sending}
-                  onChange={e => setTestSendNode(s => ({ ...s, recipient: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter') submit(); }}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, boxSizing: 'border-box' }}
+                  placeholder="Search by name, email or phone…"
+                  value={contactSearch}
+                  onChange={e => setContactSearch(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box', marginBottom: 8 }}
                 />
-                {testSendNode.result && (
-                  <div style={{
-                    marginTop: 12, padding: '10px 12px', borderRadius: 8, fontSize: 12,
-                    background: testSendNode.result.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                    color: testSendNode.result.ok ? 'var(--green)' : 'var(--red)',
-                    border: `1px solid ${testSendNode.result.ok ? 'var(--green)' : 'var(--red)'}`,
-                  }}>
-                    {testSendNode.result.ok ? (
-                      <>
-                        <div>✓ Sent — provider: {testSendNode.result.data?.provider || 'unknown'}{testSendNode.result.data?.simulated ? ' (simulated — provider not configured)' : ''}{testSendNode.result.data?.externalId ? `, id: ${testSendNode.result.data.externalId}` : ''}</div>
-                        {testSendNode.result.data?.resolvedUser ? (
-                          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-                            Matched <strong style={{ color: 'var(--text-secondary)' }}>{testSendNode.result.data.resolvedUser.name || '(no name)'}</strong> · unified_id: {testSendNode.result.data.resolvedUser.unifiedId} — personalized + rid attached
+
+                {/* Contact list */}
+                <div style={{ flex: 1, overflowY: 'auto', maxHeight: 260, border: '1px solid var(--border-color)', borderRadius: 10, marginBottom: 14 }}>
+                  {segmentContactsLoading ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading contacts…</div>
+                  ) : filtered.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No contacts match your search</div>
+                  ) : filtered.map((c, idx) => {
+                      const addr = ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number);
+                      const name = c.name || c.full_name || c.customer_name || addr || '(unnamed)';
+                      const checked = addr ? recipients.includes(addr) : false;
+                      const result = (testSendNode.results || []).find(r => r.recipient === addr);
+                      return (
+                        <div
+                          key={c.unified_id || c.id || idx}
+                          onClick={() => addr && toggleContact(addr)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+                            cursor: addr ? 'pointer' : 'default',
+                            background: checked ? 'rgba(34,197,94,0.05)' : 'transparent',
+                            borderBottom: idx < filtered.length - 1 ? '1px solid var(--border-color)' : 'none',
+                          }}
+                        >
+                          {/* Checkbox */}
+                          <div style={{ width: 18, height: 18, borderRadius: 4, border: checked ? '2px solid var(--green)' : '2px solid var(--border-color)', background: checked ? 'var(--green)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
+                            {checked && <span style={{ color: 'white', fontSize: 11, fontWeight: 700, lineHeight: 1 }}>✓</span>}
                           </div>
-                        ) : (
-                          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-                            No matching contact — sent with generic personalization (no rid)
+                          {/* Avatar */}
+                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: checked ? 'rgba(34,197,94,0.15)' : 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: checked ? 'var(--green)' : 'var(--text-muted)', flexShrink: 0 }}>
+                            {(name[0] || '?').toUpperCase()}
                           </div>
-                        )}
-                        {testSendNode.result.data?.utmLink && (
-                          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all' }}>
-                            UTM: <span style={{ color: 'var(--text-secondary)' }}>{testSendNode.result.data.utmLink}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr || <span style={{ color: 'var(--red)' }}>no {ch}</span>}</div>
                           </div>
-                        )}
-                      </>
-                    ) : `✗ ${testSendNode.result.error}`}
+                          {result && (
+                            <span style={{ fontSize: 11, fontWeight: 600, color: result.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
+                              {result.ok ? '✓ Sent' : '✗ Failed'}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                {/* Send log */}
+                {(testSendNode.results || []).length > 0 && (
+                  <div style={{ marginBottom: 12, border: '1px solid var(--border-color)', borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>Send Log</span>
+                      {(() => {
+                        const ok = (testSendNode.results || []).filter(r => r.ok).length;
+                        const total = (testSendNode.results || []).length;
+                        return (
+                          <>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)' }}>{ok} sent</span>
+                            {total - ok > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)', marginLeft: 6 }}>{total - ok} failed</span>}
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                      {(testSendNode.results || []).map((r, i) => (
+                        <div key={i} style={{ padding: '8px 12px', borderBottom: i < testSendNode.results.length - 1 ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: r.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>{r.ok ? '✓' : '✗'}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.recipient}</span>
+                            {r.ok && r.provider && <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>via {r.provider}{r.simulated ? ' (simulated)' : ''}</span>}
+                          </div>
+                          {r.ok && r.externalId && <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 20 }}>ID: {r.externalId}</div>}
+                          {r.ok && r.resolvedUser && <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 20 }}>Matched: {r.resolvedUser.name} (uid {r.resolvedUser.unifiedId})</div>}
+                          {!r.ok && <div style={{ fontSize: 11, color: 'var(--red)', paddingLeft: 20 }}>{r.error}</div>}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                   <button
                     type="button"
-                    onClick={() => setTestSendNode(null)}
+                    onClick={() => { setTestSendNode(null); setSegmentContacts([]); setContactSearch(''); }}
                     disabled={testSendNode.sending}
                     className="btn btn-ghost"
                   >Close</button>
                   <button
                     type="button"
                     onClick={submit}
-                    disabled={!testSendNode.recipient.trim() || testSendNode.sending}
+                    disabled={recipients.length === 0 || testSendNode.sending}
                     className="btn btn-primary"
-                  >{testSendNode.sending ? 'Sending…' : 'Send'}</button>
+                  >
+                    {testSendNode.sending ? `Sending…` : `Send to ${recipients.length}`}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1963,45 +2439,297 @@ export default function Journeys() {
 
       {/* ── Create Journey Modal ───────────────────────────────── */}
       {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-            <h3 className="flex items-center gap-2">
-              <Plus size={20} color="var(--red)" /> Create New Journey
-            </h3>
-            <div className="form-group">
-              <label>Journey Name *</label>
-              <input
-                type="text"
-                placeholder="e.g., Welcome Series — New Customers"
-                value={createForm.name}
-                onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))}
-              />
+        <div className="modal-overlay" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); }}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }}>
+
+            {/* Header */}
+            <div className="modal-header" style={{ paddingBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <GitBranch size={18} color="var(--red)" />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Create New Journey</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>Build an automated customer journey flow</div>
+                </div>
+              </div>
             </div>
-            <div className="form-group">
-              <label>Description</label>
-              <textarea
-                placeholder="Describe the purpose and target audience of this journey..."
-                value={createForm.description}
-                onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-                style={{ minHeight: 80 }}
-              />
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
+
+              {/* Name */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Journey Name *</label>
+                <input className="form-input" type="text"
+                  placeholder="e.g., Welcome Series — New Customers"
+                  value={createForm.name}
+                  onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Description</label>
+                <textarea className="form-input"
+                  placeholder="Describe the purpose and target audience of this journey..."
+                  value={createForm.description}
+                  onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
+                  style={{ minHeight: 70, resize: 'vertical' }} />
+              </div>
+
+              {/* Segment */}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment</label>
+                  {segmentsLoading && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)' }}>
+                      <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Loading…
+                    </span>
+                  )}
+                </div>
+                <select className="form-input"
+                  value={createForm.segmentId}
+                  disabled={segmentsLoading}
+                  onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
+                  <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment (optional) —'}</option>
+                  {allSegments.map((s, i) => (
+                    <option key={i} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Nodes */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Journey Nodes</label>
+                  {createNodes.length > 0 && !showCreateNodeForm && (
+                    <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: '1.5px solid var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
+                      <Plus size={11} /> Add Node
+                    </button>
+                  )}
+                </div>
+
+                {/* Entry trigger — always shown */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: NODE_COLORS.trigger + '10', border: `1px solid ${NODE_COLORS.trigger}25` }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 7, background: NODE_COLORS.trigger + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Zap size={13} color={NODE_COLORS.trigger} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Entry Trigger</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                        {createForm.segmentId ? `Segment: ${allSegments.find(s => s.value === createForm.segmentId)?.label?.split(' (')[0] || createForm.segmentId}` : 'Segment entry — added automatically'}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: NODE_COLORS.trigger, background: NODE_COLORS.trigger + '15', padding: '2px 8px', borderRadius: 20 }}>Trigger</span>
+                  </div>
+
+                  {/* User-added nodes */}
+                  {createNodes.map((n, idx) => {
+                    const color = NODE_COLORS[n.type];
+                    const Icon = NODE_ICONS[n.type];
+                    const detail = n.type === 'action'
+                      ? (n.channel ? n.channel.charAt(0).toUpperCase() + n.channel.slice(1) : 'Action')
+                      : n.type === 'wait'
+                      ? `Wait ${n.waitDays || 1} day${(n.waitDays || 1) !== 1 ? 's' : ''}`
+                      : n.type === 'condition'
+                      ? (n.condition === 'booked' ? 'Has Booked?' : n.condition === 'opened_email' ? 'Opened Email?' : n.condition === 'clicked_link' ? 'Clicked Link?' : n.condition || 'Condition')
+                      : n.type === 'goal'
+                      ? `Goal: ${n.goalType ? n.goalType.charAt(0).toUpperCase() + n.goalType.slice(1) : 'Booking'}`
+                      : '';
+                    return (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: color + '08', border: `1px solid ${color}20` }}>
+                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border)', flexShrink: 0, marginLeft: 8 }} />
+                        <div style={{ width: 28, height: 28, borderRadius: 7, background: color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Icon size={13} color={color} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.label}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{detail}</div>
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 600, color, background: color + '15', padding: '2px 8px', borderRadius: 20, flexShrink: 0 }}>{NODE_LABELS[n.type]}</span>
+                        <button onClick={() => setCreateNodes(ns => ns.filter((_, i) => i !== idx))}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 16, lineHeight: 1, padding: '0 0 0 2px', flexShrink: 0 }}>×</button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Add node button → only shown when list is empty and form is closed */}
+                {!showCreateNodeForm && createNodes.length === 0 ? (
+                  <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 16px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1.5px dashed var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
+                    <Plus size={12} /> Add Node
+                  </button>
+                ) : (
+                  <div style={{ border: '1.5px solid var(--brand-primary)', borderRadius: 12, padding: 16, background: 'var(--brand-primary)08', marginTop: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Plus size={13} /> Custom Node
+                    </div>
+
+                    {/* Name */}
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Node Name *</label>
+                      <input className="form-input" style={{ fontSize: 12, padding: '6px 10px' }}
+                        placeholder="e.g. Send welcome email"
+                        value={createNodeForm.label}
+                        onChange={e => setCreateNodeForm(f => ({ ...f, label: e.target.value }))} />
+                    </div>
+
+                    {/* Node Type */}
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Node Type</label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {['action', 'wait', 'condition', 'goal'].map(t => {
+                          const Icon = NODE_ICONS[t]; const color = NODE_COLORS[t]; const active = createNodeForm.type === t;
+                          const TYPE_DEFAULTS = {
+                            action:    { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Send Email' },
+                            wait:      { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Wait 1 Day' },
+                            condition: { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Has Booked?' },
+                            goal:      { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Booking Goal' },
+                          };
+                          return (
+                            <button key={t} onClick={() => setCreateNodeForm(f => ({ ...f, type: t, ...TYPE_DEFAULTS[t] }))}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: active ? `1.5px solid ${color}` : '1.5px solid var(--border)', background: active ? color + '14' : 'transparent', color: active ? color : 'var(--text-secondary)' }}>
+                              <Icon size={11} /> {NODE_LABELS[t]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* ACTION */}
+                    {createNodeForm.type === 'action' && (
+                      <>
+                        <div style={{ marginBottom: 10 }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Channel</label>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {[{ v: 'email', label: 'Email', color: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', color: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', color: 'var(--orange)', Icon: Smartphone }].map(ch => (
+                              <button key={ch.v} onClick={() => setCreateNodeForm(f => ({ ...f, channel: ch.v }))}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: createNodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: createNodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: createNodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
+                                <ch.Icon size={11} /> {ch.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {createNodeForm.channel === 'email' && (
+                          <div style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Mail Template</label>
+                            <select className="form-input" style={{ fontSize: 12 }}
+                              value={createNodeForm.emailTemplateId || ''}
+                              onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                              <option value="">— Select email template —</option>
+                              {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        {createNodeForm.channel === 'whatsapp' && (
+                          <>
+                            <div style={{ marginBottom: 10 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
+                              <select className="form-input" style={{ fontSize: 12 }}
+                                value={createNodeForm.whatsappTemplateId || ''}
+                                onChange={e => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                <option value="">— Select WhatsApp template —</option>
+                                {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
+                            </div>
+                            <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 6 }}>Rest-of-World fallback</div>
+                              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                {['email', 'sms'].map(ch => (
+                                  <button key={ch} onClick={() => setCreateNodeForm(f => ({ ...f, restChannel: ch }))}
+                                    style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: createNodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: createNodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: createNodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>{ch}</button>
+                                ))}
+                              </div>
+                              <select className="form-input" style={{ fontSize: 12 }}
+                                value={createNodeForm.restTemplateId || ''}
+                                onChange={e => setCreateNodeForm(f => ({ ...f, restTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                <option value="">— Select {createNodeForm.restChannel} template —</option>
+                                {(createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
+                            </div>
+                          </>
+                        )}
+                        {createNodeForm.channel === 'sms' && (
+                          <div style={{ marginBottom: 10 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
+                            <select className="form-input" style={{ fontSize: 12 }}
+                              value={createNodeForm.smsTemplateId || ''}
+                              onChange={e => setCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                              <option value="">— Select SMS template —</option>
+                              {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                            </select>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* WAIT */}
+                    {createNodeForm.type === 'wait' && (
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Days to Wait</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <input type="number" min={1} className="form-input" style={{ width: 80, fontSize: 12, padding: '6px 10px' }}
+                            value={createNodeForm.waitDays}
+                            onChange={e => setCreateNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                          <div style={{ display: 'flex', gap: 5 }}>
+                            {[1, 2, 3, 7].map(d => (
+                              <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d }))}
+                                style={{ padding: '3px 8px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CONDITION */}
+                    {createNodeForm.type === 'condition' && (
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Condition</label>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {[{ v: 'booked', l: 'Has Booked' }, { v: 'opened_email', l: 'Opened Email' }, { v: 'clicked_link', l: 'Clicked Link' }].map(c => (
+                            <button key={c.v} onClick={() => setCreateNodeForm(f => ({ ...f, condition: c.v }))}
+                              style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: createNodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: createNodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>{c.l}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* GOAL */}
+                    {createNodeForm.type === 'goal' && (
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Goal Type</label>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {[{ v: 'booking', l: 'Booking' }, { v: 'enquiry', l: 'Enquiry' }, { v: 'registration', l: 'Registration' }].map(g => (
+                            <button key={g.v} onClick={() => setCreateNodeForm(f => ({ ...f, goalType: g.v }))}
+                              style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: createNodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border)', background: createNodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: createNodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>{g.l}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                      <button className="btn btn-sm btn-primary"
+                        disabled={!createNodeForm.label.trim()}
+                        onClick={() => {
+                          setCreateNodes(ns => [...ns, { ...createNodeForm }]);
+                          setCreateNodeForm({ ...BLANK_CREATE_NODE });
+                          setShowCreateNodeForm(false);
+                        }}>
+                        <Plus size={11} /> Add Node
+                      </button>
+                      <button className="btn btn-sm btn-ghost" onClick={() => setShowCreateNodeForm(false)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="form-group">
-              <label>Conversion Goal</label>
-              <select
-                value={createForm.goalType}
-                onChange={e => setCreateForm(f => ({ ...f, goalType: e.target.value }))}
-              >
-                <option value="booking">Booking</option>
-                <option value="enquiry">Enquiry</option>
-                <option value="registration">Registration</option>
-                <option value="purchase">Purchase</option>
-                <option value="engagement">Engagement</option>
-              </select>
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleCreate}>
+
+            <div className="modal-footer justify-end mt-4">
+              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
                 <Plus size={14} /> Create Journey
               </button>
             </div>

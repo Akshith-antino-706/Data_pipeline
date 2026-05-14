@@ -83,6 +83,22 @@ router.post('/:id/nodes/:nodeId/test', async (req, res, next) => {
   }
 });
 
+// Batch test-send — sends to all recipients in parallel, returns per-recipient logs.
+// Body: { recipients: string[] }
+router.post('/:id/nodes/:nodeId/test-batch', async (req, res, next) => {
+  try {
+    const { recipients } = req.body;
+    const data = await JourneyService.testSendNodeBatch(
+      parseInt(req.params.id),
+      req.params.nodeId,
+      recipients
+    );
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Auto-generate journey from strategy
 router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
   try {
