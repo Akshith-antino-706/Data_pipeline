@@ -609,15 +609,15 @@ ${scripts.share}
    * Stores both structured fields and the full raw payload.
    */
   static async recordEvent(body) {
-    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId, email, contactNumber, name } = body;
+    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId, email, contactNumber, name, referrer } = body;
 
     // Resolve unified_id: try every available identifier against unified_contacts
     let resolvedUnifiedId = parseInt(rid || unifiedId) || null;
 
-    // 1. Check rid in pageUrl
-    if (!resolvedUnifiedId && pageUrl) {
-      const m = /[?&]rid=(\d+)/.exec(pageUrl);
-      if (m) resolvedUnifiedId = parseInt(m[1]);
+    // 1. Check rid in pageUrl or referrer
+    if (!resolvedUnifiedId) {
+      const ridMatch = /[?&]rid=(\d+)/.exec(pageUrl || '') || /[?&]rid=(\d+)/.exec(referrer || '');
+      if (ridMatch) resolvedUnifiedId = parseInt(ridMatch[1]);
     }
 
     // 2. Match by email (from email field or customerId)
