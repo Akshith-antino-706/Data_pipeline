@@ -213,19 +213,19 @@ window.addEventListener('scroll', function() {
       );
       if (uc) resolvedUnifiedId = uc.id;
     }
-    // Final fallback: borrow id from a recent event in the same session (last 2 hrs)
+    // Final fallback: borrow unified_id from a recent event in the same session (last 2 hrs)
     if (!resolvedUnifiedId && sessionId) {
       const { rows: [prev] } = await db.query(
-        `SELECT id FROM gtm_events
-         WHERE session_id = $1 AND id IS NOT NULL AND created_at > NOW() - INTERVAL '2 hours'
+        `SELECT unified_id FROM gtm_events
+         WHERE session_id = $1 AND unified_id IS NOT NULL AND created_at > NOW() - INTERVAL '2 hours'
          ORDER BY created_at DESC LIMIT 1`,
         [sessionId]
       );
-      if (prev) resolvedUnifiedId = prev.id;
+      if (prev) resolvedUnifiedId = prev.unified_id;
     }
 
     const { rows: [event] } = await db.query(`
-      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, id, raw_payload)
+      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       RETURNING *
     `, [eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body)]);
