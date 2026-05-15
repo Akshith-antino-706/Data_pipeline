@@ -21,7 +21,7 @@ const DAY_LABELS = {
   7: 'Abandoned Cart',
 };
 
-const INTERVAL_MS = 30 * 1000; // 30 seconds between sends (testing)
+const INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours between each day's send
 
 const timers   = new Map(); // id → intervalRef
 const prewarms = new Map(); // id → prewarm state
@@ -163,7 +163,7 @@ function _startTimer(id) {
 async function _autoTick(id) {
   try {
     const r = await tick(id);
-    console.log(`[Schedule#${id}] Day ${r.day || '?'}: ${r.skipped ? `skipped (${r.reason})` : `sent to ${r.sentTo}`}`);
+    console.log(`[Schedule#${id}] Day ${r.day || '?'}: ${r.skipped ? `skipped (${r.reason})` : r.async ? `queued ${r.sentTo} in background (job:${r.jobId})` : `sent to ${r.sentTo}`}`);
     if (r.sequenceDone || (r.skipped && r.reason === 'Not running')) {
       console.log(`[Schedule#${id}] Sequence complete — stopping timer`);
       _clearTimer(id);
@@ -201,8 +201,12 @@ export async function tick(id, {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`Day-${day} send failed: HTTP ${res.status} ${data?.error || ''}`);
 
-  const sendResults  = data?.data?.results || [];
-  const successCount = sendResults.filter(r => r.success).length;
+  // When >100 recipients, the day endpoint responds async (no results array yet)
+  const isAsync       = !!data?.data?.async;
+  const sendResults   = data?.data?.results || [];
+  const successCount  = isAsync
+    ? (data?.data?.recipients || emails.length)   // all queued in background
+    : sendResults.filter(r => r.success).length;
 
   let nextDay = day + 1;
   let stillRunning = true;
@@ -227,7 +231,9 @@ export async function tick(id, {
     day,
     label:         DAY_LABELS[day],
     sentTo:        successCount,
-    failed:        sendResults.length - successCount,
+    failed:        isAsync ? 0 : (sendResults.length - successCount),
+    async:         isAsync,
+    jobId:         data?.data?.jobId || null,
     sequenceDone:  !stillRunning,
     results:       sendResults,
     rankingSource: data?.data?.ranking?.source,

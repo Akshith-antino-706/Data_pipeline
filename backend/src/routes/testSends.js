@@ -31,6 +31,34 @@ const router = express.Router();
 
 const TEMPLATE_DIR = path.join(ROOT, 'mail_templates');
 
+// ── Concurrency-limited parallel send ─────────────────────────────────────
+const BATCH_CONCURRENCY = 20; // send 20 emails at a time in parallel
+
+/**
+ * Process an array of items with a concurrency limit.
+ * `fn(item, index)` should return a result object.
+ */
+async function parallelMap(items, fn, concurrency = BATCH_CONCURRENCY) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const i = cursor++;
+      try { results[i] = await fn(items[i], i); }
+      catch (err) { results[i] = { email: items[i]?.email, success: false, error: err.message }; }
+    }
+  }
+
+  const workers = [];
+  for (let w = 0; w < Math.min(concurrency, items.length); w++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// Large-batch tracking — stores results for async sends
+const batchJobs = new Map(); // jobId → { status, total, sent, failed, results, startedAt }
+
 // ── shared helpers ────────────────────────────────────────────────────────
 
 /**
@@ -140,27 +168,98 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
 
 // ── contact list (paginated, optional filter) ────────────────────────────
 
+// ── Filter options — distinct values for all filterable columns ──────────
+router.get('/contacts/filter-options', async (req, res, next) => {
+  try {
+    const [bs, ct, geo, pt, countries, segments, customSegs] = await Promise.all([
+      db.query(`SELECT DISTINCT booking_status AS val FROM unified_contacts WHERE booking_status IS NOT NULL ORDER BY 1`),
+      db.query(`SELECT DISTINCT contact_type AS val FROM unified_contacts WHERE contact_type IS NOT NULL ORDER BY 1`),
+      db.query(`SELECT DISTINCT geography AS val FROM unified_contacts WHERE geography IS NOT NULL ORDER BY 1`),
+      db.query(`SELECT DISTINCT product_tier AS val FROM unified_contacts WHERE product_tier IS NOT NULL ORDER BY 1`),
+      db.query(`SELECT country AS val, COUNT(*)::int AS cnt FROM unified_contacts WHERE country IS NOT NULL AND country <> '' GROUP BY country ORDER BY cnt DESC LIMIT 50`),
+      db.query(`SELECT segment_id AS id, segment_name AS name FROM segment_definitions ORDER BY segment_number`),
+      db.query(`SELECT id, name FROM custom_segments WHERE status = 'active' ORDER BY id`),
+    ]);
+    res.json({
+      data: {
+        booking_status: bs.rows.map(r => r.val),
+        contact_type: ct.rows.map(r => r.val),
+        geography: geo.rows.map(r => r.val),
+        product_tier: pt.rows.map(r => r.val),
+        countries: countries.rows,
+        segments: segments.rows,
+        custom_segments: customSegs.rows,
+      }
+    });
+  } catch (err) { next(err); }
+});
+
 router.get('/contacts', async (req, res, next) => {
   try {
     const q      = String(req.query.q || '').trim();
-    const limit  = Math.min(100, parseInt(req.query.limit  || '50'));
+    const limit  = Math.min(500, parseInt(req.query.limit  || '50'));
     const offset = Math.max(0,   parseInt(req.query.offset || '0'));
     const hasQ   = q.length >= 2;
-    const like   = hasQ ? `%${q.toLowerCase()}%` : null;
+
+    // Build filter conditions
+    const conditions = ["uc.email IS NOT NULL AND uc.email <> ''"];
+    const params = [];
+
+    if (hasQ) {
+      params.push(`%${q.toLowerCase()}%`);
+      conditions.push(`(lower(uc.email) LIKE $${params.length} OR lower(uc.name) LIKE $${params.length})`);
+    }
+    if (req.query.booking_status) {
+      params.push(req.query.booking_status);
+      conditions.push(`uc.booking_status = $${params.length}`);
+    }
+    if (req.query.contact_type) {
+      params.push(req.query.contact_type);
+      conditions.push(`uc.contact_type = $${params.length}`);
+    }
+    if (req.query.country) {
+      params.push(req.query.country);
+      conditions.push(`uc.country = $${params.length}`);
+    }
+    if (req.query.geography) {
+      params.push(req.query.geography);
+      conditions.push(`uc.geography = $${params.length}`);
+    }
+    if (req.query.product_tier) {
+      params.push(req.query.product_tier);
+      conditions.push(`uc.product_tier = $${params.length}`);
+    }
+    if (req.query.is_indian !== undefined && req.query.is_indian !== '') {
+      params.push(req.query.is_indian === 'true');
+      conditions.push(`uc.is_indian = $${params.length}`);
+    }
+    // Segment filter — join segment_customers
+    let segmentJoin = '';
+    if (req.query.segment_id) {
+      params.push(parseInt(req.query.segment_id));
+      segmentJoin = `JOIN segment_customers sc ON sc.customer_id = uc.id AND sc.segment_id = $${params.length} AND sc.is_active = true`;
+    }
+    // Custom segment filter
+    if (req.query.custom_segment_id) {
+      params.push(parseInt(req.query.custom_segment_id));
+      segmentJoin = `JOIN custom_segment_contacts csc ON csc.unified_id = uc.id AND csc.segment_id = $${params.length}`;
+    }
+
+    const where = conditions.join(' AND ');
+    const limitIdx = params.length + 1;
+    const offsetIdx = params.length + 2;
 
     const [{ rows }, { rows: [cnt] }] = await Promise.all([
       db.query(
-        `SELECT id, email, name, contact_type FROM unified_contacts
-         WHERE email IS NOT NULL AND email <> ''
-         ${hasQ ? "AND (lower(email) LIKE $3 OR lower(name) LIKE $3)" : ''}
-         ORDER BY email LIMIT $1 OFFSET $2`,
-        hasQ ? [limit, offset, like] : [limit, offset]
+        `SELECT DISTINCT ON (uc.email) uc.id, uc.email, uc.name, uc.contact_type, uc.booking_status, uc.country, uc.is_indian
+         FROM unified_contacts uc ${segmentJoin}
+         WHERE ${where}
+         ORDER BY uc.email LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        [...params, limit, offset]
       ),
       db.query(
-        `SELECT COUNT(*)::int AS total FROM unified_contacts
-         WHERE email IS NOT NULL AND email <> ''
-         ${hasQ ? "AND (lower(email) LIKE $1 OR lower(name) LIKE $1)" : ''}`,
-        hasQ ? [like] : []
+        `SELECT COUNT(DISTINCT uc.email)::int AS total FROM unified_contacts uc ${segmentJoin} WHERE ${where}`,
+        params
       ),
     ]);
     res.json({ data: { contacts: rows, total: cnt.total, limit, offset } });
@@ -323,14 +422,32 @@ router.post('/day1', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+
+    const sendOne = async (r) => {
       const data = await buildDay1WelcomeData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay1Welcome(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', source, dayNumber:1 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', source, dayNumber:1 });
+    };
+
+    // For large batches (>100), respond immediately and process in background
+    if (recipients.length > 100) {
+      const jobId = `day1_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 1, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background (20 parallel)` } });
+      // Background processing
+      parallelMap(recipients, sendOne).then(results => {
+        const sent = results.filter(r => r.success).length;
+        batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() });
+        console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`);
+      }).catch(err => {
+        batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message });
+        console.error(`[Batch:${jobId}] Error:`, err.message);
+      });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 1, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 1, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -353,14 +470,21 @@ router.post('/day2', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+    const sendOne = async (r) => {
       const data = await buildDay2CruiseData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay2Cruise(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', source, dayNumber:2 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', source, dayNumber:2 });
+    };
+    if (recipients.length > 100) {
+      const jobId = `day2_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 2, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background` } });
+      parallelMap(recipients, sendOne).then(results => { const sent = results.filter(r => r.success).length; batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() }); console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`); }).catch(err => { batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message }); });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 2, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 2, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -388,14 +512,21 @@ router.post('/day3', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+    const sendOne = async (r) => {
       const data = await buildDay3VisaData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay3Visa(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', source, dayNumber:3 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', source, dayNumber:3 });
+    };
+    if (recipients.length > 100) {
+      const jobId = `day3_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 3, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background` } });
+      parallelMap(recipients, sendOne).then(results => { const sent = results.filter(r => r.success).length; batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() }); console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`); }).catch(err => { batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message }); });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 3, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 3, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -418,14 +549,21 @@ router.post('/day4', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+    const sendOne = async (r) => {
       const data = await buildDay4HolidaysData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay4Holidays(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', source, dayNumber:4 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', source, dayNumber:4 });
+    };
+    if (recipients.length > 100) {
+      const jobId = `day4_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 4, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background` } });
+      parallelMap(recipients, sendOne).then(results => { const sent = results.filter(r => r.success).length; batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() }); console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`); }).catch(err => { batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message }); });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 4, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 4, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -448,14 +586,21 @@ router.post('/day5', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+    const sendOne = async (r) => {
       const data = await buildDay5ActivitiesData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay5Activities(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', source, dayNumber:5 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', source, dayNumber:5 });
+    };
+    if (recipients.length > 100) {
+      const jobId = `day5_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 5, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background` } });
+      parallelMap(recipients, sendOne).then(results => { const sent = results.filter(r => r.success).length; batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() }); console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`); }).catch(err => { batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message }); });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 5, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 5, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -493,14 +638,21 @@ router.post('/day6', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+    const sendOne = async (r) => {
       const data = await buildDay6DestinationData({ contactId: r.unified_id, destinationKey, ranking: ranking.ranking });
       const html = renderDay6Destination(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', source, dayNumber:6 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', source, dayNumber:6 });
+    };
+    if (recipients.length > 100) {
+      const jobId = `day6_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 6, destinationKey, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background` } });
+      parallelMap(recipients, sendOne).then(results => { const sent = results.filter(r => r.success).length; batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() }); console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`); }).catch(err => { batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message }); });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 6, destinationKey, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 6, destinationKey, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
 });
 
@@ -534,15 +686,36 @@ router.post('/day7', async (req, res, next) => {
 
     const source = req.body?.source || 'test-send';
     const EmailChannel = await loadEmailChannel();
-    const results = [];
-    for (const r of recipients) {
+    const sendOne = async (r) => {
       const data = await buildDay7AbandonedCartData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay7AbandonedCart(template, data);
-      if (!leftoversCheck(html)) { results.push({ email: r.email, success: false, error: 'placeholders left' }); continue; }
-      results.push(await sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', source, dayNumber:7 }));
+      if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', source, dayNumber:7 });
+    };
+    if (recipients.length > 100) {
+      const jobId = `day7_${Date.now()}`;
+      batchJobs.set(jobId, { status: 'processing', total: recipients.length, sent: 0, failed: 0, results: [], startedAt: new Date().toISOString() });
+      res.json({ data: { day: 7, recipients: recipients.length, async: true, jobId, message: `Sending to ${recipients.length} recipients in background` } });
+      parallelMap(recipients, sendOne).then(results => { const sent = results.filter(r => r.success).length; batchJobs.set(jobId, { status: 'done', total: recipients.length, sent, failed: recipients.length - sent, results, startedAt: batchJobs.get(jobId)?.startedAt, completedAt: new Date().toISOString() }); console.log(`[Batch:${jobId}] Done — ${sent}/${recipients.length} sent`); }).catch(err => { batchJobs.set(jobId, { ...batchJobs.get(jobId), status: 'error', error: err.message }); });
+    } else {
+      const results = await parallelMap(recipients, sendOne);
+      res.json({ data: { day: 7, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
     }
-    res.json({ data: { day: 7, recipients: recipients.length, results, ranking: { source: ranking.source, themes: ranking.trendingThemes } } });
   } catch (err) { next(err); }
+});
+
+// ── Batch job status (for async large sends) ─────────────────────────
+
+router.get('/batch-status/:jobId', (req, res) => {
+  const job = batchJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  const { results, ...summary } = job;
+  // Only include results when done (avoid sending huge arrays while processing)
+  if (job.status === 'done' || job.status === 'error') {
+    res.json({ data: { ...summary, resultCount: results?.length || 0 } });
+  } else {
+    res.json({ data: summary });
+  }
 });
 
 // ── Send Tracking — read routes ───────────────────────────────────────────
