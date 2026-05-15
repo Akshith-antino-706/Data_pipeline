@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import {
   Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
   Calendar, Search, X, ClipboardList,
-  MousePointer, Eye, ArrowRight, Link2,
+  MousePointer, Eye, ArrowRight, Link2, Filter, ChevronDown,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -53,6 +53,15 @@ export default function TestSends() {
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactsOffset, setContactsOffset]   = useState(0);
   const debounceRef = useRef(null);
+
+  // ── filter state ───────────────────────────────────────────────────
+  const [showFilters, setShowFilters]         = useState(false);
+  const [filterOptions, setFilterOptions]     = useState(null);
+  const [filters, setFilters]                 = useState({
+    booking_status: '', contact_type: '', country: '', geography: '',
+    product_tier: '', is_indian: '', segment_id: '', custom_segment_id: '',
+  });
+  const [selectingAll, setSelectingAll]       = useState(false);
 
   // ── template send state ───────────────────────────────────────────────
   const [running, setRunning] = useState({});
@@ -107,12 +116,23 @@ export default function TestSends() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [loadSchedules]);
 
+  // ── load filter options on mount ──────────────────────────────────────
+  useEffect(() => {
+    apiGet('/api/v3/test-sends/contacts/filter-options')
+      .then(d => setFilterOptions(d))
+      .catch(() => {});
+  }, []);
+
   // ── contact list (load on mount + debounced filter) ───────────────────
-  const loadContacts = useCallback(async (q = '', offset = 0) => {
+  const loadContacts = useCallback(async (q = '', offset = 0, activeFilters = {}) => {
     setContactsLoading(true);
     try {
       const qs = new URLSearchParams({ limit: 50, offset });
       if (q.trim().length >= 2) qs.set('q', q.trim());
+      // Apply active filters
+      Object.entries(activeFilters).forEach(([k, v]) => {
+        if (v !== '' && v !== undefined && v !== null) qs.set(k, v);
+      });
       const res = await apiGet(`/api/v3/test-sends/contacts?${qs}`);
       setContacts(prev => offset === 0 ? (res.contacts || []) : [...prev, ...(res.contacts || [])]);
       setContactsTotal(res.total || 0);
@@ -121,13 +141,42 @@ export default function TestSends() {
     setContactsLoading(false);
   }, []);
 
-  useEffect(() => { loadContacts('', 0); }, [loadContacts]);
+  useEffect(() => { loadContacts('', 0, filters); }, [loadContacts]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => loadContacts(contactQuery, 0), 300);
+    debounceRef.current = setTimeout(() => loadContacts(contactQuery, 0, filters), 300);
     return () => clearTimeout(debounceRef.current);
-  }, [contactQuery, loadContacts]);
+  }, [contactQuery, filters, loadContacts]);
+
+  const updateFilter = (key, val) => {
+    setFilters(f => ({ ...f, [key]: val }));
+  };
+
+  // Select all filtered contacts (bulk — fetches all emails matching current filters)
+  const handleSelectAllFiltered = async () => {
+    if (contactsTotal === 0) return;
+    setSelectingAll(true);
+    try {
+      const qs = new URLSearchParams({ limit: contactsTotal, offset: 0 });
+      if (contactQuery.trim().length >= 2) qs.set('q', contactQuery.trim());
+      Object.entries(filters).forEach(([k, v]) => {
+        if (v !== '' && v !== undefined && v !== null) qs.set(k, v);
+      });
+      const res = await apiGet(`/api/v3/test-sends/contacts?${qs}`);
+      const raw = res.contacts || [];
+      // Deduplicate by email within fetched results + existing selection
+      setSelected(prev => {
+        const seen = new Set(prev.map(s => s.email));
+        const newOnes = [];
+        for (const c of raw) {
+          if (!seen.has(c.email)) { seen.add(c.email); newOnes.push(c); }
+        }
+        return [...prev, ...newOnes];
+      });
+    } catch { /* ignore */ }
+    setSelectingAll(false);
+  };
 
   const toggleContact = (contact) => {
     setSelected(prev =>
@@ -215,19 +264,143 @@ export default function TestSends() {
             Recipients
           </span>
           <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-            &middot; {selected.length} selected of {contactsTotal} contacts
+            &middot; {selected.length} selected of {contactsTotal.toLocaleString()} contacts
           </span>
-          {selected.length > 0 && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            {selected.length > 0 && (
+              <button
+                onClick={() => setSelected([])}
+                style={{ fontSize: 11, color: 'var(--muted-foreground)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              >
+                Clear all
+              </button>
+            )}
             <button
-              onClick={() => setSelected([])}
-              style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted-foreground)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              onClick={() => setShowFilters(f => !f)}
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 'var(--radius-sm)',
+                border: `1px solid ${showFilters || Object.values(filters).some(v => v) ? '#e2b340' : 'var(--border)'}`,
+                background: showFilters ? 'rgba(226,179,64,0.12)' : 'transparent',
+                color: showFilters || Object.values(filters).some(v => v) ? '#e2b340' : 'var(--muted-foreground)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+              }}
             >
-              Clear all
+              <Filter size={12} /> Filters
+              {Object.values(filters).filter(v => v).length > 0 && (
+                <span style={{ fontSize: 9, padding: '0 5px', borderRadius: 10, background: '#e2b340', color: '#1a1a1a', fontWeight: 700 }}>
+                  {Object.values(filters).filter(v => v).length}
+                </span>
+              )}
             </button>
-          )}
+          </div>
         </div>
 
-        {/* Filter input */}
+        {/* ── Filter dropdowns ──────────────────────────────────────── */}
+        {showFilters && filterOptions && (
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12,
+            padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)',
+            border: '1px solid var(--border)',
+          }}>
+            {/* Booking Status */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Booking Status</label>
+              <select value={filters.booking_status} onChange={e => updateFilter('booking_status', e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                {(filterOptions.booking_status || []).map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            {/* Contact Type */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Contact Type</label>
+              <select value={filters.contact_type} onChange={e => updateFilter('contact_type', e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                {(filterOptions.contact_type || []).map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            {/* Country */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Country</label>
+              <select value={filters.country} onChange={e => updateFilter('country', e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                {(filterOptions.countries || []).map(c => <option key={c.val} value={c.val}>{c.val} ({c.cnt.toLocaleString()})</option>)}
+              </select>
+            </div>
+            {/* Geography */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Geography</label>
+              <select value={filters.geography} onChange={e => updateFilter('geography', e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                {(filterOptions.geography || []).map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            {/* Indian / Rest */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Indian / Rest</label>
+              <select value={filters.is_indian} onChange={e => updateFilter('is_indian', e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                <option value="true">Indian</option>
+                <option value="false">Rest of World</option>
+              </select>
+            </div>
+            {/* Product Tier */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Product Tier</label>
+              <select value={filters.product_tier} onChange={e => updateFilter('product_tier', e.target.value)}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                {(filterOptions.product_tier || []).map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+            {/* Segment */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Segment</label>
+              <select value={filters.segment_id} onChange={e => { updateFilter('segment_id', e.target.value); updateFilter('custom_segment_id', ''); }}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                <optgroup label="Standard Segments">
+                  {(filterOptions.segments || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </optgroup>
+              </select>
+            </div>
+            {/* Custom Segment */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Custom Segment</label>
+              <select value={filters.custom_segment_id} onChange={e => { updateFilter('custom_segment_id', e.target.value); updateFilter('segment_id', ''); }}
+                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                <option value="">All</option>
+                {(filterOptions.custom_segments || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            {/* Clear + Select All row */}
+            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+              <button onClick={() => setFilters({ booking_status: '', contact_type: '', country: '', geography: '', product_tier: '', is_indian: '', segment_id: '', custom_segment_id: '' })}
+                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted-foreground)', cursor: 'pointer' }}>
+                Clear Filters
+              </button>
+              <button onClick={handleSelectAllFiltered} disabled={selectingAll || contactsTotal === 0}
+                style={{
+                  fontSize: 11, fontWeight: 600, padding: '5px 14px', borderRadius: 'var(--radius-sm)',
+                  border: 'none', background: '#e2b340', color: '#1a1a1a', cursor: selectingAll ? 'wait' : 'pointer',
+                  opacity: contactsTotal === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 5,
+                }}>
+                {selectingAll ? <><Loader2 size={12} className="spin" /> Selecting...</> : <>Select All {contactsTotal.toLocaleString()} Filtered</>}
+              </button>
+              {Object.values(filters).some(v => v) && (
+                <span style={{ fontSize: 11, color: '#e2b340', fontWeight: 600 }}>
+                  {contactsTotal.toLocaleString()} contacts match
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Search input */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
           background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
@@ -293,12 +466,24 @@ export default function TestSends() {
                           {c.contact_type}
                         </span>
                       )}
+                      {c.booking_status && (
+                        <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 600, letterSpacing: 0.3, flexShrink: 0, background: 'rgba(34,197,94,0.12)', color: '#22c55e' }}>
+                          {c.booking_status}
+                        </span>
+                      )}
                     </div>
-                    {c.name && (
-                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.name}
-                      </div>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 1 }}>
+                      {c.name && (
+                        <span style={{ fontSize: 11, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.name}
+                        </span>
+                      )}
+                      {c.country && (
+                        <span style={{ fontSize: 10, color: 'var(--muted-foreground)', flexShrink: 0 }}>
+                          {c.country}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -306,12 +491,12 @@ export default function TestSends() {
           )}
           {contacts.length < contactsTotal && (
             <div
-              onClick={() => loadContacts(contactQuery, contactsOffset + 50)}
+              onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}
               style={{ padding: '10px 14px', textAlign: 'center', fontSize: 12, color: '#e2b340', cursor: 'pointer', borderTop: '1px solid var(--border)' }}
             >
-              {/* {contactsLoading
+              {contactsLoading
                 ? <Loader2 size={13} className="spin" style={{ display: 'inline' }} />
-                : `Load more (${contactsTotal - contacts.length} remaining)`} */}
+                : `Load more (${(contactsTotal - contacts.length).toLocaleString()} remaining)`}
             </div>
           )}
         </div>
@@ -319,8 +504,8 @@ export default function TestSends() {
         {/* Selected tags */}
         {selected.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-            {selected.map(s => (
-              <span key={s.email} style={{
+            {selected.map((s, i) => (
+              <span key={`${s.email}_${i}`} style={{
                 fontSize: 11, padding: '3px 8px 3px 10px', borderRadius: 'var(--radius-sm)',
                 background: 'rgba(226,179,64,0.12)', color: '#e2b340', fontWeight: 500,
                 display: 'flex', alignItems: 'center', gap: 5,

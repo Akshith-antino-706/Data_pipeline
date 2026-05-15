@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Play, CheckCircle2, XCircle, Loader2, Users, Calendar, Zap,
-  Search, X, ClipboardList, Square, Cpu, Plus, ArrowLeft,
+  Search, X, ClipboardList, Square, Cpu, Plus, ArrowLeft, Filter, CheckSquare,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -46,6 +46,15 @@ export default function SchedulerPage() {
   const [contactsOffset, setContactsOffset]   = useState(0);
   const debounceRef = useRef(null);
 
+  // ── filter state ────────────────────────────────────────────────────
+  const [showFilters, setShowFilters]       = useState(false);
+  const [filterOptions, setFilterOptions]   = useState(null);
+  const [filters, setFilters]               = useState({
+    booking_status: '', contact_type: '', country: '', geography: '',
+    product_tier: '', is_indian: '', segment_id: '', custom_segment_id: '',
+  });
+  const [selectingAll, setSelectingAll]     = useState(false);
+
   // ── schedule state ──────────────────────────────────────────────────
   const [schedules, setSchedules]           = useState([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
@@ -73,18 +82,19 @@ export default function SchedulerPage() {
   }, [loadSchedules]);
 
   // ── contact list (load on mount + debounced filter) ───────────────────
-  const loadContacts = useCallback(async (q = '', offset = 0) => {
+  const loadContacts = useCallback(async (q = '', offset = 0, activeFilters = filters) => {
     setContactsLoading(true);
     try {
       const qs = new URLSearchParams({ limit: 50, offset });
       if (q.trim().length >= 2) qs.set('q', q.trim());
+      Object.entries(activeFilters).forEach(([k, v]) => { if (v !== '') qs.set(k, v); });
       const res = await apiGet(`/api/v3/test-sends/contacts?${qs}`);
       setContacts(prev => offset === 0 ? (res.contacts || []) : [...prev, ...(res.contacts || [])]);
       setContactsTotal(res.total || 0);
       setContactsOffset(offset);
     } catch { /* ignore */ }
     setContactsLoading(false);
-  }, []);
+  }, [filters]);
 
   useEffect(() => { loadContacts('', 0); }, [loadContacts]);
 
@@ -93,6 +103,42 @@ export default function SchedulerPage() {
     debounceRef.current = setTimeout(() => loadContacts(contactQuery, 0), 300);
     return () => clearTimeout(debounceRef.current);
   }, [contactQuery, loadContacts]);
+
+  // ── load filter options on mount ──────────────────────────────────────
+  useEffect(() => {
+    apiGet('/api/v3/test-sends/contacts/filter-options').then(d => setFilterOptions(d)).catch(() => {});
+  }, []);
+
+  const handleFilterChange = (key, value) => {
+    const next = { ...filters, [key]: value };
+    setFilters(next);
+    loadContacts(contactQuery, 0, next);
+  };
+  const clearFilters = () => {
+    const blank = { booking_status: '', contact_type: '', country: '', geography: '', product_tier: '', is_indian: '', segment_id: '', custom_segment_id: '' };
+    setFilters(blank);
+    loadContacts(contactQuery, 0, blank);
+  };
+  const hasActiveFilters = Object.values(filters).some(v => v !== '');
+
+  const handleSelectAllFiltered = async () => {
+    setSelectingAll(true);
+    try {
+      const qs = new URLSearchParams({ limit: 50000, offset: 0 });
+      Object.entries(filters).forEach(([k, v]) => { if (v !== '') qs.set(k, v); });
+      if (contactQuery.trim().length >= 2) qs.set('q', contactQuery.trim());
+      const res = await apiGet(`/api/v3/test-sends/contacts?${qs}`);
+      const all = res.contacts || [];
+      const seen = new Set();
+      const deduped = [];
+      for (const c of all) {
+        const key = c.email.toLowerCase();
+        if (!seen.has(key)) { seen.add(key); deduped.push(c); }
+      }
+      setSelected(deduped);
+    } catch (err) { alert('Failed to select all: ' + err.message); }
+    setSelectingAll(false);
+  };
 
   const toggleContact = (contact) => {
     setSelected(prev =>
@@ -230,6 +276,78 @@ export default function SchedulerPage() {
           )}
         </div>
 
+        {/* Filter bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          <button
+            onClick={() => setShowFilters(f => !f)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
+              padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+              background: showFilters ? 'rgba(226,179,64,0.12)' : 'transparent',
+              border: `1px solid ${showFilters ? '#e2b340' : 'var(--border)'}`,
+              color: showFilters ? '#e2b340' : 'var(--muted-foreground)',
+            }}>
+            <Filter size={12} /> Filters {hasActiveFilters && `(${Object.values(filters).filter(v => v !== '').length})`}
+          </button>
+          {hasActiveFilters && (
+            <button onClick={clearFilters} style={{ fontSize: 11, color: 'var(--muted-foreground)', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+              Clear Filters
+            </button>
+          )}
+          <button
+            onClick={handleSelectAllFiltered}
+            disabled={selectingAll || contactsTotal === 0}
+            style={{
+              marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5,
+              fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 'var(--radius-sm)',
+              background: 'rgba(34,197,94,0.12)', color: '#22c55e', cursor: 'pointer',
+              border: '1px solid rgba(34,197,94,0.3)',
+              opacity: selectingAll || contactsTotal === 0 ? 0.5 : 1,
+            }}>
+            {selectingAll ? <Loader2 size={12} className="spin" /> : <CheckSquare size={12} />}
+            Select All {contactsTotal.toLocaleString()} Filtered
+          </button>
+        </div>
+
+        {/* Filter dropdowns */}
+        {showFilters && filterOptions && (
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8,
+            marginBottom: 10, padding: '10px 12px',
+            background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+          }}>
+            {[
+              { key: 'booking_status', label: 'Booking Status', opts: filterOptions.booking_status },
+              { key: 'contact_type', label: 'Contact Type', opts: filterOptions.contact_type },
+              { key: 'country', label: 'Country', opts: (filterOptions.countries || []).map(c => c.val) },
+              { key: 'geography', label: 'Geography', opts: filterOptions.geography },
+              { key: 'is_indian', label: 'Indian / Rest', opts: [{ val: 'true', label: 'Indian' }, { val: 'false', label: 'Rest of World' }], isObj: true },
+              { key: 'product_tier', label: 'Product Tier', opts: filterOptions.product_tier },
+              { key: 'segment_id', label: 'Segment', opts: (filterOptions.segments || []).map(s => ({ val: String(s.id), label: s.name })), isObj: true },
+              { key: 'custom_segment_id', label: 'Custom Segment', opts: (filterOptions.custom_segments || []).map(s => ({ val: String(s.id), label: s.name })), isObj: true },
+            ].map(({ key, label, opts, isObj }) => (
+              <div key={key}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>
+                  {label}
+                </label>
+                <select
+                  value={filters[key]}
+                  onChange={e => handleFilterChange(key, e.target.value)}
+                  style={{
+                    width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 'var(--radius-sm)',
+                    background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)',
+                  }}>
+                  <option value="">All</option>
+                  {(opts || []).map(o => isObj
+                    ? <option key={o.val} value={o.val}>{o.label}</option>
+                    : <option key={o} value={o}>{o}</option>
+                  )}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Contact list */}
         <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
           {contacts.length === 0 && !contactsLoading ? (
@@ -275,6 +393,19 @@ export default function SchedulerPage() {
                           {c.contact_type}
                         </span>
                       )}
+                      {c.booking_status && (
+                        <span style={{
+                          fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
+                          letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
+                          background: c.booking_status === 'CANCELLED' ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
+                          color: c.booking_status === 'CANCELLED' ? '#ef4444' : '#22c55e',
+                        }}>
+                          {c.booking_status}
+                        </span>
+                      )}
+                      {c.country && (
+                        <span style={{ fontSize: 9, color: 'var(--muted-foreground)', flexShrink: 0 }}>{c.country}</span>
+                      )}
                     </div>
                     {c.name && (
                       <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -288,7 +419,7 @@ export default function SchedulerPage() {
           )}
           {contacts.length < contactsTotal && (
             <div
-              onClick={() => loadContacts(contactQuery, contactsOffset + 50)}
+              onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}
               style={{ padding: '10px 14px', textAlign: 'center', fontSize: 12, color: '#e2b340', cursor: 'pointer', borderTop: '1px solid var(--border)' }}
             >
             </div>
@@ -298,8 +429,8 @@ export default function SchedulerPage() {
         {/* Selected tags */}
         {selected.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-            {selected.map(s => (
-              <span key={s.email} style={{
+            {selected.map((s, i) => (
+              <span key={`${s.email}_${i}`} style={{
                 fontSize: 11, padding: '3px 8px 3px 10px', borderRadius: 'var(--radius-sm)',
                 background: 'rgba(226,179,64,0.12)', color: '#e2b340', fontWeight: 500,
                 display: 'flex', alignItems: 'center', gap: 5,
