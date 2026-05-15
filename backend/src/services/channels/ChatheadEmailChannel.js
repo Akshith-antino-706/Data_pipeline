@@ -18,6 +18,15 @@ const DEFAULT_API_URL = 'http://chathead.io/apis/email/send/index.php';
 function fromEmail() { return process.env.CHATHEAD_FROM_EMAIL || 'explore@promotions.raynatours.com'; }
 function fromName()  { return process.env.CHATHEAD_FROM_NAME  || 'Rayna Tours'; }
 
+// RFC 2047 MIME word-encode the subject so non-ASCII (em-dash, accented chars,
+// emoji) survives the Chathead PHP backend's default Latin-1 form-decoding.
+// Pure-ASCII subjects pass through unchanged.
+function encodeMimeSubject(subject) {
+  const s = String(subject);
+  if (/^[\x00-\x7F]*$/.test(s)) return s;
+  return `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
+}
+
 export class ChatheadEmailChannel {
 
   static isConfigured() {
@@ -43,7 +52,7 @@ export class ChatheadEmailChannel {
     form.append('from',        fromAddress || fromEmail());
     form.append('from_name',   fromDisplay || fromName());
     form.append('destination', to);
-    form.append('subject',     subject);
+    form.append('subject',     encodeMimeSubject(subject));
     form.append('body',        html);
 
     const start = Date.now();

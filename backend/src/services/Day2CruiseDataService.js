@@ -34,6 +34,8 @@
 
 import { query } from '../config/database.js';
 import { filterMapByKey } from '../config/blockedDestinations.js';
+import { truncate, CARD_LIMITS } from '../utils/textTruncate.js';
+import { platformsForDay2 } from '../utils/platformRatings.js';
 
 // ── config maps ───────────────────────────────────────────────────────────
 
@@ -379,11 +381,11 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
   });
 
   const saver_packages = savers.map(p => ({
-    region:      deriveRegionLabel(p),
-    title:       p.name,
-    description: deriveBulletDescription(p),
+    region:      truncate(deriveRegionLabel(p), CARD_LIMITS.EYEBROW),
+    title:       truncate(p.name, CARD_LIMITS.TITLE),
+    description: truncate(deriveBulletDescription(p), CARD_LIMITS.DESC),
     image:       p.image_url,
-    price:       formatPrice(p.sale_price, p.currency),
+    price:       truncate(formatPrice(p.sale_price, p.currency), CARD_LIMITS.PRICE),
     link:        withUtm(p.url, contactId),
   }));
 
@@ -391,9 +393,9 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
     section_subtitle: regionalCopy.section_subtitle,
     section_title:    regionalCopy.section_title,
     items: regional.map(p => ({
-      tag:         deriveSeasonTag(p),
-      title:       p.name,
-      description: deriveBulletDescription(p),
+      tag:         truncate(deriveSeasonTag(p), CARD_LIMITS.EYEBROW),
+      title:       truncate(p.name, CARD_LIMITS.TITLE),
+      description: truncate(deriveBulletDescription(p), CARD_LIMITS.DESC),
       image:       p.image_url,
       link:        withUtm(p.url, contactId),
     })),
@@ -434,8 +436,11 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
     saver_packages,
     regional_cruises,
     cruise_lines,
+    ratings: RATINGS,
   };
 }
+
+const RATINGS = { platforms: platformsForDay2() };
 
 // Exports for testing / extension
 export const _internals = {

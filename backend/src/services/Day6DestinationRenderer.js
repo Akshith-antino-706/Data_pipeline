@@ -42,16 +42,28 @@ function generateGridItems(items, buttonText) {
   const card = (item) => `
     <div class="grid-cell" style="display:inline-block; width:50%; vertical-align:top; font-size:0; line-height:0;">
       <div style="margin:0 4px 8px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="border-collapse: collapse; height: 280px; width:100%;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width:100%;">
           <tr>
-            <td valign="bottom" height="220" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url('${item.image}'); background-size: cover; background-position: center; background-repeat: no-repeat; padding: 40px 20px 20px 20px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%">
-                <tr><td align="left" style="font-family: Arial, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;"><span style="opacity: 0.8">${item.category}</span></td></tr>
-                <tr><td align="left" style="font-family: Georgia, serif; font-size: 18px; line-height: 24px; font-weight: 400; color: #ffffff; padding-top: 6px;">${item.title}</td></tr>
-                <tr><td align="left" style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #e0e0e0; padding-top: 6px;">${item.duration}</td></tr>
-                <tr><td align="left" style="font-family: Georgia, serif; font-size: 16px; line-height: 20px; font-weight: 700; color: #ffffff; padding-top: 6px;">${item.price}</td></tr>
-                <tr><td align="left" style="padding-top: 10px"><a href="${item.link}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 16px;">${buttonText}</a></td></tr>
+            <td valign="bottom" background="${item.image}" bgcolor="#101010" height="280" style="height: 280px; background-color: #101010; background-image: url('${item.image}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+              <!--[if gte mso 9]>
+              <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:288px;height:280px;">
+                <v:fill type="frame" src="${item.image}" color="#101010" />
+                <v:textbox inset="0,0,0,0">
+              <![endif]-->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 40px 20px 20px 20px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%">
+                      <tr><td align="left" style="font-family: Arial, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;">${item.category}</td></tr>
+                      <tr><td align="left" style="font-family: Georgia, serif; font-size: 18px; line-height: 24px; font-weight: 400; color: #ffffff; padding-top: 6px;">${item.title}</td></tr>
+                      <tr><td align="left" style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #e0e0e0; padding-top: 6px;">${item.duration}</td></tr>
+                      <tr><td align="left" style="font-family: Georgia, serif; font-size: 16px; line-height: 20px; font-weight: 700; color: #ffffff; padding-top: 6px;">${item.price}</td></tr>
+                      <tr><td align="left" style="padding-top: 10px"><a href="${item.link}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 16px;">${buttonText}</a></td></tr>
+                    </table>
+                  </td>
+                </tr>
               </table>
+              <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
             </td>
           </tr>
         </table>
@@ -70,28 +82,33 @@ function generateGridItems(items, buttonText) {
 
 function generateRatings(ratingsData) {
   const platforms = ratingsData.platforms;
-  const card = (item) => `
-    <div class="rating-cell" style="display:inline-block; width:50%; vertical-align:top; font-size:0; line-height:0;">
-      <div style="margin:0 5px 10px; border:1px solid ${item.borderColor}; background-color:${item.bgColor};">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse;">
-          <tr>
-            <td align="center" style="padding: 18px 12px 16px 12px">
-              <div style="padding: 0 0 8px 0"><img src="${item.logo}" alt="${item.name}" style="height: 22px; max-height: 26px; width: auto; display: block; margin: 0 auto;" /></div>
-              <div style="padding: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; line-height: 18px; color: ${item.starColor};">${item.stars}</div>
-              <div style="padding: 0 0 3px 0; font-family: Arial, sans-serif; font-size: 16px; line-height: 20px; font-weight: 700; color: #1a1a1a;">${item.rating}</div>
-              <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; color: #888888;">${item.reviews}</div>
-            </td>
-          </tr>
-        </table>
-      </div>
-    </div>`;
-  // Wrap all platforms in a single row with a font-size:0 parent so inline-block divs flow without whitespace gaps.
+  const cell = (item, paddingStyle) => `
+    <td width="50%" valign="top" style="width: 50%; ${paddingStyle} box-sizing: border-box;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid ${item.borderColor}; background-color: ${item.bgColor};">
+        <tr>
+          <td align="center" style="padding: 18px 12px 16px 12px">
+            <div style="padding: 0 0 8px 0"><img src="${item.logo}" alt="${item.name}" style="height: 22px; max-height: 26px; width: auto; display: block; margin: 0 auto;" /></div>
+            <div style="padding: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; line-height: 18px; color: ${item.starColor};">${item.stars}</div>
+            <div style="padding: 0 0 3px 0; font-family: Arial, sans-serif; font-size: 16px; line-height: 20px; font-weight: 700; color: #1a1a1a;">${item.rating}</div>
+            <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; color: #888888;">${item.reviews}</div>
+          </td>
+        </tr>
+      </table>
+    </td>`;
+
+  let rows = '';
+  for (let i = 0; i < platforms.length; i += 2) {
+    const left  = platforms[i];
+    const right = platforms[i + 1];
+    rows += `<tr>
+      ${cell(left, 'padding: 0 5px 10px 0;')}
+      ${right ? cell(right, 'padding: 0 0 10px 5px;') : '<td width="50%" style="width:50%;"></td>'}
+    </tr>`;
+  }
   return `
     <tr>
       <td style="padding:0;">
-        <div style="font-size:0; line-height:0; text-align:center;">
-          ${platforms.map(card).join('')}
-        </div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">${rows}</table>
       </td>
     </tr>`;
 }

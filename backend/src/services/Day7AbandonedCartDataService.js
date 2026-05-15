@@ -18,15 +18,34 @@
 
 import { query } from '../config/database.js';
 import { isCityBlocked } from '../config/blockedDestinations.js';
+import { truncate, CARD_LIMITS } from '../utils/textTruncate.js';
+import { platformsForDay7 } from '../utils/platformRatings.js';
 
 const LOGO = 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png';
 
-const TRUST_PLATFORMS = [
-  { name: 'Rayna Tours',  stars_html: '<span style="color:#f5a623;">&#9733;&#9733;&#9733;&#9733;</span><span style="color:#ddd;">&#9733;</span>',                              score: '4.5', reviews: '25 Million Customers', name_color: '#1a1a1a' },
-  { name: 'Trustpilot',   stars_html: '<span style="color:#00b67a;">&#9733;&#9733;&#9733;&#9733;</span><span style="color:#ddd;">&#9733;</span>',                              score: '4.7', reviews: '34,655 Reviews', name_color: '#00b67a' },
-  { name: 'Tripadvisor',  stars_html: '<span style="color:#00aa6c;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>',                                                              score: '4.6', reviews: '12,882 Reviews', name_color: '#00aa6c' },
-  { name: 'Google',       stars_html: '<span style="color:#4285f4;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>',                                                              score: '4.3', reviews: '1,693 Reviews',  name_color: '#4285f4' },
-];
+const TRUST_PLATFORMS = platformsForDay7();
+
+function renderTrustPlatformsGrid(platforms) {
+  const cell = (item, paddingStyle) => `
+    <td width="50%" valign="top" style="width: 50%; ${paddingStyle} box-sizing: border-box;">
+      <div style="background-color:#ffffff; border:1px solid #e0e0e0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
+        <div style="font-family:'Montserrat', Arial, sans-serif; font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:${item.name_color}; line-height:14px; margin-bottom:8px;">${item.name}</div>
+        <div style="font-size:16px; line-height:18px; margin-bottom:8px;">${item.stars_html}</div>
+        <div style="font-family:'Montserrat', Arial, sans-serif; font-size:18px; font-weight:800; color:#1a1a1a; line-height:20px;">${item.score}</div>
+        <div style="font-family:'Montserrat', Arial, sans-serif; font-size:10px; color:#888; line-height:14px; margin-top:3px;">${item.reviews}</div>
+      </div>
+    </td>`;
+  let rows = '';
+  for (let i = 0; i < platforms.length; i += 2) {
+    const left  = platforms[i];
+    const right = platforms[i + 1];
+    rows += `<tr>
+      ${cell(left, 'padding: 0 5px 10px 0;')}
+      ${right ? cell(right, 'padding: 0 0 10px 5px;') : '<td width="50%" style="width:50%;"></td>'}
+    </tr>`;
+  }
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse;">${rows}</table>`;
+}
 
 const HERO_VARIANTS = {
   still_thinking: {
@@ -193,14 +212,14 @@ async function fetchVisaByKey(visaKey) {
 function mapToCard(p, contactId) {
   return {
     image:       p.image_url,
-    category:    categoryLabel(p),
-    name:        p.name,
+    category:    truncate(categoryLabel(p), CARD_LIMITS.EYEBROW),
+    name:        truncate(p.name, CARD_LIMITS.TITLE),
     rating_score: p.rating_score   || null,
     rating_stars: p.rating_stars   || null,
     rating_count: p.rating_count   || null,
     highlights:  highlightsFor(p),
-    price_label: priceLabel(p),
-    price:       `${p.currency || 'AED'} ${formatPrice(p.sale_price ?? p.normal_price ?? 250)}`,
+    price_label: truncate(priceLabel(p), CARD_LIMITS.META),
+    price:       truncate(`${p.currency || 'AED'} ${formatPrice(p.sale_price ?? p.normal_price ?? 250)}`, CARD_LIMITS.PRICE),
     price_sub:   priceSub(p),
     link:        withUtm(p.url, contactId),
   };
@@ -273,6 +292,7 @@ export async function buildDay7AbandonedCartData({ contactId, ranking = {} }) {
     urgency: urgencyVariant,
     browsed_experiences: items,
     trust_platforms: TRUST_PLATFORMS,
+    trust_platforms_html: renderTrustPlatformsGrid(TRUST_PLATFORMS),
     final: finalVariant,
     footer: {
       year:        String(new Date().getFullYear()),

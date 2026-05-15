@@ -19,6 +19,8 @@
 
 import { query } from '../config/database.js';
 import { isKeyBlocked } from '../config/blockedDestinations.js';
+import { truncate, CARD_LIMITS } from '../utils/textTruncate.js';
+import { platformsForDay6 } from '../utils/platformRatings.js';
 
 // ── catalog: destinations we can spotlight ────────────────────────────────
 
@@ -109,12 +111,7 @@ const RATINGS = {
   title:       'Verified by the Platforms You Already Trust',
   subtitle:    "Don't Just Take Our Word For It",
   description: 'Our ratings are earned - not curated. Check us on any major review platform and see what real travellers say.',
-  platforms: [
-    { name: 'Rayna Tours',  logo: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',                                       rating: '4.5', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#dddddd">&#9733;</span>', reviews: '25 Million Customers', borderColor: '#f0e5c0', bgColor: '#fffdf4', starColor: '#f5a623' },
-    { name: 'Trustpilot',   logo: 'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',                                                          rating: '4.7', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#dddddd">&#9733;</span>', reviews: '34,655 Reviews', borderColor: '#b8e8d0', bgColor: '#f4fcf8', starColor: '#00b67a' },
-    { name: 'Tripadvisor',  logo: 'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',                  rating: '4.6', stars: '&#9733;&#9733;&#9733;&#9733;+',                                            reviews: '12,882 Reviews', borderColor: '#b8e8d0', bgColor: '#f4fcf8', starColor: '#00aa6c' },
-    { name: 'Google',       logo: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',                                  rating: '4.3', stars: '&#9733;&#9733;&#9733;&#9733;&#9733;',                                    reviews: '1,693 Reviews',  borderColor: '#f5cfc8', bgColor: '#fff8f6', starColor: '#fbbc04' },
-  ],
+  platforms: platformsForDay6(),
 };
 
 const STATS = [
@@ -267,28 +264,28 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
 
   // Map products to card shape
   const holidayItems = holidayRows.slice(0, 4).map(p => ({
-    category: deriveCategory(p, dest, `${dest.name} - Sightseeing`),
-    title:    p.name,
-    duration: deriveDuration(p.name, '3N / 4D'),
-    price:    formatPrice(p.sale_price ?? p.normal_price, p.currency),
+    category: truncate(deriveCategory(p, dest, `${dest.name} - Sightseeing`), CARD_LIMITS.EYEBROW),
+    title:    truncate(p.name, CARD_LIMITS.TITLE),
+    duration: truncate(deriveDuration(p.name, '3N / 4D'), CARD_LIMITS.META),
+    price:    truncate(formatPrice(p.sale_price ?? p.normal_price, p.currency), CARD_LIMITS.PRICE),
     image:    p.image_url,
     link:     withUtm(p.url, contactId),
   }));
 
   const activityItems = activityRows.slice(0, 4).map(p => ({
-    category: deriveCategory(p, dest, 'Things to Do'),
-    title:    p.name,
-    duration: deriveDuration(p.name, '2-3 Hours'),
-    price:    formatPrice(p.sale_price ?? p.normal_price, p.currency),
+    category: truncate(deriveCategory(p, dest, 'Things to Do'), CARD_LIMITS.EYEBROW),
+    title:    truncate(p.name, CARD_LIMITS.TITLE),
+    duration: truncate(deriveDuration(p.name, '2-3 Hours'), CARD_LIMITS.META),
+    price:    truncate(formatPrice(p.sale_price ?? p.normal_price, p.currency), CARD_LIMITS.PRICE),
     image:    p.image_url,
     link:     withUtm(p.url, contactId),
   }));
 
   const cruiseItems = cruiseRows.slice(0, 4).map(p => ({
-    category: `Cruise - ${dest.name}`,
-    title:    p.name,
-    duration: deriveDuration(p.name, '3N / 4D'),
-    price:    formatPrice(p.sale_price ?? p.normal_price, p.currency),
+    category: truncate(`Cruise - ${dest.name}`, CARD_LIMITS.EYEBROW),
+    title:    truncate(p.name, CARD_LIMITS.TITLE),
+    duration: truncate(deriveDuration(p.name, '3N / 4D'), CARD_LIMITS.META),
+    price:    truncate(formatPrice(p.sale_price ?? p.normal_price, p.currency), CARD_LIMITS.PRICE),
     image:    p.image_url,
     link:     withUtm(p.url, contactId),
   }));

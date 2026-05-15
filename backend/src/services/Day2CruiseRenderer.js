@@ -108,25 +108,35 @@ function generateSaverPackageRows(packages) {
   let html = '';
   packages.forEach(pkg => {
     html += `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid #eeeae4; margin-bottom: 18px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
       <tr>
-        <td class="saver-img-col" width="140" valign="top" style="display: table-cell; width: 140px; padding: 0;">
-          <img class="saver-img" src="${pkg.image}" alt="${pkg.title}" width="140" height="140" style="display: block; width: 140px; height: 140px; border: 0;"/>
-        </td>
-        <td class="saver-content-col" valign="top" style="display: table-cell; padding: 14px 16px; font-family: Georgia, serif;">
-          <div>
-            <span style="display: block; font-size: 10px; line-height: 14px; color: #1a1a1a; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; padding-bottom: 4px;">${pkg.region}</span>
-            <span style="display: block; font-family: Georgia, serif; font-size: 17px; line-height: 24px; color: #1a1a1a; font-weight: 400; padding-bottom: 6px;">${pkg.title}</span>
-            <span style="display: block; font-size: 12px; line-height: 18px; color: #777777;">${pkg.description}</span>
-          </div>
-        </td>
-        <td class="saver-price-col" width="170" valign="middle" align="center" style="display: table-cell; width: 170px; min-width: 170px; background-color: #fafaf8; border-left: 1px solid #eeeae4; padding: 14px 12px; font-family: Georgia, serif;">
-          <div>
-            <span style="display: block; font-size: 11px; line-height: 16px; color: #b8b8b8; text-transform: uppercase; letter-spacing: 1.8px; font-weight: 700; padding-bottom: 4px;">Starting From</span>
-            <span style="display: block; font-family: Georgia, serif; font-size: 17px; line-height: 22px; color: #1a1a1a; font-weight: 400; padding-bottom: 2px;">${pkg.price}</span>
-            <span style="display: block; font-size: 13px; line-height: 18px; color: #8e8e8e; padding-bottom: 10px;">per person</span>
-            <a href="${pkg.link}" style="display: inline-block; font-family: Georgia, serif; font-size: 11px; line-height: 16px; color: #ffffff; font-weight: 700; letter-spacing: 1px; white-space: nowrap; text-transform: uppercase; text-decoration: none; background-color: #1a1a1a; border: 1px solid #1a1a1a; padding: 10px 16px;">Book Now &#8594;</a>
-          </div>
+        <td valign="bottom" background="${pkg.image}" bgcolor="#1a1a1a" height="320" style="height: 320px; background-color: #1a1a1a; background-image: url('${pkg.image}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+          <!--[if gte mso 9]>
+          <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:560px;height:320px;">
+            <v:fill type="frame" src="${pkg.image}" color="#1a1a1a" />
+            <v:textbox inset="0,0,0,0">
+          <![endif]-->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 22px 22px;">
+                <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; color: #ffffff; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; padding-bottom: 6px;">${pkg.region}</div>
+                <div style="font-family: Georgia, serif; font-size: 20px; line-height: 26px; color: #ffffff; font-weight: 700; padding-bottom: 6px;">${pkg.title}</div>
+                <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 18px; color: #ececec; padding-bottom: 14px;">${pkg.description}</div>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                  <tr>
+                    <td valign="middle" style="padding-right: 16px;">
+                      <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; color: #ffffff; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 700;">Starting From</div>
+                      <div style="font-family: Georgia, serif; font-size: 18px; line-height: 22px; color: #ffffff; font-weight: 700;">${pkg.price} <span style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 400; color: #cccccc;">/ pp</span></div>
+                    </td>
+                    <td valign="middle">
+                      <a href="${pkg.link}" style="display: inline-block; font-family: Arial, sans-serif; font-size: 10px; line-height: 12px; color: #1a1a1a; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; text-decoration: none; background-color: #ffffff; padding: 10px 16px;">Book Now &#8594;</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+          <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
         </td>
       </tr>
     </table>`;
@@ -147,22 +157,25 @@ function generateRegionalCruiseRows(regionalData) {
         const padding = (j === 0) ? 'padding-right: 6px;' : 'padding-left: 6px;';
         html += `
         <td class="med-col med-card-gap" width="50%" valign="top" height="1" style="width: 50%; padding-top: 0; ${padding} padding-bottom: 14px;">
-          <table role="presentation" width="100%" height="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; height: 100%; border: 1px solid #ece7df; background-color: #f8f6f2; border-radius: 6px; border-collapse: separate; overflow: hidden;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
             <tr>
-              <td valign="top" height="175" style="padding: 0; height: 175px;">
-                <img class="med-img" src="${item.image}" alt="${item.title}" width="100%" style="display: block; width: 100%; height: 175px; border: 0; border-top-left-radius: 6px; border-top-right-radius: 6px; object-fit: cover;"/>
-              </td>
-            </tr>
-            <tr>
-              <td valign="top" height="180" style="padding: 17px 16px 12px; font-family: Georgia, serif; height: 180px;">
-                <div style="display: inline-block; font-size: 10px; line-height: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: #7f7f7f; font-weight: 700; background-color: #efebe5; border-radius: 10px; padding: 3px 8px;">${item.tag}</div>
-                <div style="font-family: Georgia, serif; font-size: 20px; line-height: 26px; color: #1a1a1a; font-weight: 700; padding-top: 8px; padding-bottom: 8px;">${item.title}</div>
-                <div style="font-size: 12px; line-height: 18px; color: #888888; padding-bottom: 0;">${item.description}</div>
-              </td>
-            </tr>
-            <tr>
-              <td valign="bottom" height="1" style="padding: 0 16px 16px; height: 1px;">
-                <a href="${item.link}" style="display: block; width: 100%; background-color: #1a1a1a; border: 1px solid #1a1a1a; font-family: Georgia, serif; font-size: 11px; line-height: 14px; color: #ffffff; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; text-decoration: none; text-align: center; padding: 11px 12px; box-sizing: border-box;">View Itinerary &#8594;</a>
+              <td valign="bottom" background="${item.image}" bgcolor="#1a1a1a" height="360" style="height: 360px; background-color: #1a1a1a; background-image: url('${item.image}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+                <!--[if gte mso 9]>
+                <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:290px;height:360px;">
+                  <v:fill type="frame" src="${item.image}" color="#1a1a1a" />
+                  <v:textbox inset="0,0,0,0">
+                <![endif]-->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 18px 16px;">
+                      <div style="display: inline-block; font-family: Arial, sans-serif; font-size: 10px; line-height: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: #ffffff; font-weight: 700; background-color: rgba(255,255,255,0.18); border-radius: 10px; padding: 4px 10px;">${item.tag}</div>
+                      <div style="font-family: Georgia, serif; font-size: 20px; line-height: 26px; color: #ffffff; font-weight: 700; padding-top: 10px; padding-bottom: 6px;">${item.title}</div>
+                      <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 18px; color: #ececec; padding-bottom: 12px;">${item.description}</div>
+                      <a href="${item.link}" style="display: inline-block; background-color: #ffffff; font-family: Arial, sans-serif; font-size: 10px; line-height: 12px; color: #1a1a1a; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; text-decoration: none; padding: 9px 16px;">View Itinerary &#8594;</a>
+                    </td>
+                  </tr>
+                </table>
+                <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
               </td>
             </tr>
           </table>
@@ -224,6 +237,33 @@ function generateCruiseLineRows(cruiseLines) {
   return html;
 }
 
+function generateRatings(platforms) {
+  const cell = (item, paddingStyle) => `
+    <td width="50%" valign="top" style="width: 50%; ${paddingStyle} box-sizing: border-box;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid ${item.borderColor}; background-color: ${item.bgColor};">
+        <tr>
+          <td align="center" style="padding: 18px 12px 16px 12px">
+            <div style="padding: 0 0 8px 0"><img src="${item.logo}" alt="${item.name}" style="height: 22px; max-height: 26px; width: auto; display: block; margin: 0 auto;" /></div>
+            <div style="padding: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; line-height: 18px; color: ${item.starColor};">${item.stars}</div>
+            <div style="padding: 0 0 3px 0; font-family: Arial, sans-serif; font-size: 16px; line-height: 20px; font-weight: 700; color: #1a1a1a;">${item.rating}</div>
+            <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; color: #888888;">${item.reviews}</div>
+          </td>
+        </tr>
+      </table>
+    </td>`;
+
+  let rows = '';
+  for (let i = 0; i < platforms.length; i += 2) {
+    const left  = platforms[i];
+    const right = platforms[i + 1];
+    rows += `<tr>
+      ${cell(left, 'padding: 0 5px 10px 0;')}
+      ${right ? cell(right, 'padding: 0 0 10px 5px;') : '<td width="50%" style="width:50%;"></td>'}
+    </tr>`;
+  }
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">${rows}</table>`;
+}
+
 // ── public API ────────────────────────────────────────────────────────────
 
 /**
@@ -247,13 +287,14 @@ export function renderDay2Cruise(templateOrPath, data) {
   html = html.split('{{REGIONAL_SUBTITLE}}').join(data.regional_cruises.section_subtitle);
   html = html.split('{{REGIONAL_CRUISE_ROWS}}').join(generateRegionalCruiseRows(data.regional_cruises));
   html = html.split('{{CRUISE_LINE_ROWS}}').join(generateCruiseLineRows(data.cruise_lines));
+  html = html.split('{{RATINGS_BLOCK}}').join(generateRatings(data.ratings.platforms));
 
   return html;
 }
 
 export const _internals = {
   generateCityRows, generateSaverPackageRows,
-  generateRegionalCruiseRows, generateCruiseLineRows,
+  generateRegionalCruiseRows, generateCruiseLineRows, generateRatings,
 };
 
 export default renderDay2Cruise;

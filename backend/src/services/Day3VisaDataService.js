@@ -22,35 +22,12 @@
  */
 
 import { query } from '../config/database.js';
+import { platformsForDay3 } from '../utils/platformRatings.js';
+import { CONTACT } from '../utils/brand.js';
 
 // ── variant copy maps (NOT catalog — these are layout/copy choices) ────────
 
-const RATINGS = {
-  rayna: {
-    platform: 'Rayna Tours',
-    score:    '4.5',
-    reviews:  '25 Million Customers',
-    stars:    '&#9733;&#9733;&#9733;&#9733;<span style="color:#dddddd">&#9733;</span>',
-  },
-  trustpilot: {
-    platform: 'Trustpilot',
-    score:    '4.7',
-    reviews:  '34,655 Reviews',
-    stars:    '&#9733;&#9733;&#9733;&#9733;<span style="color:#dddddd">&#9733;</span>',
-  },
-  tripadvisor: {
-    platform: 'Tripadvisor',
-    score:    '4.6',
-    reviews:  '12,882 Reviews',
-    stars:    '&#9733;&#9733;&#9733;&#9733;+',
-  },
-  google: {
-    platform: 'Google',
-    score:    '4.3',
-    reviews:  '1,693 Reviews',
-    stars:    '&#9733;&#9733;&#9733;&#9733;&#9733;',
-  },
-};
+const RATINGS = platformsForDay3();
 
 const HERO_VARIANTS = {
   passport: {
@@ -129,8 +106,8 @@ const CTA_VARIANTS = {
 
 const FOOTER = {
   address: 'Rayna Tours &amp; Travels &middot; Dubai, UAE',
-  email:   'info@raynatours.com',
-  phone:   '+971 4 000 0000',
+  email:   CONTACT.email,
+  phone:   CONTACT.phone,
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────

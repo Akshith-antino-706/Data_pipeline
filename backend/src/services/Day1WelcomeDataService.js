@@ -27,6 +27,7 @@
 
 import { query } from '../config/database.js';
 import { filterMapByKey, isKeyBlocked } from '../config/blockedDestinations.js';
+import { platformsForDay1 } from '../utils/platformRatings.js';
 
 // ── catalog: holiday destinations ────────────────────────────────────────
 
@@ -160,40 +161,7 @@ const ACTIVITY_DESTINATIONS = filterMapByKey({
 
 // ── ratings + variants ───────────────────────────────────────────────────
 
-const RATINGS = [
-  {
-    platform: 'Rayna Tours',
-    logo:     'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',
-    stars:    '&#9733;&#9733;&#9733;&#9733;<span style="color: #dddddd">&#9733;</span>',
-    rating:   '4.5',
-    reviews:  '25 Million Customers',
-    styles:   { border: '#f0e5c0', bg: '#fffdf4', starColor: '#f5a623' },
-  },
-  {
-    platform: 'Trustpilot',
-    logo:     'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',
-    stars:    '&#9733;&#9733;&#9733;&#9733;<span style="color: #dddddd">&#9733;</span>',
-    rating:   '4.7',
-    reviews:  '34,655 Reviews',
-    styles:   { border: '#b8e8d0', bg: '#f4fcf8', starColor: '#00b67a' },
-  },
-  {
-    platform: 'Tripadvisor',
-    logo:     'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',
-    stars:    '&#9733;&#9733;&#9733;&#9733;+',
-    rating:   '4.6',
-    reviews:  '12,882 Reviews',
-    styles:   { border: '#b8e8d0', bg: '#f4fcf8', starColor: '#00aa6c' },
-  },
-  {
-    platform: 'Google',
-    logo:     'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',
-    stars:    '&#9733;&#9733;&#9733;&#9733;&#9733;',
-    rating:   '4.3',
-    reviews:  '1,693 Reviews',
-    styles:   { border: '#f5cfc8', bg: '#fff8f6', starColor: '#fbbc04' },
-  },
-];
+const RATINGS = platformsForDay1();
 
 const HERO_VARIANTS = {
   perfect_trip: {

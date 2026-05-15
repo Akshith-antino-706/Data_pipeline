@@ -21,6 +21,9 @@
 
 import { query } from '../config/database.js';
 import { filterMapByKey } from '../config/blockedDestinations.js';
+import { truncate, CARD_LIMITS } from '../utils/textTruncate.js';
+import { platformsForDay4 } from '../utils/platformRatings.js';
+import { CONTACT } from '../utils/brand.js';
 
 // ── catalog: destinations × theme tags ────────────────────────────────────
 
@@ -66,16 +69,7 @@ const HOLIDAY_DESTINATIONS = filterMapByKey({
 
 // ── ratings (same shape friend's data uses) ───────────────────────────────
 
-const RATINGS = [
-  { platform: 'Rayna Tours',  logo: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',
-    scale: '4/5',   rating: '4.5', reviews: '25 Million Customers', color: '#f5a623', border: '#f0e5c0', bg: '#fffdf4' },
-  { platform: 'Trustpilot',   logo: 'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',
-    scale: '4/5',   rating: '4.7', reviews: '34,655 Reviews', color: '#00b67a', border: '#b8e8d0', bg: '#f4fcf8' },
-  { platform: 'Tripadvisor',  logo: 'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',
-    scale: '4.5/5', rating: '4.6', reviews: '12,882 Reviews', color: '#00aa6c', border: '#b8e8d0', bg: '#f4fcf8' },
-  { platform: 'Google',       logo: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',
-    scale: '5/5',   rating: '4.3', reviews: '1,693 Reviews',  color: '#fbbc04', border: '#f5cfc8', bg: '#fff8f6' },
-];
+const RATINGS = platformsForDay4();
 
 const HERO_VARIANTS = {
   dream_holidays: {
@@ -95,11 +89,11 @@ const STATS = [
   { value: '25+',   label: 'Operating companies' },
 ];
 
-const CONTACT = {
-  phone:      '+971 2 550 3559',
-  phone_link: 'tel:+97125503559',
-  email:      'info@raynatours.com',
-  address:    'Abu Dhabi & Dubai, UAE',
+const CONTACT_BLOCK = {
+  phone:      CONTACT.phone,
+  phone_link: CONTACT.phoneLink,
+  email:      CONTACT.email,
+  address:    CONTACT.address,
 };
 
 const LOGO_URL    = 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png';
@@ -183,10 +177,10 @@ async function hydrateDestination(destKey, contactId, themeFallbackPrice = '999'
   if (product) {
     return {
       image:    product.image_url,
-      country:  product.country || cfg.country,
-      name:     product.name,
-      duration: deriveDuration(product.name),
-      price:    formatPrice(product.sale_price ?? product.normal_price, product.currency),
+      country:  truncate(product.country || cfg.country, CARD_LIMITS.EYEBROW),
+      name:     truncate(product.name, CARD_LIMITS.TITLE),
+      duration: truncate(deriveDuration(product.name), CARD_LIMITS.META),
+      price:    truncate(formatPrice(product.sale_price ?? product.normal_price, product.currency), CARD_LIMITS.PRICE),
       link:     withUtm(product.url, contactId),
     };
   }
@@ -194,10 +188,10 @@ async function hydrateDestination(destKey, contactId, themeFallbackPrice = '999'
   console.warn(`[Day4HolidaysDataService] no product for "${destKey}" — falling back`);
   return {
     image:    FALLBACK_HERO_IMAGE,
-    country:  cfg.country,
-    name:     cfg.name,
+    country:  truncate(cfg.country, CARD_LIMITS.EYEBROW),
+    name:     truncate(cfg.name, CARD_LIMITS.TITLE),
     duration: 'Multi-Day Package',
-    price:    `AED ${themeFallbackPrice}`,
+    price:    truncate(`AED ${themeFallbackPrice}`, CARD_LIMITS.PRICE),
     link:     withUtm('https://www.raynatours.com/holidays', contactId),
   };
 }
@@ -271,14 +265,14 @@ export async function buildDay4HolidaysData({ contactId, ranking }) {
     romantic_destinations,
     adventure_destinations,
     stats:    STATS,
-    contact:  CONTACT,
+    contact:  CONTACT_BLOCK,
     logo_url: LOGO_URL,
     ratings:  RATINGS,
   };
 }
 
 export const _internals = {
-  HOLIDAY_DESTINATIONS, RATINGS, HERO_VARIANTS, STATS, CONTACT,
+  HOLIDAY_DESTINATIONS, RATINGS, HERO_VARIANTS, STATS, CONTACT_BLOCK,
   LOGO_URL, FALLBACK_HERO_IMAGE,
   withUtm, formatPrice, deriveDuration, fetchProductForKey,
   hydrateDestination, validateRanking,

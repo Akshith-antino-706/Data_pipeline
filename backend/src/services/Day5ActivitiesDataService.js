@@ -19,6 +19,9 @@
 
 import { query } from '../config/database.js';
 import { filterMapByKey, filterMapByCity } from '../config/blockedDestinations.js';
+import { truncate, CARD_LIMITS } from '../utils/textTruncate.js';
+import { platformsForDay5 } from '../utils/platformRatings.js';
+import { CONTACT } from '../utils/brand.js';
 
 // ── catalog: activities by product_id (with theme tags) ──────────────────
 //
@@ -176,12 +179,7 @@ const PLATFORMS = {
   sectionHeader: "Don't Just Take Our Word For It",
   title:         'Verified by the Platforms You Already Trust',
   description:   'Our ratings are earned - not curated. Check us on any major review platform and see what real travellers say.',
-  items: [
-    { name: 'Rayna Tours',  logo: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png',                                       rating: '4.5', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '25 Million Customers', color: '#ff9900', bg: '#fffdf4' },
-    { name: 'Trustpilot',   logo: 'https://cdn.trustpilot.net/brand-assets/4.3.0/logo-black.svg',                                                          rating: '4.7', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '34,655 Reviews', color: '#00b67a', bg: '#f4fcf8' },
-    { name: 'Tripadvisor',  logo: 'https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.svg',                  rating: '4.6', stars: '&#9733;&#9733;&#9733;&#9733;+',                                            reviews: '12,882 Reviews', color: '#34e0a1', bg: '#f4fcf8' },
-    { name: 'Google',       logo: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',                                  rating: '4.3', stars: '&#9733;&#9733;&#9733;&#9733;<span style="color:#cccccc">&#9733;</span>', reviews: '1,693 Reviews',  color: '#ea4335', bg: '#fff8f6' },
-  ],
+  items: platformsForDay5(),
 };
 
 const CTA_FOOTER = {
@@ -194,9 +192,9 @@ const CTA_FOOTER = {
 
 const FOOTER = {
   contact: {
-    address: 'Abu Dhabi & Dubai, UAE',
-    phone:   '+971 2 550 3591',
-    email:   'info@raynatours.com',
+    address: CONTACT.address,
+    phone:   CONTACT.phone,
+    email:   CONTACT.email,
   },
   social: [
     { name: 'Facebook',  url: 'https://www.facebook.com/raynagroup',           icon: 'https://img.icons8.com/ios-filled/20/ffffff/facebook-new.png' },
@@ -286,8 +284,8 @@ function hydrateActivity(catalogKey, productRow, contactId) {
     // Fallback — still emits a renderable card
     console.warn(`[Day5ActivitiesDataService] product ${cfg.product_id} not found for "${catalogKey}"`);
     return {
-      category: cfg.category,
-      title:    catalogKey.replace(/_/g, ' '),
+      category: truncate(cfg.category, CARD_LIMITS.EYEBROW),
+      title:    truncate(catalogKey.replace(/_/g, ' '), CARD_LIMITS.TITLE),
       duration: '2-3 Hours',
       price:    'From AED —',
       imageUrl: 'https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/placeholder.jpg',
@@ -295,10 +293,10 @@ function hydrateActivity(catalogKey, productRow, contactId) {
     };
   }
   return {
-    category: cfg.category,
-    title:    productRow.name,
-    duration: deriveDuration(productRow.page_description || productRow.name),
-    price:    formatPrice(productRow.sale_price ?? productRow.normal_price, productRow.currency),
+    category: truncate(cfg.category, CARD_LIMITS.EYEBROW),
+    title:    truncate(productRow.name, CARD_LIMITS.TITLE),
+    duration: truncate(deriveDuration(productRow.page_description || productRow.name), CARD_LIMITS.META),
+    price:    truncate(formatPrice(productRow.sale_price ?? productRow.normal_price, productRow.currency), CARD_LIMITS.PRICE),
     imageUrl: productRow.image_url,
     bookUrl:  withUtm(productRow.url, contactId),
   };
@@ -387,9 +385,9 @@ export async function buildDay5ActivitiesData({ contactId, ranking }) {
     const cfg = TOP_CITIES[k];
     const n = cityCounts.get(cfg.productSearch) || 0;
     return {
-      country:        cfg.country,
-      city:           cfg.city,
-      activitiesCount:n > 0 ? `${n}+ Activities` : 'Activities Available',
+      country:        truncate(cfg.country, CARD_LIMITS.EYEBROW),
+      city:           truncate(cfg.city, CARD_LIMITS.TITLE),
+      activitiesCount:truncate(n > 0 ? `${n}+ Activities` : 'Activities Available', CARD_LIMITS.META),
       imageUrl:       cfg.imageUrl,
       exploreUrl:     withUtm(cfg.exploreUrl, contactId),
     };

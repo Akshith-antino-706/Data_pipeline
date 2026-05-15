@@ -79,11 +79,23 @@
 
         <!-- HERO -->
         <tr>
-          <td class="hero-inner" align="center" bgcolor="#111111" style="background-color:#111111; background-image: linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.78)), url('{{hero.background_image}}'); background-size:cover; background-position:center center; background-repeat:no-repeat; padding:64px 40px 56px;">
-            <div style="font-family:'Montserrat', Arial, sans-serif; font-size:10px; font-weight:700; letter-spacing:3.5px; text-transform:uppercase; color:rgba(255,255,255,0.6); margin-bottom:14px;">Your Saved Items</div>
-            <div class="hero-title" style="font-family:'Playfair Display', Georgia, serif; font-size:38px; font-weight:700; font-style:italic; line-height:1.22; color:#ffffff; margin-bottom:16px;">{{{hero.title}}}</div>
-            <div class="hero-sub" style="font-family:'Montserrat', Arial, sans-serif; font-size:14px; color:rgba(255,255,255,0.85); font-weight:400; line-height:1.75; max-width:460px; margin:0 auto 32px;">{{hero.subtitle}}</div>
-            <a href="{{hero.cta_link}}" style="background:#ffffff; color:#0a0a0a; font-family:'Montserrat', Arial, sans-serif; font-size:11.5px; font-weight:800; letter-spacing:2px; text-transform:uppercase; padding:14px 38px; text-decoration:none; border-radius:2px; display:inline-block;">{{hero.cta_text}}</a>
+          <td class="hero-inner" align="center" background="{{hero.background_image}}" bgcolor="#111111" style="background-color:#111111; background-image: url('{{hero.background_image}}'); background-size:cover; background-position:center center; background-repeat:no-repeat; padding:0;">
+            <!--[if gte mso 9]>
+            <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:600px;height:380px;">
+              <v:fill type="frame" src="{{hero.background_image}}" color="#111111" />
+              <v:textbox inset="0,0,0,0">
+            <![endif]-->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse;">
+              <tr>
+                <td align="center" style="background-color: rgba(0,0,0,0.55); padding:64px 40px 56px;">
+                  <div style="font-family:'Montserrat', Arial, sans-serif; font-size:10px; font-weight:700; letter-spacing:3.5px; text-transform:uppercase; color:rgba(255,255,255,0.6); margin-bottom:14px;">Your Saved Items</div>
+                  <div class="hero-title" style="font-family:'Playfair Display', Georgia, serif; font-size:38px; font-weight:700; font-style:italic; line-height:1.22; color:#ffffff; margin-bottom:16px;">{{{hero.title}}}</div>
+                  <div class="hero-sub" style="font-family:'Montserrat', Arial, sans-serif; font-size:14px; color:rgba(255,255,255,0.85); font-weight:400; line-height:1.75; max-width:460px; margin:0 auto 32px;">{{hero.subtitle}}</div>
+                  <a href="{{hero.cta_link}}" style="background:#ffffff; color:#0a0a0a; font-family:'Montserrat', Arial, sans-serif; font-size:11.5px; font-weight:800; letter-spacing:2px; text-transform:uppercase; padding:14px 38px; text-decoration:none; border-radius:2px; display:inline-block;">{{hero.cta_text}}</a>
+                </td>
+              </tr>
+            </table>
+            <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
           </td>
         </tr>
 
@@ -120,32 +132,30 @@
             <div class="product-grid" style="font-size:0; line-height:0; text-align:center;">
               {{#list browsed_experiences}}
               <div class="product-card-wrap" style="display:inline-block; width:50%; vertical-align:top; font-size:0; line-height:0;">
-                <div class="product-card-inner" style="margin:0 4px 12px; background-color:#ffffff; border:1px solid #e0e0e0; border-left:4px solid #0a0a0a; border-radius:4px; overflow:hidden; text-align:left;">
-                  <!-- IMAGE -->
-                  <img src="{{image}}" alt="{{name}}" class="product-image" style="display:block; width:100%; height:140px; max-width:100%; object-fit:cover;" />
-                  <!-- BODY -->
-                  <div class="product-body" style="padding:14px 14px 12px;">
-                    <div class="product-category" style="font-family:'Montserrat', Arial, sans-serif; font-size:8.5px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#999; line-height:12px; margin-bottom:6px; min-height:12px;">{{category}}</div>
-                    <div class="product-name" style="font-family:'Playfair Display', Georgia, serif; font-size:14px; font-weight:700; color:#1a1a1a; line-height:18px; margin-bottom:8px; min-height:36px;">{{name}}</div>
-
-                    {{#if highlights}}
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="product-highlights" style="margin:0 0 10px 0; min-height:48px;">
-                      {{#list highlights}}
-                      <tr>
-                        <td valign="top" width="12" style="vertical-align:top; padding:0 4px 1px 0; font-family:'Montserrat', Arial, sans-serif; font-size:10px; line-height:14px; color:#333; font-weight:700;">&#10003;</td>
-                        <td valign="top" style="vertical-align:top; padding:0 0 1px 0; font-family:'Montserrat', Arial, sans-serif; font-size:10.5px; line-height:14px; color:#666;">{{.}}</td>
-                      </tr>
-                      {{/list}}
-                    </table>
-                    {{/if}}
-
-                    <!-- FOOTER (price + CTA) -->
-                    <div class="product-footer" style="border-top:1px solid #f0f0f0; padding-top:10px; margin-top:8px;">
-                      <div class="product-price-label" style="font-family:'Montserrat', Arial, sans-serif; font-size:8.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.8px; color:#aaa; line-height:11px; margin-bottom:2px; min-height:11px;">{{price_label}}</div>
-                      <div class="product-price" style="font-family:'Montserrat', Arial, sans-serif; font-size:16px; font-weight:800; color:#0a0a0a; line-height:20px; margin-bottom:10px; white-space:nowrap; min-height:20px;">{{price}} <span style="font-size:10px; font-weight:600; color:#999;">{{price_sub}}</span></div>
-                      <a href="{{link}}" class="product-cta" style="background:#0a0a0a; color:#ffffff; font-family:'Montserrat', Arial, sans-serif; font-size:9px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; padding:10px 14px; text-decoration:none; border-radius:2px; display:block; text-align:center; line-height:11px;">Book Now &rarr;</a>
-                    </div>
-                  </div>
+                <div class="product-card-inner" style="margin:0 4px 12px; border-radius:4px; overflow:hidden; text-align:left;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
+                    <tr>
+                      <td valign="bottom" background="{{image}}" bgcolor="#0a0a0a" height="300" style="height: 300px; background-color: #0a0a0a; background-image: url('{{image}}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+                        <!--[if gte mso 9]>
+                        <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:280px;height:300px;">
+                          <v:fill type="frame" src="{{image}}" color="#0a0a0a" />
+                          <v:textbox inset="0,0,0,0">
+                        <![endif]-->
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+                          <tr>
+                            <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 18px 16px;">
+                              <div style="font-family:'Montserrat', Arial, sans-serif; font-size:8.5px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#ffffff; line-height:12px; margin-bottom:6px;">{{category}}</div>
+                              <div style="font-family:'Playfair Display', Georgia, serif; font-size:16px; font-weight:700; color:#ffffff; line-height:20px; margin-bottom:10px;">{{name}}</div>
+                              <div style="font-family:'Montserrat', Arial, sans-serif; font-size:8.5px; font-weight:600; text-transform:uppercase; letter-spacing:0.8px; color:#e0e0e0; line-height:11px; margin-bottom:2px;">{{price_label}}</div>
+                              <div style="font-family:'Montserrat', Arial, sans-serif; font-size:16px; font-weight:800; color:#ffffff; line-height:20px; margin-bottom:10px; white-space:nowrap;">{{price}} <span style="font-size:10px; font-weight:600; color:#cccccc;">{{price_sub}}</span></div>
+                              <a href="{{link}}" style="background:#ffffff; color:#0a0a0a; font-family:'Montserrat', Arial, sans-serif; font-size:9px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; padding:10px 14px; text-decoration:none; border-radius:2px; display:inline-block; line-height:11px;">Book Now &rarr;</a>
+                            </td>
+                          </tr>
+                        </table>
+                        <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
+                      </td>
+                    </tr>
+                  </table>
                 </div>
               </div>
               {{/list}}
@@ -163,19 +173,8 @@
             <div style="text-align:center; font-family:'Montserrat', Arial, sans-serif; font-size:10px; font-weight:600; color:#888; letter-spacing:2.5px; text-transform:uppercase; margin-bottom:8px;">Don't just take our word for it</div>
             <div style="text-align:center; font-family:'Montserrat', Arial, sans-serif; font-size:20px; font-weight:700; color:#1a1a1a; margin-bottom:8px; line-height:1.3;">Verified by the Platforms You Already Trust</div>
             <div style="text-align:center; font-family:'Montserrat', Arial, sans-serif; font-size:12px; color:#888; margin-bottom:24px; line-height:1.7; max-width:440px; margin-left:auto; margin-right:auto;">Our ratings are earned &mdash; not curated. Check us on any major review platform and see what real travellers say.</div>
-            <!-- Inline-block divs: 4-up on desktop, wraps to 2x2 on mobile via .plat-card width:50% -->
-            <div class="plat-grid" style="font-size:0; line-height:0; text-align:center;">
-              {{#list trust_platforms}}
-              <div class="plat-card" style="display:inline-block; width:25%; vertical-align:top; font-size:0; line-height:0;">
-                <div style="margin:0 4px 8px; background-color:#ffffff; border:1px solid #e0e0e0; border-radius:6px; padding:18px 10px 16px; text-align:center;">
-                  <div style="font-family:'Montserrat', Arial, sans-serif; font-size:10px; font-weight:700; letter-spacing:0.8px; text-transform:uppercase; color:{{name_color}}; line-height:14px; margin-bottom:8px;">{{name}}</div>
-                  <div style="font-size:15px; line-height:18px; margin-bottom:8px;">{{{stars_html}}}</div>
-                  <div style="font-family:'Montserrat', Arial, sans-serif; font-size:15px; font-weight:800; color:#1a1a1a; line-height:18px;">{{score}}</div>
-                  <div style="font-family:'Montserrat', Arial, sans-serif; font-size:10px; color:#888; line-height:14px; margin-top:3px;">{{reviews}}</div>
-                </div>
-              </div>
-              {{/list}}
-            </div>
+            <!-- True 2x2 table grid — consistent across all devices + clients -->
+            {{{trust_platforms_html}}}
           </td>
         </tr>
         {{/if}}
