@@ -10,7 +10,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <title>Visa Made Easy - Rayna Tours</title>
+    <!--[if gte mso 9]>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:AllowPNG/>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+    <![endif]-->
     <style type="text/css">
+      /* Cross-device resets */
+      body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; text-size-adjust: 100%; }
+      table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+      img { -ms-interpolation-mode: bicubic; display: block; outline: none; text-decoration: none; border: 0; }
+      body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+      table { border-collapse: collapse !important; }
+
       @media only screen and (max-width: 620px) {
         /* Generic */
         .container { width: 100% !important; }
@@ -100,12 +115,15 @@
             </tr>
 
             <tr>
-              <td class="hero-pad" background="{{HERO_BG_IMAGE}}" bgcolor="#0f2238" style="background-color: #0f2238; background-image: linear-gradient(rgba(8,34,58,0.55), rgba(8,34,58,0.80)), url(&quot;{{HERO_BG_IMAGE}}&quot;); background-position: center top; background-size: cover; background-repeat: no-repeat; padding: 70px 28px 38px 28px;">
+              <td class="hero-pad" background="{{HERO_BG_IMAGE}}" bgcolor="#0f2238" style="background-color: #0f2238; background-image: url(&quot;{{HERO_BG_IMAGE}}&quot;); background-position: center top; background-size: cover; background-repeat: no-repeat; padding: 0;">
                 <!--[if gte mso 9]>
                 <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:600px;height:560px;">
                   <v:fill type="frame" src="{{HERO_BG_IMAGE}}" color="#0f2238" />
                   <v:textbox inset="0,0,0,0">
                 <![endif]-->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td style="background-color: rgba(0,0,0,0.55); padding: 70px 28px 38px 28px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                   <tr>
                     <td style="padding: 0 0 18px 0">
@@ -170,6 +188,9 @@
                           </td>
                         </tr>
                       </table>
+                    </td>
+                  </tr>
+                </table>
                     </td>
                   </tr>
                 </table>
@@ -403,8 +424,8 @@
                   <tr><td align="center" style="padding: 0 20px 4px; font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #d9deea;">You received this because you're subscribed to Rayna Tours offers.</td></tr>
                   <tr>
                     <td align="center" style="padding: 0 20px 34px; font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #6f7785;">
-                      <a href="#" style="color: #6f7785; text-decoration: none">Unsubscribe</a> &middot;
-                      <a href="#" style="color: #6f7785; text-decoration: none">Manage Preferences</a>
+                      <a href="https://www.raynatours.com/unsubscribe" style="color: #6f7785; text-decoration: none">Unsubscribe</a> &middot;
+                      <a href="https://www.raynatours.com/email-preferences" style="color: #6f7785; text-decoration: none">Manage Preferences</a>
                     </td>
                   </tr>
                 </table>

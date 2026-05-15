@@ -9,8 +9,23 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <title>Rayna Tours - Curated Travel</title>
+    <title>Rayna Tours - Holiday Packages</title>
+    <!--[if gte mso 9]>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:AllowPNG/>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+    <![endif]-->
     <style type="text/css">
+      /* Cross-device resets */
+      body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; text-size-adjust: 100%; }
+      table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+      img { -ms-interpolation-mode: bicubic; display: block; outline: none; text-decoration: none; border: 0; }
+      body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+      table { border-collapse: collapse !important; }
+
       @media only screen and (max-width: 620px) {
         .perk-grid { table-layout: fixed !important; }
         .perk-col { display: table-cell !important; width: 25% !important; max-width: 25% !important; }
@@ -82,7 +97,7 @@
 
             <tr>
               <td align="center" style="background-color: #1a1a1a; padding: 10px 24px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: #ffffff;">
-                &#127796; Curated Travel Collections
+                &#127796; All-Inclusive Holiday Packages
               </td>
             </tr>
 
@@ -105,19 +120,25 @@
             </tr>
 
             <tr>
-              <td align="center" valign="middle" style="padding: 0; background-color: #0f2238; background-image: linear-gradient(rgba(8,34,58,0.55), rgba(8,34,58,0.80)), url(&quot;{{hero.background_image}}&quot;); background-size: cover; background-position: center top; background-repeat: no-repeat; height: 400px;">
+              <td align="center" valign="middle" background="{{hero.background_image}}" bgcolor="#0f2238" style="padding: 0; background-color: #0f2238; background-image: url(&quot;{{hero.background_image}}&quot;); background-size: cover; background-position: center top; background-repeat: no-repeat; height: 400px;">
                 <!--[if gte mso 9]>
-                <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width: 600px; height: 400px;">
-                  <v:fill type="tile" src="{{hero.background_image}}" />
-                </v:rect>
+                <v:group xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" coordsize="600,400" coordorigin="0,0" style="width:600px;height:400px;">
+                  <v:rect fill="true" stroke="false" style="position:absolute;left:0;top:0;width:600px;height:400px;">
+                    <v:fill type="frame" src="{{hero.background_image}}" color="#0f2238" />
+                  </v:rect>
+                  <v:rect fill="true" stroke="false" style="position:absolute;left:0;top:0;width:600px;height:400px;">
+                    <v:fill type="solid" color="#0f2238" opacity="70%" />
+                  </v:rect>
+                  <v:rect fill="false" stroke="false" style="position:absolute;left:0;top:0;width:600px;height:400px;">
+                    <v:textbox inset="0,0,0,0">
                 <![endif]-->
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto; width: 100%">
                   <tr>
-                    <td align="center" valign="middle" style="padding: 50px 30px">
+                    <td align="center" valign="middle" style="padding: 50px 30px; background-color: rgba(0,0,0,0.55);">
                       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto; width: 100%; max-width: 520px;">
                         <tr>
                           <td align="center" style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 18px; font-weight: 600; letter-spacing: 2.4px; text-transform: uppercase; color: #ffffff; padding: 0 20px 16px;">
-                            Handcrafted Travel Collections
+                            Handcrafted Holiday Packages
                           </td>
                         </tr>
                         <tr>
@@ -135,7 +156,7 @@
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto">
                               <tr>
                                 <td bgcolor="#ffffff" style="padding: 14px 32px">
-                                  <a href="https://www.raynatours.com/holidays" style="display: inline-block; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">Browse Destinations</a>
+                                  <a href="https://www.raynatours.com/holidays" style="display: inline-block; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">Browse Packages</a>
                                 </td>
                               </tr>
                             </table>
@@ -145,6 +166,11 @@
                     </td>
                   </tr>
                 </table>
+                <!--[if gte mso 9]>
+                    </v:textbox>
+                  </v:rect>
+                </v:group>
+                <![endif]-->
               </td>
             </tr>
 
@@ -188,23 +214,32 @@
                   <tr>
                     {{#each row}}
                     <td width="50%" valign="top" style="padding: 0 5px 10px;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="390" style="border-collapse: collapse; width: 100%; height: 390px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
                         <tr>
-                          <td height="170" style="height: 170px;"><img src="{{image}}" alt="{{name}}" width="275" height="170" style="display: block; width: 100%; max-width: 275px; height: 170px; border: 0;" /></td>
-                        </tr>
-                        <tr>
-                          <td valign="top" height="220" style="height: 220px; background-color: #1a1a1a; padding: 14px 16px;">
-                            <span style="display: block; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #aaaaaa;">{{country}}</span>
-                            <p style="margin: 0; font-family: Georgia, serif; font-size: 20px; line-height: 24px; color: #ffffff; padding-top: 4px;">{{name}}</p>
-                            <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #8f8f8f; padding-top: 4px;">{{duration}}</p>
-                            <p style="margin: 0; font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 8px;">From {{price}}</p>
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 10px;">
+                          <td valign="bottom" background="{{image}}" bgcolor="#1a1a1a" height="390" style="height: 390px; background-color: #1a1a1a; background-image: url('{{image}}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+                            <!--[if gte mso 9]>
+                            <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:290px;height:390px;">
+                              <v:fill type="frame" src="{{image}}" color="#1a1a1a" />
+                              <v:textbox inset="0,0,0,0">
+                            <![endif]-->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
                               <tr>
-                                <td bgcolor="#ffffff" style="padding: 7px 14px">
-                                  <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">View Package &rarr;</a>
+                                <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 18px 16px;">
+                                  <span style="display: block; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">{{country}}</span>
+                                  <p style="margin: 0; font-family: Georgia, serif; font-size: 20px; line-height: 24px; color: #ffffff; padding-top: 4px;">{{name}}</p>
+                                  <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #d8d4d0; padding-top: 4px;">{{duration}}</p>
+                                  <p style="margin: 0; font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 8px;">From {{price}}</p>
+                                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 10px;">
+                                    <tr>
+                                      <td bgcolor="#ffffff" style="padding: 7px 14px">
+                                        <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">View Package &rarr;</a>
+                                      </td>
+                                    </tr>
+                                  </table>
                                 </td>
                               </tr>
                             </table>
+                            <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
                           </td>
                         </tr>
                       </table>
@@ -219,7 +254,7 @@
             <tr>
               <td align="center" style="padding: 42px 24px 10px">
                 <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">Celebrate in Style</p>
-                <p style="margin: 0; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: 400; color: #1a1a1a; padding-top: 8px;">Eid Al Adha Collection</p>
+                <p style="margin: 0; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: 400; color: #1a1a1a; padding-top: 8px;">Eid Al Adha Packages</p>
                 <p style="margin: 0; font-family: Arial, sans-serif; font-size: 13px; line-height: 22px; color: #7a7570; padding-top: 10px;">Make your Eid break extraordinary - specially curated multi-day packages designed to celebrate and explore.</p>
               </td>
             </tr>
@@ -231,23 +266,32 @@
                   <tr>
                     {{#each row}}
                     <td width="50%" valign="top" style="padding: 0 5px 10px;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="390" style="border-collapse: collapse; width: 100%; height: 390px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
                         <tr>
-                          <td height="170" style="height: 170px;"><img src="{{image}}" alt="{{name}}" width="275" height="170" style="display: block; width: 100%; max-width: 275px; height: 170px; border: 0;" /></td>
-                        </tr>
-                        <tr>
-                          <td valign="top" height="220" style="height: 220px; background-color: #1a1a1a; padding: 14px 16px;">
-                            <span style="display: block; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #aaaaaa;">{{country}}</span>
-                            <p style="margin: 0; font-family: Georgia, serif; font-size: 20px; line-height: 24px; color: #ffffff; padding-top: 4px;">{{name}}</p>
-                            <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #8f8f8f; padding-top: 4px;">{{duration}}</p>
-                            <p style="margin: 0; font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 8px;">From {{price}}</p>
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top: 10px">
+                          <td valign="bottom" background="{{image}}" bgcolor="#1a1a1a" height="390" style="height: 390px; background-color: #1a1a1a; background-image: url('{{image}}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+                            <!--[if gte mso 9]>
+                            <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:290px;height:390px;">
+                              <v:fill type="frame" src="{{image}}" color="#1a1a1a" />
+                              <v:textbox inset="0,0,0,0">
+                            <![endif]-->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
                               <tr>
-                                <td bgcolor="#ffffff" style="padding: 7px 14px">
-                                  <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">View Package &rarr;</a>
+                                <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 18px 16px;">
+                                  <span style="display: block; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">{{country}}</span>
+                                  <p style="margin: 0; font-family: Georgia, serif; font-size: 20px; line-height: 24px; color: #ffffff; padding-top: 4px;">{{name}}</p>
+                                  <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #d8d4d0; padding-top: 4px;">{{duration}}</p>
+                                  <p style="margin: 0; font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 8px;">From {{price}}</p>
+                                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 10px;">
+                                    <tr>
+                                      <td bgcolor="#ffffff" style="padding: 7px 14px">
+                                        <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">Book Now &rarr;</a>
+                                      </td>
+                                    </tr>
+                                  </table>
                                 </td>
                               </tr>
                             </table>
+                            <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
                           </td>
                         </tr>
                       </table>
@@ -264,11 +308,11 @@
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #1a1a1a;">
                   <tr>
                     <td class="eid-col-image" width="40%" valign="top" style="width: 40%">
-                      <img class="eid-image" src="{{eid_special_offer.image}}" alt="Eid Collection" width="240" height="240" style="display: block; width: 100%; max-width: 240px; height: 240px; object-fit: cover; border: 0;" />
+                      <img class="eid-image" src="{{eid_special_offer.image}}" alt="Special Eid Offer" width="240" height="240" style="display: block; width: 100%; max-width: 240px; height: 240px; object-fit: cover; border: 0;" />
                     </td>
                     <td class="eid-col-content eid-content" width="60%" valign="middle" style="width: 60%; padding: 22px 28px;">
                       <p class="eid-eyebrow" style="margin: 0; font-family: Arial, sans-serif; font-size: 9.5px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">
-                        &#10024; Featured Eid Collection
+                        &#10024; Exclusive Eid Offer
                       </p>
                       <p class="eid-heading" style="margin: 0; font-family: Georgia, serif; font-size: 30px; line-height: 40px; font-weight: 400; color: #ffffff; padding-top: 10px;">
                         {{eid_special_offer.heading}}
@@ -288,7 +332,7 @@
             <tr>
               <td align="center" style="padding: 42px 24px 10px">
                 <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">For Couples</p>
-                <p style="margin: 0; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: 400; color: #1a1a1a; padding-top: 8px;">Romantic Getaway Destinations</p>
+                <p style="margin: 0; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: 400; color: #1a1a1a; padding-top: 8px;">Romantic Holiday Destinations</p>
                 <p style="margin: 0; font-family: Arial, sans-serif; font-size: 13px; line-height: 22px; color: #7a7570; padding-top: 10px;">Intimate escapes designed for two - from golden-hour sunsets in Santorini to tropical seclusion in Bali.</p>
               </td>
             </tr>
@@ -300,23 +344,32 @@
                   <tr>
                     {{#each row}}
                     <td width="50%" valign="top" style="padding: 0 5px 10px;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="390" style="border-collapse: collapse; width: 100%; height: 390px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
                         <tr>
-                          <td height="170" style="height: 170px;"><img src="{{image}}" alt="{{name}}" width="275" height="170" style="display: block; width: 100%; max-width: 275px; height: 170px; border: 0;" /></td>
-                        </tr>
-                        <tr>
-                          <td valign="top" height="220" style="height: 220px; background-color: #1a1a1a; padding: 14px 16px;">
-                            <span style="display: block; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #aaaaaa;">{{country}}</span>
-                            <p style="margin: 0; font-family: Georgia, serif; font-size: 20px; line-height: 24px; color: #ffffff; padding-top: 4px;">{{name}}</p>
-                            <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #8f8f8f; padding-top: 4px;">{{duration}}</p>
-                            <p style="margin: 0; font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 8px;">From {{price}}</p>
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top: 10px">
+                          <td valign="bottom" background="{{image}}" bgcolor="#1a1a1a" height="390" style="height: 390px; background-color: #1a1a1a; background-image: url('{{image}}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+                            <!--[if gte mso 9]>
+                            <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:290px;height:390px;">
+                              <v:fill type="frame" src="{{image}}" color="#1a1a1a" />
+                              <v:textbox inset="0,0,0,0">
+                            <![endif]-->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
                               <tr>
-                                <td bgcolor="#ffffff" style="padding: 7px 14px">
-                                  <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">View Package &rarr;</a>
+                                <td valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 18px 16px;">
+                                  <span style="display: block; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff;">{{country}}</span>
+                                  <p style="margin: 0; font-family: Georgia, serif; font-size: 20px; line-height: 24px; color: #ffffff; padding-top: 4px;">{{name}}</p>
+                                  <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #d8d4d0; padding-top: 4px;">{{duration}}</p>
+                                  <p style="margin: 0; font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 8px;">From {{price}}</p>
+                                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 10px;">
+                                    <tr>
+                                      <td bgcolor="#ffffff" style="padding: 7px 14px">
+                                        <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">View Package &rarr;</a>
+                                      </td>
+                                    </tr>
+                                  </table>
                                 </td>
                               </tr>
                             </table>
+                            <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
                           </td>
                         </tr>
                       </table>
@@ -331,7 +384,7 @@
             <tr>
               <td align="center" style="padding: 42px 24px 10px">
                 <p style="margin: 0; font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">For the Bold</p>
-                <p style="margin: 0; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: 400; color: #1a1a1a; padding-top: 8px;">Adventure Travel Destinations</p>
+                <p style="margin: 0; font-family: Georgia, serif; font-size: 36px; line-height: 42px; font-weight: 400; color: #1a1a1a; padding-top: 8px;">Adventure Holiday Destinations</p>
                 <p style="margin: 0; font-family: Arial, sans-serif; font-size: 13px; line-height: 22px; color: #7a7570; padding-top: 10px;">Thrilling journeys for adventurous souls - desert dunes, lush jungles, mountain escapes and more await you.</p>
               </td>
             </tr>
@@ -343,30 +396,28 @@
                   <tr>
                     {{#each row}}
                     <td width="50%" valign="top" style="padding: 0 5px 10px;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" height="280" style="border-collapse: collapse; width: 100%; height: 280px">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
                         <tr>
-                          <td valign="bottom" height="280" style="height: 280px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(&quot;{{image}}&quot;); background-size: cover; background-position: center; background-repeat: no-repeat; padding: 40px 16px 18px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%">
+                          <td valign="bottom" background="{{image}}" bgcolor="#101010" height="290" style="height: 290px; background-color: #101010; background-image: url('{{image}}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
+                            <!--[if gte mso 9]>
+                            <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:290px;height:290px;">
+                              <v:fill type="frame" src="{{image}}" color="#101010" />
+                              <v:textbox inset="0,0,0,0">
+                            <![endif]-->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
                               <tr>
-                                <td align="center" style="font-family: Arial, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;">
-                                  <span style="opacity: 0.8">{{country}}</span>
-                                </td>
-                              </tr>
-                              <tr>
-                                <td class="adv-title" align="center" style="font-family: Georgia, serif; font-size: 20px; line-height: 24px; font-weight: 400; color: #ffffff; padding-top: 6px;">{{name}}</td>
-                              </tr>
-                              <tr>
-                                <td align="center" style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #e0e0e0; padding-top: 6px;">{{duration}}</td>
-                              </tr>
-                              <tr>
-                                <td align="center" style="font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 6px;">From {{price}}</td>
-                              </tr>
-                              <tr>
-                                <td align="center" style="padding-top: 10px">
-                                  <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 16px;">View Package &rarr;</a>
+                                <td align="center" valign="bottom" style="background-color: rgba(0,0,0,0.55); padding: 16px;">
+                                  <div style="font-family: Arial, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;">{{country}}</div>
+                                  <div class="adv-title" style="font-family: Georgia, serif; font-size: 20px; line-height: 24px; font-weight: 400; color: #ffffff; padding-top: 6px;">{{name}}</div>
+                                  <div style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; color: #ececec; padding-top: 4px;">{{duration}}</div>
+                                  <div style="font-family: Georgia, serif; font-size: 17px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 4px;">From {{price}}</div>
+                                  <div style="padding-top: 10px;">
+                                    <a href="{{link}}" style="font-family: Arial, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 16px;">View Package &rarr;</a>
+                                  </div>
                                 </td>
                               </tr>
                             </table>
+                            <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
                           </td>
                         </tr>
                       </table>
@@ -416,8 +467,8 @@
                           <td class="promise-col" width="32%" valign="top" style="border: 1px solid #e8e5df; border-radius: 8px;">
                             <div class="promise-card-pad" style="padding: 20px 16px 18px; background-color: #ffffff;">
                               <div class="promise-icon-box" align="center" style="margin: 0 0 16px; width: 44px; height: 44px; background-color: #fff8e6; border-radius: 12px; font-family: Georgia, serif; font-size: 22px; line-height: 44px; color: #1a1a1a;">&#128176;</div>
-                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Promise</div>
-                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price elsewhere? We'll match it.</div>
+                              <div class="promise-title" style="padding: 0 0 10px; font-family: Georgia, serif; font-size: 14px; line-height: 21px; font-weight: 700; color: #101010;">Best Price<br />Guarantee</div>
+                              <div class="promise-desc" style="font-family: Georgia, serif; font-size: 12px; line-height: 20px; color: #8e8e8e;">Find a lower price? We'll refund 110% of the difference.</div>
                             </div>
                           </td>
                           <td class="promise-gap" width="5">&nbsp;</td>
@@ -482,14 +533,14 @@
               <td align="center" style="padding: 52px 28px; background-color: #1a1a1a">
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto">
                   <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: 2.2px; text-transform: uppercase; color: #9e9e9e;">Plan Your Next Getaway</td></tr>
-                  <tr><td align="center" style="font-family: Georgia, serif; font-size: 42px; line-height: 48px; color: #ffffff; padding-top: 12px;">Your Next Adventure Awaits</td></tr>
-                  <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 13px; line-height: 22px; color: #c7c7c7; padding: 12px 0 28px;">Can't find what you're looking for? Our travel experts will <br />design a personalised itinerary just for you.</td></tr>
+                  <tr><td align="center" style="font-family: Georgia, serif; font-size: 42px; line-height: 48px; color: #ffffff; padding-top: 12px;">Your Dream Holiday Awaits</td></tr>
+                  <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 13px; line-height: 22px; color: #c7c7c7; padding: 12px 0 28px;">Can't find what you're looking for? Our travel experts will <br />design a custom holiday package just for you - no extra charge.</td></tr>
                   <tr>
                     <td align="center">
                       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto">
                         <tr>
                           <td bgcolor="#ffffff" style="padding: 14px 30px">
-                            <a href="https://www.raynatours.com/holidays" style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">Start Planning</a>
+                            <a href="https://www.raynatours.com/holidays" style="font-family: Arial, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #1a1a1a; text-decoration: none;">Start Planning Now</a>
                           </td>
                         </tr>
                       </table>
@@ -538,6 +589,12 @@
                           <td style="padding: 0 7px"><a href="https://www.youtube.com/raynatours" style="display: block; text-decoration: none; line-height: 0;"><img src="https://img.icons8.com/ios-filled/14/ffffff/youtube-play.png" alt="YouTube" width="20" style="display: block; width: 20px; height: 20px; padding: 10px; background-color: #333741; border-radius: 20px; box-sizing: content-box;" /></a></td>
                         </tr>
                       </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td align="center" style="padding: 0 20px 14px; font-family: Arial, sans-serif; font-size: 10px; line-height: 16px; color: #6e7682;">
+                      <a href="https://www.raynatours.com/unsubscribe" style="color: #6e7682; text-decoration: underline;">Unsubscribe</a> &middot;
+                      <a href="https://www.raynatours.com/email-preferences" style="color: #6e7682; text-decoration: underline;">Manage Preferences</a>
                     </td>
                   </tr>
                   <tr>

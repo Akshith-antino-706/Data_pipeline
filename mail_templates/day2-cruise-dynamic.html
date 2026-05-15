@@ -5,7 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <title>Cruise Spotlight - Rayna Tours</title>
+    <!--[if gte mso 9]>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:AllowPNG/>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+    <![endif]-->
     <style type="text/css">
+      /* Cross-device resets */
+      body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; text-size-adjust: 100%; }
+      table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+      img { -ms-interpolation-mode: bicubic; display: block; outline: none; text-decoration: none; border: 0; }
+      body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+      table { border-collapse: collapse !important; }
+
       @media only screen and (max-width: 620px) {
         .cruise-section-pad {
           padding-left: 14px !important;
@@ -173,23 +188,25 @@
 
             <tr>
               <td
+                background="{{HERO_BG_IMAGE}}"
+                bgcolor="#0f2238"
                 style="
                   background-color: #0f2238;
-                  background-image:
-                    linear-gradient(
-                      rgba(8, 34, 58, 0.55),
-                      rgba(8, 34, 58, 0.80)
-                    ),
-                    url(&quot;{{HERO_BG_IMAGE}}&quot;);
+                  background-image: url(&quot;{{HERO_BG_IMAGE}}&quot;);
                   background-repeat: no-repeat;
                   background-position: center top;
                   background-size: cover;
-                  padding-top: 30px;
-                  padding-right: 20px;
-                  padding-bottom: 30px;
-                  padding-left: 20px;
+                  padding: 0;
                 "
               >
+                <!--[if gte mso 9]>
+                <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:600px;height:560px;">
+                  <v:fill type="frame" src="{{HERO_BG_IMAGE}}" color="#0f2238" />
+                  <v:textbox inset="0,0,0,0">
+                <![endif]-->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+                  <tr>
+                    <td style="background-color: rgba(0,0,0,0.55); padding: 30px 20px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                   <tr>
                     <td align="left" style="padding-top: 0; padding-right: 0; padding-bottom: 12px; padding-left: 0;">
@@ -238,6 +255,10 @@
                     </td>
                   </tr>
                 </table>
+                    </td>
+                  </tr>
+                </table>
+                <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
               </td>
             </tr>
 
@@ -437,6 +458,21 @@
             </tr>
 
             <tr>
+              <td style="padding: 40px 20px 44px; background-color: #f4f1ec; border-top: 1px solid #e8e4de; border-bottom: 1px solid #e8e4de;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                  <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 10px; line-height: 14px; letter-spacing: 2.5px; text-transform: uppercase; color: #aaaaaa; font-weight: 700;">Don't just take our word for it</td></tr>
+                  <tr><td align="center" style="font-family: Georgia, serif; font-size: 26px; line-height: 32px; color: #1a1a1a; padding-top: 8px;">Verified by the Platforms You Already Trust</td></tr>
+                  <tr><td align="center" style="font-family: Arial, sans-serif; font-size: 12.5px; line-height: 20px; color: #888888; padding: 8px 0 24px;">Our ratings are earned &mdash; not curated. Check us on any major review platform and see what real travellers say.</td></tr>
+                  <tr>
+                    <td style="padding: 0;">
+                      {{RATINGS_BLOCK}}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
               <td style="height: 1px; line-height: 1px; font-size: 1px; background-color: #ece7df;">&nbsp;</td>
             </tr>
 
@@ -490,11 +526,11 @@
                 </table>
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
                   <tr><td align="center" style="font-family: Georgia, serif; font-size: 11px; line-height: 18px; color: #a2a2a2;">Rayna Tours and Travels | Dubai, UAE</td></tr>
-                  <tr><td align="center" style="font-family: Georgia, serif; font-size: 11px; line-height: 18px; color: #a2a2a2;">info@raynatours.com | +971 4 000 0000</td></tr>
+                  <tr><td align="center" style="font-family: Georgia, serif; font-size: 11px; line-height: 18px; color: #a2a2a2;">help@raynatours.com | +971 4 208 7112</td></tr>
                   <tr><td align="center" style="font-family: Georgia, serif; font-size: 10px; line-height: 16px; color: #b9b9b9; padding-top: 8px;">You received this email because you subscribed to Rayna Tours offers.</td></tr>
                   <tr><td align="center" style="font-family: Georgia, serif; font-size: 10px; line-height: 16px; color: #b9b9b9;">
-                    <a href="#" style="color: #1a1a1a; text-decoration: none">Unsubscribe</a> |
-                    <a href="#" style="color: #1a1a1a; text-decoration: none">Manage Preferences</a>
+                    <a href="https://www.raynatours.com/unsubscribe" style="color: #1a1a1a; text-decoration: none">Unsubscribe</a> |
+                    <a href="https://www.raynatours.com/email-preferences" style="color: #1a1a1a; text-decoration: none">Manage Preferences</a>
                   </td></tr>
                 </table>
               </td>
