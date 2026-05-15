@@ -636,16 +636,10 @@ ${scripts.share}
       if (prev) resolvedUnifiedId = prev.unified_id;
     }
 
-    // Resolve customer_id: explicit numeric value, or look up via unified_contacts → customers email match
+    // Resolve customer_id from unified_contacts.id
     let numericCustomerId = /^\d+$/.test(customerId) ? parseInt(customerId) : null;
     if (!numericCustomerId && resolvedUnifiedId) {
-      const { rows: [match] } = await db.query(
-        `SELECT c.customer_id FROM unified_contacts uc
-         JOIN customers c ON LOWER(c.email) = LOWER(uc.email)
-         WHERE uc.id = $1 LIMIT 1`,
-        [resolvedUnifiedId]
-      );
-      if (match) numericCustomerId = match.customer_id;
+      numericCustomerId = parseInt(resolvedUnifiedId);
     }
 
     const { rows: [event] } = await db.query(`
