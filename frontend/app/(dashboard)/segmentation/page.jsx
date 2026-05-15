@@ -3,18 +3,98 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, recomputeSegmentation, getGeneralSegment, getUnifiedContact } from '@/lib/api';
+import { getSegmentationTree, recomputeSegmentation, getGeneralSegment, getUnifiedContact, getCustomSegments, deleteCustomSegment } from '@/lib/api';
+import CreateSegmentModal from './CreateSegmentModal';
 import { comboToSlug } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
   Users, Plane, Hotel, Map, Ticket, Search, X,
-  Loader2, Globe, MapPin, MessageCircle, DollarSign, Eye, RefreshCw,
+  Loader2, Globe, MapPin, MessageCircle, DollarSign, Eye, RefreshCw, Plus, Filter, Trash2, List, AlertTriangle,
   Clock, TrendingUp, Phone, Mail, Send, Package, ShieldCheck, MoreHorizontal,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import toast from 'react-hot-toast';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
+
+/* ── Skeleton primitives ─────────────────────────────── */
+const shimmer = {
+  background: 'linear-gradient(90deg, var(--secondary) 25%, var(--border) 50%, var(--secondary) 75%)',
+  backgroundSize: '200% 100%',
+  animation: 'shimmer 1.5s infinite',
+};
+
+function SkeletonBox({ width, height = 20, borderRadius = 'var(--radius)', style = {} }) {
+  return <div style={{ width, height, borderRadius, ...shimmer, ...style }} />;
+}
+
+function SegmentationSkeleton() {
+  return (
+    <div style={{ padding: '28px 32px' }}>
+      {/* Header skeleton */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
+        <div>
+          <SkeletonBox width={260} height={26} style={{ marginBottom: 8 }} />
+          <SkeletonBox width={340} height={13} />
+        </div>
+        <SkeletonBox width={100} height={36} borderRadius="var(--radius)" />
+      </div>
+
+      {/* KPI Cards skeleton — 4 cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '20px 24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <SkeletonBox width={16} height={16} borderRadius={4} />
+              <SkeletonBox width={90} height={10} />
+            </div>
+            <SkeletonBox width={100} height={24} />
+          </div>
+        ))}
+      </div>
+
+      {/* Revenue Breakdown skeleton — 4 source cards */}
+      <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 32 }}>
+        <SkeletonBox width={320} height={10} style={{ marginBottom: 14 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+              <SkeletonBox width={32} height={32} borderRadius="var(--radius)" />
+              <div>
+                <SkeletonBox width={50} height={12} style={{ marginBottom: 6 }} />
+                <SkeletonBox width={80} height={10} style={{ marginBottom: 4 }} />
+                <SkeletonBox width={70} height={14} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Step 1 heading skeleton */}
+      <SkeletonBox width={200} height={13} style={{ marginBottom: 16 }} />
+
+      {/* Status cards skeleton — 3×2 grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '18px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <SkeletonBox width={36} height={36} borderRadius="var(--radius)" />
+              <div>
+                <SkeletonBox width={90} height={14} style={{ marginBottom: 6 }} />
+                <SkeletonBox width={130} height={10} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <SkeletonBox width={80} height={28} />
+              <SkeletonBox width={120} height={12} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const fmt = (n) => (n || 0).toLocaleString();
 const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -53,6 +133,9 @@ export default function CustomerSegmentation() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [generalSeg, setGeneralSeg] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [customSegments, setCustomSegments] = useState([]);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -83,6 +166,34 @@ export default function CustomerSegmentation() {
   }, [loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const loadCustomSegments = useCallback(async () => {
+    try {
+      const res = await getCustomSegments();
+      setCustomSegments(res.data || []);
+    } catch (err) { console.error('Failed to load custom segments:', err); }
+  }, []);
+
+  useEffect(() => { loadCustomSegments(); }, [loadCustomSegments]);
+
+  const handleDeleteClick = (seg, e) => {
+    e.stopPropagation();
+    setDeleteConfirm(seg);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const id = deleteConfirm.id;
+    setDeleteConfirm(null);
+    try {
+      await deleteCustomSegment(id);
+      toast.success('Segment deleted');
+      loadCustomSegments();
+    } catch (err) {
+      console.error('Failed to delete segment:', err);
+      toast.error('Failed to delete segment');
+    }
+  };
 
   const navigateToSegment = (combo) => {
     router.push('/segmentation/' + comboToSlug(combo));
@@ -147,11 +258,7 @@ export default function CustomerSegmentation() {
     return parts.join(' \u2014 ');
   };
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
-      <Loader2 size={24} className="spin" /> <span style={{ color: 'var(--muted-foreground)' }}>Loading segmentation...</span>
-    </div>
-  );
+  if (loading) return <SegmentationSkeleton />;
 
   if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>Failed to load segmentation data.</div>;
 
@@ -171,11 +278,23 @@ export default function CustomerSegmentation() {
               3-step decision tree: Booking Status &rarr; Product Tier &rarr; Geography
             </p>
           </div>
-          <button onClick={handleRefresh} disabled={refreshing || loading}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', color: 'var(--primary-foreground)', border: 'none', borderRadius: 'var(--radius)', cursor: (refreshing || loading) ? 'wait' : 'pointer', opacity: (refreshing || loading) ? 0.7 : 1, fontSize: 13, fontWeight: 500 }}>
-            <RefreshCw size={14} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
-            {refreshing ? 'Recomputing…' : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => router.push('/segmentation/all-segments')}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+              <List size={14} />
+              All Segments
+            </button>
+            <button onClick={() => setShowCreateModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+              <Plus size={14} />
+              Create Segment
+            </button>
+            <button onClick={handleRefresh} disabled={refreshing || loading}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', color: 'var(--primary-foreground)', border: 'none', borderRadius: 'var(--radius)', cursor: (refreshing || loading) ? 'wait' : 'pointer', opacity: (refreshing || loading) ? 0.7 : 1, fontSize: 13, fontWeight: 500 }}>
+              <RefreshCw size={14} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
+              {refreshing ? 'Recomputing…' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {/* Top KPIs */}
@@ -454,6 +573,79 @@ export default function CustomerSegmentation() {
           </div>
         )}
 
+      {/* Custom Segments */}
+        {customSegments.length > 0 && (
+          <div style={{ marginTop: 32 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', margin: 0 }}>
+                Custom Segments
+              </h2>
+              <button onClick={() => router.push('/segmentation/all-segments')}
+                style={{ fontSize: 12, color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>
+                View All →
+              </button>
+            </div>
+            <motion.div variants={staggerContainer} initial="hidden" animate="visible"
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+              {customSegments.map(seg => (
+                <motion.div key={seg.id} variants={fadeInUp}
+                  onClick={() => router.push(`/segmentation/custom/${seg.id}`)}
+                  style={{
+                    background: 'var(--card)', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-xl)', padding: '18px 20px',
+                    cursor: 'pointer', transition: 'all 0.2s',
+                  }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 'var(--radius)', background: `${seg.color || '#3b82f6'}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Filter size={18} style={{ color: seg.color || '#3b82f6' }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 15, fontWeight: 600 }}>{seg.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                        {seg.conditions?.length || 0} condition{(seg.conditions?.length || 0) !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                    <button onClick={(e) => handleDeleteClick(seg, e)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 4 }}
+                      title="Delete segment">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: 28, fontWeight: 700, color: seg.color || '#3b82f6' }}>
+                      {(seg.cached_count || 0).toLocaleString()}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>contacts</span>
+                  </div>
+                  {/* Condition tags */}
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 10 }}>
+                    {(seg.conditions || []).slice(0, 3).map((c, i) => (
+                      <span key={i} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 'var(--radius-sm)', background: 'var(--secondary)', color: 'var(--muted-foreground)' }}>
+                        {c.field?.replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                    {(seg.conditions || []).length > 3 && (
+                      <span style={{ fontSize: 10, padding: '2px 6px', color: 'var(--muted-foreground)' }}>
+                        +{seg.conditions.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                </motion.div>
+              ))}
+            </motion.div>
+          </div>
+        )}
+
+      {/* Create Segment Modal */}
+      <AnimatePresence>
+        {showCreateModal && (
+          <CreateSegmentModal
+            onClose={() => setShowCreateModal(false)}
+            onCreated={() => { toast.success('Segment created'); loadCustomSegments(); }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Booking Breakdown Modal */}
       <AnimatePresence>
         {breakdownModal && (() => {
@@ -729,6 +921,57 @@ export default function CustomerSegmentation() {
             </motion.div>
           );
         })()}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setDeleteConfirm(null)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1200,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: 'var(--card)', borderRadius: 'var(--radius-xl)', padding: '28px 32px',
+                width: 420, maxWidth: '90vw', border: '1px solid var(--border)',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(239,68,68,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertTriangle size={20} style={{ color: '#ef4444' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>Delete Segment</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>This action cannot be undone</div>
+                </div>
+              </div>
+              <div style={{ padding: '14px 16px', background: 'var(--secondary)', borderRadius: 'var(--radius)', marginBottom: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{deleteConfirm.name}</div>
+                {deleteConfirm.description && (
+                  <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginTop: 4 }}>{deleteConfirm.description}</div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>
+                  {deleteConfirm.conditions?.length || 0} condition{(deleteConfirm.conditions?.length || 0) !== 1 ? 's' : ''} · {(deleteConfirm.cached_count || 0).toLocaleString()} contacts
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button onClick={() => setDeleteConfirm(null)}
+                  style={{ padding: '8px 20px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button onClick={confirmDelete}
+                  style={{ padding: '8px 20px', borderRadius: 'var(--radius)', border: 'none', background: '#ef4444', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );

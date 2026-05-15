@@ -28,6 +28,7 @@ import syncRouter from './src/routes/sync.js';
 import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
 import DailyBillingSync from './src/services/DailyBillingSync.js';
+import JourneyService from './src/services/JourneyService.js';
 // import BigQuerySyncService from './src/services/BigQuerySyncService.js'; // disabled
 // import MySQLSyncService from './src/services/MySQLSyncService.js'; // disabled
 // RaynaSyncService — no longer uses ACICO API; data ingested via POST /api/v3/rayna-sync/ingest
@@ -38,6 +39,8 @@ import testE2ERouter from './src/routes/testE2E.js';
 import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
 import authRouter from './src/routes/auth.js';
+import customSegmentsRouter from './src/routes/customSegments.js';
+import { flushAll as flushCache } from './src/config/cache.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -125,6 +128,7 @@ app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 app.use('/api/v3/test', testE2ERouter);
 app.use('/api/v3/gupshup', gupshupRouter);
 app.use('/api/v3/test-sends', testSendsRouter);
+app.use('/api/v3/custom-segments', customSegmentsRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
@@ -214,6 +218,10 @@ app.post('/api/v3/migrate-all', async (_, res) => {
       '063_email_send_tracking.sql',
       '064_utm_visits.sql',
       '065_gtm_events_unified_id.sql',
+      '067_custom_segments.sql',
+      '068_custom_segments_status.sql',
+      '069_journey_next_fire.sql',
+      '070_journey_exit_on_conversion.sql',
     ]) {
       await runMigrationFile(file);
     }
@@ -446,16 +454,45 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // import ProductAffinityService from './src/services/ProductAffinityService.js'; // disabled
 
 // ── Daily Billing Sync — 1 AM Dubai time (UTC+4) ────────────
-cron.schedule('0 1 * * *', async () => {
+// Retries up to 3 times with 10-minute gaps if any step fails.
+// After all retries exhausted, logs the error and waits for next day.
+const MAX_SYNC_RETRIES = 3;
+const RETRY_DELAY_MS   = 10 * 60 * 1000; // 10 minutes
+
+async function runDailySyncWithRetry() {
+  for (let attempt = 1; attempt <= MAX_SYNC_RETRIES; attempt++) {
+    try {
+      console.log(`[Cron] Daily billing sync attempt ${attempt}/${MAX_SYNC_RETRIES}...`);
+      const result = await DailyBillingSync.run();
+      console.log(`[Cron] Daily billing sync succeeded (attempt ${attempt}):`, JSON.stringify(result));
+      return; // success — stop retrying
+    } catch (err) {
+      console.error(`[Cron] Daily billing sync attempt ${attempt} failed: ${err.message}`);
+      if (attempt < MAX_SYNC_RETRIES) {
+        console.log(`[Cron] Retrying in ${RETRY_DELAY_MS / 60000} minutes...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      } else {
+        console.error('[Cron] All 3 retry attempts exhausted. Will try again tomorrow at 1 AM.');
+      }
+    }
+  }
+}
+
+cron.schedule('0 1 * * *', () => { runDailySyncWithRetry(); }, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time (3 retries, 10min gap)');
+
+// ── Journey Engine — process due entries every 15 min ──────────────
+cron.schedule('*/15 * * * *', async () => {
   try {
-    console.log('[Cron] Daily billing sync starting...');
-    const result = await DailyBillingSync.run();
-    console.log('[Cron] Daily billing sync done:', JSON.stringify(result));
+    const result = await JourneyService.processDueEntries();
+    if (result.processed > 0) {
+      console.log(`[Cron:Journey] Processed ${result.processed} entries: journeys=${result.sent}, converted=${result.converted}`);
+    }
   } catch (err) {
-    console.error('[Cron] Daily billing sync failed:', err.message);
+    console.error('[Cron:Journey] Error:', err.message);
   }
 }, { timezone: 'Asia/Dubai' });
-console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time');
+console.log('[Cron] Journey engine scheduled: every 15 min (Asia/Dubai)');
 
 // ── BullMQ workers (optional in-process mode) ────────────────
 // In dev set WORKERS_INLINE=true to run journey send workers in this process.
@@ -475,8 +512,9 @@ if (process.env.WORKERS_INLINE === 'true') {
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
 const HTTPS_PORT = 3443;
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`  HTTP  → http://localhost:${PORT}`);
+  await flushCache();
 });
 
 // HTTPS server for GTM events (avoids mixed-content blocking)

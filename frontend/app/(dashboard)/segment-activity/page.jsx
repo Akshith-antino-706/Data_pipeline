@@ -14,6 +14,80 @@ import {
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
+/* ── Skeleton primitives ─────────────────────────────── */
+const shimmer = {
+  background: 'linear-gradient(90deg, var(--secondary) 25%, var(--border) 50%, var(--secondary) 75%)',
+  backgroundSize: '200% 100%',
+  animation: 'shimmer 1.5s infinite',
+};
+
+function SkeletonBox({ width, height = 20, borderRadius = 'var(--radius)', style = {} }) {
+  return <div style={{ width, height, borderRadius, ...shimmer, ...style }} />;
+}
+
+function SkeletonKPICards() {
+  return (
+    <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+            <SkeletonBox width={14} height={14} borderRadius={4} />
+            <SkeletonBox width={70} height={10} />
+          </div>
+          <SkeletonBox width={90} height={24} />
+        </div>
+      ))}
+    </motion.div>
+  );
+}
+
+function SkeletonLiveSegments() {
+  return (
+    <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+        <SkeletonBox width={14} height={14} borderRadius={4} />
+        <SkeletonBox width={240} height={13} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} style={{ padding: '12px 14px', borderRadius: 'var(--radius)', background: 'var(--secondary)', borderLeft: '3px solid var(--border)' }}>
+            <SkeletonBox width={60} height={10} style={{ marginBottom: 8 }} />
+            <SkeletonBox width={70} height={24} style={{ marginBottom: 6 }} />
+            <SkeletonBox width={80} height={10} />
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+function SkeletonTable() {
+  return (
+    <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <SkeletonBox width={80} height={13} />
+        <SkeletonBox width={70} height={26} borderRadius={'var(--radius)'} />
+      </div>
+      <div style={{ padding: '0' }}>
+        {/* Header row */}
+        <div style={{ display: 'flex', gap: 0, padding: '10px 14px', background: 'var(--secondary)' }}>
+          {[60, 80, 50, 50, 50, 55, 50, 40, 40, 55, 50, 70, 30].map((w, i) => (
+            <div key={i} style={{ flex: 1, padding: '0 4px' }}><SkeletonBox width={w} height={10} /></div>
+          ))}
+        </div>
+        {/* Data rows */}
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} style={{ display: 'flex', gap: 0, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+            {[70, 80, 60, 40, 40, 40, 35, 35, 35, 45, 40, 75, 16].map((w, j) => (
+              <div key={j} style={{ flex: 1, padding: '0 4px' }}><SkeletonBox width={w} height={14} /></div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
 const fmt = (n) => (n || 0).toLocaleString();
 const fmtAED = (n) => `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
@@ -142,45 +216,49 @@ export default function SegmentActivity() {
       </motion.div>
 
       {/* KPI Cards */}
-      <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
-        {[
-          { label: 'Total Customers', value: fmt(totalCustomers), icon: Users, color: 'var(--primary)' },
-          { label: 'Entered', value: fmt(totalEntered), icon: TrendingUp, color: '#22c55e' },
-          { label: 'Exited', value: fmt(totalExited), icon: TrendingDown, color: '#ef4444' },
-          { label: 'Converted', value: fmt(totalConverted), icon: ArrowRightLeft, color: '#8b5cf6' },
-          { label: 'Reached', value: fmt(totalReached), icon: Mail, color: '#3b82f6' },
-          { label: 'Revenue', value: fmtAED(totalRevenue), icon: DollarSign, color: '#f59e0b' },
-        ].map((kpi) => (
-          <div key={kpi.label} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <kpi.icon size={14} style={{ color: kpi.color }} />
-              <span style={{ fontSize: 11, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{kpi.label}</span>
+      {loading ? <SkeletonKPICards /> : (
+        <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
+          {[
+            { label: 'Total Customers', value: fmt(totalCustomers), icon: Users, color: 'var(--primary)' },
+            { label: 'Entered', value: fmt(totalEntered), icon: TrendingUp, color: '#22c55e' },
+            { label: 'Exited', value: fmt(totalExited), icon: TrendingDown, color: '#ef4444' },
+            { label: 'Converted', value: fmt(totalConverted), icon: ArrowRightLeft, color: '#8b5cf6' },
+            { label: 'Reached', value: fmt(totalReached), icon: Mail, color: '#3b82f6' },
+            { label: 'Revenue', value: fmtAED(totalRevenue), icon: DollarSign, color: '#f59e0b' },
+          ].map((kpi) => (
+            <div key={kpi.label} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <kpi.icon size={14} style={{ color: kpi.color }} />
+                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{kpi.label}</span>
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{kpi.value}</div>
             </div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{kpi.value}</div>
-          </div>
-        ))}
-      </motion.div>
+          ))}
+        </motion.div>
+      )}
 
       {/* Live Today — Clickable Segment Cards */}
-      <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Calendar size={14} /> Live Segment Counts (Today) — click to view customers
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
-          {liveToday.map(seg => {
-            const cfg = STATUS_CONFIG[seg.segment_label] || { label: seg.segment_label, color: '#64748b' };
-            const isSelected = detailSegment === seg.segment_label;
-            return (
-              <div key={seg.segment_label} onClick={() => openDetail(seg.segment_label)}
-                style={{ padding: '12px 14px', borderRadius: 'var(--radius)', background: 'var(--secondary)', borderLeft: `3px solid ${cfg.color}`, cursor: 'pointer', transition: 'all 0.2s', boxShadow: isSelected ? `0 0 0 2px ${cfg.color}` : 'none' }}>
-                <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>{cfg.label}</div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: cfg.color }}>{fmt(seg.total_count)}</div>
-                <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 2 }}>{fmtAED(seg.revenue)}</div>
-              </div>
-            );
-          })}
-        </div>
-      </motion.div>
+      {loading ? <SkeletonLiveSegments /> : (
+        <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Calendar size={14} /> Live Segment Counts (Today) — click to view customers
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+            {liveToday.map(seg => {
+              const cfg = STATUS_CONFIG[seg.segment_label] || { label: seg.segment_label, color: '#64748b' };
+              const isSelected = detailSegment === seg.segment_label;
+              return (
+                <div key={seg.segment_label} onClick={() => openDetail(seg.segment_label)}
+                  style={{ padding: '12px 14px', borderRadius: 'var(--radius)', background: 'var(--secondary)', borderLeft: `3px solid ${cfg.color}`, cursor: 'pointer', transition: 'all 0.2s', boxShadow: isSelected ? `0 0 0 2px ${cfg.color}` : 'none' }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>{cfg.label}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: cfg.color }}>{fmt(seg.total_count)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 2 }}>{fmtAED(seg.revenue)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
 
       {/* Daily Changes — Before / After / Change */}
       {changes?.changes?.length > 0 && (
@@ -250,6 +328,7 @@ export default function SegmentActivity() {
       </motion.div>
 
       {/* Daily Activity Table */}
+      {loading ? <SkeletonTable /> : (
       <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Log</span>
@@ -258,9 +337,7 @@ export default function SegmentActivity() {
             <Download size={11} /> Export
           </button>
         </div>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={20} className="spin" /> Loading...</div>
-        ) : dates.length === 0 ? (
+        {dates.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>
             No daily logs yet. Click "Snapshot Now" to capture today's data.
           </div>
@@ -325,6 +402,7 @@ export default function SegmentActivity() {
           </div>
         )}
       </motion.div>
+      )}
       {/* Customer Detail Panel — below daily log */}
       <AnimatePresence>
         {detailSegment && (

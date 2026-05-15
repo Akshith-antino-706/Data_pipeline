@@ -111,6 +111,9 @@ export const deleteJourney = (id) => request(`/api/v3/journeys/${id}`, { method:
 export const generateJourneyFromStrategy = (strategyId) => request(`/api/v3/journeys/generate-from-strategy/${strategyId}`, { method: 'POST' });
 export const enrollJourney = (id) => request(`/api/v3/journeys/${id}/enroll`, { method: 'POST' });
 export const processJourney = (id) => request(`/api/v3/journeys/${id}/process`, { method: 'POST' });
+export const startJourney = (id) => request(`/api/v3/journeys/${id}/start`, { method: 'POST' });
+export const pauseJourney = (id) => request(`/api/v3/journeys/${id}/pause`, { method: 'POST' });
+export const getJourneyEntries = (id, params = {}) => { const qs = new URLSearchParams(params).toString(); return request(`/api/v3/journeys/${id}/entries?${qs}`); };
 export const getJourneyAnalytics = (id) => request(`/api/v3/journeys/${id}/analytics`);
 export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${id}/campaign-analytics`);
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
@@ -314,6 +317,21 @@ export const downloadSegmentCustomers = async (params = {}) => {
 export const getSegmentCustomers = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/segment-customers?${qs}`);
+};
+
+// ── Custom Segments ──────────────────────────────────────────────────────────
+export const getCustomSegments = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/custom-segments${qs ? `?${qs}` : ''}`);
+};
+export const getCustomSegmentById = (id) => request(`/api/v3/custom-segments/${id}`);
+export const createCustomSegment = (data) => request('/api/v3/custom-segments', { method: 'POST', body: JSON.stringify(data) });
+export const updateCustomSegment = (id, data) => request(`/api/v3/custom-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteCustomSegment = (id) => request(`/api/v3/custom-segments/${id}`, { method: 'DELETE' });
+export const previewSegmentCount = (conditions) => request('/api/v3/custom-segments/preview-count', { method: 'POST', body: JSON.stringify({ conditions }) });
+export const getCustomSegmentCustomers = (id, params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return request(`/api/v3/custom-segments/${id}/customers?${qs}`);
 };
 
 // ── Email UTM Visit Tracking ──────────────────────────────────────────────────

@@ -61,4 +61,25 @@ export async function invalidate(pattern) {
   }
 }
 
-export default { cached, invalidate };
+/**
+ * Flush all cached keys under the dp: namespace.
+ * Called on server startup to ensure fresh data.
+ */
+export async function flushAll() {
+  const redis = getRedis();
+  if (!redis) return;
+
+  try {
+    const keys = await redis.keys(PREFIX + '*');
+    if (keys.length > 0) {
+      await redis.del(...keys);
+      console.log(`[Cache] Startup flush — cleared ${keys.length} cached keys`);
+    } else {
+      console.log('[Cache] Startup flush — no cached keys to clear');
+    }
+  } catch (err) {
+    console.warn('[Cache] Startup flush error:', err.message);
+  }
+}
+
+export default { cached, invalidate, flushAll };

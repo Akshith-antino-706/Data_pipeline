@@ -1,4 +1,5 @@
 import { query, transaction } from '../config/database.js';
+import { invalidate } from '../config/cache.js';
 
 const API_URL = process.env.RAYNA_BILLING_API_URL
   || 'http://bdbizgulf.com/DataCenterAPI/api/BusinessProvider/GetDataAPIDetails';
@@ -72,12 +73,19 @@ class DailyBillingSync {
     const newContacts = await this.incrementalContactUpdate();
 
     // 4. Snapshot daily segment counts
+    //    NO try/catch — failure must propagate so the retry cron re-runs the full pipeline.
+    //    (Steps 1-3 are idempotent, so re-running them is safe.)
+    const { default: UnifiedContactService } = await import('./UnifiedContactService.js');
+    const snapshot = await UnifiedContactService.snapshotDailySegments();
+    console.log(`[DailySync] Snapshot: ${snapshot.segments} segments logged`);
+
+    // 5. Invalidate dashboard caches so the UI sees fresh data immediately
+    //    This is non-critical (cache expires in 30 min anyway), so swallow errors.
     try {
-      const { default: UnifiedContactService } = await import('./UnifiedContactService.js');
-      const snapshot = await UnifiedContactService.snapshotDailySegments();
-      console.log(`[DailySync] Snapshot: ${snapshot.segments} segments logged`);
+      await invalidate('dashboard:*');
+      console.log('[DailySync] Dashboard caches invalidated');
     } catch (err) {
-      console.error('[DailySync] Snapshot failed:', err.message);
+      console.error('[DailySync] Cache invalidation failed:', err.message);
     }
 
     const ms = Date.now() - t0;

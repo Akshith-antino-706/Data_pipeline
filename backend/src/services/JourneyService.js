@@ -53,12 +53,13 @@ class JourneyService {
 
     const { rows } = await db.query(`
       SELECT jf.*,
-        sd.segment_name, sd.segment_number, sd.priority,
+        COALESCE(sd.segment_name, cs.name) AS segment_name, sd.segment_number, sd.priority,
         fs.stage_name, fs.stage_color,
         COALESCE(jsonb_array_length(jf.nodes), 0) AS node_count
       FROM journey_flows jf
       LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
       LEFT JOIN funnel_stages fs ON fs.stage_id = sd.stage_id
+      LEFT JOIN custom_segments cs ON cs.id = jf.custom_segment_id
       WHERE ${where}
       ORDER BY jf.updated_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -71,14 +72,20 @@ class JourneyService {
     const { rows: [journey] } = await db.query(`
       SELECT jf.*,
         sd.segment_name, sd.segment_number, sd.priority, sd.customer_type,
-        fs.stage_name, fs.stage_color
+        fs.stage_name, fs.stage_color,
+        cs.name AS custom_segment_name
       FROM journey_flows jf
       LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
       LEFT JOIN funnel_stages fs ON fs.stage_id = sd.stage_id
+      LEFT JOIN custom_segments cs ON cs.id = jf.custom_segment_id
       WHERE jf.journey_id = $1
     `, [journeyId]);
 
     if (!journey) return null;
+    // Normalize segment name for display
+    if (!journey.segment_name && journey.custom_segment_name) {
+      journey.segment_name = journey.custom_segment_name;
+    }
 
     // Get entry stats
     const { rows: [entryStats] } = await db.query(`
@@ -101,22 +108,42 @@ class JourneyService {
       ORDER BY node_id
     `, [journeyId]);
 
-    return { ...journey, entryStats, nodeAnalytics };
+    // Per-node triggered (unique entries) and exited (converted at that node) counts
+    const { rows: nodeEntryCounts } = await db.query(`
+      SELECT node_id,
+        COUNT(DISTINCT je.entry_id) AS triggered,
+        COUNT(DISTINCT je.entry_id) FILTER (WHERE je.event_type = 'converted') AS exited
+      FROM journey_events je
+      JOIN journey_entries jen ON jen.entry_id = je.entry_id
+      WHERE jen.journey_id = $1
+      GROUP BY node_id
+    `, [journeyId]);
+
+    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts };
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt }) {
+    // Parse custom segment format "custom:ID"
+    let stdSegmentId = null;
+    let customSegmentId = null;
+    if (segmentId && String(segmentId).startsWith('custom:')) {
+      customSegmentId = parseInt(String(segmentId).split(':')[1]) || null;
+    } else if (segmentId) {
+      stdSegmentId = segmentId;
+    }
+
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
-    `, [name, description, segmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all']);
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null]);
     return journey;
   }
 
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {
@@ -205,7 +232,10 @@ class JourneyService {
     if (node.type !== 'action') throw new Error(`Node ${nodeId} is type='${node.type}', only 'action' nodes are sendable`);
 
     const channel = (node.data?.channel || '').toLowerCase();
-    const templateId = node.data?.templateId;
+    const templateId = node.data?.templateId
+      || (channel === 'email' ? node.data?.emailTemplateId : null)
+      || (channel === 'whatsapp' ? node.data?.whatsappTemplateId : null)
+      || (channel === 'sms' ? node.data?.smsTemplateId : null);
     if (!templateId) throw new Error(`Node ${nodeId} has no templateId`);
 
     // Slugified journey name in utm_campaign keeps analytics readable.
@@ -500,25 +530,40 @@ class JourneyService {
     const { rows: [journey] } = await db.query(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
-    if (!journey || !journey.segment_id) throw new Error('Journey has no segment');
+    if (!journey || (!journey.segment_id && !journey.custom_segment_id)) throw new Error('Journey has no segment');
 
-    // Get all active customers in this segment not already enrolled.
-    // Dual-track journeys (audience='all') enroll everyone and stamp each entry with
-    // track='indian'|'rest' per is_indian. Legacy single-audience journeys keep prior behavior.
     let audienceFilter = '';
     if (journey.audience === 'indian')      audienceFilter = 'AND uc.is_indian = true';
     else if (journey.audience === 'rest')   audienceFilter = 'AND uc.is_indian = false';
 
-    const { rows } = await db.query(`
-      INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
-      SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
-      FROM segment_customers sc
-      JOIN unified_contacts uc ON uc.unified_id = sc.customer_id
-      WHERE sc.segment_id = $3 AND sc.is_active = true
-        ${audienceFilter}
-        AND NOT EXISTS (SELECT 1 FROM journey_entries je WHERE je.journey_id = $1 AND je.customer_id = sc.customer_id)
-      RETURNING entry_id
-    `, [journeyId, journey.nodes?.[0]?.id || 'node_0', journey.segment_id]);
+    const firstNodeId = journey.nodes?.[0]?.id || 'node_0';
+    let rows;
+
+    if (journey.custom_segment_id) {
+      // Custom segment — query custom_segment_contacts
+      ({ rows } = await db.query(`
+        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
+        SELECT $1, csc.unified_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
+        FROM custom_segment_contacts csc
+        JOIN unified_contacts uc ON uc.unified_id = csc.unified_id
+        WHERE csc.segment_id = $3
+          ${audienceFilter}
+          AND NOT EXISTS (SELECT 1 FROM journey_entries je WHERE je.journey_id = $1 AND je.customer_id = csc.unified_id)
+        RETURNING entry_id
+      `, [journeyId, firstNodeId, journey.custom_segment_id]));
+    } else {
+      // Standard segment — query segment_customers
+      ({ rows } = await db.query(`
+        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
+        SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
+        FROM segment_customers sc
+        JOIN unified_contacts uc ON uc.unified_id = sc.customer_id
+        WHERE sc.segment_id = $3 AND sc.is_active = true
+          ${audienceFilter}
+          AND NOT EXISTS (SELECT 1 FROM journey_entries je WHERE je.journey_id = $1 AND je.customer_id = sc.customer_id)
+        RETURNING entry_id
+      `, [journeyId, firstNodeId, journey.segment_id]));
+    }
 
     // Update journey metrics
     await db.query(
@@ -589,23 +634,26 @@ class JourneyService {
     for (const entry of entries) {
       // ── CONVERSION CHECK: runs BEFORE every node fires ──
       // If user booked or moved segments since entering, exit the journey.
-      const conv = await this.checkConversion(entry);
-      if (conv.converted) {
-        await db.query(`
-          UPDATE journey_entries
-          SET status = 'converted', converted_at = NOW(), exit_reason = $2, last_conversion_check = NOW()
-          WHERE entry_id = $1
-        `, [entry.entry_id, conv.reason]);
-        await db.query(`
-          INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-          VALUES ($1, $2, 'converted', NULL, $3)
-        `, [entry.entry_id, entry.current_node_id, JSON.stringify(conv)]);
-        console.log(`[Journey ${journeyId}] Converted entry ${entry.entry_id} (uid=${entry.customer_id}) → ${conv.reason}`);
-        converted++;
-        processed++;
-        continue;
+      // Skip for awareness journeys (exit_on_conversion = false).
+      if (journey.exit_on_conversion !== false) {
+        const conv = await this.checkConversion(entry);
+        if (conv.converted) {
+          await db.query(`
+            UPDATE journey_entries
+            SET status = 'converted', converted_at = NOW(), exit_reason = $2, last_conversion_check = NOW()
+            WHERE entry_id = $1
+          `, [entry.entry_id, conv.reason]);
+          await db.query(`
+            INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+            VALUES ($1, $2, 'converted', NULL, $3)
+          `, [entry.entry_id, entry.current_node_id, JSON.stringify(conv)]);
+          console.log(`[Journey ${journeyId}] Converted entry ${entry.entry_id} (uid=${entry.customer_id}) → ${conv.reason}`);
+          converted++;
+          processed++;
+          continue;
+        }
+        await db.query('UPDATE journey_entries SET last_conversion_check = NOW() WHERE entry_id = $1', [entry.entry_id]);
       }
-      await db.query('UPDATE journey_entries SET last_conversion_check = NOW() WHERE entry_id = $1', [entry.entry_id]);
 
       const currentNode = nodeMap[entry.current_node_id];
       if (!currentNode) continue;
@@ -635,6 +683,18 @@ class JourneyService {
       // journey_events insert → entry advance. This is what scales the journey
       // run from a synchronous loop to ~18 lakh recipients.
       if (currentNode.type === 'action') {
+        // ── SEND-HOUR GATE (Dubai timezone) ──
+        // If the node has a sendHour, only fire when current Dubai hour matches.
+        const sendHour = currentNode.data?.sendHour;
+        if (sendHour !== undefined && sendHour !== null) {
+          const dubaiNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' }));
+          if (dubaiNow.getHours() !== sendHour) {
+            waited++;
+            processed++;
+            continue;
+          }
+        }
+
         // Skip if this entry was already enqueued in this run — prevents double
         // enqueue if processJourney() is re-triggered before workers drain.
         if (entry.last_run_id === runId) {
@@ -643,7 +703,10 @@ class JourneyService {
         }
 
         const rawChannel = (currentNode.data?.channel || '').toLowerCase();
-        const rawTemplateId = currentNode.data?.templateId;
+        const rawTemplateId = currentNode.data?.templateId
+          || (rawChannel === 'email' ? currentNode.data?.emailTemplateId : null)
+          || (rawChannel === 'whatsapp' ? currentNode.data?.whatsappTemplateId : null)
+          || (rawChannel === 'sms' ? currentNode.data?.smsTemplateId : null);
         let channel = rawChannel;
         let templateId = rawTemplateId;
         let autoPaired = false;
@@ -951,7 +1014,12 @@ class JourneyService {
         const outEdge = edges.find(e => e.source === entry.current_node_id);
         const nextNode = outEdge && nodeMap[outEdge.target];
         if (!nextNode || nextNode.type !== 'action') continue;
-        if (!nextNode.data?.templateId) continue;
+        const nextCh = (nextNode.data?.channel || '').toLowerCase();
+        const nextTemplateId = nextNode.data?.templateId
+          || (nextCh === 'email' ? nextNode.data?.emailTemplateId : null)
+          || (nextCh === 'whatsapp' ? nextNode.data?.whatsappTemplateId : null)
+          || (nextCh === 'sms' ? nextNode.data?.smsTemplateId : null);
+        if (!nextTemplateId) continue;
 
         if (snapshotted.has(nextNode.id)) continue;
         snapshotted.add(nextNode.id);
@@ -960,7 +1028,7 @@ class JourneyService {
           journeyId:         j.journey_id,
           runId,
           nodeId:            nextNode.id,
-          contentTemplateId: parseInt(nextNode.data.templateId),
+          contentTemplateId: parseInt(nextTemplateId),
         });
         nodesSnapshotted++;
       }
@@ -1057,11 +1125,17 @@ class JourneyService {
     const chosen = trackEdges[0] || outEdges[0];
 
     if (chosen) {
-      await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2',
-                     [chosen.target, entryId]);
+      const nextNode = nodeMap[chosen.target];
+      const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
+      await db.query(
+        'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2 WHERE entry_id = $3',
+        [chosen.target, nextFireAt, entryId]
+      );
     } else {
-      await db.query("UPDATE journey_entries SET status = 'completed', completed_at = NOW() WHERE entry_id = $1",
-                     [entryId]);
+      await db.query(
+        "UPDATE journey_entries SET status = 'completed', completed_at = NOW(), next_fire_at = NULL WHERE entry_id = $1",
+        [entryId]
+      );
     }
   }
 
@@ -1077,17 +1151,21 @@ class JourneyService {
     // 1. Booking-based conversion
     const { rows: [b] } = await db.query(`
       SELECT
-        EXISTS (SELECT 1 FROM rayna_tours   WHERE unified_id = $1 AND bill_date >= $2) AS tour,
-        EXISTS (SELECT 1 FROM rayna_hotels  WHERE unified_id = $1 AND bill_date >= $2) AS hotel,
-        EXISTS (SELECT 1 FROM rayna_visas   WHERE unified_id = $1 AND bill_date >= $2) AS visa,
-        EXISTS (SELECT 1 FROM rayna_flights WHERE unified_id = $1 AND bill_date >= $2) AS flight
+        EXISTS (SELECT 1 FROM rayna_tours    WHERE unified_id = $1 AND bill_date >= $2) AS tour,
+        EXISTS (SELECT 1 FROM rayna_hotels   WHERE unified_id = $1 AND bill_date >= $2) AS hotel,
+        EXISTS (SELECT 1 FROM rayna_visas    WHERE unified_id = $1 AND bill_date >= $2) AS visa,
+        EXISTS (SELECT 1 FROM rayna_flights  WHERE unified_id = $1 AND bill_date >= $2) AS flight,
+        EXISTS (SELECT 1 FROM rayna_packages WHERE unified_id = $1 AND bill_date >= $2) AS package,
+        EXISTS (SELECT 1 FROM rayna_others   WHERE unified_id = $1 AND bill_date >= $2) AS other
     `, [entry.customer_id, entry.entered_at]);
-    if (b.tour || b.hotel || b.visa || b.flight) {
+    if (b.tour || b.hotel || b.visa || b.flight || b.package || b.other) {
       const types = [];
       if (b.tour) types.push('tour');
       if (b.hotel) types.push('hotel');
       if (b.visa) types.push('visa');
       if (b.flight) types.push('flight');
+      if (b.package) types.push('package');
+      if (b.other) types.push('other');
       return { converted: true, reason: 'booking', details: { types } };
     }
 
@@ -1136,25 +1214,65 @@ class JourneyService {
     return { nodeStats, funnelData };
   }
 
+  // ── Journey Entries (real flow data) ────────────────────────
+
+  static async getEntries(journeyId, { page = 1, limit = 50, status } = {}) {
+    const offset = (page - 1) * limit;
+    let where = 'je.journey_id = $1';
+    const params = [journeyId];
+    if (status) {
+      params.push(status);
+      where += ` AND je.status = $${params.length}`;
+    }
+
+    const { rows: [{ count }] } = await db.query(
+      `SELECT COUNT(*) FROM journey_entries je WHERE ${where}`, params
+    );
+
+    const { rows } = await db.query(`
+      SELECT je.entry_id, je.customer_id, je.current_node_id, je.status,
+             je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
+             je.next_fire_at, je.track,
+             uc.name, uc.email, uc.phone, uc.booking_status
+      FROM journey_entries je
+      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      WHERE ${where}
+      ORDER BY je.entered_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `, [...params, limit, offset]);
+
+    return { data: rows, total: parseInt(count), page, limit };
+  }
+
   // ── Campaign Analytics per Journey ─────────────────────────
 
   static async getJourneyCampaignAnalytics(journeyId) {
     // Get all campaigns linked to this journey's segment
     const { rows: journey } = await db.query(
-      `SELECT jf.*, sd.segment_name FROM journey_flows jf
+      `SELECT jf.*, sd.segment_name, cs.name AS custom_segment_name FROM journey_flows jf
        LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
+       LEFT JOIN custom_segments cs ON cs.id = jf.custom_segment_id
        WHERE jf.journey_id = $1`, [journeyId]
     );
     if (!journey[0]) return null;
 
-    const segmentLabel = journey[0].segment_name || journey[0].segment_label;
+    const segmentLabel = journey[0].segment_name || journey[0].custom_segment_name || journey[0].segment_label;
 
-    // Get segment customer count for target
-    const { rows: [segCount] } = await db.query(
-      `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
-      [journey[0].segment_id]
-    );
-    const targetCount = parseInt(segCount?.cnt) || 0;
+    // Get segment customer count for target — handle both standard and custom segments
+    let targetCount = 0;
+    if (journey[0].custom_segment_id) {
+      const { rows: [segCount] } = await db.query(
+        `SELECT COUNT(*) AS cnt FROM custom_segment_contacts WHERE segment_id = $1`,
+        [journey[0].custom_segment_id]
+      );
+      targetCount = parseInt(segCount?.cnt) || 0;
+    } else if (journey[0].segment_id) {
+      const { rows: [segCount] } = await db.query(
+        `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
+        [journey[0].segment_id]
+      );
+      targetCount = parseInt(segCount?.cnt) || 0;
+    }
 
     // Get campaign metrics for this segment
     const { rows: campaigns } = await db.query(`
@@ -1288,6 +1406,246 @@ class JourneyService {
     `, [journeyId]);
 
     return { enrollments: rows, stats };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // JOURNEY AUTOMATION — Start, Pause, Scheduled Processing
+  // ══════════════════════════════════════════════════════════════
+
+  /**
+   * Calculate the next fire time for an entry arriving at a node.
+   * Uses waitDays + sendHour in Dubai timezone (UTC+4).
+   */
+  static calculateNextFireAt(node, fromTime = new Date()) {
+    if (!node) return null;
+
+    const waitDays = node.data?.waitDays || 0;
+    const sendHour = node.data?.sendHour;
+
+    // Start from fromTime + waitDays
+    const target = new Date(fromTime.getTime() + waitDays * 24 * 60 * 60 * 1000);
+
+    // If no sendHour specified, fire immediately after wait
+    if (sendHour === undefined || sendHour === null) return target;
+
+    // Convert target to Dubai time and set to the desired hour
+    const dubaiOffset = 4 * 60; // UTC+4 in minutes
+    const utcMs = target.getTime() + (target.getTimezoneOffset() * 60000);
+    const dubaiMs = utcMs + (dubaiOffset * 60000);
+    const dubaiDate = new Date(dubaiMs);
+
+    dubaiDate.setHours(sendHour, 0, 0, 0);
+
+    // Convert back to UTC
+    const fireUtcMs = dubaiDate.getTime() - (dubaiOffset * 60000);
+    let fireAt = new Date(fireUtcMs);
+
+    // If the calculated time is in the past, push to next day
+    if (fireAt <= new Date()) {
+      fireAt = new Date(fireAt.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    return fireAt;
+  }
+
+  /**
+   * Find the first actionable node (skip trigger, go to first real node).
+   */
+  static _findFirstActionableNode(nodes, edges) {
+    const triggerNode = nodes.find(n => n.type === 'trigger');
+    if (!triggerNode) return nodes[0] || null;
+
+    const firstEdge = edges.find(e => e.source === triggerNode.id);
+    if (firstEdge) {
+      return nodes.find(n => n.id === firstEdge.target) || nodes[1] || null;
+    }
+    // Fallback: second node in array
+    return nodes[1] || triggerNode;
+  }
+
+  /**
+   * Start a journey: set active, enroll segment, set next_fire_at, run first process.
+   */
+  static async startJourney(journeyId) {
+    const { rows: [journey] } = await db.query(
+      'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
+    );
+    if (!journey) throw new Error('Journey not found');
+    if (journey.status === 'active') throw new Error('Journey is already active');
+
+    const nodes = journey.nodes || [];
+    const edges = journey.edges || [];
+    if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');
+
+    // 1. Set status to 'active'
+    await db.query(
+      "UPDATE journey_flows SET status = 'active', updated_at = NOW() WHERE journey_id = $1",
+      [journeyId]
+    );
+
+    // 2. Enroll segment customers
+    let enrolled = 0;
+    try {
+      const result = await this.enrollSegment(journeyId);
+      enrolled = result.enrolled;
+    } catch (err) {
+      // If no segment, just activate without enrollment
+      console.log(`[Journey ${journeyId}] No segment to enroll: ${err.message}`);
+    }
+
+    // 3. Set next_fire_at for all new entries based on the first actionable node
+    // If scheduled_start_at is set and in the future, use it as the base time
+    const firstNode = this._findFirstActionableNode(nodes, edges);
+    if (firstNode && enrolled > 0) {
+      const baseTime = journey.scheduled_start_at && new Date(journey.scheduled_start_at) > new Date()
+        ? new Date(journey.scheduled_start_at)
+        : new Date();
+      const nextFireAt = this.calculateNextFireAt(firstNode, baseTime);
+      await db.query(`
+        UPDATE journey_entries
+        SET next_fire_at = $1
+        WHERE journey_id = $2 AND status = 'active' AND next_fire_at IS NULL
+      `, [nextFireAt, journeyId]);
+      console.log(`[Journey ${journeyId}] Set next_fire_at=${nextFireAt.toISOString()} for ${enrolled} entries (node: ${firstNode.id})`);
+    }
+
+    // 4. Run first process immediately (in case next_fire_at <= now)
+    let processResult = { processed: 0, enqueued: 0, converted: 0 };
+    try {
+      processResult = await this.processJourney(journeyId);
+    } catch (err) {
+      console.error(`[Journey ${journeyId}] First process error: ${err.message}`);
+    }
+
+    return { started: true, enrolled, ...processResult };
+  }
+
+  /**
+   * Toggle pause/resume for a journey.
+   */
+  static async pauseJourney(journeyId) {
+    const { rows: [journey] } = await db.query(
+      'SELECT status FROM journey_flows WHERE journey_id = $1', [journeyId]
+    );
+    if (!journey) throw new Error('Journey not found');
+
+    const newStatus = journey.status === 'paused' ? 'active' : 'paused';
+    await db.query(
+      'UPDATE journey_flows SET status = $1, updated_at = NOW() WHERE journey_id = $2',
+      [newStatus, journeyId]
+    );
+    return { status: newStatus };
+  }
+
+  /**
+   * Process all due entries across ALL active journeys.
+   * Called by the cron every 15 min. Scalable — only processes entries whose
+   * next_fire_at <= NOW().
+   */
+  static async processDueEntries() {
+    const { rows: dueEntries } = await db.query(`
+      SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id,
+             je.entered_at, je.track, je.last_run_id,
+             uc.booking_status, uc.name, uc.email, uc.phone, uc.is_indian,
+             uc.segment_label AS current_segment,
+             jf.nodes, jf.edges, jf.segment_id, jf.exit_on_conversion,
+             sd.segment_name AS journey_segment
+      FROM journey_entries je
+      JOIN journey_flows jf ON jf.journey_id = je.journey_id
+      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
+      WHERE je.status = 'active'
+        AND je.next_fire_at IS NOT NULL
+        AND je.next_fire_at <= NOW()
+        AND jf.status = 'active'
+      ORDER BY je.next_fire_at
+      LIMIT 500
+    `);
+
+    if (dueEntries.length === 0) return { processed: 0, sent: 0, converted: 0, completed: 0 };
+
+    let processed = 0, sent = 0, converted = 0, completed = 0;
+
+    for (const entry of dueEntries) {
+      try {
+        // 1. Check conversion — exit if booking_status changed (skip for awareness journeys)
+        if (entry.exit_on_conversion !== false) {
+          const conv = await this.checkConversion(entry);
+          if (conv.converted) {
+            await db.query(`
+              UPDATE journey_entries
+              SET status = 'converted', converted_at = NOW(), exit_reason = $2,
+                  next_fire_at = NULL, last_conversion_check = NOW()
+              WHERE entry_id = $1
+            `, [entry.entry_id, conv.reason]);
+            await db.query(`
+              INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+              VALUES ($1, $2, 'converted', NULL, $3)
+            `, [entry.entry_id, entry.current_node_id, JSON.stringify(conv)]);
+            console.log(`[DueEntries] Converted entry ${entry.entry_id} (uid=${entry.customer_id}) → ${conv.reason}`);
+            converted++;
+            processed++;
+            continue;
+          }
+        }
+
+        // 2. Process the current node — delegate to processJourney for this journey
+        // processJourney handles all node types (action/wait/condition/goal)
+        // and the sendHour gate. After processing, it advances the entry.
+        // We just need to make sure the journey gets processed.
+        // Group by journey and process once per journey.
+        processed++;
+        sent++;
+      } catch (err) {
+        console.error(`[DueEntries] Error processing entry ${entry.entry_id}: ${err.message}`);
+      }
+    }
+
+    // Process unique journeys that have due entries
+    const uniqueJourneyIds = [...new Set(dueEntries.map(e => e.journey_id))];
+    for (const journeyId of uniqueJourneyIds) {
+      try {
+        const result = await this.processJourney(journeyId);
+        console.log(`[DueEntries] Journey ${journeyId}: processed=${result.processed}, enqueued=${result.enqueued}, converted=${result.converted}`);
+      } catch (err) {
+        console.error(`[DueEntries] Journey ${journeyId} process error: ${err.message}`);
+      }
+    }
+
+    // After processing, update next_fire_at for entries that advanced to new nodes
+    await this._updateNextFireAtForAdvancedEntries();
+
+    return { processed, sent: uniqueJourneyIds.length, converted, completed };
+  }
+
+  /**
+   * After processJourney advances entries, recalculate next_fire_at for entries
+   * that moved to a new node but still have the old (expired) next_fire_at.
+   */
+  static async _updateNextFireAtForAdvancedEntries() {
+    // Find active entries whose next_fire_at is in the past (already fired)
+    const { rows: staleEntries } = await db.query(`
+      SELECT je.entry_id, je.current_node_id, je.journey_id, jf.nodes
+      FROM journey_entries je
+      JOIN journey_flows jf ON jf.journey_id = je.journey_id
+      WHERE je.status = 'active'
+        AND jf.status = 'active'
+        AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
+    `);
+
+    for (const entry of staleEntries) {
+      const nodes = entry.nodes || [];
+      const currentNode = nodes.find(n => n.id === entry.current_node_id);
+      if (!currentNode) continue;
+
+      const nextFireAt = this.calculateNextFireAt(currentNode, new Date());
+      if (nextFireAt) {
+        await db.query(
+          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = $2',
+          [nextFireAt, entry.entry_id]
+        );
+      }
+    }
   }
 }
 

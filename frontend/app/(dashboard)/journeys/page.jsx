@@ -7,7 +7,9 @@ import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  testSendJourneyNodeBatch, getTemplates, getSegmentationTree, getSegmentCustomers
+  testSendJourneyNodeBatch, getTemplates, getSegmentationTree, getSegmentCustomers,
+  getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
+  previewTemplate as fetchTemplatePreview, getJourneyEntries
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -15,9 +17,10 @@ import {
   Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
   ArrowDown, Send, Mail, Smartphone, Bell, Globe, MessageCircle,
   TrendingUp, Pause, MoreVertical, Calendar, Hash, Layers, ArrowRight,
-  ChevronDown, Info, Sparkles, LayoutGrid, List
+  ChevronDown, Info, Sparkles, LayoutGrid, List, AlertTriangle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+import hotToast from 'react-hot-toast';
 
 // ── Constants ──────────────────────────────────────────────────
 const NODE_COLORS = {
@@ -103,8 +106,10 @@ export default function Journeys() {
   const [processing, setProcessing] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [toast, setToast] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, name } for list/card delete
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState('cards');
@@ -126,12 +131,19 @@ export default function Journeys() {
   const [segmentContacts, setSegmentContacts] = useState([]);
   const [segmentContactsLoading, setSegmentContactsLoading] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
+  const [previewTemplate, setPreviewTemplate] = useState(null); // { name, subject, body_html, channel }
+  // Journey entries (real flow data)
+  const [journeyEntries, setJourneyEntries] = useState([]);
+  const [entriesTotal, setEntriesTotal] = useState(0);
+  const [entriesPage, setEntriesPage] = useState(1);
+  const [entriesLoading, setEntriesLoading] = useState(false);
+  const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '' });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
-  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null };
+  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null };
   const [createNodeForm, setCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
   const [allSegments, setAllSegments] = useState([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
@@ -159,6 +171,19 @@ export default function Journeys() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  const loadEntries = useCallback(async (journeyId, page = 1, status = '') => {
+    setEntriesLoading(true);
+    try {
+      const params = { page, limit: 50 };
+      if (status) params.status = status;
+      const res = await getJourneyEntries(journeyId, params);
+      setJourneyEntries(res.data || []);
+      setEntriesTotal(res.total || 0);
+      setEntriesPage(page);
+    } catch { setJourneyEntries([]); }
+    setEntriesLoading(false);
+  }, []);
+
   // ── Journey Actions ───────────────────────────────────────────
   const openJourney = async (id) => {
     setSelected(id);
@@ -178,11 +203,12 @@ export default function Journeys() {
       setDetail(d.data);
       setAnalytics(a.data);
       setCampaignData(cd.data);
+      loadTemplates(); // Load templates for preview buttons
     } catch (err) { showToast('Failed to load journey', 'error'); }
     setDetailLoading(false);
   };
 
-  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null };
+  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null };
 
   const loadTemplates = async () => {
     if (templatesLoaded) return;
@@ -196,6 +222,16 @@ export default function Journeys() {
       });
       setTemplatesLoaded(true);
     } catch { /* ignore */ }
+  };
+
+  // Find template for a given action node
+  const getNodeTemplate = (node) => {
+    if (!node?.data) return null;
+    const ch = (node.data.channel || '').toLowerCase();
+    const tplId = ch === 'email' ? node.data.emailTemplateId : ch === 'whatsapp' ? node.data.whatsappTemplateId : ch === 'sms' ? node.data.smsTemplateId : null;
+    if (!tplId) return null;
+    const list = allTemplates[ch] || [];
+    return list.find(t => String(t.id) === String(tplId)) || null;
   };
 
   const openNodeModal = (afterIdx = null) => {
@@ -220,7 +256,10 @@ export default function Journeys() {
     if (segmentsLoaded || segmentsLoading) return;
     setSegmentsLoading(true);
     try {
-      const res = await getSegmentationTree();
+      const [res, customRes] = await Promise.all([
+        getSegmentationTree(),
+        getCustomSegments().catch(() => ({ data: [] }))
+      ]);
       const STATUS_LABELS = { ON_TRIP: 'On Trip', FUTURE_TRAVEL: 'Future Travel', ACTIVE_ENQUIRY: 'Active Enquiry', PAST_BOOKING: 'Past Booking', PAST_ENQUIRY: 'Past Enquiry', PROSPECT: 'Prospect' };
       const breakdown = res?.breakdown || [];
       const statusCounts = res?.statusCounts || [];
@@ -228,7 +267,7 @@ export default function Journeys() {
       // Use statusCounts for top-level groups (guaranteed to exist)
       for (const s of statusCounts) {
         const st = s.booking_status;
-        if (st) flat.push({ value: st, label: `${STATUS_LABELS[st] || st} (${Number(s.count || 0).toLocaleString()})` });
+        if (st) flat.push({ value: st, label: `${STATUS_LABELS[st] || st} (${Number(s.count || 0).toLocaleString()})`, group: 'standard' });
       }
       // Then breakdown rows with tier + geo
       for (const b of breakdown) {
@@ -237,8 +276,13 @@ export default function Journeys() {
         if (b.product_tier) parts.push(b.product_tier === 'LUXURY' ? 'Luxury' : 'Standard');
         if (b.geography) parts.push(b.geography === 'LOCAL' ? 'Local' : 'International');
         if (parts.length > 1) {
-          flat.push({ value: `${b.booking_status}|${b.product_tier || ''}|${b.geography || ''}`, label: `${parts.join(' · ')} (${Number(b.count || 0).toLocaleString()})` });
+          flat.push({ value: `${b.booking_status}|${b.product_tier || ''}|${b.geography || ''}`, label: `${parts.join(' · ')} (${Number(b.count || 0).toLocaleString()})`, group: 'standard' });
         }
+      }
+      // Add custom segments
+      const customSegs = customRes?.data || [];
+      for (const cs of customSegs) {
+        flat.push({ value: `custom:${cs.id}`, label: `${cs.name} (${Number(cs.cached_count || 0).toLocaleString()})`, group: 'custom' });
       }
       setAllSegments(flat);
       setSegmentsLoaded(true);
@@ -264,6 +308,7 @@ export default function Journeys() {
           label: n.label, channel: n.channel || undefined,
           waitDays: n.waitDays || undefined, condition: n.condition || undefined,
           goalType: n.goalType || undefined,
+          sendHour: n.sendHour ?? undefined,
           emailTemplateId: n.emailTemplateId || undefined,
           whatsappTemplateId: n.whatsappTemplateId || undefined,
           smsTemplateId: n.smsTemplateId || undefined,
@@ -275,11 +320,14 @@ export default function Journeys() {
       const res = await createJourney({
         name: createForm.name,
         description: createForm.description,
+        segmentId: createForm.segmentId || null,
+        exitOnConversion: createForm.exitOnConversion,
+        scheduledStartAt: createForm.scheduledStartAt || null,
         nodes: [trigger, ...extraNodes],
         edges: []
       });
       showToast(`Journey "${res.data?.name}" created`, 'success');
-      setCreateForm({ name: '', description: '', segmentId: '' });
+      setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       await loadData();
@@ -308,6 +356,29 @@ export default function Journeys() {
       setDetail(d.data);
     } catch (err) { showToast(err.message, 'error'); }
     setProcessing(false);
+  };
+
+  const handleStart = async () => {
+    setConfirmAction(null);
+    setStarting(true);
+    try {
+      const res = await startJourney(selected);
+      hotToast.success(`Journey started! Enrolled ${res.data?.enrolled || 0} customers`);
+      const d = await getJourney(selected);
+      setDetail(d.data);
+      await loadData();
+    } catch (err) { hotToast.error(err.message || 'Failed to start journey'); }
+    setStarting(false);
+  };
+
+  const handlePause = async () => {
+    try {
+      const res = await pauseJourney(selected);
+      hotToast.success(`Journey ${res.data?.status === 'paused' ? 'paused' : 'resumed'}`);
+      const d = await getJourney(selected);
+      setDetail(d.data);
+      await loadData();
+    } catch (err) { hotToast.error(err.message || 'Failed to update journey'); }
   };
 
   const handleDelete = async (id) => {
@@ -365,6 +436,7 @@ export default function Journeys() {
           channel: nodeForm.channel,
           message: nodeForm.message,
           templateId: resolvedTemplateId,
+          sendHour: nodeForm.sendHour ?? null,
           ...(nodeForm.channel === 'whatsapp' && {
             restChannel: nodeForm.restChannel || 'email',
             restTemplateId: nodeForm.restTemplateId || null,
@@ -503,6 +575,11 @@ export default function Journeys() {
       if (!nodeAnalyticsMap[na.node_id]) nodeAnalyticsMap[na.node_id] = {};
       nodeAnalyticsMap[na.node_id][na.event_type] = parseInt(na.event_count);
     });
+    // Per-node triggered/exited counts
+    const nodeEntryCountsMap = {};
+    (detail.nodeEntryCounts || []).forEach(nc => {
+      nodeEntryCountsMap[nc.node_id] = { triggered: parseInt(nc.triggered) || 0, exited: parseInt(nc.exited) || 0 };
+    });
 
     // Build campaign metrics per action node
     const nodeCampaignMap = {};
@@ -640,12 +717,21 @@ export default function Journeys() {
             <button className="btn btn-secondary" onClick={handleAISuggest} disabled={suggestLoading}>
               <Sparkles size={14} /> {suggestLoading ? 'Analyzing...' : 'AI Optimize'}
             </button>
-            <button className="btn btn-secondary" onClick={() => setConfirmAction('enroll')} disabled={enrolling}>
-              <Users size={14} /> {enrolling ? 'Enrolling...' : 'Enroll'}
-            </button>
-            <button className="btn btn-primary" onClick={() => setConfirmAction('process')} disabled={processing}>
-              <Play size={14} /> {processing ? 'Processing...' : 'Process'}
-            </button>
+            {detail.status === 'draft' && (
+              <button className="btn btn-primary" onClick={() => setConfirmAction('start')} disabled={starting}>
+                <Play size={14} /> {starting ? 'Starting...' : 'Start Journey'}
+              </button>
+            )}
+            {detail.status === 'active' && (
+              <button className="btn btn-secondary" onClick={handlePause}>
+                <Pause size={14} /> Pause
+              </button>
+            )}
+            {detail.status === 'paused' && (
+              <button className="btn btn-primary" onClick={handlePause}>
+                <Play size={14} /> Resume
+              </button>
+            )}
             <div style={{ position: 'relative' }}>
               <button className="btn btn-ghost btn-icon" onClick={() => setShowActions(a => !a)}>
                 <MoreVertical size={16} />
@@ -677,31 +763,42 @@ export default function Journeys() {
 
         {/* ── KPIs ──────────────────────────────────────────────── */}
         <motion.div variants={fadeInUp}>
-        <div className="card-grid card-grid-4 mb-6">
-          {[
+        {(() => {
+          const ct = campaignData?.totals || {};
+          const kpis = [
             { label: 'Total Entries', value: fmt(stats.total_entries), color: 'kpi-blue', icon: Users },
-            { label: 'Active Now', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
-            { label: 'Converted', value: fmt(stats.converted), color: 'kpi-purple', icon: CheckCircle2 },
-            { label: 'Conversion Rate', value: pct(detail.conversion_rate), color: 'kpi-orange', icon: TrendingUp },
-          ].map((kpi, i) => (
-            <div key={i} className="card" style={{ padding: '20px 16px' }}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 4 }}>{kpi.label}</div>
-                  <div className={`kpi-value ${kpi.color}`} style={{ fontSize: 26 }}>{kpi.value}</div>
+            { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
+            { label: 'Sent', value: fmt(ct.total_sent || 0), color: 'kpi-orange', icon: Send },
+            { label: 'Delivered', value: fmt(ct.total_delivered || 0), color: 'kpi-green', icon: CheckCircle2 },
+            { label: 'Read', value: fmt(ct.total_read || 0), color: 'kpi-blue', icon: Eye },
+            { label: 'Clicked', value: fmt(ct.total_clicked || 0), color: 'kpi-purple', icon: TrendingUp },
+            { label: 'Converted', value: fmt(stats.converted), color: 'kpi-purple', icon: Target },
+            { label: 'Failed', value: fmt(ct.total_failed || 0), color: 'kpi-red', icon: XCircle },
+          ];
+          return (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+              {kpis.map((kpi, i) => (
+                <div key={i} className="card" style={{ padding: '16px 14px' }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 600, marginBottom: 3 }}>{kpi.label}</div>
+                      <div className={`kpi-value ${kpi.color}`} style={{ fontSize: 22 }}>{kpi.value}</div>
+                    </div>
+                    <div className="flex items-center justify-center" style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--bg-secondary)' }}>
+                      <kpi.icon size={16} color="var(--text-secondary)" />
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-secondary)' }}>
-                  <kpi.icon size={20} color="var(--text-secondary)" />
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
+          );
+        })()}
 
         {/* ── Tabs ──────────────────────────────────────────────── */}
         <div className="tabs mb-5">
           {[
             { id: 'flow', label: 'Journey Flow', icon: GitBranch },
+            { id: 'entries', label: 'Entries', icon: Users },
             { id: 'analytics', label: 'Analytics', icon: BarChart3 },
             { id: 'activity', label: 'Activity', icon: Activity },
             { id: 'settings', label: 'Settings', icon: Settings },
@@ -709,7 +806,7 @@ export default function Journeys() {
             <button
               key={tab.id}
               className={`tab flex items-center gap-1.5 ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, ''); }}
             >
               <tab.icon size={14} /> {tab.label}
             </button>
@@ -976,7 +1073,9 @@ export default function Journeys() {
                             onClick={() => setExpandedNode(isExpanded ? null : key)}
                             style={{
                               background: 'var(--bg-card)',
-                              border: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
+                              borderTop: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
+                              borderRight: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
+                              borderBottom: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
                               borderLeft: `4px solid ${color}`,
                               borderRadius: 12,
                               padding: '14px 16px',
@@ -1026,6 +1125,15 @@ export default function Journeys() {
                                 {node.data?.label && (
                                   <div className="font-medium" style={{ fontSize: 13, color: 'var(--text-primary)', marginTop: 4 }}>{node.data.label}</div>
                                 )}
+                                {/* Show mapped template name on action nodes */}
+                                {node.type === 'action' && (() => {
+                                  const tpl = getNodeTemplate(node);
+                                  return tpl ? (
+                                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <Mail size={9} /> {tpl.name}{tpl.subject ? ` — ${tpl.subject}` : ''}
+                                    </div>
+                                  ) : null;
+                                })()}
                               </div>
 
                               {/* Node stats preview */}
@@ -1095,6 +1203,28 @@ export default function Journeys() {
                                   </div>
                                 )}
 
+                                {/* Triggered / Exited counts */}
+                                {(() => {
+                                  const nc = nodeEntryCountsMap[node.id];
+                                  if (!nc || (nc.triggered === 0 && nc.exited === 0)) return null;
+                                  return (
+                                    <div style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                                        <Users size={13} color="#3B82F6" />
+                                        <span style={{ fontSize: 15, fontWeight: 700, color: '#3B82F6' }}>{fmt(nc.triggered)}</span>
+                                        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>TRIGGERED</span>
+                                      </div>
+                                      {nc.exited > 0 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+                                          <XCircle size={13} color="var(--red)" />
+                                          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--red)' }}>{fmt(nc.exited)}</span>
+                                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>EXITED</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
                                 {/* Campaign Metrics Card — per node */}
                                 {node.type === 'action' && (() => {
                                   const camp = nodeCampaignMap?.[node.id];
@@ -1162,8 +1292,34 @@ export default function Journeys() {
                                           </div>
                                         );
                                       })()}
-                                      {/* Manual test-send — sends this node's content to an arbitrary recipient */}
-                                      <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+                                      {/* Action buttons — Preview + Send test */}
+                                      <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                                        {(() => {
+                                          const tpl = getNodeTemplate(node);
+                                          return tpl ? (
+                                            <button
+                                              type="button"
+                                              onClick={async (e) => {
+                                                e.stopPropagation();
+                                                try {
+                                                  const res = await fetchTemplatePreview(tpl.id);
+                                                  setPreviewTemplate({ ...tpl, body_html: res.data?.html || null });
+                                                } catch {
+                                                  setPreviewTemplate(tpl);
+                                                }
+                                              }}
+                                              style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: 6,
+                                                fontSize: 11, fontWeight: 600, padding: '6px 12px',
+                                                borderRadius: 6, border: '1px solid var(--brand-primary)',
+                                                background: 'rgba(59,130,246,0.06)', color: 'var(--brand-primary)',
+                                                cursor: 'pointer',
+                                              }}
+                                            >
+                                              <Eye size={12} /> Preview Template
+                                            </button>
+                                          ) : null;
+                                        })()}
                                         <button
                                           type="button"
                                           onClick={(e) => {
@@ -1287,6 +1443,91 @@ export default function Journeys() {
               </div>
             </div>
           </>
+        )}
+
+        {/* ── TAB: Entries ──────────────────────────────────────── */}
+        {activeTab === 'entries' && (
+          <div className="card">
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h3>Journey Entries</h3>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>{fmt(entriesTotal)} total</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select className="form-input" style={{ width: 140, fontSize: 11, padding: '5px 8px' }}
+                  value={entriesStatusFilter}
+                  onChange={e => { setEntriesStatusFilter(e.target.value); loadEntries(selected, 1, e.target.value); }}>
+                  <option value="">All Status</option>
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                  <option value="converted">Converted</option>
+                  <option value="exited">Exited</option>
+                </select>
+                <button className="btn btn-sm btn-secondary" onClick={() => loadEntries(selected, entriesPage, entriesStatusFilter)} disabled={entriesLoading}>
+                  <RefreshCw size={12} className={entriesLoading ? 'animate-spin' : ''} /> Refresh
+                </button>
+              </div>
+            </div>
+            {entriesLoading && journeyEntries.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>Loading entries...</div>
+            ) : journeyEntries.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-tertiary)' }}>
+                <Users size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                <div style={{ fontSize: 13 }}>No entries yet. Click "Load Entries" or start the journey to enroll customers.</div>
+                <button className="btn btn-sm btn-primary mt-3" onClick={() => loadEntries(selected, 1, '')}>
+                  <RefreshCw size={12} /> Load Entries
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Customer</th>
+                        <th>Email</th>
+                        <th>Current Node</th>
+                        <th>Status</th>
+                        <th>Booking</th>
+                        <th>Next Fire</th>
+                        <th>Entered</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {journeyEntries.map(e => {
+                        const node = (detail.nodes || []).find(n => n.id === e.current_node_id);
+                        const statusColors = { active: 'badge-green', completed: 'badge-purple', converted: 'badge-blue', exited: 'badge-gray' };
+                        return (
+                          <tr key={e.entry_id}>
+                            <td style={{ fontWeight: 600, fontSize: 12 }}>{e.name || '—'}</td>
+                            <td style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{e.email || '—'}</td>
+                            <td>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+                                <span style={{ width: 7, height: 7, borderRadius: 2, background: NODE_COLORS[node?.type] || '#78716c' }} />
+                                {node?.data?.label || node?.type || e.current_node_id || '—'}
+                              </span>
+                            </td>
+                            <td><span className={`badge ${statusColors[e.status] || 'badge-gray'}`} style={{ fontSize: 10 }}>{e.status}{e.exit_reason ? ` (${e.exit_reason})` : ''}</span></td>
+                            <td style={{ fontSize: 11 }}>{e.booking_status || '—'}</td>
+                            <td style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{e.next_fire_at ? new Date(e.next_fire_at).toLocaleString('en-US', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                            <td style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{timeAgo(e.entered_at)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Pagination */}
+                {entriesTotal > 50 && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: '12px 0' }}>
+                    <button className="btn btn-sm btn-ghost" disabled={entriesPage <= 1} onClick={() => loadEntries(selected, entriesPage - 1, entriesStatusFilter)}>Prev</button>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '4px 8px' }}>Page {entriesPage} of {Math.ceil(entriesTotal / 50)}</span>
+                    <button className="btn btn-sm btn-ghost" disabled={entriesPage >= Math.ceil(entriesTotal / 50)} onClick={() => loadEntries(selected, entriesPage + 1, entriesStatusFilter)}>Next</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {/* ── TAB: Analytics ────────────────────────────────────── */}
@@ -1724,6 +1965,25 @@ export default function Journeys() {
                         {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
                       </div>
                     )}
+                  {/* ── Send Hour (Dubai time) ── */}
+                  <div style={{ marginTop: 12 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                      Send Hour (Dubai Time)
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <select className="form-input" style={{ width: 180 }}
+                        value={nodeForm.sendHour ?? ''}
+                        onChange={e => setNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
+                        <option value="">Any time (immediate)</option>
+                        {Array.from({ length: 24 }, (_, h) => (
+                          <option key={h} value={h}>
+                            {h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}
+                          </option>
+                        ))}
+                      </select>
+                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>UTC+4</span>
+                    </div>
+                  </div>
                   </>
                 )}
 
@@ -1801,14 +2061,17 @@ export default function Journeys() {
         {confirmAction && (
           <div className="confirm-overlay" onClick={() => setConfirmAction(null)}>
             <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
-              <AlertCircle size={32} color={confirmAction === 'delete' ? 'var(--red)' : 'var(--orange)'} style={{ marginBottom: 12 }} />
+              <AlertCircle size={32} color={confirmAction === 'delete' ? 'var(--red)' : confirmAction === 'start' ? 'var(--green)' : 'var(--orange)'} style={{ marginBottom: 12 }} />
               <h3>
-                {confirmAction === 'enroll' ? 'Enroll Segment Customers?' :
+                {confirmAction === 'start' ? 'Start This Journey?' :
+                 confirmAction === 'enroll' ? 'Enroll Segment Customers?' :
                  confirmAction === 'process' ? 'Process Journey?' :
                  'Delete Journey?'}
               </h3>
               <p>
-                {confirmAction === 'enroll'
+                {confirmAction === 'start'
+                  ? 'This will enroll all segment customers, activate the journey, and begin automatic processing every 15 minutes. You can pause it anytime.'
+                  : confirmAction === 'enroll'
                   ? 'This will enroll all customers from the associated segment into this journey. This action cannot be undone.'
                   : confirmAction === 'process'
                   ? 'This will advance all active entries to their next step in the journey flow.'
@@ -1818,7 +2081,7 @@ export default function Journeys() {
                 <button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>Cancel</button>
                 <button
                   className={`btn ${confirmAction === 'delete' ? 'btn-danger' : 'btn-primary'}`}
-                  onClick={confirmAction === 'enroll' ? handleEnroll : confirmAction === 'process' ? handleProcess : () => handleDelete(selected)}
+                  onClick={confirmAction === 'start' ? handleStart : confirmAction === 'enroll' ? handleEnroll : confirmAction === 'process' ? handleProcess : () => handleDelete(selected)}
                 >
                   {confirmAction === 'delete' ? 'Delete Forever' : 'Confirm'}
                 </button>
@@ -1844,11 +2107,16 @@ export default function Journeys() {
             if (!segmentId) return;
             setSegmentContactsLoading(true);
             try {
-              const res = await getSegmentCustomers({ segmentId, limit: 200 });
+              let res;
+              if (segmentId.startsWith('custom:')) {
+                const customId = segmentId.replace('custom:', '');
+                res = await getCustomSegmentCustomers(customId, { limit: 200 });
+              } else {
+                res = await getSegmentCustomers({ segmentId, limit: 200 });
+              }
               const list = res?.data || res?.customers || (Array.isArray(res) ? res : []);
-              const merged = [...MOCK_TEST_CONTACTS, ...list];
-              setSegmentContacts(merged);
-              const allAddrs = merged.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
+              setSegmentContacts(list);
+              const allAddrs = list.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
               setTestSendNode(s => ({ ...s, recipients: allAddrs }));
             } catch {
               setSegmentContacts(MOCK_TEST_CONTACTS);
@@ -1933,9 +2201,12 @@ export default function Journeys() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', flex: 1 }}>
                     Contacts
-                    {!segmentId && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>(test users)</span>}
+                    <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 10, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700 }}>
+                      {segmentContactsLoading ? '…' : (segmentContacts.length || MOCK_TEST_CONTACTS.length)} total
+                    </span>
+                    {!segmentId && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>(test users)</span>}
                     {recipients.length > 0 && (
-                      <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 10, background: 'rgba(34,197,94,0.12)', color: 'var(--green)', fontSize: 11, fontWeight: 700 }}>
+                      <span style={{ marginLeft: 4, padding: '1px 7px', borderRadius: 10, background: 'rgba(34,197,94,0.12)', color: 'var(--green)', fontSize: 11, fontWeight: 700 }}>
                         {recipients.length} selected
                       </span>
                     )}
@@ -2054,6 +2325,61 @@ export default function Journeys() {
             </div>
           );
         })()}
+
+        {/* ── Template Preview Modal (inside detail view) ───── */}
+        <AnimatePresence>
+          {previewTemplate && (
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setPreviewTemplate(null)}
+              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                onClick={e => e.stopPropagation()}
+                style={{ background: 'var(--card)', borderRadius: 16, width: 680, maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+                {/* Header */}
+                <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>Template Preview</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      {previewTemplate.name}
+                      {previewTemplate.subject && <span> — {previewTemplate.subject}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ padding: '3px 10px', borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                      background: (CHANNEL_CONFIG[(previewTemplate.channel || '').toLowerCase()]?.color || 'var(--text-tertiary)') + '14',
+                      color: CHANNEL_CONFIG[(previewTemplate.channel || '').toLowerCase()]?.color || 'var(--text-tertiary)' }}>
+                      {previewTemplate.channel || 'Unknown'}
+                    </span>
+                    <button onClick={() => setPreviewTemplate(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>×</button>
+                  </div>
+                </div>
+                {/* Body */}
+                <div style={{ padding: '20px 24px', overflow: 'auto', flex: 1 }}>
+                  {previewTemplate.body_html ? (
+                    <div style={{ background: '#fff', borderRadius: 8, padding: 16, border: '1px solid var(--border-color)' }}>
+                      <iframe
+                        srcDoc={previewTemplate.body_html}
+                        style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }}
+                        title="Template Preview"
+                      />
+                    </div>
+                  ) : previewTemplate.body || previewTemplate.message ? (
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '16px 20px', fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
+                      {previewTemplate.body || previewTemplate.message}
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>
+                      No preview content available
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         </motion.div>
       </motion.div>
     );
@@ -2283,6 +2609,20 @@ export default function Journeys() {
                     }} />
                   </div>
                 </div>
+
+                {/* Footer: date + delete */}
+                <div className="flex justify-between items-center" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
+                  <span className="text-secondary" style={{ fontSize: 11 }}>{j.created_at ? new Date(j.created_at).toLocaleDateString() : ''}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: j.journey_id, name: j.name }); }}
+                    title="Delete journey"
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -2357,7 +2697,20 @@ export default function Journeys() {
                           {pct(j.conversion_rate)}
                         </span>
                       </td>
-                      <td><ChevronRight size={14} color="var(--text-muted)" /></td>
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: j.journey_id, name: j.name }); }}
+                            title="Delete journey"
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                          <ChevronRight size={14} color="var(--text-muted)" />
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -2492,10 +2845,66 @@ export default function Journeys() {
                   disabled={segmentsLoading}
                   onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
                   <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment (optional) —'}</option>
-                  {allSegments.map((s, i) => (
-                    <option key={i} value={s.value}>{s.label}</option>
-                  ))}
+                  {allSegments.filter(s => s.group === 'standard').length > 0 && (
+                    <optgroup label="Standard Segments">
+                      {allSegments.filter(s => s.group === 'standard').map((s, i) => (
+                        <option key={`std-${i}`} value={s.value}>{s.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {allSegments.filter(s => s.group === 'custom').length > 0 && (
+                    <optgroup label="Custom Segments">
+                      {allSegments.filter(s => s.group === 'custom').map((s, i) => (
+                        <option key={`cust-${i}`} value={s.value}>{s.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
+              </div>
+
+              {/* Exit on Conversion Toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {createForm.exitOnConversion ? 'Exit on Booking' : 'Awareness Mode'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+                    {createForm.exitOnConversion
+                      ? 'Users who book will exit the journey automatically'
+                      : 'All users receive every message — no exit on booking'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCreateForm(f => ({ ...f, exitOnConversion: !f.exitOnConversion }))}
+                  style={{
+                    width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+                    background: createForm.exitOnConversion ? 'var(--green)' : 'var(--text-tertiary)',
+                    position: 'relative', transition: 'background 0.2s', flexShrink: 0
+                  }}>
+                  <div style={{
+                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                    position: 'absolute', top: 3,
+                    left: createForm.exitOnConversion ? 23 : 3,
+                    transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                  }} />
+                </button>
+              </div>
+
+              {/* Scheduled Start Date */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Start Date & Time (Dubai)</label>
+                <input
+                  type="datetime-local"
+                  className="form-input"
+                  value={createForm.scheduledStartAt}
+                  onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
+                  style={{ fontSize: 12 }}
+                />
+                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  {createForm.scheduledStartAt
+                    ? `Journey will start at ${new Date(createForm.scheduledStartAt).toLocaleString('en-US', { timeZone: 'Asia/Dubai', dateStyle: 'medium', timeStyle: 'short' })} Dubai time`
+                    : 'Leave empty to start immediately when you click "Start Journey"'}
+                </div>
               </div>
 
               {/* Nodes */}
@@ -2663,6 +3072,23 @@ export default function Journeys() {
                             </select>
                           </div>
                         )}
+                      {/* Send Hour picker */}
+                      <div style={{ marginTop: 8 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <select className="form-input" style={{ width: 160, fontSize: 12, padding: '6px 10px' }}
+                            value={createNodeForm.sendHour ?? ''}
+                            onChange={e => setCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
+                            <option value="">Any time</option>
+                            {Array.from({ length: 24 }, (_, h) => (
+                              <option key={h} value={h}>
+                                {h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}
+                              </option>
+                            ))}
+                          </select>
+                          <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>UTC+4</span>
+                        </div>
+                      </div>
                       </>
                     )}
 
@@ -2738,6 +3164,56 @@ export default function Journeys() {
       )}
 
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
+
+      {/* ── Delete Confirmation Modal ─────────────────────────── */}
+      <AnimatePresence>
+        {deleteConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setDeleteConfirm(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: 'var(--card)', borderRadius: 16, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--red-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertTriangle size={20} color="var(--red)" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>Delete Journey</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This action cannot be undone</div>
+                </div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-secondary)', marginBottom: 20, fontSize: 13 }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Journey: </span>
+                <span style={{ fontWeight: 600 }}>{deleteConfirm.name}</span>
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+                This will permanently delete this journey and all associated entries and events.
+              </p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setDeleteConfirm(null)}
+                  style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                  Cancel
+                </button>
+                <button onClick={async () => {
+                  const id = deleteConfirm.id;
+                  setDeleteConfirm(null);
+                  try {
+                    await deleteJourney(id);
+                    hotToast.success('Journey deleted successfully');
+                    await loadData();
+                  } catch (err) { hotToast.error(err.message || 'Failed to delete journey'); }
+                }}
+                  style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--red)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Trash2 size={14} /> Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       </motion.div>
     </motion.div>
   );

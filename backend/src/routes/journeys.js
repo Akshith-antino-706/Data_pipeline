@@ -107,6 +107,22 @@ router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Start journey: activate + enroll + first process
+router.post('/:id/start', async (req, res, next) => {
+  try {
+    const data = await JourneyService.startJourney(parseInt(req.params.id));
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Pause or resume journey (toggle)
+router.post('/:id/pause', async (req, res, next) => {
+  try {
+    const data = await JourneyService.pauseJourney(parseInt(req.params.id));
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 // Enroll segment customers into journey
 router.post('/:id/enroll', async (req, res, next) => {
   try {
@@ -120,6 +136,15 @@ router.post('/:id/process', async (req, res, next) => {
   try {
     const data = await JourneyService.processJourney(parseInt(req.params.id), parseInt(req.query.batch) || 100);
     res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Get journey entries (real flow data)
+router.get('/:id/entries', async (req, res, next) => {
+  try {
+    const { page, limit, status } = req.query;
+    const data = await JourneyService.getEntries(parseInt(req.params.id), { page: parseInt(page) || 1, limit: parseInt(limit) || 50, status });
+    res.json(data);
   } catch (err) { next(err); }
 });
 
