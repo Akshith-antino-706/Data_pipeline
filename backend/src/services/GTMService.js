@@ -609,44 +609,69 @@ ${scripts.share}
    * Stores both structured fields and the full raw payload.
    */
   static async recordEvent(body) {
-    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId } = body;
+    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId, email, contactNumber, name } = body;
 
-    // Resolve unified_id: explicit `rid` / `unifiedId` in payload wins, else try pulling from pageUrl,
-    // else fall back to matching customerId (email) against unified_contacts.
+    // Resolve unified_id: try every available identifier against unified_contacts
     let resolvedUnifiedId = parseInt(rid || unifiedId) || null;
+
+    // 1. Check rid in pageUrl
     if (!resolvedUnifiedId && pageUrl) {
       const m = /[?&]rid=(\d+)/.exec(pageUrl);
       if (m) resolvedUnifiedId = parseInt(m[1]);
     }
-    if (!resolvedUnifiedId && customerId && customerId.includes('@')) {
+
+    // 2. Match by email (from email field or customerId)
+    const emailToMatch = email || (customerId && customerId.includes('@') ? customerId : null);
+    if (!resolvedUnifiedId && emailToMatch) {
       const { rows: [uc] } = await db.query(
         'SELECT id FROM unified_contacts WHERE LOWER(email) = LOWER($1) LIMIT 1',
-        [customerId]
+        [emailToMatch]
       );
-      if (uc) resolvedUnifiedId = uc.id;
+      if (uc) resolvedUnifiedId = parseInt(uc.id);
     }
-    // Final fallback: borrow unified_id from a recent event in the same session (last 2 hrs)
+
+    // 3. Match by phone/contactNumber
+    if (!resolvedUnifiedId && contactNumber) {
+      const cleanPhone = String(contactNumber).replace(/\D/g, '').slice(-10);
+      if (cleanPhone.length >= 7) {
+        const { rows: [uc] } = await db.query(
+          `SELECT id FROM unified_contacts WHERE mobile LIKE '%' || $1 LIMIT 1`,
+          [cleanPhone]
+        );
+        if (uc) resolvedUnifiedId = parseInt(uc.id);
+      }
+    }
+
+    // 4. Borrow unified_id from a recent event in the same session (last 24 hrs)
     if (!resolvedUnifiedId && sessionId) {
       const { rows: [prev] } = await db.query(
         `SELECT unified_id FROM gtm_events
-         WHERE session_id = $1 AND unified_id IS NOT NULL AND created_at > NOW() - INTERVAL '2 hours'
+         WHERE session_id = $1 AND unified_id IS NOT NULL AND created_at > NOW() - INTERVAL '24 hours'
          ORDER BY created_at DESC LIMIT 1`,
         [sessionId]
       );
-      if (prev) resolvedUnifiedId = prev.unified_id;
+      if (prev) resolvedUnifiedId = parseInt(prev.unified_id);
     }
 
-    // Resolve customer_id from unified_contacts.id
-    let numericCustomerId = /^\d+$/.test(customerId) ? parseInt(customerId) : null;
-    if (!numericCustomerId && resolvedUnifiedId) {
-      numericCustomerId = parseInt(resolvedUnifiedId);
-    }
+    // customer_id = unified_contacts.id
+    let numericCustomerId = resolvedUnifiedId || null;
 
     const { rows: [event] } = await db.query(`
       INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
       RETURNING *
     `, [eventName, numericCustomerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body)]);
+
+    // Backfill: when we identify a session, update all earlier anonymous events in this session
+    if (resolvedUnifiedId && sessionId) {
+      await db.query(
+        `UPDATE gtm_events
+         SET unified_id = $1, customer_id = $1, updated_at = NOW()
+         WHERE session_id = $2 AND unified_id IS NULL`,
+        [resolvedUnifiedId, sessionId]
+      ).catch(() => {});
+    }
+
     return event;
   }
 
