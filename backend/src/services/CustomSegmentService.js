@@ -23,20 +23,26 @@ export default class CustomSegmentService {
       switch (cond.field) {
         case 'booking_status': {
           const values = Array.isArray(cond.value) ? cond.value : [cond.value];
-          const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          clauses.push(`uc.booking_status IN (${placeholders.join(',')})`);
+          if (values.length > 0) {
+            const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
+            clauses.push(`uc.booking_status IN (${placeholders.join(',')})`);
+          }
           break;
         }
         case 'product_tier': {
           const values = Array.isArray(cond.value) ? cond.value : [cond.value];
-          const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          clauses.push(`uc.product_tier IN (${placeholders.join(',')})`);
+          if (values.length > 0) {
+            const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
+            clauses.push(`uc.product_tier IN (${placeholders.join(',')})`);
+          }
           break;
         }
         case 'geography': {
           const values = Array.isArray(cond.value) ? cond.value : [cond.value];
-          const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          clauses.push(`uc.geography IN (${placeholders.join(',')})`);
+          if (values.length > 0) {
+            const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
+            clauses.push(`uc.geography IN (${placeholders.join(',')})`);
+          }
           break;
         }
         case 'contact_type': {
@@ -81,26 +87,30 @@ export default class CustomSegmentService {
           break;
         }
         case 'travel_date': {
-          needsTravelDate = true;
-          if (cond.value && cond.value[0]) { params.push(cond.value[0]); clauses.push(`booking_agg.max_travel_date >= $${idx++}::date`); }
-          if (cond.value && cond.value[1]) { params.push(cond.value[1]); clauses.push(`booking_agg.min_travel_date <= $${idx++}::date`); }
+          let tAdded = false;
+          if (cond.value?.[0]) { params.push(cond.value[0]); clauses.push(`booking_agg.max_travel_date >= $${idx++}::date`); tAdded = true; }
+          if (cond.value?.[1]) { params.push(cond.value[1]); clauses.push(`booking_agg.min_travel_date <= $${idx++}::date`); tAdded = true; }
+          if (tAdded) needsTravelDate = true;
           break;
         }
         case 'booking_date': {
-          needsBookingDate = true;
-          if (cond.value && cond.value[0]) { params.push(cond.value[0]); clauses.push(`booking_agg.max_booking_date >= $${idx++}::date`); }
-          if (cond.value && cond.value[1]) { params.push(cond.value[1]); clauses.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
+          let bAdded = false;
+          if (cond.value?.[0]) { params.push(cond.value[0]); clauses.push(`booking_agg.max_booking_date >= $${idx++}::date`); bAdded = true; }
+          if (cond.value?.[1]) { params.push(cond.value[1]); clauses.push(`booking_agg.min_booking_date <= $${idx++}::date`); bAdded = true; }
+          if (bAdded) needsBookingDate = true;
           break;
         }
         case 'revenue': {
-          needsRevenueJoin = true;
           if (cond.operator === 'between' && Array.isArray(cond.value)) {
-            params.push(cond.value[0]); clauses.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
-            params.push(cond.value[1]); clauses.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
+            const [v0, v1] = cond.value;
+            if (v0 !== '' && v0 != null) { params.push(Number(v0)); clauses.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`); needsRevenueJoin = true; }
+            if (v1 !== '' && v1 != null) { params.push(Number(v1)); clauses.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`); needsRevenueJoin = true; }
           } else if (cond.operator === 'gte') {
-            params.push(cond.value); clauses.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
+            const v = Array.isArray(cond.value) ? cond.value[0] : cond.value;
+            if (v !== '' && v != null) { params.push(Number(v)); clauses.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`); needsRevenueJoin = true; }
           } else if (cond.operator === 'lte') {
-            params.push(cond.value); clauses.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
+            const v = Array.isArray(cond.value) ? (cond.value[1] ?? cond.value[0]) : cond.value;
+            if (v !== '' && v != null) { params.push(Number(v)); clauses.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`); needsRevenueJoin = true; }
           }
           break;
         }
@@ -118,36 +128,49 @@ export default class CustomSegmentService {
       this.buildWhereClause(conditions);
 
     const needsDateJoin = needsTravelDate || needsBookingDate;
+    const ctes = [];
 
-    const revenueJoin = needsRevenueJoin ? `
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(sub.selling_price::numeric), 0) AS total_revenue FROM (
+    if (needsRevenueJoin) {
+      ctes.push(`rev_agg AS (
+        SELECT unified_id, COALESCE(SUM(selling_price::numeric), 0) AS total_revenue
+        FROM (
           ${RAYNA_TABLES.map(t =>
-            `SELECT selling_price FROM ${t} WHERE unified_id = uc.id AND is_cancel <> '1'`
+            `SELECT unified_id, selling_price FROM ${t} WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
           ).join(' UNION ALL ')}
         ) sub
-      ) rev_agg ON true
-    ` : '';
+        GROUP BY unified_id
+      )`);
+    }
 
-    const dateSelectParts = [];
-    if (needsTravelDate) dateSelectParts.push(`MIN(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS min_travel_date, MAX(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS max_travel_date`);
-    if (needsBookingDate) dateSelectParts.push(`MIN(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS min_booking_date, MAX(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS max_booking_date`);
-
-    const dateJoin = needsDateJoin ? `
-      LEFT JOIN LATERAL (
-        SELECT ${dateSelectParts.join(', ')}
+    if (needsDateJoin) {
+      ctes.push(`booking_agg AS (
+        SELECT unified_id,
+          MIN(CASE WHEN travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN travel_date::date END) AS min_travel_date,
+          MAX(CASE WHEN travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN travel_date::date END) AS max_travel_date,
+          MIN(CASE
+            WHEN booking_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN booking_date::date
+            WHEN booking_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN TO_DATE(booking_date, 'DD/MM/YYYY')
+          END) AS min_booking_date,
+          MAX(CASE
+            WHEN booking_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN booking_date::date
+            WHEN booking_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN TO_DATE(booking_date, 'DD/MM/YYYY')
+          END) AS max_booking_date
         FROM (
-          ${RAYNA_TABLES.map(t => `
-            SELECT ${needsTravelDate ? 'travel_date AS td,' : "'x' AS td,"} ${needsBookingDate ? 'booking_date AS bd' : "'x' AS bd"}
-            FROM ${t} WHERE unified_id = uc.id AND is_cancel <> '1'
-          `).join(' UNION ALL ')}
+          ${RAYNA_TABLES.map(t =>
+            `SELECT unified_id, travel_date, booking_date FROM ${t} WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
+          ).join(' UNION ALL ')}
         ) sub
-      ) booking_agg ON true
-    ` : '';
+        GROUP BY unified_id
+      )`);
+    }
 
+    const cteSql = ctes.length > 0 ? `WITH ${ctes.join(',\n')}` : '';
+    const revenueJoin = needsRevenueJoin ? `LEFT JOIN rev_agg ON rev_agg.unified_id = uc.id` : '';
+    const dateJoin = needsDateJoin ? `LEFT JOIN booking_agg ON booking_agg.unified_id = uc.id` : '';
     const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 
     const sql = `
+      ${cteSql}
       SELECT ${select}
       FROM unified_contacts uc
       ${revenueJoin}
@@ -241,14 +264,12 @@ export default class CustomSegmentService {
 
     const conditions = seg.conditions || [];
 
-    // Build count query
-    const { clauses: countClauses, params: countParams, nextIdx: countIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
+    const { clauses: condClauses, params: condParams, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
       this.buildWhereClause(conditions);
 
-    // Add search to a copy
-    const clauses = [...countClauses];
-    const params = [...countParams];
-    let pIdx = countIdx;
+    const clauses = [...condClauses];
+    const params = [...condParams];
+    let pIdx = nextIdx;
 
     if (search) {
       params.push(`%${search}%`);
@@ -256,12 +277,12 @@ export default class CustomSegmentService {
       pIdx++;
     }
 
-    // Count
+    // Count (uses CTEs via buildSegmentSQL)
     const countBuild = this.buildSegmentSQL(conditions);
     const { rows: [countRow] } = await query(countBuild.sql, countBuild.params);
     const total = countRow.count;
 
-    // Data query
+    // Data query with CTEs instead of LATERAL JOINs
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
@@ -270,35 +291,49 @@ export default class CustomSegmentService {
       uc.wa_unsubscribe, uc.email_unsubscribe, uc.created_at`;
 
     const needsDateJoin = needsTravelDate || needsBookingDate;
-    const dateSelectParts = [];
-    if (needsTravelDate) dateSelectParts.push(`MIN(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS min_travel_date, MAX(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS max_travel_date`);
-    if (needsBookingDate) dateSelectParts.push(`MIN(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS min_booking_date, MAX(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS max_booking_date`);
+    const ctes = [];
 
-    const revenueJoin = needsRevenueJoin ? `
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(sub.selling_price::numeric), 0) AS total_revenue FROM (
+    if (needsRevenueJoin) {
+      ctes.push(`rev_agg AS (
+        SELECT unified_id, COALESCE(SUM(selling_price::numeric), 0) AS total_revenue
+        FROM (
           ${RAYNA_TABLES.map(t =>
-            `SELECT selling_price FROM ${t} WHERE unified_id = uc.id AND is_cancel <> '1'`
+            `SELECT unified_id, selling_price FROM ${t} WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
           ).join(' UNION ALL ')}
         ) sub
-      ) rev_agg ON true
-    ` : '';
+        GROUP BY unified_id
+      )`);
+    }
 
-    const dateJoin = needsDateJoin ? `
-      LEFT JOIN LATERAL (
-        SELECT ${dateSelectParts.join(', ')}
+    if (needsDateJoin) {
+      ctes.push(`booking_agg AS (
+        SELECT unified_id,
+          MIN(CASE WHEN travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN travel_date::date END) AS min_travel_date,
+          MAX(CASE WHEN travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN travel_date::date END) AS max_travel_date,
+          MIN(CASE
+            WHEN booking_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN booking_date::date
+            WHEN booking_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN TO_DATE(booking_date, 'DD/MM/YYYY')
+          END) AS min_booking_date,
+          MAX(CASE
+            WHEN booking_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN booking_date::date
+            WHEN booking_date ~ '^\\d{1,2}/\\d{1,2}/\\d{4}$' THEN TO_DATE(booking_date, 'DD/MM/YYYY')
+          END) AS max_booking_date
         FROM (
-          ${RAYNA_TABLES.map(t => `
-            SELECT ${needsTravelDate ? 'travel_date AS td,' : "'x' AS td,"} ${needsBookingDate ? 'booking_date AS bd' : "'x' AS bd"}
-            FROM ${t} WHERE unified_id = uc.id AND is_cancel <> '1'
-          `).join(' UNION ALL ')}
+          ${RAYNA_TABLES.map(t =>
+            `SELECT unified_id, travel_date, booking_date FROM ${t} WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
+          ).join(' UNION ALL ')}
         ) sub
-      ) booking_agg ON true
-    ` : '';
+        GROUP BY unified_id
+      )`);
+    }
 
+    const cteSql = ctes.length > 0 ? `WITH ${ctes.join(',\n')}` : '';
+    const revenueJoin = needsRevenueJoin ? `LEFT JOIN rev_agg ON rev_agg.unified_id = uc.id` : '';
+    const dateJoin = needsDateJoin ? `LEFT JOIN booking_agg ON booking_agg.unified_id = uc.id` : '';
     const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 
     const sql = `
+      ${cteSql}
       SELECT ${selectCols}
       FROM unified_contacts uc
       ${revenueJoin}

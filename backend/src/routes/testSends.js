@@ -313,6 +313,22 @@ router.get('/schedule/list', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Schedule summary — returns only counts (no emails array)
+router.get('/schedule/summary', async (_req, res, next) => {
+  try {
+    const { listSchedules } = await import('../services/TestSendScheduler.js');
+    const list = await listSchedules();
+    const running = list.filter(s => s.is_running).length;
+    const last = list.find(s => s.last_sent_at);
+    res.json({ data: {
+      running,
+      total: list.length,
+      lastSentDay: last?.last_sent_day ?? null,
+      lastSentAt:  last?.last_sent_at  ?? null,
+    }});
+  } catch (err) { next(err); }
+});
+
 // Create + start a new schedule
 router.post('/schedule/start', async (req, res, next) => {
   try {

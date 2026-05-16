@@ -250,13 +250,13 @@ export default class UnifiedContactService {
       ${btClause}
     `, btParam);
 
-    // Compute total revenue from rayna tables
+    // Compute total revenue and total bookings from rayna tables
     const revenueSQL = RAYNA_TABLES.map(t =>
-      `SELECT COALESCE(SUM(selling_price), 0) AS rev FROM ${t} WHERE ${cancelFilter(t)}`
+      `SELECT COALESCE(SUM(selling_price), 0) AS rev, COUNT(*)::int AS cnt FROM ${t} WHERE ${cancelFilter(t)}`
     ).join(' UNION ALL ');
-    const { rows: revRows } = await pool.query(`SELECT SUM(rev)::numeric AS total_revenue FROM (${revenueSQL}) t`);
+    const { rows: revRows } = await pool.query(`SELECT SUM(rev)::numeric AS total_revenue, SUM(cnt)::int AS total_bookings FROM (${revenueSQL}) t`);
 
-    return { ...rows[0], total_revenue: revRows[0].total_revenue || 0 };
+    return { ...rows[0], total_revenue: revRows[0].total_revenue || 0, total_bookings: revRows[0].total_bookings || 0 };
   }
 
   /**
