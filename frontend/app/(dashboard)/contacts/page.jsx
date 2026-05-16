@@ -98,9 +98,7 @@ export default function UnifiedContacts() {
 
   const kpis = [
     { label: 'Total Contacts', value: formatNum(stats?.total_contacts), icon: Users, color: 'var(--brand-primary)' },
-    { label: 'With Chats', value: formatNum(stats?.with_chats), icon: MessageSquare, color: '#25D366' },
-    { label: 'With Bookings', value: formatNum(stats?.with_travel), icon: Map, color: 'var(--green)' },
-    { label: 'Multi-Source', value: formatNum(stats?.multi_source), icon: Layers, color: 'var(--purple)' },
+    { label: 'Total Bookings', value: formatNum(stats?.total_bookings), icon: Map, color: 'var(--green)' },
     { label: 'Total Revenue', value: formatAED(stats?.total_revenue), icon: DollarSign, color: 'var(--yellow)' },
   ];
 
@@ -265,7 +263,7 @@ export default function UnifiedContacts() {
                   <td>{c.product_tier ? <span className={`badge ${c.product_tier === 'LUXURY' ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: 9 }}>{c.product_tier}</span> : '\u2014'}</td>
                   <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}</span> : '\u2014'}</td>
                   <td>{totalBookings > 0 ? <span className="badge badge-blue">{totalBookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
-                  <td style={{ fontSize: 12, fontWeight: 500 }}>{parseFloat(c.total_booking_revenue) > 0 ? formatAED(c.total_booking_revenue) : <span style={{ color: 'var(--text-tertiary)' }}>\u2014</span>}</td>
+                  <td style={{ fontSize: 12, fontWeight: 500 }}>{formatAED(c.total_booking_revenue)}</td>
                   <td><button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.id || c.unified_id); }}><Eye size={14} /></button></td>
                 </tr>
                 );

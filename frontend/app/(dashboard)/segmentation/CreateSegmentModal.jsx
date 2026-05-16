@@ -24,6 +24,7 @@ const FIELD_CONFIG = {
     labels: { LOCAL: 'Local', INTERNATIONAL: 'International' },
     defaultOperator: 'in',
   },
+
   contact_type: {
     label: 'Contact Type', type: 'single-select',
     options: ['B2B', 'B2C'],
@@ -53,8 +54,8 @@ const FIELD_CONFIG = {
   },
   source: {
     label: 'Source', type: 'single-select',
-    options: ['tours', 'hotels', 'visas', 'flights', 'packages', 'others'],
-    labels: { tours: 'Tours', hotels: 'Hotels', visas: 'Visas', flights: 'Flights', packages: 'Packages', others: 'Others' },
+    options: ['tours', 'hotels', 'visas', 'flights', 'packages', 'others', 'contacts', 'rayna', 'chat', 'gtm', 'ga4'],
+    labels: { tours: 'Tours', hotels: 'Hotels', visas: 'Visas', flights: 'Flights', packages: 'Packages', others: 'Others', contacts: 'phpAdmin', rayna: 'Rayna (Billing)', chat: 'Chat (WhatsApp)', gtm: 'GTM', ga4: 'GA4' },
     defaultOperator: 'contains',
   },
   travel_date: {
@@ -91,9 +92,21 @@ function ConditionValueInput({ fieldKey, condition, onChange }) {
   if (!cfg) return null;
 
   switch (cfg.type) {
-    case 'multi-select':
+    case 'multi-select': {
+      const allSelected = !Array.isArray(condition.value) || condition.value.length === 0;
       return (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button type="button"
+            onClick={() => onChange({ ...condition, value: [] })}
+            style={{
+              padding: '4px 10px', fontSize: 12, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+              border: `1px solid ${allSelected ? 'var(--primary)' : 'var(--border)'}`,
+              background: allSelected ? 'var(--primary)' : 'var(--background)',
+              color: allSelected ? 'var(--primary-foreground)' : 'var(--foreground)',
+              fontWeight: allSelected ? 600 : 400, transition: 'all 0.15s',
+            }}>
+            All
+          </button>
           {cfg.options.map(opt => {
             const selected = Array.isArray(condition.value) && condition.value.includes(opt);
             return (
@@ -101,7 +114,7 @@ function ConditionValueInput({ fieldKey, condition, onChange }) {
                 onClick={() => {
                   const current = Array.isArray(condition.value) ? condition.value : [];
                   const next = selected ? current.filter(v => v !== opt) : [...current, opt];
-                  onChange({ ...condition, value: next.length ? next : [] });
+                  onChange({ ...condition, value: next });
                 }}
                 style={{
                   padding: '4px 10px', fontSize: 12, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
@@ -116,6 +129,7 @@ function ConditionValueInput({ fieldKey, condition, onChange }) {
           })}
         </div>
       );
+    }
 
     case 'single-select':
       return (
@@ -176,7 +190,9 @@ function ConditionValueInput({ fieldKey, condition, onChange }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <select value={opVal} onChange={e => {
             const op = e.target.value;
-            const val = op === 'between' ? [condition.value?.[0] || '', condition.value?.[1] || ''] : (condition.value?.[0] || condition.value || '');
+            const val = op === 'between'
+              ? [condition.value?.[0] || '', condition.value?.[1] || '']
+              : (Array.isArray(condition.value) ? (condition.value?.[0] || '') : (condition.value || ''));
             onChange({ ...condition, operator: op, value: val });
           }} style={{ ...selectStyle, maxWidth: 120 }}>
             <option value="gte">Min (≥)</option>
@@ -213,7 +229,7 @@ function isConditionValid(cond) {
   if (!cfg) return false;
 
   switch (cfg.type) {
-    case 'multi-select': return Array.isArray(cond.value) && cond.value.length > 0;
+    case 'multi-select': return Array.isArray(cond.value); // empty = "All" (no filter for this field)
     case 'single-select': return !!cond.value;
     case 'boolean': return cond.value === true || cond.value === false;
     case 'text': return typeof cond.value === 'string' && cond.value.trim().length > 0;

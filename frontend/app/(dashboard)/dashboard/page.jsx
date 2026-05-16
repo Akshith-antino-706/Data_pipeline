@@ -36,21 +36,12 @@ export default function Dashboard() {
   // ── email schedule summary ─────────────────────────────────────────
   const [schedSummary, setSchedSummary] = useState({ running: 0, total: 0, lastSentDay: null, lastSentAt: null });
   useEffect(() => {
-    fetch(`${API_BASE}/api/v3/test-sends/schedule/list`)
+    fetch(`${API_BASE}/api/v3/test-sends/schedule/summary`)
       .then(r => r.json())
-      .then(d => {
-        const list = Array.isArray(d?.data) ? d.data : [];
-        const running = list.filter(s => s.is_running);
-        const last = list.find(s => s.last_sent_at);
-        setSchedSummary({
-          running:     running.length,
-          total:       list.length,
-          lastSentDay: last?.last_sent_day ?? null,
-          lastSentAt:  last?.last_sent_at  ?? null,
-        });
-      })
+      .then(d => { if (d?.data) setSchedSummary(d.data); })
       .catch(() => {});
   }, []);
+
 
   // const [dateFrom, setDateFrom] = useState(() => {
   //   const d = new Date(); d.setDate(d.getDate() - 30);
@@ -245,6 +236,7 @@ export default function Dashboard() {
         </Link>
       </motion.div>
 
+
       {/* Email Schedule Status */}
       <motion.div variants={fadeInUp}>
         <div className="card mb-24">
@@ -265,9 +257,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div style={{ textAlign: 'center', padding: '14px 8px' }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {schedSummary.total}
-              </div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)' }}>{schedSummary.total}</div>
               <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Total Schedules</div>
             </div>
             <div style={{ textAlign: 'center', padding: '14px 8px' }}>
