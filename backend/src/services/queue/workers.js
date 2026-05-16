@@ -297,6 +297,35 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
        WHERE entry_id = $1`,
       [d.entryId]
     );
+    // Last node finished — check if the whole journey is now done
+    await _checkJourneyCompletion(d.journeyId);
+  }
+}
+
+async function _checkJourneyCompletion(journeyId) {
+  try {
+    const { rows: [r] } = await db.query(
+      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+      [journeyId]
+    );
+    if (parseInt(r.cnt) > 0) return; // still active entries
+
+    const { rows: [total] } = await db.query(
+      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1`,
+      [journeyId]
+    );
+    if (parseInt(total.cnt) === 0) return; // no entries at all — journey not started yet
+
+    const { rowCount } = await db.query(
+      `UPDATE journey_flows SET status = 'completed', updated_at = NOW()
+       WHERE journey_id = $1 AND status = 'active'`,
+      [journeyId]
+    );
+    if (rowCount > 0) {
+      console.log(`[Worker] Journey ${journeyId} auto-completed — all entries done.`);
+    }
+  } catch (err) {
+    console.error(`[Worker] Journey completion check failed for ${journeyId}: ${err.message}`);
   }
 }
 

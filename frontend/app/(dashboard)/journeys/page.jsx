@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -89,6 +90,10 @@ const getJourneyChannels = (nodes) => {
 // ══════════════════════════════════════════════════════════════════
 export default function Journeys() {
   const { businessType } = useBusinessType();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
   // ── State ─────────────────────────────────────────────────────
   const [journeys, setJourneys] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -139,6 +144,9 @@ export default function Journeys() {
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
 
+  // Tracks the real live node (most entries are currently on) — set on journey open/start/process
+  const [liveNodeId, setLiveNodeId] = useState(null);
+
   // ── Simulation (test mode) ────────────────────────────────────
   const [simActive, setSimActive] = useState(false);
   const [simNodeIndex, setSimNodeIndex] = useState(-1);
@@ -148,6 +156,22 @@ export default function Journeys() {
   const [simWaitRemaining, setSimWaitRemaining] = useState(0); // countdown secs for active wait node
   const simNodesRef = useRef([]);
   const simSegmentCountRef = useRef(0); // actual segment customer count for this journey
+  const selectedRef = useRef(selected); // always-fresh selected journey id for async callbacks
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  // Auto-poll journey detail every 30s when active — picks up node_statuses + journey completion
+  useEffect(() => {
+    if (detail?.status !== 'active') return;
+    const t = setInterval(async () => {
+      const id = selectedRef.current;
+      if (!id) return;
+      try {
+        const d = await getJourney(id);
+        setDetail(d.data);
+      } catch { /* silent */ }
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
   const simTimeoutRef = useRef(null);   // drives the advance between nodes
   const simCountdownRef = useRef(null); // drives the 1-sec wait countdown display
   const simSendPollRef = useRef(null);  // polls DB every 2s for live sent/failed counts
@@ -162,6 +186,32 @@ export default function Journeys() {
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
 
+  // ── Dubai live clock (for scheduled-start input) ─────────────
+  const [dubaiClock, setDubaiClock] = useState('');
+  useEffect(() => {
+    const tick = () => {
+      const s = new Date().toLocaleString('en-GB', {
+        timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        day: '2-digit', month: 'short', year: 'numeric',
+      });
+      setDubaiClock(s);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Returns current Dubai time as "YYYY-MM-DDTHH:mm" for datetime-local min
+  const dubaiNowForInput = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(now);
+    const get = (t) => parts.find(p => p.type === t)?.value || '00';
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+  };
+
   // ── Scheduled-start countdown ────────────────────────────────
   const [schedCountdown, setSchedCountdown] = useState(null); // null | { days, hours, mins, secs }
   const schedCountdownRef = useRef(null);
@@ -171,9 +221,30 @@ export default function Journeys() {
     const iso = detail?.scheduled_start_at;
     if (!iso || detail?.status !== 'draft') { setSchedCountdown(null); return; }
     const target = new Date(iso);
+
+    const fireAutoStart = () => {
+      const id = selectedRef.current;
+      if (!id) return;
+      setStarting(true);
+      startJourney(id)
+        .then(async (res) => {
+          hotToast.success(`Journey started! Enrolled ${res.data?.enrolled || 0} customers`);
+          const d = await getJourney(id);
+          setDetail(d.data);
+          loadData();
+        })
+        .catch(err => hotToast.error(err.message || 'Auto-start failed'))
+        .finally(() => setStarting(false));
+    };
+
     const tick = () => {
       const diff = target - Date.now();
-      if (diff <= 0) { clearInterval(schedCountdownRef.current); setSchedCountdown(null); return; }
+      if (diff <= 0) {
+        clearInterval(schedCountdownRef.current);
+        setSchedCountdown(null);
+        fireAutoStart();
+        return;
+      }
       const total = Math.floor(diff / 1000);
       setSchedCountdown({
         days:  Math.floor(total / 86400),
@@ -185,7 +256,7 @@ export default function Journeys() {
     tick();
     schedCountdownRef.current = setInterval(tick, 1000);
     return () => clearInterval(schedCountdownRef.current);
-  }, [detail?.scheduled_start_at, detail?.status]);
+  }, [detail?.scheduled_start_at, detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Bulk test state ───────────────────────────────────────────
   const [bulkTestModal, setBulkTestModal] = useState(null); // { node } | null
@@ -216,6 +287,12 @@ export default function Journeys() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Restore selected journey from URL on page load / refresh
+  useEffect(() => {
+    const idFromUrl = searchParams.get('id');
+    if (idFromUrl && !selected) openJourney(parseInt(idFromUrl));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Simulation engine — advance only after each node's action completes ──
   useEffect(() => {
@@ -353,8 +430,25 @@ export default function Journeys() {
   }, []);
 
   // ── Journey Actions ───────────────────────────────────────────
+  // Fetch active entries and find which node most entries are currently on
+  const refreshLiveNode = useCallback(async (id, journeyNodes) => {
+    try {
+      const res = await getJourneyEntries(id, { status: 'active', limit: 200 });
+      const entries = res.data || [];
+      if (entries.length === 0) { setLiveNodeId(null); return; }
+      // Tally current_node_id occurrences
+      const tally = {};
+      entries.forEach(e => { if (e.current_node_id) tally[e.current_node_id] = (tally[e.current_node_id] || 0) + 1; });
+      // Pick node with highest count; break ties by node order in journey
+      const nodeOrder = (journeyNodes || []).reduce((m, n, i) => { m[n.id] = i; return m; }, {});
+      const winner = Object.entries(tally).sort((a, b) => b[1] - a[1] || (nodeOrder[a[0]] ?? 999) - (nodeOrder[b[0]] ?? 999))[0];
+      setLiveNodeId(winner ? winner[0] : null);
+    } catch { setLiveNodeId(null); }
+  }, []);
+
   const openJourney = async (id) => {
     setSelected(id);
+    router.replace(`${pathname}?id=${id}`, { scroll: false });
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
@@ -362,6 +456,7 @@ export default function Journeys() {
     setActiveTab('flow');
     setDetailLoading(true);
     setExpandedNode(null);
+    setLiveNodeId(null);
     try {
       const [d, a, cd] = await Promise.all([
         getJourney(id),
@@ -372,6 +467,8 @@ export default function Journeys() {
       setAnalytics(a.data);
       setCampaignData(cd.data);
       loadTemplates(); // Load templates for preview buttons
+      // Restore live node indicator if journey is active
+      if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
     } catch (err) { showToast('Failed to load journey', 'error'); }
     setDetailLoading(false);
   };
@@ -458,11 +555,17 @@ export default function Journeys() {
     setSegmentsLoading(false);
   };
 
-  // Load segments whenever the create modal opens
-  useEffect(() => { if (showCreate) loadSegments(); }, [showCreate]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Load segments + pre-fill date with current Dubai time whenever the create modal opens
+  useEffect(() => {
+    if (showCreate) {
+      loadSegments();
+      setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput() }));
+    }
+  }, [showCreate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async () => {
     if (!createForm.name.trim()) return showToast('Journey name is required', 'error');
+    if (!createForm.segmentId) return showToast('Segment is required', 'error');
     setShowCreate(false);
     try {
       const trigger = {
@@ -525,6 +628,7 @@ export default function Journeys() {
       showToast(`Processed: ${res.data?.processed || 0} entries advanced`, 'success');
       const d = await getJourney(selected);
       setDetail(d.data);
+      if (d.data?.status === 'active') refreshLiveNode(selected, d.data?.nodes || []);
     } catch (err) { showToast(err.message, 'error'); }
     setProcessing(false);
   };
@@ -580,6 +684,7 @@ export default function Journeys() {
       showToast('Journey deleted', 'success');
       setSelected(null);
       setDetail(null);
+      router.replace(pathname, { scroll: false });
       await loadData();
     } catch (err) { showToast(err.message, 'error'); }
   };
@@ -618,6 +723,11 @@ export default function Journeys() {
       nodeForm.channel === 'email'     ? (nodeForm.emailTemplateId     || null) :
       nodeForm.channel === 'whatsapp'  ? (nodeForm.whatsappTemplateId  || null) :
       nodeForm.channel === 'sms'       ? (nodeForm.smsTemplateId       || null) : null;
+
+    // Validation
+    if (nodeForm.type === 'action' && !resolvedTemplateId) {
+      return showToast(`Email template is required for action nodes`, 'error');
+    }
     const newNode = {
       id: newId,
       type: nodeForm.type,
@@ -826,7 +936,7 @@ export default function Journeys() {
         `}</style>
         {/* ── Back + Header ─────────────────────────────────────── */}
         <motion.div variants={fadeInUp}>
-        <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); }}>
+        <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); router.replace(pathname, { scroll: false }); }}>
           <ArrowLeft size={14} /> All Journeys
         </button>
 
@@ -1165,7 +1275,15 @@ export default function Journeys() {
                       const hasSent = nodeStats.action_sent > 0;
                       // Draft → all nodes grey. Any started status → all nodes coloured & clickable.
                       const isNodeActive = simActive ? i <= simNodeIndex : isJourneyStarted;
-                      const isCurrentSimNode = simActive && i === simNodeIndex;
+
+                      // Node lifecycle status — sourced from backend node_statuses (persists across refresh)
+                      const backendStatus = detail?.node_statuses?.[node.id]; // 'pending'|'running'|'completed'
+                      const nodeLifecycle = isJourneyStarted && detail?.status !== 'draft'
+                        ? (backendStatus || 'pending').toUpperCase()
+                        : null;
+
+                      // Highlight: sim drives it while sim is running; otherwise use backend node_statuses
+                      const isCurrentSimNode = simActive ? i === simNodeIndex : (backendStatus === 'running');
                       const color = isNodeActive
                         ? (NODE_COLORS[node.type] || 'var(--text-tertiary)')
                         : '#9ca3af';
@@ -1347,16 +1465,19 @@ export default function Journeys() {
                                   <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color, lineHeight: 1 }}>
                                     {NODE_LABELS[node.type] || node.type}
                                   </span>
-                                  {isCurrentSimNode && (
-                                    <span style={{
-                                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                                      padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800,
-                                      background: color, color: '#fff', letterSpacing: '0.8px', textTransform: 'uppercase',
-                                    }}>
-                                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#fff', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
-                                      RUNNING
-                                    </span>
-                                  )}
+                                  {nodeLifecycle && (() => {
+                                    const lcConfig = {
+                                      PENDING:   { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', dot: null },
+                                      RUNNING:   { bg: color + '20',             color,            dot: true  },
+                                      COMPLETED: { bg: 'rgba(34,197,94,0.12)',   color: '#22c55e', dot: null  },
+                                    }[nodeLifecycle];
+                                    return (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: lcConfig.bg, color: lcConfig.color, letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                                        {lcConfig.dot && <span style={{ width: 5, height: 5, borderRadius: '50%', background: lcConfig.color, display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />}
+                                        {nodeLifecycle === 'COMPLETED' && '✓ '}{nodeLifecycle}
+                                      </span>
+                                    );
+                                  })()}
                                   {(() => {
                                     // Rest-pair duplicate for WhatsApp nodes: override the channel chip so
                                     // the Rest column visually shows Email/SMS instead of WhatsApp.
@@ -2193,9 +2314,10 @@ export default function Journeys() {
                     {(nodeForm.channel === 'email' || (nodeForm.channel === 'whatsapp' && nodeForm.restChannel === 'email')) && (
                       <div>
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
-                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}
+                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}{nodeForm.channel === 'email' && <span style={{ color: 'var(--red)', marginLeft: 3 }}>*</span>}
                         </label>
                         <select className="form-input"
+                          style={{ borderColor: nodeForm.channel === 'email' && !nodeForm.emailTemplateId ? 'var(--red)' : undefined }}
                           value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
                           onChange={e => {
                             const val = e.target.value ? parseInt(e.target.value) : null;
@@ -3427,7 +3549,7 @@ export default function Journeys() {
               {/* Segment */}
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment</label>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
                   {segmentsLoading && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)' }}>
                       <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Loading…
@@ -3437,8 +3559,9 @@ export default function Journeys() {
                 <select className="form-input"
                   value={createForm.segmentId}
                   disabled={segmentsLoading}
+                  style={{ borderColor: !createForm.segmentId ? 'var(--red)' : undefined }}
                   onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
-                  <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment (optional) —'}</option>
+                  <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment —'}</option>
                   {allSegments.filter(s => s.group === 'standard').length > 0 && (
                     <optgroup label="Standard Segments">
                       {allSegments.filter(s => s.group === 'standard').map((s, i) => (
@@ -3484,40 +3607,29 @@ export default function Journeys() {
                 </button>
               </div>
 
-              {/* Scheduled Start Date — Dubai time (UTC+4) */}
+              {/* Scheduled Start Date — Dubai time */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>
-                  Start Date &amp; Time <span style={{ color: 'var(--orange)', fontWeight: 800 }}>Dubai (UTC+4)</span>
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    type="datetime-local"
-                    className="form-input"
-                    value={createForm.scheduledStartAt}
-                    min={new Date(Date.now() + 4 * 3600000).toISOString().slice(0, 16)}
-                    onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
-                    style={{ fontSize: 13, paddingRight: 80 }}
-                  />
-                  <span style={{
-                    position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                    fontSize: 10, fontWeight: 700, color: 'var(--orange)',
-                    background: 'var(--orange-dim)', padding: '2px 7px', borderRadius: 6,
-                    pointerEvents: 'none',
-                  }}>Dubai</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    Start Date &amp; Time
+                  </label>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--orange)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
+                    Dubai now: {dubaiClock}
+                  </span>
                 </div>
+                <input
+                  type="datetime-local"
+                  className="form-input"
+                  value={createForm.scheduledStartAt}
+                  min={dubaiNowForInput()}
+                  onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
+                  style={{ fontSize: 13 }}
+                />
                 <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5, lineHeight: 1.5 }}>
-                  {createForm.scheduledStartAt ? (() => {
-                    const dubaiIso = new Date(createForm.scheduledStartAt + ':00+04:00');
-                    return (
-                      <span>
-                        ✓ Journey auto-starts at{' '}
-                        <strong style={{ color: 'var(--orange)' }}>
-                          {dubaiIso.toLocaleString('en-AE', { timeZone: 'Asia/Dubai', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
-                        </strong>
-                        {' '}Dubai time
-                      </span>
-                    );
-                  })() : 'Leave empty to start immediately when you click "Start Journey"'}
+                  {createForm.scheduledStartAt
+                    ? '✓ Journey will auto-start at this Dubai time'
+                    : 'Leave empty to start immediately when you click "Start Journey"'}
                 </div>
               </div>
 

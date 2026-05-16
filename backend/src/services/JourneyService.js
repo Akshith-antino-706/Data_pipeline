@@ -1,12 +1,96 @@
 import db from '../config/database.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import EmailRenderer from './EmailRenderer.js';
 import { EmailChannel } from './channels/EmailChannel.js';
-import { SMSChannel } from './channels/SMSChannel.js';
-import { WhatsAppChannel } from './channels/WhatsAppChannel.js';
+import { ChatheadEmailChannel } from './channels/ChatheadEmailChannel.js';
+
 import GupshupService from './GupshupService.js';
 import PopularityService from './PopularityService.js';
 import { enqueueBatch } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+const MAIL_TEMPLATES_DIR = path.resolve(__dirname, '..', '..', '..', 'mail_templates');
+
+// Pick ChatheadEmailChannel if configured (sends from explore@promotions.raynatours.com),
+// otherwise fall back to SMTP EmailChannel.
+function getEmailChannel() {
+  return ChatheadEmailChannel.isConfigured() ? ChatheadEmailChannel : EmailChannel;
+}
+
+// Render the real Day HTML for a contact using the same Day renderers testSends uses.
+// Uses fallback ranking (no Claude API call) to keep sends fast.
+async function renderDayHtml(templateId, contactId) {
+  const id = parseInt(templateId);
+  const tplFile = (name) => fs.readFileSync(path.join(MAIL_TEMPLATES_DIR, name), 'utf8');
+
+  if (id === 1) {
+    const { _internals } = await import('./Day1WelcomeRankingService.js');
+    const { buildDay1WelcomeData }            = await import('./Day1WelcomeDataService.js');
+    const { renderDay1Welcome }               = await import('./Day1WelcomeRenderer.js');
+    const { rows: visaRows } = await db.query("SELECT key, name FROM visa_products LIMIT 20").catch(() => ({ rows: [] }));
+    const visaMap  = Object.fromEntries((visaRows || []).map(r => [r.key, r]));
+    const ranking  = _internals.buildFallbackRanking({
+      holidayMap:  _internals.HOLIDAY_DESTINATIONS  || {},
+      cruiseMap:   _internals.CRUISE_DESTINATIONS   || {},
+      activityMap: _internals.ACTIVITY_DESTINATIONS || {},
+      visaMap,
+    });
+    const data = await buildDay1WelcomeData({ contactId, ranking });
+    return { html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' };
+  }
+  if (id === 2) {
+    const { _internals } = await import('./Day2CruiseRankingService.js');
+    const { buildDay2CruiseData }             = await import('./Day2CruiseDataService.js');
+    const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
+    const ranking = _internals.buildFallbackRanking();
+    const data    = await buildDay2CruiseData({ contactId, ranking });
+    return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
+  }
+  if (id === 3) {
+    const { _internals } = await import('./VisaRankingService.js');
+    const { buildDay3VisaData }             = await import('./Day3VisaDataService.js');
+    const { renderDay3Visa }                = await import('./Day3VisaRenderer.js');
+    const ranking = _internals.buildFallbackRanking();
+    if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
+    const data = await buildDay3VisaData({ contactId, ranking });
+    return { html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' };
+  }
+  if (id === 4) {
+    const { _internals } = await import('./Day4HolidaysRankingService.js');
+    const { buildDay4HolidaysData } = await import('./Day4HolidaysDataService.js');
+    const { renderDay4Holidays }    = await import('./Day4HolidaysRenderer.js');
+    const ranking = _internals.buildFallbackRanking();
+    const data    = await buildDay4HolidaysData({ contactId, ranking });
+    return { html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' };
+  }
+  if (id === 5) {
+    const { _internals } = await import('./Day5ActivitiesRankingService.js');
+    const { buildDay5ActivitiesData } = await import('./Day5ActivitiesDataService.js');
+    const { renderDay5Activities }    = await import('./Day5ActivitiesRenderer.js');
+    const ranking = _internals.buildFallbackRanking();
+    const data    = await buildDay5ActivitiesData({ contactId, ranking });
+    return { html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' };
+  }
+  if (id === 6) {
+    const { _internals } = await import('./Day6DestinationRankingService.js');
+    const { buildDay6DestinationData } = await import('./Day6DestinationDataService.js');
+    const { renderDay6Destination }    = await import('./Day6DestinationRenderer.js');
+    const ranking = _internals.buildFallbackRanking ? _internals.buildFallbackRanking() : {};
+    const data    = await buildDay6DestinationData({ contactId, ranking });
+    return { html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' };
+  }
+  if (id === 7) {
+    const { buildDay7AbandonedCartData } = await import('./Day7AbandonedCartDataService.js');
+    const { renderDay7AbandonedCart }    = await import('./Day7AbandonedCartRenderer.js');
+    const data = await buildDay7AbandonedCartData({ contactId });
+    return { html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' };
+  }
+  return null; // unknown template — fall back to EmailRenderer
+}
 
 // Test email guard — used by processJourney to force email-only for test
 // users (skip WhatsApp/SMS). Keep empty; test sends now use a separate
@@ -109,6 +193,45 @@ class JourneyService {
       ORDER BY node_id
     `, [journeyId]);
 
+    // Compute per-node lifecycle status from live journey_entries
+    // pending  → no entries have reached this node yet
+    // running  → ≥1 active entry is currently sitting on this node
+    // completed → entries have passed through this node and none are active here
+    let node_statuses = {};
+    const nodes = journey.nodes || [];
+    if (journey.status === 'draft') {
+      nodes.forEach(n => { node_statuses[n.id] = 'pending'; });
+    } else if (journey.status === 'completed') {
+      nodes.forEach(n => { node_statuses[n.id] = 'completed'; });
+    } else {
+      // active / paused — derive from entries
+      const { rows: activeOnNode } = await db.query(
+        `SELECT current_node_id, COUNT(*) AS cnt
+         FROM journey_entries WHERE journey_id = $1 AND status = 'active'
+         GROUP BY current_node_id`,
+        [journeyId]
+      );
+      const { rows: processedNodes } = await db.query(
+        `SELECT DISTINCT je.node_id
+         FROM journey_events je
+         JOIN journey_entries jen ON jen.entry_id = je.entry_id
+         WHERE jen.journey_id = $1
+           AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
+        [journeyId]
+      );
+      const activeSet = new Set(activeOnNode.map(r => r.current_node_id));
+      const processedSet = new Set(processedNodes.map(r => r.node_id));
+      // Lowest index of any running node — everything before it that was processed = completed
+      const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
+      const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
+      nodes.forEach((n, i) => {
+        if (activeSet.has(n.id)) node_statuses[n.id] = 'running';
+        else if (i < minRunning && processedSet.has(n.id)) node_statuses[n.id] = 'completed';
+        else if (processedSet.has(n.id)) node_statuses[n.id] = 'completed'; // processed and no active here
+        else node_statuses[n.id] = 'pending';
+      });
+    }
+
     // Per-node triggered (unique entries) and exited (converted at that node) counts
     const { rows: nodeEntryCounts } = await db.query(`
       SELECT node_id,
@@ -120,7 +243,7 @@ class JourneyService {
       GROUP BY node_id
     `, [journeyId]);
 
-    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts };
+    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, node_statuses };
   }
 
   static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt }) {
@@ -211,6 +334,8 @@ class JourneyService {
   }
 
   static async delete(journeyId) {
+    // Nullify non-cascading FK on campaigns before deleting the journey
+    await db.query('UPDATE campaigns SET journey_id = NULL WHERE journey_id = $1', [journeyId]);
     await db.query('DELETE FROM journey_flows WHERE journey_id = $1', [journeyId]);
     return { deleted: true };
   }
@@ -381,13 +506,20 @@ class JourneyService {
     const utmLink = user ? `${base}&rid=${user.unified_id}` : base;
 
     if (channel === 'email') {
-      const rendered = await EmailRenderer.render(parseInt(templateId), user?.unified_id || null, { utm_link: utmLink });
-      const result = await EmailChannel.send({
-        to: overrideEmail,
-        subject: rendered.subject || `[TEST] ${node.data?.label || 'Journey node'}`,
-        html: rendered.html,
-        text: rendered.plainText,
-      });
+      // Try Day-specific renderer first (templates 1–7); fall back to generic EmailRenderer
+      let html, subject;
+      const dayRendered = await renderDayHtml(templateId, user?.unified_id || unifiedId).catch(() => null);
+      if (dayRendered?.html) {
+        html    = dayRendered.html;
+        subject = dayRendered.subject || node.data?.label || 'Rayna Tours';
+      } else {
+        const rendered = await EmailRenderer.render(parseInt(templateId), user?.unified_id || null, { utm_link: utmLink });
+        html    = rendered.html;
+        subject = rendered.subject || node.data?.label || 'Rayna Tours';
+      }
+
+      const EmailCh = getEmailChannel();
+      const result  = await EmailCh.send({ to: overrideEmail, subject, html });
       return { channel, recipient: overrideEmail, realEmail: user?.email || null, resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null, ...result };
     }
     throw new Error(`Unsupported channel '${channel}' for segment test`);
@@ -627,7 +759,7 @@ class JourneyService {
                    AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$')`);
     }
     if (channel === 'whatsapp' || channel === 'both') {
-      where.push(`(uc.phone IS NOT NULL AND uc.phone <> ''
+      where.push(`(uc.mobile IS NOT NULL AND uc.mobile <> ''
                    AND COALESCE(uc.wa_unsubscribed,'No') <> 'Yes'
                    AND COALESCE(uc.is_indian, false) = true)`);
     }
@@ -643,7 +775,7 @@ class JourneyService {
       // Match by canonical email — the 4 test users (Akshith / Anket / Vaibhav /
       // Alok) saved in /memory. unifiedIds override available for ad-hoc tests.
       if (unifiedIds && unifiedIds.length > 0) {
-        extra = `AND uc.unified_id = ANY($3::bigint[])`;
+        extra = `AND uc.id = ANY($3::bigint[])`;
         params.push(unifiedIds);
       } else {
         extra = `AND LOWER(uc.email) = ANY($3::text[])`;
@@ -657,12 +789,12 @@ class JourneyService {
 
     const sql = `
       INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
-      SELECT $1, uc.unified_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
+      SELECT $1, uc.id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
       FROM unified_contacts uc
       WHERE ${where.join(' AND ')}
         AND NOT EXISTS (
           SELECT 1 FROM journey_entries je
-          WHERE je.journey_id = $1 AND je.customer_id = uc.unified_id
+          WHERE je.journey_id = $1 AND je.customer_id = uc.id
         )
         ${extra}
       RETURNING entry_id`;
@@ -727,7 +859,7 @@ class JourneyService {
         INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
         SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
         FROM segment_customers sc
-        JOIN unified_contacts uc ON uc.unified_id = sc.customer_id
+        JOIN unified_contacts uc ON uc.id = sc.customer_id
         WHERE sc.segment_id = $3 AND sc.is_active = true
           ${audienceFilter}
           AND NOT EXISTS (SELECT 1 FROM journey_entries je WHERE je.journey_id = $1 AND je.customer_id = sc.customer_id)
@@ -780,12 +912,13 @@ class JourneyService {
 
     // Get all active entries joined with unified_contacts + current journey segment
     const { rows: entries } = await db.query(`
-      SELECT je.*, uc.name, uc.email, uc.phone, uc.phone_key, uc.booking_status,
+      SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
+        uc.booking_status,
         uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings,
         uc.segment_label AS current_segment, uc.is_indian,
         sd.segment_name AS journey_segment
       FROM journey_entries je
-      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      JOIN unified_contacts uc ON uc.id = je.customer_id
       LEFT JOIN segment_definitions sd ON sd.segment_id = $2
       WHERE je.journey_id = $1 AND je.status = 'active'
     `, [journeyId, journey.segment_id]);
@@ -1403,9 +1536,9 @@ class JourneyService {
       SELECT je.entry_id, je.customer_id, je.current_node_id, je.status,
              je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
              je.next_fire_at, je.track,
-             uc.name, uc.email, uc.phone, uc.booking_status
+             uc.name, uc.email, uc.mobile AS phone, uc.booking_status
       FROM journey_entries je
-      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      JOIN unified_contacts uc ON uc.id = je.customer_id
       WHERE ${where}
       ORDER BY je.entered_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
@@ -1555,10 +1688,10 @@ class JourneyService {
     const { rows } = await db.query(`
       SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id, je.status,
         je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
-        uc.name, uc.email, uc.phone, uc.company_name, uc.country,
+        uc.name, uc.email, uc.mobile AS phone, uc.company_name, uc.country,
         uc.booking_status, uc.segment_label
       FROM journey_entries je
-      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      JOIN unified_contacts uc ON uc.id = je.customer_id
       WHERE je.journey_id = $1
       ORDER BY je.entered_at DESC
       LIMIT 100
@@ -1715,13 +1848,13 @@ class JourneyService {
     const { rows: dueEntries } = await db.query(`
       SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id,
              je.entered_at, je.track, je.last_run_id,
-             uc.booking_status, uc.name, uc.email, uc.phone, uc.is_indian,
+             uc.booking_status, uc.name, uc.email, uc.mobile AS phone, uc.is_indian,
              uc.segment_label AS current_segment,
              jf.nodes, jf.edges, jf.segment_id, jf.exit_on_conversion,
              sd.segment_name AS journey_segment
       FROM journey_entries je
       JOIN journey_flows jf ON jf.journey_id = je.journey_id
-      JOIN unified_contacts uc ON uc.unified_id = je.customer_id
+      JOIN unified_contacts uc ON uc.id = je.customer_id
       LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
       WHERE je.status = 'active'
         AND je.next_fire_at IS NOT NULL
