@@ -494,6 +494,29 @@ cron.schedule('*/15 * * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey engine scheduled: every 15 min (Asia/Dubai)');
 
+// ── Journey Scheduler — auto-start draft journeys when scheduled_start_at arrives ──
+cron.schedule('* * * * *', async () => {
+  try {
+    const { rows: due } = await pool.query(
+      `SELECT journey_id, name FROM journey_flows
+       WHERE status = 'draft'
+         AND scheduled_start_at IS NOT NULL
+         AND scheduled_start_at <= NOW()`
+    );
+    for (const j of due) {
+      try {
+        await JourneyService.startJourney(j.journey_id);
+        console.log(`[Cron:Scheduler] Auto-started journey ${j.journey_id} "${j.name}"`);
+      } catch (err) {
+        console.error(`[Cron:Scheduler] Failed to start journey ${j.journey_id}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.error('[Cron:Scheduler] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Journey scheduler: every 1 min (auto-start scheduled journeys, Dubai TZ)');
+
 // ── BullMQ workers (optional in-process mode) ────────────────
 // In dev set WORKERS_INLINE=true to run journey send workers in this process.
 // In prod, run them separately: `node backend/scripts/start-workers.js`.

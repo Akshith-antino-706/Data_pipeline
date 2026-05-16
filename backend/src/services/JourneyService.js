@@ -6,6 +6,7 @@ import { WhatsAppChannel } from './channels/WhatsAppChannel.js';
 import GupshupService from './GupshupService.js';
 import PopularityService from './PopularityService.js';
 import { enqueueBatch } from './queue/index.js';
+import CustomSegmentService from './CustomSegmentService.js';
 
 // Test email guard — used by processJourney to force email-only for test
 // users (skip WhatsApp/SMS). Keep empty; test sends now use a separate
@@ -350,6 +351,160 @@ class JourneyService {
     };
   }
 
+  /**
+   * Send to ONE real customer but deliver to an override email (for test-mode).
+   * Renders the template with the real unified_id (full personalization) but
+   * routes the actual SMTP delivery to `overrideEmail`.
+   */
+  static async testSendNodeForUser(journeyId, nodeId, unifiedId, overrideEmail) {
+    const journey = await this.getById(journeyId);
+    if (!journey) throw new Error('Journey not found');
+    const node = (journey.nodes || []).find(n => n.id === nodeId);
+    if (!node) throw new Error(`Node ${nodeId} not found`);
+    if (node.type !== 'action') throw new Error('Only action nodes are sendable');
+
+    const channel = (node.data?.channel || '').toLowerCase();
+    const templateId = node.data?.templateId
+      || (channel === 'email'    ? node.data?.emailTemplateId    : null)
+      || (channel === 'whatsapp' ? node.data?.whatsappTemplateId : null)
+      || (channel === 'sms'      ? node.data?.smsTemplateId      : null);
+    if (!templateId) throw new Error(`Node ${nodeId} has no templateId`);
+
+    // Fetch real customer for personalization
+    const { rows: [user] } = await db.query(
+      'SELECT id AS unified_id, name, email FROM unified_contacts WHERE id = $1',
+      [String(unifiedId)]
+    );
+
+    const campaignSlug = String(journey.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const base = `https://www.raynatours.com/?utm_source=journey_test&utm_medium=${channel}&utm_campaign=${encodeURIComponent(campaignSlug)}&utm_content=${encodeURIComponent(nodeId)}`;
+    const utmLink = user ? `${base}&rid=${user.unified_id}` : base;
+
+    if (channel === 'email') {
+      const rendered = await EmailRenderer.render(parseInt(templateId), user?.unified_id || null, { utm_link: utmLink });
+      const result = await EmailChannel.send({
+        to: overrideEmail,
+        subject: rendered.subject || `[TEST] ${node.data?.label || 'Journey node'}`,
+        html: rendered.html,
+        text: rendered.plainText,
+      });
+      return { channel, recipient: overrideEmail, realEmail: user?.email || null, resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null, ...result };
+    }
+    throw new Error(`Unsupported channel '${channel}' for segment test`);
+  }
+
+  /**
+   * Send to all customers in the journey's segment, replacing each customer's
+   * real email with testEmail (e.g. rocky.86agency@gmail.com) so all test
+   * sends land in one inbox while templates still render with real customer data.
+   */
+  static async testSendNodeToSegment(journeyId, nodeId, testEmail = 'rocky.86agency@gmail.com', limit = 100) {
+    const { rows: [journey] } = await db.query(
+      'SELECT journey_id, name, segment_id, custom_segment_id, nodes FROM journey_flows WHERE journey_id = $1',
+      [journeyId]
+    );
+    if (!journey) throw new Error('Journey not found');
+
+    const n = Math.min(Math.max(parseInt(limit) || 100, 1), 50000);
+    let customers = [];
+
+    if (journey.custom_segment_id) {
+      const result = await CustomSegmentService.getCustomers(journey.custom_segment_id, { page: 1, limit: n });
+      customers = (result?.data || []).map(r => ({ unified_id: r.id }));
+    } else if (journey.segment_id) {
+      const { rows } = await db.query(
+        `SELECT sc.unified_id FROM segment_customers sc
+         WHERE sc.segment_id = $1 AND sc.is_active = true LIMIT $2`,
+        [journey.segment_id, n]
+      );
+      customers = rows;
+    } else {
+      const { rows } = await db.query(
+        `SELECT je.unified_id FROM journey_entries je WHERE je.journey_id = $1 LIMIT $2`,
+        [journeyId, n]
+      );
+      customers = rows;
+    }
+
+    if (customers.length === 0) throw new Error('No customers found in segment — enroll the segment first or check the journey has a segment attached');
+
+    // Find/create campaign record before sending so we can update it
+    const node = (journey.nodes || []).find(n => n.id === nodeId);
+    const channel = (node?.data?.channel || 'email').toLowerCase();
+    const templateId = node?.data?.templateId || node?.data?.emailTemplateId || node?.data?.whatsappTemplateId || node?.data?.smsTemplateId;
+    const segLabel = `journey:${journeyId}:${nodeId}`;
+
+    let campaignId;
+    const { rows: [existing] } = await db.query(
+      'SELECT id, sent_count, fail_count FROM campaigns WHERE journey_id = $1 AND journey_node_id = $2',
+      [journeyId, nodeId]
+    );
+    if (existing) {
+      campaignId = existing.id;
+      // Reset counts for this run (fresh test)
+      await db.query(
+        'UPDATE campaigns SET sent_count = 0, fail_count = 0, target_count = $1, started_at = NOW(), updated_at = NOW() WHERE id = $2',
+        [customers.length, campaignId]
+      );
+    } else {
+      const { rows: [created] } = await db.query(
+        `INSERT INTO campaigns (name, segment_label, channel, template_id, journey_id, journey_node_id, target_count, sent_count, fail_count, status, started_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,'running',NOW()) RETURNING id`,
+        [`${journey.name} – ${nodeId}`, segLabel, channel, templateId || null, journeyId, nodeId, customers.length]
+      );
+      campaignId = created.id;
+    }
+
+    const BATCH = 50;
+    let sent = 0, failed = 0;
+
+    for (let i = 0; i < customers.length; i += BATCH) {
+      const batch = customers.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(
+        batch.map(c => this.testSendNodeForUser(journeyId, nodeId, c.unified_id, testEmail))
+      );
+      settled.forEach(r => r.status === 'fulfilled' && r.value?.success ? sent++ : failed++);
+
+      // Persist running counts every batch so UI can reflect progress on reload
+      await db.query(
+        'UPDATE campaigns SET sent_count = $1, fail_count = $2, updated_at = NOW() WHERE id = $3',
+        [sent, failed, campaignId]
+      );
+    }
+
+    // Mark completed
+    await db.query(
+      'UPDATE campaigns SET completed_at = NOW(), updated_at = NOW() WHERE id = $1',
+      [campaignId]
+    );
+
+    return { total: customers.length, sent, failed, testEmail, baseEmail: testEmail, campaignId };
+  }
+
+  static async getNodeSendLog(journeyId, nodeId) {
+    const { rows: [camp] } = await db.query(
+      `SELECT id, name, sent_count, fail_count, target_count, started_at, completed_at, updated_at,
+              delivered_count, read_count, click_count, bounce_count
+       FROM campaigns WHERE journey_id = $1 AND journey_node_id = $2`,
+      [journeyId, nodeId]
+    );
+    if (!camp) return null;
+    return {
+      campaignId: camp.id,
+      name: camp.name,
+      total: parseInt(camp.target_count) || 0,
+      sent: parseInt(camp.sent_count) || 0,
+      failed: parseInt(camp.fail_count) || 0,
+      delivered: parseInt(camp.delivered_count) || 0,
+      read: parseInt(camp.read_count) || 0,
+      clicked: parseInt(camp.click_count) || 0,
+      bounced: parseInt(camp.bounce_count) || 0,
+      startedAt: camp.started_at,
+      completedAt: camp.completed_at,
+      updatedAt: camp.updated_at,
+    };
+  }
+
   // ── Auto-generate journey from strategy flow_steps ──────────
 
   static async generateFromStrategy(strategyId) {
@@ -540,17 +695,32 @@ class JourneyService {
     let rows;
 
     if (journey.custom_segment_id) {
-      // Custom segment — query custom_segment_contacts
-      ({ rows } = await db.query(`
-        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
-        SELECT $1, csc.unified_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
-        FROM custom_segment_contacts csc
-        JOIN unified_contacts uc ON uc.unified_id = csc.unified_id
-        WHERE csc.segment_id = $3
-          ${audienceFilter}
-          AND NOT EXISTS (SELECT 1 FROM journey_entries je WHERE je.journey_id = $1 AND je.customer_id = csc.unified_id)
-        RETURNING entry_id
-      `, [journeyId, firstNodeId, journey.custom_segment_id]));
+      // Custom segment — fetch via CustomSegmentService (queries unified_contacts directly)
+      const segResult = await CustomSegmentService.getCustomers(journey.custom_segment_id, { page: 1, limit: 50000 });
+      const segCustomers = segResult?.data || [];
+
+      // Apply audience filter and exclude already-enrolled customers
+      const { rows: alreadyEnrolled } = await db.query(
+        'SELECT customer_id FROM journey_entries WHERE journey_id = $1', [journeyId]
+      );
+      const enrolledSet = new Set(alreadyEnrolled.map(r => String(r.customer_id)));
+
+      const toInsert = segCustomers.filter(c => {
+        if (enrolledSet.has(String(c.id))) return false;
+        if (journey.audience === 'indian' && !c.is_indian) return false;
+        if (journey.audience === 'rest' && c.is_indian) return false;
+        return true;
+      });
+
+      rows = [];
+      for (const c of toInsert) {
+        const track = c.is_indian ? 'indian' : 'rest';
+        const { rows: inserted } = await db.query(
+          'INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING entry_id',
+          [journeyId, c.id, firstNodeId, track]
+        );
+        if (inserted.length) rows.push(inserted[0]);
+      }
     } else {
       // Standard segment — query segment_customers
       ({ rows } = await db.query(`
@@ -1261,11 +1431,10 @@ class JourneyService {
     // Get segment customer count for target — handle both standard and custom segments
     let targetCount = 0;
     if (journey[0].custom_segment_id) {
-      const { rows: [segCount] } = await db.query(
-        `SELECT COUNT(*) AS cnt FROM custom_segment_contacts WHERE segment_id = $1`,
-        [journey[0].custom_segment_id]
-      );
-      targetCount = parseInt(segCount?.cnt) || 0;
+      const seg = await CustomSegmentService.getById(journey[0].custom_segment_id);
+      if (seg) {
+        targetCount = await CustomSegmentService.getCountPreview(seg.conditions || []);
+      }
     } else if (journey[0].segment_id) {
       const { rows: [segCount] } = await db.query(
         `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
@@ -1274,21 +1443,21 @@ class JourneyService {
       targetCount = parseInt(segCount?.cnt) || 0;
     }
 
-    // Get campaign metrics for this segment
+    // Get campaign metrics — prefer direct journey_id match, fallback to segment_label
     const { rows: campaigns } = await db.query(`
       SELECT c.id, c.name, c.channel::text, c.status, c.template_id,
         c.sent_count, c.delivered_count, c.read_count, c.click_count,
         c.bounce_count, c.fail_count, c.conversion_count, c.revenue_total,
-        c.journey_node_id,
+        c.journey_node_id, c.target_count, c.started_at, c.completed_at,
         ct.body AS template_body, ct.name AS template_name,
         CASE WHEN c.sent_count > 0 THEN ROUND(c.delivered_count::numeric / c.sent_count * 100, 1) ELSE 0 END AS delivery_rate,
         CASE WHEN c.delivered_count > 0 THEN ROUND(c.read_count::numeric / c.delivered_count * 100, 1) ELSE 0 END AS open_rate,
         CASE WHEN c.delivered_count > 0 THEN ROUND(c.click_count::numeric / c.delivered_count * 100, 1) ELSE 0 END AS click_rate
       FROM campaigns c
       LEFT JOIN content_templates ct ON ct.id = c.template_id
-      WHERE c.segment_label = $1
+      WHERE c.journey_id = $2 OR c.segment_label = $1
       ORDER BY c.created_at ASC
-    `, [segmentLabel]);
+    `, [segmentLabel, journeyId]);
 
     // Aggregate totals
     const totals = {

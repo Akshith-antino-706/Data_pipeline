@@ -99,6 +99,61 @@ router.post('/:id/nodes/:nodeId/test-batch', async (req, res, next) => {
   }
 });
 
+// Bulk test-send — generates email+1, email+2 ... email+N (Gmail + trick)
+// so all land in the same inbox. Body: { email, count }
+router.post('/:id/nodes/:nodeId/bulk-test', async (req, res, next) => {
+  try {
+    const { email, count = 100 } = req.body;
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      return res.status(400).json({ error: 'Valid email required' });
+    }
+    const n = Math.min(Math.max(parseInt(count) || 100, 1), 5000);
+    const [local, domain] = email.trim().split('@');
+
+    // Generate local+test1@domain … local+testN@domain
+    const recipients = Array.from({ length: n }, (_, i) => `${local}+test${i + 1}@${domain}`);
+
+    // Send in parallel batches of 50 to avoid overwhelming SMTP
+    const BATCH = 50;
+    let sent = 0, failed = 0;
+    for (let i = 0; i < recipients.length; i += BATCH) {
+      const batch = recipients.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(
+        batch.map(r => JourneyService.testSendNode(parseInt(req.params.id), req.params.nodeId, r))
+      );
+      settled.forEach(r => r.status === 'fulfilled' && r.value?.success ? sent++ : failed++);
+    }
+
+    res.json({ data: { total: n, sent, failed, baseEmail: email.trim() } });
+  } catch (err) { next(err); }
+});
+
+// Segment test send — sends to real segment customers but overrides delivery email
+// to testEmail+testN@domain so all land in one inbox. Body: { testEmail, limit }
+router.post('/:id/nodes/:nodeId/segment-test', async (req, res, next) => {
+  try {
+    const { testEmail = 'rocky.86agency@gmail.com', limit = 100 } = req.body;
+    if (!testEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(testEmail.trim())) {
+      return res.status(400).json({ error: 'Valid testEmail required' });
+    }
+    const data = await JourneyService.testSendNodeToSegment(
+      parseInt(req.params.id),
+      req.params.nodeId,
+      testEmail.trim(),
+      parseInt(limit) || 100
+    );
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Get persisted send log for a specific action node (campaign stats)
+router.get('/:id/nodes/:nodeId/send-log', async (req, res, next) => {
+  try {
+    const data = await JourneyService.getNodeSendLog(parseInt(req.params.id), req.params.nodeId);
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 // Auto-generate journey from strategy
 router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
   try {
