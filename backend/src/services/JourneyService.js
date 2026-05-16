@@ -176,10 +176,13 @@ class JourneyService {
     const { rows: [entryStats] } = await db.query(`
       SELECT
         COUNT(*) AS total_entries,
+        COUNT(*) FILTER (WHERE status = 'snapshot') AS snapshot,
         COUNT(*) FILTER (WHERE status = 'active') AS active,
         COUNT(*) FILTER (WHERE status = 'completed') AS completed,
         COUNT(*) FILTER (WHERE status = 'converted') AS converted,
-        COUNT(*) FILTER (WHERE status = 'exited') AS exited
+        COUNT(*) FILTER (WHERE status = 'exited') AS exited,
+        COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'booked') AS exited_booked,
+        COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'unsubscribed') AS exited_unsubscribed
       FROM journey_entries WHERE journey_id = $1
     `, [journeyId]);
 
@@ -243,7 +246,30 @@ class JourneyService {
       GROUP BY node_id
     `, [journeyId]);
 
-    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, node_statuses };
+    // ── Per-node user stats (active, exited by reason, completed at each node) ──
+    const { rows: nodeUserStats } = await db.query(`
+      SELECT current_node_id, status, exit_reason, COUNT(*)::int AS cnt
+      FROM journey_entries WHERE journey_id = $1
+      GROUP BY current_node_id, status, exit_reason
+    `, [journeyId]);
+
+    const node_stats = {};
+    for (const row of nodeUserStats) {
+      const nid = row.current_node_id;
+      if (!node_stats[nid]) node_stats[nid] = { snapshot: 0, active: 0, exited_booked: 0, exited_unsubscribed: 0, completed: 0, total: 0 };
+      const s = node_stats[nid];
+      s.total += row.cnt;
+      if (row.status === 'snapshot') s.snapshot += row.cnt;
+      else if (row.status === 'active') s.active += row.cnt;
+      else if (row.status === 'completed') s.completed += row.cnt;
+      else if (row.status === 'exited' || row.status === 'converted') {
+        if (row.exit_reason === 'booked') s.exited_booked += row.cnt;
+        else if (row.exit_reason === 'unsubscribed') s.exited_unsubscribed += row.cnt;
+        else s.exited_booked += row.cnt; // fallback
+      }
+    }
+
+    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, node_statuses, node_stats };
   }
 
   static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt }) {
@@ -261,6 +287,53 @@ class JourneyService {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
     `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null]);
+
+    // ── Snapshot segment users at creation time (FIXED — never re-queried) ──
+    const journeyId = journey.journey_id;
+    const firstNodeId = (nodes || [])[0]?.id || 'node_0';
+    let snapshotCount = 0;
+
+    if (customSegmentId) {
+      // Custom segment — fetch users from unified_contacts via conditions
+      const segResult = await CustomSegmentService.getCustomers(customSegmentId, { page: 1, limit: 50000 });
+      const segCustomers = segResult?.data || [];
+      const toInsert = segCustomers.filter(c => {
+        if (audience === 'indian' && !c.is_indian) return false;
+        if (audience === 'rest' && c.is_indian) return false;
+        return true;
+      });
+      for (const c of toInsert) {
+        const track = c.is_indian ? 'indian' : 'rest';
+        const { rowCount } = await db.query(
+          `INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
+           VALUES ($1, $2, $3, $4, 'snapshot') ON CONFLICT DO NOTHING`,
+          [journeyId, c.id, firstNodeId, track]
+        );
+        if (rowCount > 0) snapshotCount++;
+      }
+    } else if (stdSegmentId) {
+      // Standard segment — query segment_customers
+      let audienceFilter = '';
+      if (audience === 'indian') audienceFilter = 'AND uc.is_indian = true';
+      else if (audience === 'rest') audienceFilter = 'AND uc.is_indian = false';
+
+      const { rowCount } = await db.query(`
+        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
+        SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END, 'snapshot'
+        FROM segment_customers sc
+        JOIN unified_contacts uc ON uc.id = sc.customer_id
+        WHERE sc.segment_id = $3 AND sc.is_active = true ${audienceFilter}
+      `, [journeyId, firstNodeId, stdSegmentId]);
+      snapshotCount = rowCount;
+    }
+
+    // Store the fixed snapshot count
+    await db.query(
+      'UPDATE journey_flows SET snapshot_count = $1, total_entries = $1 WHERE journey_id = $2',
+      [snapshotCount, journeyId]
+    );
+    journey.snapshot_count = snapshotCount;
+
     return journey;
   }
 
@@ -910,19 +983,6 @@ class JourneyService {
     // in practice. _ensureNodeSnapshotted() dedupes within a run via this Set.
     const snapshottedNodes = new Set();
 
-    // Get all active entries joined with unified_contacts + current journey segment
-    const { rows: entries } = await db.query(`
-      SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
-        uc.booking_status,
-        uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings,
-        uc.segment_label AS current_segment, uc.is_indian,
-        sd.segment_name AS journey_segment
-      FROM journey_entries je
-      JOIN unified_contacts uc ON uc.id = je.customer_id
-      LEFT JOIN segment_definitions sd ON sd.segment_id = $2
-      WHERE je.journey_id = $1 AND je.status = 'active'
-    `, [journeyId, journey.segment_id]);
-
     let processed = 0;
     let actioned = 0;
     let waited = 0;
@@ -934,29 +994,64 @@ class JourneyService {
     // BullMQ round-trips. One batch per channel.
     const enqueueByChannel = { email: [], whatsapp: [], sms: [] };
 
-    for (const entry of entries) {
-      // ── CONVERSION CHECK: runs BEFORE every node fires ──
-      // If user booked or moved segments since entering, exit the journey.
-      // Skip for awareness journeys (exit_on_conversion = false).
-      if (journey.exit_on_conversion !== false) {
-        const conv = await this.checkConversion(entry);
-        if (conv.converted) {
-          await db.query(`
-            UPDATE journey_entries
-            SET status = 'converted', converted_at = NOW(), exit_reason = $2, last_conversion_check = NOW()
-            WHERE entry_id = $1
-          `, [entry.entry_id, conv.reason]);
-          await db.query(`
-            INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-            VALUES ($1, $2, 'converted', NULL, $3)
-          `, [entry.entry_id, entry.current_node_id, JSON.stringify(conv)]);
-          console.log(`[Journey ${journeyId}] Converted entry ${entry.entry_id} (uid=${entry.customer_id}) → ${conv.reason}`);
-          converted++;
-          processed++;
-          continue;
-        }
-        await db.query('UPDATE journey_entries SET last_conversion_check = NOW() WHERE entry_id = $1', [entry.entry_id]);
+    // ── BULK EXIT CHECK (scalable for 15 lakh+ users) ──
+    // Exit booked + unsubscribed users in a single batch UPDATE before the per-entry loop.
+    // This avoids N individual queries for exit conditions.
+    if (journey.exit_on_conversion !== false) {
+      // Bulk exit: booked users
+      const { rows: bookedExits } = await db.query(`
+        UPDATE journey_entries je
+        SET status = 'exited', exit_reason = 'booked', completed_at = NOW(), next_fire_at = NULL
+        FROM unified_contacts uc
+        WHERE je.journey_id = $1 AND je.status = 'active'
+          AND uc.id = je.customer_id
+          AND LOWER(uc.booking_status) IN ('booked', 'confirmed')
+        RETURNING je.entry_id, je.current_node_id
+      `, [journeyId]);
+      for (const ex of bookedExits) {
+        await db.query(
+          `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1, $2, 'converted', NULL, $3)`,
+          [ex.entry_id, ex.current_node_id, JSON.stringify({ converted: true, reason: 'booked' })]
+        );
       }
+
+      // Bulk exit: unsubscribed users
+      const { rows: unsubExits } = await db.query(`
+        UPDATE journey_entries je
+        SET status = 'exited', exit_reason = 'unsubscribed', completed_at = NOW(), next_fire_at = NULL
+        FROM unified_contacts uc
+        WHERE je.journey_id = $1 AND je.status = 'active'
+          AND uc.id = je.customer_id
+          AND uc.email_unsubscribe = 'Yes'
+        RETURNING je.entry_id, je.current_node_id
+      `, [journeyId]);
+      for (const ex of unsubExits) {
+        await db.query(
+          `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1, $2, 'converted', NULL, $3)`,
+          [ex.entry_id, ex.current_node_id, JSON.stringify({ converted: true, reason: 'unsubscribed' })]
+        );
+      }
+
+      converted = bookedExits.length + unsubExits.length;
+      if (converted > 0) {
+        console.log(`[Journey ${journeyId}] Bulk exited: ${bookedExits.length} booked, ${unsubExits.length} unsubscribed`);
+      }
+    }
+
+    // Re-fetch active entries after bulk exit (only the ones still active)
+    const { rows: activeEntries } = await db.query(`
+      SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
+        uc.booking_status, uc.email_unsubscribe,
+        uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings,
+        uc.segment_label AS current_segment, uc.is_indian,
+        sd.segment_name AS journey_segment
+      FROM journey_entries je
+      JOIN unified_contacts uc ON uc.id = je.customer_id
+      LEFT JOIN segment_definitions sd ON sd.segment_id = $2
+      WHERE je.journey_id = $1 AND je.status = 'active'
+    `, [journeyId, journey.segment_id]);
+
+    for (const entry of activeEntries) {
 
       const currentNode = nodeMap[entry.current_node_id];
       if (!currentNode) continue;
@@ -1228,13 +1323,26 @@ class JourneyService {
     // Update journey stats
     await db.query(`
       UPDATE journey_flows SET
-        total_conversions = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status = 'converted'),
+        total_conversions = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status IN ('converted','exited')),
         total_exits = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status = 'exited'),
         conversion_rate = CASE WHEN total_entries > 0
-          THEN ((SELECT COUNT(*)::numeric FROM journey_entries WHERE journey_id = $1 AND status = 'converted') / total_entries * 100)
+          THEN ((SELECT COUNT(*)::numeric FROM journey_entries WHERE journey_id = $1 AND status IN ('converted','exited')) / total_entries * 100)
           ELSE 0 END
       WHERE journey_id = $1
     `, [journeyId]);
+
+    // ── Auto-complete journey when all entries are done (no active entries left) ──
+    const { rows: [{ active_cnt }] } = await db.query(
+      `SELECT COUNT(*) AS active_cnt FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+      [journeyId]
+    );
+    if (parseInt(active_cnt) === 0) {
+      await db.query(
+        `UPDATE journey_flows SET status = 'completed', updated_at = NOW() WHERE journey_id = $1 AND status = 'active'`,
+        [journeyId]
+      );
+      console.log(`[Journey ${journeyId}] Auto-completed — all entries finished.`);
+    }
 
     return { processed, actioned, waited, conditioned, converted, enqueued, runId };
   }
@@ -1443,43 +1551,28 @@ class JourneyService {
   }
 
   /**
-   * Check whether an entry has converted since it was enrolled.
-   * Converts when EITHER:
-   *   - A new booking exists in any rayna_* table with bill_date >= entered_at, OR
-   *   - The user's current segment differs from the journey's intended segment
-   *     (segment engine has moved them; they're no longer the target audience).
-   * Returns: { converted: bool, reason: 'booking' | 'segment_change' | null, details?: {...} }
+   * Check whether an entry should exit the journey.
+   * Exit conditions:
+   *   1. User has booked (unified_contacts.booking_status is 'booked' or 'confirmed')
+   *   2. User has unsubscribed from email (email_unsubscribe = 'Yes')
+   * Returns: { converted: bool, reason: 'booked' | 'unsubscribed' | null, details?: {...} }
    */
   static async checkConversion(entry) {
-    // 1. Booking-based conversion
-    const { rows: [b] } = await db.query(`
-      SELECT
-        EXISTS (SELECT 1 FROM rayna_tours    WHERE unified_id = $1 AND bill_date >= $2) AS tour,
-        EXISTS (SELECT 1 FROM rayna_hotels   WHERE unified_id = $1 AND bill_date >= $2) AS hotel,
-        EXISTS (SELECT 1 FROM rayna_visas    WHERE unified_id = $1 AND bill_date >= $2) AS visa,
-        EXISTS (SELECT 1 FROM rayna_flights  WHERE unified_id = $1 AND bill_date >= $2) AS flight,
-        EXISTS (SELECT 1 FROM rayna_packages WHERE unified_id = $1 AND bill_date >= $2) AS package,
-        EXISTS (SELECT 1 FROM rayna_others   WHERE unified_id = $1 AND bill_date >= $2) AS other
-    `, [entry.customer_id, entry.entered_at]);
-    if (b.tour || b.hotel || b.visa || b.flight || b.package || b.other) {
-      const types = [];
-      if (b.tour) types.push('tour');
-      if (b.hotel) types.push('hotel');
-      if (b.visa) types.push('visa');
-      if (b.flight) types.push('flight');
-      if (b.package) types.push('package');
-      if (b.other) types.push('other');
-      return { converted: true, reason: 'booking', details: { types } };
+    const { rows: [uc] } = await db.query(
+      `SELECT booking_status, email_unsubscribe FROM unified_contacts WHERE id = $1`,
+      [entry.customer_id]
+    );
+    if (!uc) return { converted: false, reason: null };
+
+    // 1. Booking-based exit
+    const bs = (uc.booking_status || '').toLowerCase();
+    if (bs === 'booked' || bs === 'confirmed') {
+      return { converted: true, reason: 'booked', details: { booking_status: uc.booking_status } };
     }
 
-    // 2. Segment-change conversion — user no longer matches the journey's target segment.
-    // Skip this check for journeys that aren't tied to a specific segment (e.g., occasions).
-    if (entry.journey_segment && entry.current_segment && entry.journey_segment !== entry.current_segment) {
-      return {
-        converted: true,
-        reason: 'segment_change',
-        details: { from: entry.journey_segment, to: entry.current_segment },
-      };
+    // 2. Unsubscribe-based exit
+    if (uc.email_unsubscribe === 'Yes') {
+      return { converted: true, reason: 'unsubscribed', details: {} };
     }
 
     return { converted: false, reason: null };
@@ -1779,27 +1872,36 @@ class JourneyService {
     const edges = journey.edges || [];
     if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');
 
+    // ── Validate scheduled_start_at hasn't passed ──
+    if (journey.scheduled_start_at && new Date(journey.scheduled_start_at) < new Date()) {
+      throw new Error('Journey start date and time has already passed. Please update the start date before starting.');
+    }
+
+    // ── Check snapshot entries exist (snapshotted at creation time) ──
+    const { rows: [{ cnt: snapshotCount }] } = await db.query(
+      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'snapshot'`,
+      [journeyId]
+    );
+    if (parseInt(snapshotCount) === 0) {
+      throw new Error('No users snapshotted for this journey. Please select a segment with users.');
+    }
+
     // 1. Set status to 'active'
     await db.query(
       "UPDATE journey_flows SET status = 'active', updated_at = NOW() WHERE journey_id = $1",
       [journeyId]
     );
 
-    // 2. Enroll segment customers
-    let enrolled = 0;
-    try {
-      const result = await this.enrollSegment(journeyId);
-      enrolled = result.enrolled;
-    } catch (err) {
-      // If no segment, just activate without enrollment
-      console.log(`[Journey ${journeyId}] No segment to enroll: ${err.message}`);
-    }
+    // 2. Flip all snapshot entries to 'active' (users were already locked at creation)
+    const { rowCount: enrolled } = await db.query(
+      `UPDATE journey_entries SET status = 'active' WHERE journey_id = $1 AND status = 'snapshot'`,
+      [journeyId]
+    );
 
-    // 3. Set next_fire_at for all new entries based on the first actionable node
-    // If scheduled_start_at is set and in the future, use it as the base time
+    // 3. Set next_fire_at for all entries — first node fires at scheduled_start_at or NOW()
     const firstNode = this._findFirstActionableNode(nodes, edges);
     if (firstNode && enrolled > 0) {
-      const baseTime = journey.scheduled_start_at && new Date(journey.scheduled_start_at) > new Date()
+      const baseTime = journey.scheduled_start_at
         ? new Date(journey.scheduled_start_at)
         : new Date();
       const nextFireAt = this.calculateNextFireAt(firstNode, baseTime);
@@ -1824,14 +1926,34 @@ class JourneyService {
 
   /**
    * Toggle pause/resume for a journey.
+   * Resume is allowed if at least one journey_event exists (one node has fired).
    */
   static async pauseJourney(journeyId) {
     const { rows: [journey] } = await db.query(
-      'SELECT status FROM journey_flows WHERE journey_id = $1', [journeyId]
+      'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
     if (!journey) throw new Error('Journey not found');
 
     const newStatus = journey.status === 'paused' ? 'active' : 'paused';
+
+    // On resume: recalculate next_fire_at for active entries so the cron picks them up
+    if (newStatus === 'active') {
+      const nodes = journey.nodes || [];
+      const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+      const { rows: activeEntries } = await db.query(
+        `SELECT entry_id, current_node_id FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+        [journeyId]
+      );
+      for (const entry of activeEntries) {
+        const currentNode = nodeMap[entry.current_node_id];
+        const nextFireAt = this.calculateNextFireAt(currentNode, new Date());
+        await db.query(
+          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = $2',
+          [nextFireAt, entry.entry_id]
+        );
+      }
+    }
+
     await db.query(
       'UPDATE journey_flows SET status = $1, updated_at = NOW() WHERE journey_id = $2',
       [newStatus, journeyId]

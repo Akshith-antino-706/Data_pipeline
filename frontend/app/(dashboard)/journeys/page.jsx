@@ -228,7 +228,7 @@ export default function Journeys() {
       setStarting(true);
       startJourney(id)
         .then(async (res) => {
-          hotToast.success(`Journey started! Enrolled ${res.data?.enrolled || 0} customers`);
+          hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
           const d = await getJourney(id);
           setDetail(d.data);
           loadData();
@@ -600,7 +600,8 @@ export default function Journeys() {
         nodes: [trigger, ...extraNodes],
         edges: []
       });
-      showToast(`Journey "${res.data?.name}" created`, 'success');
+      const snapCount = res.data?.snapshot_count || 0;
+      showToast(`Journey "${res.data?.name}" created — ${snapCount} users snapshotted`, 'success');
       setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
@@ -638,7 +639,7 @@ export default function Journeys() {
     setStarting(true);
     try {
       const res = await startJourney(selected);
-      hotToast.success(`Journey started! Enrolled ${res.data?.enrolled || 0} customers`);
+      hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
       const d = await getJourney(selected);
       setDetail(d.data);
       await loadData();
@@ -915,11 +916,11 @@ export default function Journeys() {
 
     const funnelData = analytics?.funnelData || [];
     const entryFunnelData = [
-      { name: 'Entered', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
+      { name: 'Snapshotted', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
       { name: 'Active', value: parseInt(stats.active) || 0, color: 'var(--green)' },
       { name: 'Completed', value: parseInt(stats.completed) || 0, color: 'var(--brand-primary)' },
-      { name: 'Converted', value: parseInt(stats.converted) || 0, color: 'var(--purple)' },
-      { name: 'Exited', value: parseInt(stats.exited) || 0, color: 'var(--red)' },
+      { name: 'Booked', value: parseInt(stats.exited_booked) || 0, color: 'var(--purple)' },
+      { name: 'Unsubscribed', value: parseInt(stats.exited_unsubscribed) || 0, color: 'var(--red)' },
     ].filter(d => d.value > 0);
 
     return (
@@ -1054,13 +1055,13 @@ export default function Journeys() {
         {(() => {
           const ct = campaignData?.totals || {};
           const kpis = [
-            { label: 'Total Entries', value: fmt(stats.total_entries), color: 'kpi-blue', icon: Users },
+            { label: 'Snapshotted', value: fmt(detail.snapshot_count || stats.total_entries), color: 'kpi-blue', icon: Users },
             { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
             { label: 'Sent', value: fmt(ct.total_sent || 0), color: 'kpi-orange', icon: Send },
             { label: 'Delivered', value: fmt(ct.total_delivered || 0), color: 'kpi-green', icon: CheckCircle2 },
-            { label: 'Read', value: fmt(ct.total_read || 0), color: 'kpi-blue', icon: Eye },
-            { label: 'Clicked', value: fmt(ct.total_clicked || 0), color: 'kpi-purple', icon: TrendingUp },
-            { label: 'Converted', value: fmt(stats.converted), color: 'kpi-purple', icon: Target },
+            { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
+            { label: 'Unsub (Exit)', value: fmt(stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
+            { label: 'Completed', value: fmt(stats.completed), color: 'kpi-blue', icon: CheckCircle2 },
             { label: 'Failed', value: fmt(ct.total_failed || 0), color: 'kpi-red', icon: XCircle },
           ];
           return (
@@ -1273,6 +1274,7 @@ export default function Journeys() {
                       const channelConf = node.data?.channel ? CHANNEL_CONFIG[node.data.channel.toLowerCase()] : null;
                       const nodeStats = nodeAnalyticsMap[node.id] || {};
                       const hasSent = nodeStats.action_sent > 0;
+                      const nStats = detail?.node_stats?.[node.id];
                       // Draft → all nodes grey. Any started status → all nodes coloured & clickable.
                       const isNodeActive = simActive ? i <= simNodeIndex : isJourneyStarted;
 
@@ -1515,11 +1517,39 @@ export default function Journeys() {
                                 })()}
                               </div>
 
-                              {/* Node stats preview */}
-                              {hasSent && (
-                                <div className="text-right shrink-0">
-                                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(nodeStats.action_sent)}</div>
-                                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>sent</div>
+                              {/* Node stats preview — user counts + sent */}
+                              {(hasSent || nStats) && (
+                                <div className="flex items-center gap-3 shrink-0">
+                                  {nStats && (
+                                    <div className="flex gap-2" style={{ fontSize: 10 }}>
+                                      {nStats.active > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', fontWeight: 700 }}>
+                                          {fmt(nStats.active)} active
+                                        </span>
+                                      )}
+                                      {nStats.exited_booked > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(34,197,94,0.1)', color: '#22c55e', fontWeight: 700 }}>
+                                          {fmt(nStats.exited_booked)} booked
+                                        </span>
+                                      )}
+                                      {nStats.exited_unsubscribed > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 700 }}>
+                                          {fmt(nStats.exited_unsubscribed)} unsub
+                                        </span>
+                                      )}
+                                      {nStats.completed > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(156,163,175,0.1)', color: '#9ca3af', fontWeight: 700 }}>
+                                          {fmt(nStats.completed)} done
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {hasSent && (
+                                    <div className="text-right shrink-0">
+                                      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(nodeStats.action_sent)}</div>
+                                      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>sent</div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
