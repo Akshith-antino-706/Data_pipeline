@@ -68,84 +68,6 @@ router.delete('/:id/nodes/:nodeId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Manual test-send for a single action node (email / sms / whatsapp).
-// Body: { recipient: "<email or phone>" }
-router.post('/:id/nodes/:nodeId/test', async (req, res, next) => {
-  try {
-    const data = await JourneyService.testSendNode(
-      parseInt(req.params.id),
-      req.params.nodeId,
-      req.body?.recipient
-    );
-    res.json({ data });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Batch test-send — sends to all recipients in parallel, returns per-recipient logs.
-// Body: { recipients: string[] }
-router.post('/:id/nodes/:nodeId/test-batch', async (req, res, next) => {
-  try {
-    const { recipients } = req.body;
-    const data = await JourneyService.testSendNodeBatch(
-      parseInt(req.params.id),
-      req.params.nodeId,
-      recipients
-    );
-    res.json({ data });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Bulk test-send — generates email+1, email+2 ... email+N (Gmail + trick)
-// so all land in the same inbox. Body: { email, count }
-router.post('/:id/nodes/:nodeId/bulk-test', async (req, res, next) => {
-  try {
-    const { email, count = 100 } = req.body;
-    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
-      return res.status(400).json({ error: 'Valid email required' });
-    }
-    const n = Math.min(Math.max(parseInt(count) || 100, 1), 5000);
-    const [local, domain] = email.trim().split('@');
-
-    // Generate local+test1@domain … local+testN@domain
-    const recipients = Array.from({ length: n }, (_, i) => `${local}+test${i + 1}@${domain}`);
-
-    // Send in parallel batches of 50 to avoid overwhelming SMTP
-    const BATCH = 50;
-    let sent = 0, failed = 0;
-    for (let i = 0; i < recipients.length; i += BATCH) {
-      const batch = recipients.slice(i, i + BATCH);
-      const settled = await Promise.allSettled(
-        batch.map(r => JourneyService.testSendNode(parseInt(req.params.id), req.params.nodeId, r))
-      );
-      settled.forEach(r => r.status === 'fulfilled' && r.value?.success ? sent++ : failed++);
-    }
-
-    res.json({ data: { total: n, sent, failed, baseEmail: email.trim() } });
-  } catch (err) { next(err); }
-});
-
-// Segment test send — sends to real segment customers but overrides delivery email
-// to testEmail+testN@domain so all land in one inbox. Body: { testEmail, limit }
-router.post('/:id/nodes/:nodeId/segment-test', async (req, res, next) => {
-  try {
-    const { testEmail = 'rocky.86agency@gmail.com', limit = 100 } = req.body;
-    if (!testEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(testEmail.trim())) {
-      return res.status(400).json({ error: 'Valid testEmail required' });
-    }
-    const data = await JourneyService.testSendNodeToSegment(
-      parseInt(req.params.id),
-      req.params.nodeId,
-      testEmail.trim(),
-      parseInt(limit) || 100
-    );
-    res.json({ data });
-  } catch (err) { next(err); }
-});
-
 // Get persisted send log for a specific action node (campaign stats)
 router.get('/:id/nodes/:nodeId/send-log', async (req, res, next) => {
   try {
@@ -162,11 +84,38 @@ router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Reset stuck entries (clear last_run_id so they can be re-processed)
+router.post('/:id/reset-entries', async (req, res, next) => {
+  try {
+    const pool = (await import('../config/database.js')).default;
+    const nodeId = req.body?.nodeId || req.query?.nodeId;
+    if (nodeId) {
+      const { rowCount } = await pool.query(
+        `UPDATE journey_entries SET current_node_id = $2, last_run_id = NULL, last_enqueued_at = NULL WHERE journey_id = $1 AND status = 'active'`,
+        [parseInt(req.params.id), nodeId]
+      );
+      return res.json({ data: { reset: rowCount, movedTo: nodeId } });
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE journey_entries SET last_run_id = NULL, last_enqueued_at = NULL WHERE journey_id = $1 AND status = 'active'`,
+      [parseInt(req.params.id)]
+    );
+    res.json({ data: { reset: rowCount } });
+  } catch (err) { next(err); }
+});
+
 // Start journey: activate + enroll + first process
 router.post('/:id/start', async (req, res, next) => {
   try {
-    const data = await JourneyService.startJourney(parseInt(req.params.id));
+    const journeyId = parseInt(req.params.id);
+    const data = await JourneyService.startJourney(journeyId);
     res.json({ data });
+    // Fire first node immediately (don't await — respond to client first)
+    JourneyService.processJourney(journeyId).then(r => {
+      console.log(`[Journey ${journeyId}] Immediate trigger after start: processed=${r.processed}, enqueued=${r.enqueued}`);
+    }).catch(err => {
+      console.error(`[Journey ${journeyId}] Immediate trigger error: ${err.message}`);
+    });
   } catch (err) { next(err); }
 });
 

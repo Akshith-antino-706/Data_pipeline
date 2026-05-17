@@ -191,6 +191,18 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
   }
 });
 
+app.post('/api/v3/migrate-journey', async (_, res) => {
+  try {
+    await runMigrationFile('071_journey_snapshot.sql');
+    await runMigrationFile('072_journey_test_mode.sql');
+    await runMigrationFile('073_fix_journey_entries_fk.sql');
+    await runMigrationFile('074_journey_entries_columns.sql');
+    res.json({ success: true, message: 'Journey migrations (071-074) completed' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
     for (const file of [
@@ -223,6 +235,7 @@ app.post('/api/v3/migrate-all', async (_, res) => {
       '069_journey_next_fire.sql',
       '070_journey_exit_on_conversion.sql',
       '071_journey_snapshot.sql',
+      '072_journey_test_mode.sql',
     ]) {
       await runMigrationFile(file);
     }
@@ -482,8 +495,8 @@ async function runDailySyncWithRetry() {
 cron.schedule('0 1 * * *', () => { runDailySyncWithRetry(); }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time (3 retries, 10min gap)');
 
-// ── Journey Engine — process due entries every 15 min ──────────────
-cron.schedule('*/15 * * * *', async () => {
+// ── Journey Engine — process due entries every 5 min ──────────────
+cron.schedule('*/5 * * * *', async () => {
   try {
     const result = await JourneyService.processDueEntries();
     if (result.processed > 0) {
@@ -493,25 +506,19 @@ cron.schedule('*/15 * * * *', async () => {
     console.error('[Cron:Journey] Error:', err.message);
   }
 }, { timezone: 'Asia/Dubai' });
-console.log('[Cron] Journey engine scheduled: every 15 min (Asia/Dubai)');
+console.log('[Cron] Journey engine scheduled: every 5 min (Asia/Dubai)');
 
 // ── Journey auto-start DISABLED — user must manually click "Start" ──
 // Journeys only start when the user explicitly clicks Start on the UI.
 // The scheduled_start_at is validated on start: if it has passed, start is blocked.
 
-// ── BullMQ workers (optional in-process mode) ────────────────
-// In dev set WORKERS_INLINE=true to run journey send workers in this process.
-// In prod, run them separately: `node backend/scripts/start-workers.js`.
-if (process.env.WORKERS_INLINE === 'true') {
-  try {
-    const { startWorkers } = await import('./src/services/queue/workers.js');
-    startWorkers();
-    console.log('[Workers] In-process journey workers running (WORKERS_INLINE=true)');
-  } catch (err) {
-    console.error(`[Workers] Failed to start in-process: ${err.message}`);
-  }
-} else {
-  console.log('[Workers] Out-of-process — run: node backend/scripts/start-workers.js');
+// ── BullMQ workers — always run inline ────────────────
+try {
+  const { startWorkers } = await import('./src/services/queue/workers.js');
+  startWorkers();
+  console.log('[Workers] Journey send workers started inline');
+} catch (err) {
+  console.error(`[Workers] Failed to start: ${err.message}`);
 }
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────

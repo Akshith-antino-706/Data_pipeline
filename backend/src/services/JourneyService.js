@@ -2,11 +2,6 @@ import db from '../config/database.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import EmailRenderer from './EmailRenderer.js';
-import { EmailChannel } from './channels/EmailChannel.js';
-import { ChatheadEmailChannel } from './channels/ChatheadEmailChannel.js';
-
-import GupshupService from './GupshupService.js';
 import PopularityService from './PopularityService.js';
 import { enqueueBatch } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
@@ -15,15 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const MAIL_TEMPLATES_DIR = path.resolve(__dirname, '..', '..', '..', 'mail_templates');
 
-// Pick ChatheadEmailChannel if configured (sends from explore@promotions.raynatours.com),
-// otherwise fall back to SMTP EmailChannel.
-function getEmailChannel() {
-  return ChatheadEmailChannel.isConfigured() ? ChatheadEmailChannel : EmailChannel;
-}
-
-// Render the real Day HTML for a contact using the same Day renderers testSends uses.
+// Render the real Day HTML for a contact using the same Day renderers.
 // Uses fallback ranking (no Claude API call) to keep sends fast.
-async function renderDayHtml(templateId, contactId) {
+export async function renderDayHtml(templateId, contactId) {
   const id = parseInt(templateId);
   const tplFile = (name) => fs.readFileSync(path.join(MAIL_TEMPLATES_DIR, name), 'utf8');
 
@@ -92,13 +81,6 @@ async function renderDayHtml(templateId, contactId) {
   return null; // unknown template — fall back to EmailRenderer
 }
 
-// Test email guard — used by processJourney to force email-only for test
-// users (skip WhatsApp/SMS). Keep empty; test sends now use a separate
-// /api/v3/test-sends route with user-selected recipients.
-const TEST_EMAILS = new Set([]);
-function isTestUser(email) {
-  return !!email && TEST_EMAILS.has(String(email).toLowerCase().trim());
-}
 
 /**
  * JourneyService — Journey Flow Builder & Execution Engine
@@ -302,14 +284,17 @@ class JourneyService {
         if (audience === 'rest' && c.is_indian) return false;
         return true;
       });
-      for (const c of toInsert) {
-        const track = c.is_indian ? 'indian' : 'rest';
-        const { rowCount } = await db.query(
-          `INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
-           VALUES ($1, $2, $3, $4, 'snapshot') ON CONFLICT DO NOTHING`,
-          [journeyId, c.id, firstNodeId, track]
-        );
-        if (rowCount > 0) snapshotCount++;
+      // Bulk insert with EXISTS check — skip IDs not in unified_contacts
+      const validIds = toInsert.map(c => c.id);
+      if (validIds.length > 0) {
+        const { rowCount } = await db.query(`
+          INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
+          SELECT $1, uc.id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END, 'snapshot'
+          FROM unified_contacts uc
+          WHERE uc.id = ANY($3::bigint[])
+          ON CONFLICT DO NOTHING
+        `, [journeyId, firstNodeId, validIds]);
+        snapshotCount = rowCount;
       }
     } else if (stdSegmentId) {
       // Standard segment — query segment_customers
@@ -411,279 +396,6 @@ class JourneyService {
     await db.query('UPDATE campaigns SET journey_id = NULL WHERE journey_id = $1', [journeyId]);
     await db.query('DELETE FROM journey_flows WHERE journey_id = $1', [journeyId]);
     return { deleted: true };
-  }
-
-  /**
-   * Test-send a single action node to an arbitrary recipient. Does NOT touch
-   * journey_entries or journey_events — this is purely for content QA.
-   *   - email  → renders template via EmailRenderer (no unifiedId personalization)
-   *              and sends via EmailChannel
-   *   - sms    → sends template body via SMSChannel
-   *   - whatsapp → sends template body as free-form text via WhatsAppChannel.sendText
-   *                (session-window only; no approved template lookup here)
-   */
-  static async testSendNode(journeyId, nodeId, recipient) {
-    const journey = await this.getById(journeyId);
-    if (!journey) throw new Error('Journey not found');
-
-    const node = (journey.nodes || []).find(n => n.id === nodeId);
-    if (!node) throw new Error(`Node ${nodeId} not found in journey ${journeyId}`);
-    if (node.type !== 'action') throw new Error(`Node ${nodeId} is type='${node.type}', only 'action' nodes are sendable`);
-
-    const channel = (node.data?.channel || '').toLowerCase();
-    const templateId = node.data?.templateId
-      || (channel === 'email' ? node.data?.emailTemplateId : null)
-      || (channel === 'whatsapp' ? node.data?.whatsappTemplateId : null)
-      || (channel === 'sms' ? node.data?.smsTemplateId : null);
-    if (!templateId) throw new Error(`Node ${nodeId} has no templateId`);
-
-    // Slugified journey name in utm_campaign keeps analytics readable.
-    const campaignSlug = String(journey.name || `journey-${journeyId}`)
-      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-
-    // Resolve recipient → unified_contacts for full personalization + rid attribution.
-    // Email: match on email_key (lowercased). Phone: match on phone_key (last 10 digits).
-    // If no match, fall back to generic (null unifiedId) — send still works.
-    const resolveRecipient = async (to) => {
-      if (channel === 'email') {
-        const { rows: [u] } = await db.query(
-          'SELECT id AS unified_id, name, email FROM unified_contacts WHERE LOWER(email) = LOWER(TRIM($1)) LIMIT 1',
-          [to]
-        );
-        return u || null;
-      }
-      const { rows: [u] } = await db.query(
-        `SELECT id AS unified_id, name, mobile AS phone FROM unified_contacts
-         WHERE RIGHT(REGEXP_REPLACE(mobile, '[^0-9]', '', 'g'), 10) = RIGHT(REGEXP_REPLACE($1, '[^0-9]', '', 'g'), 10) LIMIT 1`,
-        [to]
-      );
-      return u || null;
-    };
-
-    // Build the UTM link including rid= when we found the user, so GTM event
-    // attribution links clicks back to the same unified_id.
-    const buildUtmLink = (unifiedId) => {
-      const base = `https://www.raynatours.com/?utm_source=journey_test&utm_medium=${encodeURIComponent(channel)}&utm_campaign=${encodeURIComponent(campaignSlug)}&utm_content=${encodeURIComponent(nodeId)}`;
-      return unifiedId ? `${base}&rid=${unifiedId}` : base;
-    };
-
-    if (channel === 'email') {
-      const to = (recipient || '').trim();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error('Valid email address required');
-      const user = await resolveRecipient(to);
-      const utmLink = buildUtmLink(user?.unified_id);
-      const rendered = await EmailRenderer.render(parseInt(templateId), user?.unified_id || null, { utm_link: utmLink });
-      const result = await EmailChannel.send({
-        to,
-        subject: rendered.subject || `[TEST] ${node.data?.label || 'Journey node'}`,
-        html: rendered.html,
-        text: rendered.plainText,
-      });
-      return {
-        channel, recipient: to, templateId, utmLink,
-        resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null,
-        ...result,
-      };
-    }
-
-    if (channel === 'sms' || channel === 'whatsapp') {
-      const to = (recipient || '').trim();
-      if (!/^\+?[0-9][0-9\s\-()]{5,}$/.test(to)) throw new Error('Valid phone number required (E.164 recommended, e.g. +971501234567)');
-      const { rows: [tpl] } = await db.query(
-        'SELECT body, subject, external_status, external_template_id FROM content_templates WHERE id = $1',
-        [parseInt(templateId)]
-      );
-      if (!tpl) throw new Error(`Template ${templateId} not found`);
-
-      // Approval gate — WA/SMS must be approved via Gupshup before any send.
-      // Simulation mode (no keys) still enforces this, but you can flip a template
-      // to 'approved' via /api/v3/gupshup/templates/:id/force-approve for local dev.
-      await GupshupService.assertApproved(parseInt(templateId));
-
-      const user = await resolveRecipient(to);
-      const utmLink = buildUtmLink(user?.unified_id);
-      const rawBody = tpl.body || tpl.subject || node.data?.label || 'Journey node test';
-      const firstName = user?.name ? user.name.split(' ')[0] : 'there';
-      const body = `[TEST] ${rawBody
-        .replace(/\{\{utm_link\}\}/g, utmLink)
-        .replace(/\{\{first_name\}\}/g, firstName)}`;
-
-      const result = channel === 'sms'
-        ? await GupshupService.sendSMS({ to, templateId: parseInt(templateId), messageBody: body })
-        : await GupshupService.sendWhatsApp({ to, templateId: parseInt(templateId), params: [firstName, utmLink] });
-
-      return {
-        channel, recipient: to, templateId, utmLink,
-        externalTemplateId: tpl.external_template_id,
-        resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null,
-        ...result,
-      };
-    }
-
-    throw new Error(`Unsupported channel '${channel}'`);
-  }
-
-  /**
-   * Send a test to multiple recipients in one call.
-   * Runs all sends in parallel and returns per-recipient results so the
-   * UI can show a full log without making N separate HTTP requests.
-   */
-  static async testSendNodeBatch(journeyId, nodeId, recipients) {
-    if (!Array.isArray(recipients) || recipients.length === 0) throw new Error('No recipients provided');
-
-    const settled = await Promise.allSettled(
-      recipients.map(recipient => this.testSendNode(journeyId, nodeId, recipient))
-    );
-
-    const results = settled.map((r, i) => ({
-      recipient: recipients[i],
-      ok: r.status === 'fulfilled',
-      ...(r.status === 'fulfilled' ? r.value : { error: r.reason?.message || 'Send failed' }),
-    }));
-
-    return {
-      total: results.length,
-      sent: results.filter(r => r.ok).length,
-      failed: results.filter(r => !r.ok).length,
-      results,
-    };
-  }
-
-  /**
-   * Send to ONE real customer but deliver to an override email (for test-mode).
-   * Renders the template with the real unified_id (full personalization) but
-   * routes the actual SMTP delivery to `overrideEmail`.
-   */
-  static async testSendNodeForUser(journeyId, nodeId, unifiedId, overrideEmail) {
-    const journey = await this.getById(journeyId);
-    if (!journey) throw new Error('Journey not found');
-    const node = (journey.nodes || []).find(n => n.id === nodeId);
-    if (!node) throw new Error(`Node ${nodeId} not found`);
-    if (node.type !== 'action') throw new Error('Only action nodes are sendable');
-
-    const channel = (node.data?.channel || '').toLowerCase();
-    const templateId = node.data?.templateId
-      || (channel === 'email'    ? node.data?.emailTemplateId    : null)
-      || (channel === 'whatsapp' ? node.data?.whatsappTemplateId : null)
-      || (channel === 'sms'      ? node.data?.smsTemplateId      : null);
-    if (!templateId) throw new Error(`Node ${nodeId} has no templateId`);
-
-    // Fetch real customer for personalization
-    const { rows: [user] } = await db.query(
-      'SELECT id AS unified_id, name, email FROM unified_contacts WHERE id = $1',
-      [String(unifiedId)]
-    );
-
-    const campaignSlug = String(journey.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const base = `https://www.raynatours.com/?utm_source=journey_test&utm_medium=${channel}&utm_campaign=${encodeURIComponent(campaignSlug)}&utm_content=${encodeURIComponent(nodeId)}`;
-    const utmLink = user ? `${base}&rid=${user.unified_id}` : base;
-
-    if (channel === 'email') {
-      // Try Day-specific renderer first (templates 1–7); fall back to generic EmailRenderer
-      let html, subject;
-      const dayRendered = await renderDayHtml(templateId, user?.unified_id || unifiedId).catch(() => null);
-      if (dayRendered?.html) {
-        html    = dayRendered.html;
-        subject = dayRendered.subject || node.data?.label || 'Rayna Tours';
-      } else {
-        const rendered = await EmailRenderer.render(parseInt(templateId), user?.unified_id || null, { utm_link: utmLink });
-        html    = rendered.html;
-        subject = rendered.subject || node.data?.label || 'Rayna Tours';
-      }
-
-      const EmailCh = getEmailChannel();
-      const result  = await EmailCh.send({ to: overrideEmail, subject, html });
-      return { channel, recipient: overrideEmail, realEmail: user?.email || null, resolvedUser: user ? { unifiedId: user.unified_id, name: user.name } : null, ...result };
-    }
-    throw new Error(`Unsupported channel '${channel}' for segment test`);
-  }
-
-  /**
-   * Send to all customers in the journey's segment, replacing each customer's
-   * real email with testEmail (e.g. rocky.86agency@gmail.com) so all test
-   * sends land in one inbox while templates still render with real customer data.
-   */
-  static async testSendNodeToSegment(journeyId, nodeId, testEmail = 'rocky.86agency@gmail.com', limit = 100) {
-    const { rows: [journey] } = await db.query(
-      'SELECT journey_id, name, segment_id, custom_segment_id, nodes FROM journey_flows WHERE journey_id = $1',
-      [journeyId]
-    );
-    if (!journey) throw new Error('Journey not found');
-
-    const n = Math.min(Math.max(parseInt(limit) || 100, 1), 50000);
-    let customers = [];
-
-    if (journey.custom_segment_id) {
-      const result = await CustomSegmentService.getCustomers(journey.custom_segment_id, { page: 1, limit: n });
-      customers = (result?.data || []).map(r => ({ unified_id: r.id }));
-    } else if (journey.segment_id) {
-      const { rows } = await db.query(
-        `SELECT sc.unified_id FROM segment_customers sc
-         WHERE sc.segment_id = $1 AND sc.is_active = true LIMIT $2`,
-        [journey.segment_id, n]
-      );
-      customers = rows;
-    } else {
-      const { rows } = await db.query(
-        `SELECT je.unified_id FROM journey_entries je WHERE je.journey_id = $1 LIMIT $2`,
-        [journeyId, n]
-      );
-      customers = rows;
-    }
-
-    if (customers.length === 0) throw new Error('No customers found in segment — enroll the segment first or check the journey has a segment attached');
-
-    // Find/create campaign record before sending so we can update it
-    const node = (journey.nodes || []).find(n => n.id === nodeId);
-    const channel = (node?.data?.channel || 'email').toLowerCase();
-    const templateId = node?.data?.templateId || node?.data?.emailTemplateId || node?.data?.whatsappTemplateId || node?.data?.smsTemplateId;
-    const segLabel = `journey:${journeyId}:${nodeId}`;
-
-    let campaignId;
-    const { rows: [existing] } = await db.query(
-      'SELECT id, sent_count, fail_count FROM campaigns WHERE journey_id = $1 AND journey_node_id = $2',
-      [journeyId, nodeId]
-    );
-    if (existing) {
-      campaignId = existing.id;
-      // Reset counts for this run (fresh test)
-      await db.query(
-        'UPDATE campaigns SET sent_count = 0, fail_count = 0, target_count = $1, started_at = NOW(), updated_at = NOW() WHERE id = $2',
-        [customers.length, campaignId]
-      );
-    } else {
-      const { rows: [created] } = await db.query(
-        `INSERT INTO campaigns (name, segment_label, channel, template_id, journey_id, journey_node_id, target_count, sent_count, fail_count, status, started_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,0,0,'running',NOW()) RETURNING id`,
-        [`${journey.name} – ${nodeId}`, segLabel, channel, templateId || null, journeyId, nodeId, customers.length]
-      );
-      campaignId = created.id;
-    }
-
-    const BATCH = 50;
-    let sent = 0, failed = 0;
-
-    for (let i = 0; i < customers.length; i += BATCH) {
-      const batch = customers.slice(i, i + BATCH);
-      const settled = await Promise.allSettled(
-        batch.map(c => this.testSendNodeForUser(journeyId, nodeId, c.unified_id, testEmail))
-      );
-      settled.forEach(r => r.status === 'fulfilled' && r.value?.success ? sent++ : failed++);
-
-      // Persist running counts every batch so UI can reflect progress on reload
-      await db.query(
-        'UPDATE campaigns SET sent_count = $1, fail_count = $2, updated_at = NOW() WHERE id = $3',
-        [sent, failed, campaignId]
-      );
-    }
-
-    // Mark completed
-    await db.query(
-      'UPDATE campaigns SET completed_at = NOW(), updated_at = NOW() WHERE id = $1',
-      [campaignId]
-    );
-
-    return { total: customers.length, sent, failed, testEmail, baseEmail: testEmail, campaignId };
   }
 
   static async getNodeSendLog(journeyId, nodeId) {
@@ -1041,20 +753,21 @@ class JourneyService {
     // Re-fetch active entries after bulk exit (only the ones still active)
     const { rows: activeEntries } = await db.query(`
       SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
-        uc.booking_status, uc.email_unsubscribe,
-        uc.total_tour_bookings, uc.total_hotel_bookings, uc.total_visa_bookings, uc.total_flight_bookings,
-        uc.segment_label AS current_segment, uc.is_indian,
-        sd.segment_name AS journey_segment
+        uc.booking_status, uc.email_unsubscribe, uc.is_indian
       FROM journey_entries je
       JOIN unified_contacts uc ON uc.id = je.customer_id
-      LEFT JOIN segment_definitions sd ON sd.segment_id = $2
       WHERE je.journey_id = $1 AND je.status = 'active'
-    `, [journeyId, journey.segment_id]);
+    `, [journeyId]);
 
     for (const entry of activeEntries) {
 
       const currentNode = nodeMap[entry.current_node_id];
-      if (!currentNode) continue;
+      if (!currentNode) { console.log(`[DBG] entry ${entry.entry_id} — no node for '${entry.current_node_id}'`); continue; }
+
+      // DEBUG: log first entry's node info
+      if (processed === 0) {
+        console.log(`[DBG] first entry: node=${currentNode.id}, type='${currentNode.type}', data=`, JSON.stringify(currentNode.data || {}).slice(0, 200));
+      }
 
       const entryTrack = entry.track || 'all';
 
@@ -1065,9 +778,12 @@ class JourneyService {
           SELECT MAX(created_at) as last_event FROM journey_events WHERE entry_id = $1
         `, [entry.entry_id]);
         const lastEvent = lastEventRes.rows[0]?.last_event || entry.entered_at;
-        const elapsed = (Date.now() - new Date(lastEvent).getTime()) / (1000 * 60 * 60 * 24);
 
-        if (elapsed < waitDays) {
+        const elapsedMs = Date.now() - new Date(lastEvent).getTime();
+        const elapsed = elapsedMs / (1000 * 60 * 60 * 24);  // elapsed in days
+        const threshold = waitDays;
+
+        if (elapsed < threshold) {
           waited++;
           continue; // Not enough time has passed, skip
         }
@@ -1082,7 +798,6 @@ class JourneyService {
       // run from a synchronous loop to ~18 lakh recipients.
       if (currentNode.type === 'action') {
         // ── SEND-HOUR GATE (Dubai timezone) ──
-        // If the node has a sendHour, only fire when current Dubai hour matches.
         const sendHour = currentNode.data?.sendHour;
         if (sendHour !== undefined && sendHour !== null) {
           const dubaiNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' }));
@@ -1114,21 +829,6 @@ class JourneyService {
           autoPaired = true;
         }
 
-        // TEST_USERS guard: hardcoded testers receive email only — no WhatsApp,
-        // no SMS — even if the action node specifies one of those channels.
-        // Skip the action entirely (don't enqueue) and advance to the next node.
-        if (isTestUser(entry.email) && channel !== 'email') {
-          await db.query(
-            `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-             VALUES ($1, $2, 'action_skipped', $3, $4)`,
-            [entry.entry_id, currentNode.id, channel,
-             JSON.stringify({ reason: 'test_user_email_only', track: entryTrack })]
-          );
-          await this._advanceEntry(entry.entry_id, currentNode.id, edges, nodeMap, entryTrack);
-          processed++;
-          continue;
-        }
-
         // Pre-resolve the html_template_id once per templateId per run (cached
         // on this in-memory map) so the worker doesn't have to do another lookup.
         let htmlTemplateId = null;
@@ -1147,6 +847,8 @@ class JourneyService {
           snapshottedNodes.add(currentNode.id);
         }
 
+        const recipientEmail = entry.email;
+
         const jobData = {
           entryId:        entry.entry_id,
           customerId:     entry.customer_id,
@@ -1157,7 +859,7 @@ class JourneyService {
           templateId,
           htmlTemplateId,
           name:           entry.name,
-          email:          entry.email,
+          email:          recipientEmail,
           phone:          entry.phone,
           isIndian:       entry.is_indian,
           track:          entryTrack,
@@ -1296,8 +998,9 @@ class JourneyService {
       processed++;
     }
 
-    // Drain per-channel batches into BullMQ. We chunk to ~1000 jobs per addBulk
-    // call to keep the Redis round-trip and the in-memory pipeline bounded.
+    // ════════════════════════════════════════════════════════════════
+    //  Drain per-channel batches into BullMQ
+    // ════════════════════════════════════════════════════════════════
     const BATCH_SIZE = 1000;
     for (const [channel, jobs] of Object.entries(enqueueByChannel)) {
       if (!jobs || jobs.length === 0) continue;
@@ -1308,8 +1011,6 @@ class JourneyService {
           enqueued += slice.length;
         } catch (err) {
           console.error(`[Journey ${journeyId}] enqueueBatch(${channel}) failed: ${err.message}`);
-          // Roll back the last_run_id stamp on the affected entries so they are
-          // re-tried on the next processJourney() run instead of being skipped.
           const entryIds = slice.map(j => j.data.entryId);
           await db.query(
             `UPDATE journey_entries SET last_run_id = NULL, last_enqueued_at = NULL
@@ -1901,9 +1602,7 @@ class JourneyService {
     // 3. Set next_fire_at for all entries — first node fires at scheduled_start_at or NOW()
     const firstNode = this._findFirstActionableNode(nodes, edges);
     if (firstNode && enrolled > 0) {
-      const baseTime = journey.scheduled_start_at
-        ? new Date(journey.scheduled_start_at)
-        : new Date();
+      const baseTime = journey.scheduled_start_at ? new Date(journey.scheduled_start_at) : new Date();
       const nextFireAt = this.calculateNextFireAt(firstNode, baseTime);
       await db.query(`
         UPDATE journey_entries
