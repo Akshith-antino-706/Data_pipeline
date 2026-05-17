@@ -132,12 +132,112 @@ app.use('/api/v3/custom-segments', customSegmentsRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
+  const start = Date.now();
+  const checks = {};
+
+  // ── PostgreSQL ──
   try {
+    const t0 = Date.now();
     await pool.query('SELECT 1');
-    res.json({ status: 'ok', db: 'connected', timestamp: new Date().toISOString() });
+    checks.postgres = { status: 'ok', latencyMs: Date.now() - t0 };
   } catch (err) {
-    res.status(503).json({ status: 'error', db: 'disconnected', error: err.message });
+    checks.postgres = { status: 'error', error: err.message };
   }
+
+  // ── Redis + BullMQ queues ──
+  try {
+    const { queueCounts, getConnection } = await import('./src/services/queue/index.js');
+    const t0 = Date.now();
+    await getConnection().ping();
+    const redisPingMs = Date.now() - t0;
+
+    const [emailQ, waQ, smsQ] = await Promise.all([
+      queueCounts('email').catch(() => null),
+      queueCounts('whatsapp').catch(() => null),
+      queueCounts('sms').catch(() => null),
+    ]);
+
+    checks.redis = { status: 'ok', latencyMs: redisPingMs };
+    checks.bullmq = {
+      status: 'ok',
+      queues: {
+        email:    emailQ,
+        whatsapp: waQ,
+        sms:      smsQ,
+      },
+    };
+  } catch (err) {
+    checks.redis  = { status: 'error', error: err.message };
+    checks.bullmq = { status: 'error', error: err.message };
+  }
+
+  // ── Email API (Chathead / AWS) ──
+  try {
+    const t0 = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch('http://95.211.169.194/apis/aws/send/index.php', {
+      method: 'HEAD',
+      signal: ctrl.signal,
+    }).catch(() => null);
+    clearTimeout(timer);
+    checks.emailApi = {
+      status: r ? 'ok' : 'unreachable',
+      httpStatus: r?.status || null,
+      latencyMs: Date.now() - t0,
+    };
+  } catch {
+    checks.emailApi = { status: 'unreachable' };
+  }
+
+  // ── Workers ──
+  try {
+    const { _workers } = await import('./src/services/queue/workers.js');
+    const w = _workers;
+    checks.workers = {
+      status: w ? 'running' : 'stopped',
+      email:    w?.email  ? 'running' : 'stopped',
+      whatsapp: w?.wa     ? 'running' : 'stopped',
+      sms:      w?.sms    ? 'running' : 'stopped',
+    };
+  } catch {
+    checks.workers = { status: 'unknown' };
+  }
+
+  // ── Journey engine ──
+  try {
+    const { rows: [r] } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'active')    AS active_journeys,
+        COUNT(*) FILTER (WHERE status = 'paused')    AS paused_journeys,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed_journeys
+      FROM journey_flows
+    `);
+    const { rows: [e] } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'active')    AS active_entries,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed_entries,
+        COUNT(*) FILTER (WHERE status = 'converted') AS converted_entries
+      FROM journey_entries
+    `);
+    checks.journeyEngine = {
+      status: 'ok',
+      journeys: { active: +r.active_journeys, paused: +r.paused_journeys, completed: +r.completed_journeys },
+      entries:  { active: +e.active_entries, completed: +e.completed_entries, converted: +e.converted_entries },
+    };
+  } catch (err) {
+    checks.journeyEngine = { status: 'error', error: err.message };
+  }
+
+  const httpStatus = checks.postgres?.status === 'ok' ? 200 : 503;
+
+  res.status(httpStatus).json({
+    status: httpStatus === 200 ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    totalMs: Date.now() - start,
+    checks,
+  });
 });
 
 // ── DB Migration helper ─────────────────────────────────────
@@ -191,6 +291,18 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
   }
 });
 
+app.post('/api/v3/migrate-journey', async (_, res) => {
+  try {
+    await runMigrationFile('071_journey_snapshot.sql');
+    await runMigrationFile('072_journey_test_mode.sql');
+    await runMigrationFile('073_fix_journey_entries_fk.sql');
+    await runMigrationFile('074_journey_entries_columns.sql');
+    res.json({ success: true, message: 'Journey migrations (071-074) completed' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/v3/migrate-all', async (_, res) => {
   try {
     for (const file of [
@@ -222,6 +334,8 @@ app.post('/api/v3/migrate-all', async (_, res) => {
       '068_custom_segments_status.sql',
       '069_journey_next_fire.sql',
       '070_journey_exit_on_conversion.sql',
+      '071_journey_snapshot.sql',
+      '072_journey_test_mode.sql',
     ]) {
       await runMigrationFile(file);
     }
@@ -481,8 +595,8 @@ async function runDailySyncWithRetry() {
 cron.schedule('0 1 * * *', () => { runDailySyncWithRetry(); }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time (3 retries, 10min gap)');
 
-// ── Journey Engine — process due entries every 15 min ──────────────
-cron.schedule('*/15 * * * *', async () => {
+// ── Journey Engine — process due entries every 5 min ──────────────
+cron.schedule('*/5 * * * *', async () => {
   try {
     const result = await JourneyService.processDueEntries();
     if (result.processed > 0) {
@@ -492,21 +606,19 @@ cron.schedule('*/15 * * * *', async () => {
     console.error('[Cron:Journey] Error:', err.message);
   }
 }, { timezone: 'Asia/Dubai' });
-console.log('[Cron] Journey engine scheduled: every 15 min (Asia/Dubai)');
+console.log('[Cron] Journey engine scheduled: every 5 min (Asia/Dubai)');
 
-// ── BullMQ workers (optional in-process mode) ────────────────
-// In dev set WORKERS_INLINE=true to run journey send workers in this process.
-// In prod, run them separately: `node backend/scripts/start-workers.js`.
-if (process.env.WORKERS_INLINE === 'true') {
-  try {
-    const { startWorkers } = await import('./src/services/queue/workers.js');
-    startWorkers();
-    console.log('[Workers] In-process journey workers running (WORKERS_INLINE=true)');
-  } catch (err) {
-    console.error(`[Workers] Failed to start in-process: ${err.message}`);
-  }
-} else {
-  console.log('[Workers] Out-of-process — run: node backend/scripts/start-workers.js');
+// ── Journey auto-start DISABLED — user must manually click "Start" ──
+// Journeys only start when the user explicitly clicks Start on the UI.
+// The scheduled_start_at is validated on start: if it has passed, start is blocked.
+
+// ── BullMQ workers — always run inline ────────────────
+try {
+  const { startWorkers } = await import('./src/services/queue/workers.js');
+  startWorkers();
+  console.log('[Workers] Journey send workers started inline');
+} catch (err) {
+  console.error(`[Workers] Failed to start: ${err.message}`);
 }
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────

@@ -9,8 +9,8 @@
  *   {
  *     entryId, customerId, journeyId, nodeId, runId,
  *     channel:        'email' | 'whatsapp' | 'sms',
- *     templateId:     content_templates.id (the per-channel template; for email this points to email_html_templates via content_templates.html_template_id)
- *     htmlTemplateId: email_html_templates.id (email channel only — what the renderer expands)
+ *     templateId:     content_templates.id
+ *     htmlTemplateId: email_html_templates.id (email channel only — fallback)
  *     name, email, phone,
  *     track:          'indian' | 'rest' | 'all',
  *     edges:          journey edges array (for advancing the entry post-send)
@@ -19,11 +19,11 @@
  */
 import { Worker } from 'bullmq';
 import { getConnection } from './index.js';
-import JourneyService from '../JourneyService.js';
 import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
-import { EmailChannel } from '../channels/EmailChannel.js';
+import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
+import { renderDayHtml } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 
@@ -38,7 +38,7 @@ const WA_RATE_WINDOW    = parseInt(process.env.JOURNEY_WA_RATE_WINDOW    || '100
 
 const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
 
-let _workers = null;
+export let _workers = null;
 
 /** Start all journey workers in this process. Idempotent — safe to call once at boot. */
 export function startWorkers() {
@@ -63,28 +63,53 @@ export function startWorkers() {
     limiter: { max: 10, duration: 1000 },
   });
 
-  const testSend = new Worker('journey-test-send', async (job) => {
-    const { journeyId, nodeId, recipient } = job.data;
-    return JourneyService.testSendNode(journeyId, nodeId, recipient);
-  }, { connection, concurrency: 10 });
+  // After all retries exhausted on the email queue: advance the entry so it doesn't block forever
+  email.on('failed', async (job, err) => {
+    const attempts = job?.opts?.attempts || 3;
+    console.error(`[Worker:email] job ${job?.id} EXHAUSTED (${job?.attemptsMade}/${attempts}): ${err.message}`);
+    if (job?.attemptsMade >= attempts && job?.data?.entryId) {
+      const d = job.data;
+      try {
+        await db.query(
+          `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+           VALUES ($1, $2, 'action_failed', 'email', $3)`,
+          [d.entryId, d.nodeId, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
+        );
+        // Now advance past the action node
+        const edges = d.edges || [];
+        const outEdge = edges.find(e => e.source === d.nodeId);
+        if (outEdge) {
+          await db.query(
+            `UPDATE journey_entries SET current_node_id = $1, bullmq_job_id = NULL WHERE entry_id = $2`,
+            [outEdge.target, d.entryId]
+          );
+        } else {
+          await db.query(
+            `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL WHERE entry_id = $1`,
+            [d.entryId]
+          );
+        }
+        console.log(`[Worker:email] entry=${d.entryId} advanced after all retries exhausted`);
+      } catch (advErr) {
+        console.error(`[Worker:email] failed to advance entry ${d.entryId}: ${advErr.message}`);
+      }
+    }
+  });
 
-  for (const w of [email, wa, sms, testSend]) {
-    w.on('failed', (job, err) => {
-      console.error(`[Worker:${w.name}] job ${job?.id} failed (attempt ${job?.attemptsMade}/${job?.opts?.attempts || 1}): ${err.message}`);
-    });
+  for (const w of [email, wa, sms]) {
     w.on('error', (err) => {
       console.error(`[Worker:${w.name}] worker error: ${err.message}`);
     });
   }
 
-  _workers = { email, wa, sms, testSend };
+  _workers = { email, wa, sms };
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
 
 export async function stopWorkers() {
   if (!_workers) return;
-  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.testSend.close()]);
+  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close()]);
   _workers = null;
 }
 
@@ -94,24 +119,36 @@ async function processEmail(job) {
   const d = job.data;
   if (!d.email) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
 
-  // The action node's content_template references an html_template_id; the
-  // renderer expands SLOT markers from popularity_snapshots.
-  const htmlTemplateId = d.htmlTemplateId || await _resolveHtmlTemplateId(d.templateId);
-  if (!htmlTemplateId) {
-    return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
-  }
-
-  const rendered = await EmailRenderer.renderForJourneyNode({
-    htmlTemplateId,
-    unifiedId: d.customerId,
-    journeyId: d.journeyId,
-    nodeId: d.nodeId,
-    runId: d.runId,
+  // Try renderDayHtml first (Day1-Day7 templates from mail_templates/ folder)
+  // Falls back to EmailRenderer if renderDayHtml doesn't match the templateId
+  let html, subject;
+  const dayRendered = await renderDayHtml(d.templateId, d.customerId).catch(err => {
+    console.log(`[Worker] renderDayHtml failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
+    return null;
   });
 
-  // ── Inject click/open tracking (same as test-sends) ──
+  if (dayRendered?.html) {
+    html    = dayRendered.html;
+    subject = dayRendered.subject || 'Rayna Tours';
+  } else {
+    // Fallback: EmailRenderer with htmlTemplateId from DB
+    const htmlTemplateId = d.htmlTemplateId || await _resolveHtmlTemplateId(d.templateId);
+    if (!htmlTemplateId) {
+      return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
+    }
+    const rendered = await EmailRenderer.renderForJourneyNode({
+      htmlTemplateId,
+      unifiedId: d.customerId,
+      journeyId: d.journeyId,
+      nodeId: d.nodeId,
+      runId: d.runId,
+    });
+    html    = rendered.html;
+    subject = rendered.subject || 'Rayna Tours';
+  }
+
+  // ── Inject click/open tracking ──
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
-  const subject = rendered.subject || 'Rayna Tours';
 
   const logId = await SendTrackService.logSend({
     unifiedId: d.customerId,
@@ -123,7 +160,7 @@ async function processEmail(job) {
   });
 
   const campaignSlug = `j${d.journeyId}_${(d.nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
-  let trackedHtml = injectClickTracking(rendered.html, {
+  let trackedHtml = injectClickTracking(html, {
     logId,
     baseUrl,
     campaign: campaignSlug,
@@ -134,52 +171,56 @@ async function processEmail(job) {
   });
   trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
 
-  const sendResult = await EmailChannel.send({
-    to: d.email,
+  // Apply test override — all journey emails go to override inbox during testing
+  const overrideTo = process.env.EMAIL_OVERRIDE_TO;
+  const actualTo   = overrideTo || d.email;
+  if (overrideTo) {
+    console.log(`[Worker:email] OVERRIDE → sending to ${overrideTo} (real: ${d.email})`);
+  }
+
+  // Send via ChatheadEmailChannel (AWS Email API)
+  const sendResult = await ChatheadEmailChannel.send({
+    to: actualTo,
     subject,
     html: trackedHtml,
-    text: rendered.plainText,
   });
 
   // Update send log status
-  if (sendResult.success || sendResult.simulated) {
+  if (sendResult.success) {
     SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
-  } else if (sendResult.blocked) {
-    SendTrackService.markFailed(logId, { error: sendResult.reason || 'blocked' }).catch(() => {});
+  } else {
+    SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' }).catch(() => {});
   }
 
-  // EmailChannel returns { blocked: true } for unsubscribed/bounced contacts —
-  // not a retryable failure; record as action_blocked and advance.
-  if (sendResult.blocked) {
-    await _logAndAdvance(d, 'action_blocked', {
-      templateId: d.templateId, htmlTemplateId, channel: 'email', track: d.track,
-      reason: sendResult.reason || 'unsubscribed_or_bounced',
-    }, false);
-    return;
+  if (!sendResult.success) {
+    // Log the failure but do NOT advance the entry — let BullMQ retry.
+    // Only advance after all retries are exhausted (handled by the failed event below).
+    await db.query(
+      `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+       VALUES ($1, $2, 'action_failed', $3, $4)`,
+      [d.entryId, d.nodeId, 'email', JSON.stringify({
+        templateId: d.templateId, track: d.track,
+        sendResult: { success: false, error: sendResult.error, provider: sendResult.provider },
+        attempt: job.attemptsMade + 1,
+        willRetry: (job.attemptsMade + 1) < (job.opts?.attempts || 3),
+      })]
+    );
+    console.error(`[Worker:email] FAILED entry=${d.entryId} attempt=${job.attemptsMade + 1}: ${sendResult.error}`);
+    throw new Error(`email send failed: ${sendResult.error || 'unknown'}`);
   }
 
-  await _logAndAdvance(d, sendResult.success ? 'action_sent' : 'action_failed', {
+  await _logAndAdvance(d, 'action_sent', {
     templateId: d.templateId,
-    htmlTemplateId,
     channel: 'email',
     track: d.track,
-    slotsFilled: rendered.slotsFilled,
-    sendResult: { success: sendResult.success, provider: sendResult.provider, simulated: sendResult.simulated, externalId: sendResult.externalId, error: sendResult.error },
-  }, sendResult.success);
-
-  if (!sendResult.success && !sendResult.simulated) {
-    // Surface to BullMQ so it retries with backoff
-    throw new Error(`smtp send failed: ${sendResult.error || 'unknown'}`);
-  }
+    sendResult: { success: true, provider: sendResult.provider, externalId: sendResult.externalId },
+  }, true);
 }
 
 async function processWA(job) {
   const d = job.data;
   if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
 
-  // Approval gate is enforced by GupshupService.assertApproved → throws if not approved.
-  // We catch and log as 'action_blocked' so the journey advances and the worker
-  // doesn't retry an unapprovable template.
   let approvalBlocked = false;
   let sendResult;
   try {
@@ -259,9 +300,6 @@ async function _resolveHtmlTemplateId(contentTemplateId) {
  * After the worker finishes its send (success or terminal failure),
  *  - insert a journey_events row
  *  - advance the journey_entry to the next track-matched edge (or complete it)
- *
- * Failed-with-retry-pending sends never call this — they throw and BullMQ
- * re-runs the job, which writes a fresh attempt log via the on('failed') handler.
  */
 async function _logAndAdvance(d, eventType, details, sendSucceeded) {
   await db.query(
@@ -270,8 +308,6 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
     [d.entryId, d.nodeId, eventType, d.channel, JSON.stringify(details || {})]
   );
 
-  // Advance the entry to the next node via the same track-aware edge selection
-  // processJourney() uses for non-action nodes.
   const edges = d.edges || [];
   const nodeMap = d.nodes || {};
   const entryTrack = d.track || 'all';
@@ -297,6 +333,34 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
        WHERE entry_id = $1`,
       [d.entryId]
     );
+    await _checkJourneyCompletion(d.journeyId);
+  }
+}
+
+async function _checkJourneyCompletion(journeyId) {
+  try {
+    const { rows: [r] } = await db.query(
+      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+      [journeyId]
+    );
+    if (parseInt(r.cnt) > 0) return;
+
+    const { rows: [total] } = await db.query(
+      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1`,
+      [journeyId]
+    );
+    if (parseInt(total.cnt) === 0) return;
+
+    const { rowCount } = await db.query(
+      `UPDATE journey_flows SET status = 'completed', updated_at = NOW()
+       WHERE journey_id = $1 AND status = 'active'`,
+      [journeyId]
+    );
+    if (rowCount > 0) {
+      console.log(`[Worker] Journey ${journeyId} auto-completed — all entries done.`);
+    }
+  } catch (err) {
+    console.error(`[Worker] Journey completion check failed for ${journeyId}: ${err.message}`);
   }
 }
 

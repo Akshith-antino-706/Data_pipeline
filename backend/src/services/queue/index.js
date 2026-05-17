@@ -18,8 +18,10 @@ const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 function buildConnection() {
   const url = process.env.REDIS_URL || DEFAULT_REDIS_URL;
   return new IORedis(url, {
-    maxRetriesPerRequest: null,                  // BullMQ requires this
+    maxRetriesPerRequest: null,   // BullMQ requires this
     enableReadyCheck: false,
+    connectTimeout: 5000,         // fail fast if Redis is down
+    retryStrategy: (times) => Math.min(times * 500, 3000),
   });
 }
 
@@ -46,7 +48,6 @@ function _initQueues() {
     email:    new Queue('journey-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     wa:       new Queue('journey-wa',        { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     sms:      new Queue('journey-sms',       { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
-    testSend: new Queue('journey-test-send', { connection: conn, defaultJobOptions: { ...QUEUE_DEFAULTS, attempts: 2 } }),
   };
   return _queues;
 }
@@ -57,10 +58,6 @@ export function getQueue(channel) {
   if (channel === 'whatsapp') return q.wa;
   if (channel === 'sms')      return q.sms;
   throw new Error(`Unknown channel for queue: ${channel}`);
-}
-
-export function getTestSendQueue() {
-  return _initQueues().testSend;
 }
 
 /**
@@ -91,7 +88,6 @@ export async function closeQueues() {
     _queues.email.close(),
     _queues.wa.close(),
     _queues.sms.close(),
-    _queues.testSend.close(),
   ]);
   _queues = null;
   if (_connection) {

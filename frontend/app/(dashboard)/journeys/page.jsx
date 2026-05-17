@@ -1,25 +1,27 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  testSendJourneyNodeBatch, getTemplates, getSegmentationTree, getSegmentCustomers,
+  getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
-  previewTemplate as fetchTemplatePreview, getJourneyEntries
+  previewTemplate as fetchTemplatePreview, getJourneyEntries,
+  getJourneyQueueCounts, retryBlockedEntries
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
-  ChevronRight, RefreshCw, AlertCircle, Plus, Search, Filter, BarChart3,
+  ChevronRight, RefreshCw, AlertCircle, Plus, Search, BarChart3,
   Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
-  ArrowDown, Send, Mail, Smartphone, Bell, Globe, MessageCircle,
-  TrendingUp, Pause, MoreVertical, Calendar, Hash, Layers, ArrowRight,
-  ChevronDown, Info, Sparkles, LayoutGrid, List, AlertTriangle
+  Send, Mail, Smartphone, Bell, Globe, MessageCircle,
+  TrendingUp, Pause, MoreVertical, Layers, ArrowRight,
+  ChevronDown, Sparkles, LayoutGrid, List, AlertTriangle
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import hotToast from 'react-hot-toast';
 
 // ── Constants ──────────────────────────────────────────────────
@@ -49,12 +51,6 @@ const STATUS_CONFIG = {
   paused: { color: 'var(--text-tertiary)', bg: 'rgba(120,113,108,0.1)', label: 'Paused' },
   completed: { color: 'var(--purple)', bg: 'var(--purple-dim)', label: 'Completed' }
 };
-const PIE_COLORS = ['var(--green)', 'var(--red)', 'var(--orange)', 'var(--purple)', 'var(--brand-primary)', 'var(--yellow)'];
-
-const MOCK_TEST_CONTACTS = [
-  { id: '641522', name: 'Rocky',   email: 'rocky.86agency@gmail.com',  phone: '' },
-  { id: '641500', name: 'Avinash', email: 'avinash@antino.com',         phone: '' },
-];
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -89,6 +85,10 @@ const getJourneyChannels = (nodes) => {
 // ══════════════════════════════════════════════════════════════════
 export default function Journeys() {
   const { businessType } = useBusinessType();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
   // ── State ─────────────────────────────────────────────────────
   const [journeys, setJourneys] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -103,8 +103,8 @@ export default function Journeys() {
   const [showCreate, setShowCreate] = useState(false);
   const [suggestions, setSuggestions] = useState(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [enrolling, setEnrolling] = useState(false);
+  const [, setProcessing] = useState(false);
+  const [, setEnrolling] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [starting, setStarting] = useState(false);
   const [toast, setToast] = useState(null);
@@ -118,19 +118,14 @@ export default function Journeys() {
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [flowEditMode, setFlowEditMode] = useState(false);
-  const [editingNode, setEditingNode] = useState(null); // node being edited
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
   const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null });
   const [showNodeModal, setShowNodeModal] = useState(false);
   const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
+  const [editNodeId, setEditNodeId] = useState(null);
   const [allTemplates, setAllTemplates] = useState({ email: [], whatsapp: [], sms: [] });
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
-  const [trackFilter, setTrackFilter] = useState('all'); // 'all' | 'indian' | 'rest'
-  // Test-send-from-node modal state: null when closed, { node, recipients[], scheduledAt, sending, results[] } when open
-  const [testSendNode, setTestSendNode] = useState(null);
-  const [segmentContacts, setSegmentContacts] = useState([]);
-  const [segmentContactsLoading, setSegmentContactsLoading] = useState(false);
-  const [contactSearch, setContactSearch] = useState('');
+  const [trackFilter] = useState('all');
   const [previewTemplate, setPreviewTemplate] = useState(null); // { name, subject, body_html, channel }
   // Journey entries (real flow data)
   const [journeyEntries, setJourneyEntries] = useState([]);
@@ -138,6 +133,34 @@ export default function Journeys() {
   const [entriesPage, setEntriesPage] = useState(1);
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
+  const [queueStats, setQueueStats] = useState(null); // BullMQ live counts
+  const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
+
+  // Tracks the real live node (most entries are currently on) — set on journey open/start/process
+  const [liveNodeId, setLiveNodeId] = useState(null);
+
+  const selectedRef = useRef(selected); // always-fresh selected journey id for async callbacks
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  // Auto-poll journey detail every 30s when active — picks up node_statuses + journey completion
+  useEffect(() => {
+    if (detail?.status !== 'active') return;
+    const t = setInterval(async () => {
+      const id = selectedRef.current;
+      if (!id) return;
+      try {
+        const d = await getJourney(id);
+        setDetail(d.data);
+      } catch { /* silent */ }
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tick every second so wait-node countdown timers stay live
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
@@ -148,6 +171,78 @@ export default function Journeys() {
   const [allSegments, setAllSegments] = useState([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
+
+  // ── Dubai live clock (for scheduled-start input) ─────────────
+  const [dubaiClock, setDubaiClock] = useState('');
+  useEffect(() => {
+    const tick = () => {
+      const s = new Date().toLocaleString('en-GB', {
+        timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        day: '2-digit', month: 'short', year: 'numeric',
+      });
+      setDubaiClock(s);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Returns current Dubai time as "YYYY-MM-DDTHH:mm" for datetime-local min
+  const dubaiNowForInput = () => {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(now);
+    const get = (t) => parts.find(p => p.type === t)?.value || '00';
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+  };
+
+  // ── Scheduled-start countdown ────────────────────────────────
+  const [schedCountdown, setSchedCountdown] = useState(null); // null | { days, hours, mins, secs }
+  const schedCountdownRef = useRef(null);
+
+  useEffect(() => {
+    clearInterval(schedCountdownRef.current);
+    const iso = detail?.scheduled_start_at;
+    if (!iso || detail?.status !== 'draft') { setSchedCountdown(null); return; }
+    const target = new Date(iso);
+
+    const fireAutoStart = () => {
+      const id = selectedRef.current;
+      if (!id) return;
+      setStarting(true);
+      startJourney(id)
+        .then(async (res) => {
+          hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
+          const d = await getJourney(id);
+          setDetail(d.data);
+          loadData();
+        })
+        .catch(err => hotToast.error(err.message || 'Auto-start failed'))
+        .finally(() => setStarting(false));
+    };
+
+    const tick = () => {
+      const diff = target - Date.now();
+      if (diff <= 0) {
+        clearInterval(schedCountdownRef.current);
+        setSchedCountdown(null);
+        fireAutoStart();
+        return;
+      }
+      const total = Math.floor(diff / 1000);
+      setSchedCountdown({
+        days:  Math.floor(total / 86400),
+        hours: Math.floor((total % 86400) / 3600),
+        mins:  Math.floor((total % 3600) / 60),
+        secs:  total % 60,
+      });
+    };
+    tick();
+    schedCountdownRef.current = setInterval(tick, 1000);
+    return () => clearInterval(schedCountdownRef.current);
+  }, [detail?.scheduled_start_at, detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Toast helper ──────────────────────────────────────────────
   const showToast = (msg, type = 'info') => {
@@ -171,6 +266,12 @@ export default function Journeys() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Restore selected journey from URL on page load / refresh
+  useEffect(() => {
+    const idFromUrl = searchParams.get('id');
+    if (idFromUrl && !selected) openJourney(parseInt(idFromUrl));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadEntries = useCallback(async (journeyId, page = 1, status = '') => {
     setEntriesLoading(true);
     try {
@@ -185,8 +286,25 @@ export default function Journeys() {
   }, []);
 
   // ── Journey Actions ───────────────────────────────────────────
+  // Fetch active entries and find which node most entries are currently on
+  const refreshLiveNode = useCallback(async (id, journeyNodes) => {
+    try {
+      const res = await getJourneyEntries(id, { status: 'active', limit: 200 });
+      const entries = res.data || [];
+      if (entries.length === 0) { setLiveNodeId(null); return; }
+      // Tally current_node_id occurrences
+      const tally = {};
+      entries.forEach(e => { if (e.current_node_id) tally[e.current_node_id] = (tally[e.current_node_id] || 0) + 1; });
+      // Pick node with highest count; break ties by node order in journey
+      const nodeOrder = (journeyNodes || []).reduce((m, n, i) => { m[n.id] = i; return m; }, {});
+      const winner = Object.entries(tally).sort((a, b) => b[1] - a[1] || (nodeOrder[a[0]] ?? 999) - (nodeOrder[b[0]] ?? 999))[0];
+      setLiveNodeId(winner ? winner[0] : null);
+    } catch { setLiveNodeId(null); }
+  }, []);
+
   const openJourney = async (id) => {
     setSelected(id);
+    router.replace(`${pathname}?id=${id}`, { scroll: false });
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
@@ -194,16 +312,21 @@ export default function Journeys() {
     setActiveTab('flow');
     setDetailLoading(true);
     setExpandedNode(null);
+    setLiveNodeId(null);
     try {
-      const [d, a, cd] = await Promise.all([
+      const [d, a, cd, qc] = await Promise.all([
         getJourney(id),
         getJourneyAnalytics(id).catch(() => ({ data: null })),
-        getJourneyCampaignAnalytics(id).catch(() => ({ data: null }))
+        getJourneyCampaignAnalytics(id).catch(() => ({ data: null })),
+        getJourneyQueueCounts().catch(() => ({ data: null })),
       ]);
       setDetail(d.data);
       setAnalytics(a.data);
       setCampaignData(cd.data);
+      setQueueStats(qc.data);
       loadTemplates(); // Load templates for preview buttons
+      // Restore live node indicator if journey is active
+      if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
     } catch (err) { showToast('Failed to load journey', 'error'); }
     setDetailLoading(false);
   };
@@ -236,9 +359,70 @@ export default function Journeys() {
 
   const openNodeModal = (afterIdx = null) => {
     setNodeModalAfterIdx(afterIdx);
+    setEditNodeId(null);
     setNodeForm({ ...BLANK_NODE_FORM });
     setShowNodeModal(true);
     loadTemplates();
+  };
+
+  const openNodeEditModal = (node) => {
+    const d = node.data || {};
+    const ch = (d.channel || 'email').toLowerCase();
+    setEditNodeId(node.id);
+    setNodeForm({
+      type: node.type || 'action',
+      channel: ch,
+      label: d.label || '',
+      message: d.message || '',
+      waitDays: d.waitDays || 1,
+      goalType: d.goalType || 'booking',
+      condition: d.condition || 'booked',
+      track: d.track || 'all',
+      sendHour: d.sendHour ?? null,
+      emailTemplateId: ch === 'email' ? (d.templateId || d.emailTemplateId || null) : (d.emailTemplateId || null),
+      whatsappTemplateId: ch === 'whatsapp' ? (d.templateId || d.whatsappTemplateId || null) : (d.whatsappTemplateId || null),
+      smsTemplateId: ch === 'sms' ? (d.templateId || d.smsTemplateId || null) : (d.smsTemplateId || null),
+      restChannel: d.restChannel || 'email',
+      restTemplateId: d.restTemplateId || null,
+    });
+    setShowNodeModal(true);
+    loadTemplates();
+  };
+
+  const handleSaveNodeEdit = () => {
+    if (!editNodeId) return;
+    const nodes = detail.nodes || [];
+    const resolvedTemplateId =
+      nodeForm.channel === 'email'    ? (nodeForm.emailTemplateId    || null) :
+      nodeForm.channel === 'whatsapp' ? (nodeForm.whatsappTemplateId || null) :
+      nodeForm.channel === 'sms'      ? (nodeForm.smsTemplateId      || null) : null;
+    if (nodeForm.type === 'action' && !resolvedTemplateId) {
+      return showToast('Template is required for action nodes', 'error');
+    }
+    const updated = nodes.map(n => {
+      if (n.id !== editNodeId) return n;
+      return {
+        ...n, type: nodeForm.type,
+        data: {
+          label: nodeForm.label || n.data?.label || `${nodeForm.type} step`,
+          track: nodeForm.track || 'all',
+          ...(nodeForm.type === 'action' && {
+            channel: nodeForm.channel,
+            message: nodeForm.message,
+            templateId: resolvedTemplateId,
+            sendHour: nodeForm.sendHour ?? null,
+            ...(nodeForm.channel === 'whatsapp' && { restChannel: nodeForm.restChannel || 'email', restTemplateId: nodeForm.restTemplateId || null }),
+          }),
+          ...(nodeForm.type === 'wait'      && { waitDays: nodeForm.waitDays }),
+          ...(nodeForm.type === 'condition' && { condition: nodeForm.condition }),
+          ...(nodeForm.type === 'goal'      && { goalType: nodeForm.goalType }),
+        },
+      };
+    });
+    saveNodeChanges(updated);
+    setShowNodeModal(false);
+    setEditNodeId(null);
+    setNodeForm({ ...BLANK_NODE_FORM });
   };
 
   const handleGenerate = async (strategyId) => {
@@ -290,11 +474,17 @@ export default function Journeys() {
     setSegmentsLoading(false);
   };
 
-  // Load segments whenever the create modal opens
-  useEffect(() => { if (showCreate) loadSegments(); }, [showCreate]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Load segments + pre-fill date with current Dubai time whenever the create modal opens
+  useEffect(() => {
+    if (showCreate) {
+      loadSegments();
+      setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput() }));
+    }
+  }, [showCreate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async () => {
     if (!createForm.name.trim()) return showToast('Journey name is required', 'error');
+    if (!createForm.segmentId) return showToast('Segment is required', 'error');
     setShowCreate(false);
     try {
       const trigger = {
@@ -322,11 +512,19 @@ export default function Journeys() {
         description: createForm.description,
         segmentId: createForm.segmentId || null,
         exitOnConversion: createForm.exitOnConversion,
-        scheduledStartAt: createForm.scheduledStartAt || null,
+        // Treat the input value as Dubai time (UTC+4) → convert to UTC ISO for the backend
+        scheduledStartAt: createForm.scheduledStartAt
+          ? new Date(createForm.scheduledStartAt + ':00+04:00').toISOString()
+          : null,
         nodes: [trigger, ...extraNodes],
-        edges: []
+        edges: [trigger, ...extraNodes].slice(1).map((n, i) => ({
+          id: `e_${[trigger, ...extraNodes][i].id}_${n.id}`,
+          source: [trigger, ...extraNodes][i].id,
+          target: n.id,
+        }))
       });
-      showToast(`Journey "${res.data?.name}" created`, 'success');
+      const snapCount = res.data?.snapshot_count || 0;
+      showToast(`Journey "${res.data?.name}" created — ${snapCount} users snapshotted`, 'success');
       setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
@@ -346,14 +544,22 @@ export default function Journeys() {
     setEnrolling(false);
   };
 
+  const refreshQueueStats = async () => {
+    try {
+      const qc = await getJourneyQueueCounts();
+      setQueueStats(qc.data);
+    } catch { /* ignore */ }
+  };
+
   const handleProcess = async () => {
     setConfirmAction(null);
     setProcessing(true);
     try {
       const res = await processJourney(selected);
       showToast(`Processed: ${res.data?.processed || 0} entries advanced`, 'success');
-      const d = await getJourney(selected);
+      const [d] = await Promise.all([getJourney(selected), refreshQueueStats()]);
       setDetail(d.data);
+      if (d.data?.status === 'active') refreshLiveNode(selected, d.data?.nodes || []);
     } catch (err) { showToast(err.message, 'error'); }
     setProcessing(false);
   };
@@ -363,10 +569,9 @@ export default function Journeys() {
     setStarting(true);
     try {
       const res = await startJourney(selected);
-      hotToast.success(`Journey started! Enrolled ${res.data?.enrolled || 0} customers`);
-      const d = await getJourney(selected);
+      hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
+      const [d] = await Promise.all([getJourney(selected), refreshQueueStats(), loadData()]);
       setDetail(d.data);
-      await loadData();
     } catch (err) { hotToast.error(err.message || 'Failed to start journey'); }
     setStarting(false);
   };
@@ -388,6 +593,7 @@ export default function Journeys() {
       showToast('Journey deleted', 'success');
       setSelected(null);
       setDetail(null);
+      router.replace(pathname, { scroll: false });
       await loadData();
     } catch (err) { showToast(err.message, 'error'); }
   };
@@ -426,6 +632,11 @@ export default function Journeys() {
       nodeForm.channel === 'email'     ? (nodeForm.emailTemplateId     || null) :
       nodeForm.channel === 'whatsapp'  ? (nodeForm.whatsappTemplateId  || null) :
       nodeForm.channel === 'sms'       ? (nodeForm.smsTemplateId       || null) : null;
+
+    // Validation
+    if (nodeForm.type === 'action' && !resolvedTemplateId) {
+      return showToast(`Email template is required for action nodes`, 'error');
+    }
     const newNode = {
       id: newId,
       type: nodeForm.type,
@@ -453,35 +664,6 @@ export default function Journeys() {
     setAddNodeAfter(null);
     setShowNodeModal(false);
     setNodeForm({ ...BLANK_NODE_FORM });
-  };
-
-  const handleEditNode = (nodeId) => {
-    const nodes = detail.nodes || [];
-    const idx = nodes.findIndex(n => n.id === nodeId);
-    if (idx < 0) return;
-    const updated = [...nodes];
-    updated[idx] = {
-      ...updated[idx],
-      type: nodeForm.type,
-      data: {
-        ...updated[idx].data,
-        label: nodeForm.label || updated[idx].data?.label,
-        track: nodeForm.track || updated[idx].data?.track || 'all',
-        ...(nodeForm.type === 'action' && {
-          channel: nodeForm.channel,
-          message: nodeForm.message,
-          // Save rest auto-pair settings when this is a WhatsApp node
-          ...(nodeForm.channel === 'whatsapp' && {
-            restChannel: nodeForm.restChannel || 'email',
-            restTemplateId: nodeForm.restTemplateId || null,
-          }),
-        }),
-        ...(nodeForm.type === 'wait' && { waitDays: nodeForm.waitDays }),
-        ...(nodeForm.type === 'goal' && { goalType: nodeForm.goalType }),
-      }
-    };
-    saveNodeChanges(updated);
-    setEditingNode(null);
   };
 
   const handleDeleteNode = (nodeId) => {
@@ -581,6 +763,8 @@ export default function Journeys() {
       nodeEntryCountsMap[nc.node_id] = { triggered: parseInt(nc.triggered) || 0, exited: parseInt(nc.exited) || 0 };
     });
 
+    const isJourneyStarted = ['active', 'paused', 'completed'].includes(detail.status);
+
     // Build campaign metrics per action node
     const nodeCampaignMap = {};
     const campaigns = campaignData?.campaigns || [];
@@ -599,13 +783,16 @@ export default function Journeys() {
         || (campaignsByChannel[ch] && campaignsByChannel[ch].shift());
       if (matched) {
         nodeCampaignMap[n.id] = {
-          target: parseInt(campaignData?.target_count) || parseInt(detail.total_entries) || 0,
+          total: parseInt(matched.target_count) || parseInt(campaignData?.target_count) || parseInt(detail.total_entries) || 0,
+          target: parseInt(matched.target_count) || parseInt(campaignData?.target_count) || parseInt(detail.total_entries) || 0,
           sent: parseInt(matched.sent_count) || 0,
           delivered: parseInt(matched.delivered_count) || 0,
           read: parseInt(matched.read_count) || 0,
           clicked: parseInt(matched.click_count) || 0,
           bounced: parseInt(matched.bounce_count) || 0,
           failed: parseInt(matched.fail_count) || 0,
+          startedAt: matched.started_at || null,
+          completedAt: matched.completed_at || null,
           template_body: matched.template_body || null,
           campaign_name: matched.name,
           delivery_rate: matched.delivery_rate,
@@ -613,6 +800,16 @@ export default function Journeys() {
           click_rate: matched.click_rate,
         };
       }
+    });
+
+    // Build per-node fire-time map for wait countdown timers
+    const nodeFireTimesMap = {};
+    (analytics?.nodeFireTimes || []).forEach(ft => {
+      nodeFireTimesMap[ft.current_node_id] = {
+        earliestFireAt: ft.earliest_fire_at ? new Date(ft.earliest_fire_at).getTime() : null,
+        latestFireAt:   ft.latest_fire_at   ? new Date(ft.latest_fire_at).getTime()   : null,
+        activeCount:    parseInt(ft.active_count) || 0,
+      };
     });
 
     const channels = getJourneyChannels(nodes);
@@ -637,18 +834,28 @@ export default function Journeys() {
 
     const funnelData = analytics?.funnelData || [];
     const entryFunnelData = [
-      { name: 'Entered', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
+      { name: 'Snapshotted', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
       { name: 'Active', value: parseInt(stats.active) || 0, color: 'var(--green)' },
       { name: 'Completed', value: parseInt(stats.completed) || 0, color: 'var(--brand-primary)' },
-      { name: 'Converted', value: parseInt(stats.converted) || 0, color: 'var(--purple)' },
-      { name: 'Exited', value: parseInt(stats.exited) || 0, color: 'var(--red)' },
+      { name: 'Booked', value: parseInt(stats.exited_booked) || 0, color: 'var(--purple)' },
+      { name: 'Unsubscribed', value: parseInt(stats.exited_unsubscribed) || 0, color: 'var(--red)' },
     ].filter(d => d.value > 0);
 
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
+        <style>{`
+          @keyframes simPulse {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(0,0,0,0.12), 0 6px 20px rgba(0,0,0,0.15); }
+            50%       { box-shadow: 0 0 0 6px rgba(0,0,0,0.06), 0 8px 28px rgba(0,0,0,0.25); }
+          }
+          @keyframes simDot {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.3; }
+          }
+        `}</style>
         {/* ── Back + Header ─────────────────────────────────────── */}
         <motion.div variants={fadeInUp}>
-        <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); }}>
+        <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); router.replace(pathname, { scroll: false }); }}>
           <ArrowLeft size={14} /> All Journeys
         </button>
 
@@ -766,13 +973,13 @@ export default function Journeys() {
         {(() => {
           const ct = campaignData?.totals || {};
           const kpis = [
-            { label: 'Total Entries', value: fmt(stats.total_entries), color: 'kpi-blue', icon: Users },
+            { label: 'Snapshotted', value: fmt(detail.snapshot_count || stats.total_entries), color: 'kpi-blue', icon: Users },
             { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
             { label: 'Sent', value: fmt(ct.total_sent || 0), color: 'kpi-orange', icon: Send },
             { label: 'Delivered', value: fmt(ct.total_delivered || 0), color: 'kpi-green', icon: CheckCircle2 },
-            { label: 'Read', value: fmt(ct.total_read || 0), color: 'kpi-blue', icon: Eye },
-            { label: 'Clicked', value: fmt(ct.total_clicked || 0), color: 'kpi-purple', icon: TrendingUp },
-            { label: 'Converted', value: fmt(stats.converted), color: 'kpi-purple', icon: Target },
+            { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
+            { label: 'Unsub (Exit)', value: fmt(stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
+            { label: 'Completed', value: fmt(stats.completed), color: 'kpi-blue', icon: CheckCircle2 },
             { label: 'Failed', value: fmt(ct.total_failed || 0), color: 'kpi-red', icon: XCircle },
           ];
           return (
@@ -793,6 +1000,44 @@ export default function Journeys() {
             </div>
           );
         })()}
+
+        {/* ── Scheduled Start Countdown ────────────────────────── */}
+        {schedCountdown && detail?.scheduled_start_at && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+            padding: '14px 20px', marginBottom: 20, borderRadius: 12,
+            background: 'linear-gradient(135deg, rgba(255,153,51,0.08) 0%, rgba(234,179,8,0.08) 100%)',
+            border: '1px solid rgba(255,153,51,0.35)',
+          }}>
+            <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 0 }}>
+              <Clock size={16} color="var(--orange)" />
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)' }}>Auto-starts in</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                ({new Date(detail.scheduled_start_at).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })} Dubai)
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {[
+                { v: schedCountdown.days,  l: 'D' },
+                { v: schedCountdown.hours, l: 'H' },
+                { v: schedCountdown.mins,  l: 'M' },
+                { v: schedCountdown.secs,  l: 'S' },
+              ].map(({ v, l }) => (
+                <div key={l} style={{ textAlign: 'center', minWidth: 44 }}>
+                  <div style={{
+                    fontSize: 22, fontWeight: 800, color: 'var(--orange)',
+                    background: 'var(--orange-dim)', borderRadius: 8,
+                    padding: '4px 8px', lineHeight: 1, border: '1px solid rgba(255,153,51,0.3)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {String(v).padStart(2, '0')}
+                  </div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', marginTop: 3, letterSpacing: '0.5px' }}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Tabs ──────────────────────────────────────────────── */}
         <div className="tabs mb-5">
@@ -883,20 +1128,24 @@ export default function Journeys() {
                       </span>
                     ))}
                   </div>
-                  <button
-                    onClick={() => openNodeModal(detail?.nodes?.length ? detail.nodes.length - 1 : 0)}
-                    className="btn btn-sm btn-secondary"
-                    style={{ fontSize: 11, padding: '4px 12px' }}
-                  >
-                    <Plus size={11} /> Add Node
-                  </button>
-                  <button
-                    onClick={() => setFlowEditMode(!flowEditMode)}
-                    className={`btn btn-sm ${flowEditMode ? 'btn-primary' : 'btn-ghost'}`}
-                    style={{ fontSize: 11, padding: '4px 12px' }}
-                  >
-                    {flowEditMode ? 'Done Editing' : 'Edit Flow'}
-                  </button>
+                  {!isJourneyStarted && (
+                    <>
+                      <button
+                        onClick={() => openNodeModal(detail?.nodes?.length ? detail.nodes.length - 1 : 0)}
+                        className="btn btn-sm btn-secondary"
+                        style={{ fontSize: 11, padding: '4px 12px' }}
+                      >
+                        <Plus size={11} /> Add Node
+                      </button>
+                      <button
+                        onClick={() => setFlowEditMode(!flowEditMode)}
+                        className={`btn btn-sm ${flowEditMode ? 'btn-primary' : 'btn-ghost'}`}
+                        style={{ fontSize: 11, padding: '4px 12px' }}
+                      >
+                        {flowEditMode ? 'Done Editing' : 'Edit Flow'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -921,11 +1170,24 @@ export default function Journeys() {
 
                     {nodes.map((node, i) => {
                       const Icon = NODE_ICONS[node.type] || Target;
-                      const color = NODE_COLORS[node.type] || 'var(--text-tertiary)';
                       const channelConf = node.data?.channel ? CHANNEL_CONFIG[node.data.channel.toLowerCase()] : null;
-                      const ChannelIcon = channelConf?.icon || null;
                       const nodeStats = nodeAnalyticsMap[node.id] || {};
                       const hasSent = nodeStats.action_sent > 0;
+                      const nStats = detail?.node_stats?.[node.id];
+                      // Draft → all nodes grey. Any started status → all nodes coloured & clickable.
+                      const isNodeActive = isJourneyStarted;
+
+                      // Node lifecycle status — sourced from backend node_statuses (persists across refresh)
+                      const backendStatus = detail?.node_statuses?.[node.id]; // 'pending'|'running'|'completed'
+                      const nodeLifecycle = isJourneyStarted && detail?.status !== 'draft'
+                        ? (backendStatus || 'pending').toUpperCase()
+                        : null;
+
+                      // Highlight: use backend node_statuses
+                      const isCurrentSimNode = (backendStatus === 'running');
+                      const color = isNodeActive
+                        ? (NODE_COLORS[node.type] || 'var(--text-tertiary)')
+                        : '#9ca3af';
 
                       // ── Track-aware grid placement ──
                       // Trigger spans both columns (single shared entry).
@@ -1052,6 +1314,8 @@ export default function Journeys() {
                                     +
                                   </button>
                                 )
+                              ) : isJourneyStarted ? (
+                                <div style={{ width: 2, height: 28, background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
                               ) : (
                                 <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', height: 28 }}>
                                   <div style={{ width: 2, height: '100%', background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
@@ -1072,16 +1336,19 @@ export default function Journeys() {
                           <div
                             onClick={() => setExpandedNode(isExpanded ? null : key)}
                             style={{
-                              background: 'var(--bg-card)',
-                              borderTop: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
-                              borderRight: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
-                              borderBottom: `1px solid ${isExpanded ? color + '50' : 'var(--border-color)'}`,
+                              background: isCurrentSimNode ? color + '08' : 'var(--bg-card)',
+                              borderTop: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
+                              borderRight: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
+                              borderBottom: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
                               borderLeft: `4px solid ${color}`,
                               borderRadius: 12,
                               padding: '14px 16px',
                               cursor: 'pointer',
-                              transition: 'all 0.2s ease',
-                              boxShadow: isExpanded ? `0 4px 16px ${color}15` : 'var(--shadow)',
+                              transition: 'all 0.3s ease',
+                              boxShadow: isCurrentSimNode
+                                ? `0 0 0 3px ${color}40, 0 6px 20px ${color}30`
+                                : isExpanded ? `0 4px 16px ${color}15` : 'var(--shadow)',
+                              animation: isCurrentSimNode ? 'simPulse 1.5s ease-in-out infinite' : 'none',
                             }}
                           >
                             <div className="flex items-center gap-3">
@@ -1099,6 +1366,19 @@ export default function Journeys() {
                                   <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color, lineHeight: 1 }}>
                                     {NODE_LABELS[node.type] || node.type}
                                   </span>
+                                  {nodeLifecycle && (() => {
+                                    const lcConfig = {
+                                      PENDING:   { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', dot: null },
+                                      RUNNING:   { bg: color + '20',             color,            dot: true  },
+                                      COMPLETED: { bg: 'rgba(34,197,94,0.12)',   color: '#22c55e', dot: null  },
+                                    }[nodeLifecycle];
+                                    return (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: lcConfig.bg, color: lcConfig.color, letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                                        {lcConfig.dot && <span style={{ width: 5, height: 5, borderRadius: '50%', background: lcConfig.color, display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />}
+                                        {nodeLifecycle === 'COMPLETED' && '✓ '}{nodeLifecycle}
+                                      </span>
+                                    );
+                                  })()}
                                   {(() => {
                                     // Rest-pair duplicate for WhatsApp nodes: override the channel chip so
                                     // the Rest column visually shows Email/SMS instead of WhatsApp.
@@ -1136,11 +1416,39 @@ export default function Journeys() {
                                 })()}
                               </div>
 
-                              {/* Node stats preview */}
-                              {hasSent && (
-                                <div className="text-right shrink-0">
-                                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(nodeStats.action_sent)}</div>
-                                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>sent</div>
+                              {/* Node stats preview — user counts + sent */}
+                              {(hasSent || nStats) && (
+                                <div className="flex items-center gap-3 shrink-0">
+                                  {nStats && (
+                                    <div className="flex gap-2" style={{ fontSize: 10 }}>
+                                      {nStats.active > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', fontWeight: 700 }}>
+                                          {fmt(nStats.active)} active
+                                        </span>
+                                      )}
+                                      {nStats.exited_booked > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(34,197,94,0.1)', color: '#22c55e', fontWeight: 700 }}>
+                                          {fmt(nStats.exited_booked)} booked
+                                        </span>
+                                      )}
+                                      {nStats.exited_unsubscribed > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 700 }}>
+                                          {fmt(nStats.exited_unsubscribed)} unsub
+                                        </span>
+                                      )}
+                                      {nStats.completed > 0 && (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(156,163,175,0.1)', color: '#9ca3af', fontWeight: 700 }}>
+                                          {fmt(nStats.completed)} done
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {hasSent && (
+                                    <div className="text-right shrink-0">
+                                      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(nodeStats.action_sent)}</div>
+                                      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>sent</div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
@@ -1157,6 +1465,11 @@ export default function Journeys() {
                                       className="flex items-center justify-center"
                                       style={{ width: 24, height: 24, border: '1px solid var(--border-color)', borderRadius: 6, background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 12 }}>↓</button>
                                   )}
+                                  <button onClick={() => openNodeEditModal(node)} title="Edit node"
+                                    className="flex items-center justify-center"
+                                    style={{ width: 24, height: 24, border: '1px solid var(--brand-primary)', borderRadius: 6, background: 'rgba(59,130,246,0.08)', color: 'var(--brand-primary)', cursor: 'pointer' }}>
+                                    <Edit3 size={11} />
+                                  </button>
                                   <button onClick={() => handleDeleteNode(node.id)} title="Delete node"
                                     className="flex items-center justify-center"
                                     style={{ width: 24, height: 24, border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-dim)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>×</button>
@@ -1177,14 +1490,128 @@ export default function Journeys() {
                                     {node.data.message}
                                   </div>
                                 )}
-                                {node.data?.waitDays && (
-                                  <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
-                                    <Clock size={14} color={color} />
-                                    <span className="text-secondary text-sm">
-                                      Wait <strong>{node.data.waitDays} day{node.data.waitDays !== 1 ? 's' : ''}</strong> before proceeding
-                                    </span>
-                                  </div>
-                                )}
+                                {node.data?.waitDays && (() => {
+                                  const waitDays    = node.data.waitDays;
+                                  const ft          = nodeFireTimesMap[node.id];
+                                  const fireAt      = ft?.earliestFireAt   || null;
+                                  const enqueuedAt  = ft?.earliestEnqueued || null;
+                                  const activeCount = ft?.activeCount       || 0;
+
+                                  // Remaining time — ticks every second via `now`
+                                  const remainingMs  = fireAt ? Math.max(0, fireAt - now) : null;
+                                  const remainingSec = remainingMs !== null ? Math.ceil(remainingMs / 1000) : null;
+                                  const isDue        = remainingMs === 0;
+
+                                  // Progress using real worker enqueue→fire span
+                                  const totalMs   = (fireAt && enqueuedAt) ? Math.max(1, fireAt - enqueuedAt) : null;
+                                  const elapsedMs = enqueuedAt ? Math.max(0, now - enqueuedAt) : null;
+                                  const pct       = (totalMs && elapsedMs !== null)
+                                    ? Math.min(100, Math.max(0, Math.round(elapsedMs / totalMs * 100)))
+                                    : null;
+
+                                  // Digital clock segments — zero-padded
+                                  const pad = (n) => String(n).padStart(2, '0');
+                                  const buildClock = (sec) => {
+                                    if (sec <= 0) return null;
+                                    const d  = Math.floor(sec / 86400);
+                                    const h  = Math.floor((sec % 86400) / 3600);
+                                    const m  = Math.floor((sec % 3600) / 60);
+                                    const s  = sec % 60;
+                                    if (d > 0)  return { parts: [{ v: pad(d), u: 'd' }, { v: pad(h), u: 'h' }, { v: pad(m), u: 'm' }], color: 'var(--text-secondary)' };
+                                    if (h > 0)  return { parts: [{ v: pad(h), u: 'h' }, { v: pad(m), u: 'm' }, { v: pad(s), u: 's' }], color: '#f59e0b' };
+                                    if (m > 0)  return { parts: [{ v: pad(m), u: 'm' }, { v: pad(s), u: 's' }], color: '#eab308' };
+                                    return       { parts: [{ v: pad(s), u: 's' }], color: '#22c55e' };
+                                  };
+                                  const clock = isDue ? null : buildClock(remainingSec);
+
+                                  return (
+                                    <div style={{ marginTop: 4 }}>
+                                      <div className="flex items-center gap-2" style={{ padding: '4px 0 10px' }}>
+                                        <Clock size={14} color={color} />
+                                        <span className="text-secondary text-sm">
+                                          Wait <strong>{waitDays} day{waitDays !== 1 ? 's' : ''}</strong> before proceeding
+                                        </span>
+                                      </div>
+
+                                      {remainingSec !== null ? (
+                                        <div style={{ borderRadius: 12, border: `1px solid ${isDue ? 'rgba(34,197,94,0.35)' : 'rgba(234,179,8,0.3)'}`, background: isDue ? 'rgba(34,197,94,0.07)' : 'rgba(234,179,8,0.05)', overflow: 'hidden' }}>
+
+                                          {/* Header */}
+                                          <div className="flex items-center justify-between" style={{ padding: '10px 14px 6px' }}>
+                                            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                                              {isDue ? '✓ Ready to advance' : 'Time remaining'}
+                                            </span>
+                                            {activeCount > 0 && (
+                                              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                                {activeCount} entries waiting
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Digital countdown clock */}
+                                          <div className="flex items-end justify-center gap-1" style={{ padding: isDue ? '6px 14px 10px' : '4px 14px 10px' }}>
+                                            {isDue ? (
+                                              <span style={{ fontSize: 30, fontWeight: 900, color: '#22c55e', letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>
+                                                ✓ Due Now
+                                              </span>
+                                            ) : clock?.parts.map((p, i) => (
+                                              <div key={i} className="flex items-end gap-1">
+                                                {i > 0 && <span style={{ fontSize: 22, fontWeight: 700, color: 'rgba(120,113,108,0.4)', marginBottom: 6, lineHeight: 1 }}>:</span>}
+                                                <div style={{ textAlign: 'center' }}>
+                                                  <div style={{
+                                                    fontSize: 36, fontWeight: 900, color: clock.color,
+                                                    fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em',
+                                                    lineHeight: 1, minWidth: 52, textAlign: 'center',
+                                                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                                                    transition: 'color 0.3s ease',
+                                                  }}>
+                                                    {p.v}
+                                                  </div>
+                                                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 2 }}>
+                                                    {p.u === 'd' ? 'days' : p.u === 'h' ? 'hours' : p.u === 'm' ? 'mins' : 'secs'}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+
+                                          {/* Progress bar */}
+                                          <div style={{ position: 'relative', height: 5, background: 'rgba(120,113,108,0.12)', margin: '0 0 0 0' }}>
+                                            <div style={{
+                                              position: 'absolute', left: 0, top: 0, height: '100%',
+                                              width: `${pct ?? (isDue ? 100 : 0)}%`,
+                                              background: isDue ? '#22c55e' : 'linear-gradient(90deg,#ca8a04,#eab308)',
+                                              transition: 'width 1s linear',
+                                            }} />
+                                          </div>
+
+                                          {/* Footer row */}
+                                          <div className="flex gap-4 flex-wrap" style={{ padding: '7px 14px 10px' }}>
+                                            {enqueuedAt && (
+                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
+                                                Entered: <strong style={{ color: 'var(--text-secondary)' }}>{new Date(enqueuedAt).toLocaleTimeString()}</strong>
+                                              </span>
+                                            )}
+                                            {fireAt && (
+                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
+                                                Fires at: <strong style={{ color: 'var(--text-secondary)' }}>{new Date(fireAt).toLocaleTimeString()}</strong>
+                                              </span>
+                                            )}
+                                            {pct !== null && (
+                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
+                                                <strong style={{ color: clock?.color || '#22c55e' }}>{pct}%</strong> elapsed
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(120,113,108,0.06)', border: '1px solid var(--border-color)', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                                          Waiting for entries — refreshes every 10s
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                                 {node.data?.triggerType && (
                                   <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
                                     <Zap size={14} color={color} />
@@ -1228,28 +1655,102 @@ export default function Journeys() {
                                 {/* Campaign Metrics Card — per node */}
                                 {node.type === 'action' && (() => {
                                   const camp = nodeCampaignMap?.[node.id];
-                                  const target = camp?.target || parseInt(detail?.total_entries) || 0;
-                                  const sent = camp?.sent || parseInt(nodeStats?.action_sent) || 0;
-                                  const delivered = camp?.delivered || parseInt(nodeStats?.action_delivered) || 0;
-                                  const read = camp?.read || parseInt(nodeStats?.action_read) || 0;
-                                  const clicked = camp?.clicked || parseInt(nodeStats?.action_clicked) || 0;
-                                  const bounced = camp?.bounced || parseInt(nodeStats?.action_bounced) || 0;
-                                  const failed = camp?.failed || parseInt(nodeStats?.action_failed) || 0;
+                                  const target    = camp?.target    || parseInt(detail?.total_entries) || 0;
+                                  const sent      = camp?.sent      || parseInt(nodeStats?.action_sent)      || 0;
+                                  const delivered = camp?.delivered  || parseInt(nodeStats?.action_delivered) || 0;
+                                  const read      = camp?.read       || parseInt(nodeStats?.action_read)      || 0;
+                                  const clicked   = camp?.clicked    || parseInt(nodeStats?.action_clicked)   || 0;
+                                  const bounced   = camp?.bounced    || parseInt(nodeStats?.action_bounced)   || 0;
+                                  const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
+                                  const blocked   = parseInt(nodeStats?.action_blocked) || 0;
+                                  // BullMQ live queue depth for this channel
+                                  const ch = (node.data?.channel || '').toLowerCase();
+                                  const liveQ = queueStats?.[ch === 'whatsapp' ? 'whatsapp' : ch] || null;
+                                  const qWaiting = (liveQ?.waiting || 0) + (liveQ?.active || 0) + (liveQ?.delayed || 0);
+                                  // Node config check
+                                  const nodeChannel = node.data?.channel || '';
+                                  const nodeTemplateId = node.data?.templateId || node.data?.emailTemplateId || node.data?.whatsappTemplateId || node.data?.smsTemplateId;
+                                  const missingConfig = !nodeChannel || !nodeTemplateId;
                                   return (
                                     <div className="mt-3">
-                                      {/* Top row — Target, Sent, Delivered */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                                      {/* Node config strip — shows channel + templateId, red if missing */}
+                                      <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: missingConfig ? 'rgba(239,68,68,0.06)' : 'rgba(34,197,94,0.06)', border: `1px solid ${missingConfig ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.15)'}`, fontSize: 11, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <span style={{ color: 'var(--text-tertiary)' }}>Channel: <strong style={{ color: nodeChannel ? 'var(--text-primary)' : 'var(--red)' }}>{nodeChannel || '⚠ not set'}</strong></span>
+                                        <span style={{ color: 'var(--text-tertiary)' }}>Template ID: <strong style={{ color: nodeTemplateId ? 'var(--text-primary)' : 'var(--red)' }}>{nodeTemplateId || '⚠ not set'}</strong></span>
+                                        {missingConfig && (
+                                          <button onClick={e => { e.stopPropagation(); openNodeEditModal(node); }}
+                                            style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--red)', background: 'rgba(239,68,68,0.08)', color: 'var(--red)' }}>
+                                            Fix Node →
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {/* BullMQ live queue strip */}
+                                      {liveQ && (
+                                        <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.15)', fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <span style={{ color: '#3b82f6', fontWeight: 700 }}>📬 BullMQ Queue</span>
+                                          {[
+                                            { label: 'waiting', val: liveQ.waiting || 0, c: '#f59e0b' },
+                                            { label: 'active', val: liveQ.active || 0, c: '#3b82f6' },
+                                            { label: 'delayed', val: liveQ.delayed || 0, c: '#8b5cf6' },
+                                            { label: 'failed', val: liveQ.failed || 0, c: '#ef4444' },
+                                            { label: 'completed', val: liveQ.completed || 0, c: '#22c55e' },
+                                          ].map(({ label, val, c }) => (
+                                            <span key={label} style={{ color: 'var(--text-tertiary)' }}>
+                                              {label}: <strong style={{ color: val > 0 ? c : 'var(--text-muted)' }}>{fmt(val)}</strong>
+                                            </span>
+                                          ))}
+                                          <button onClick={async e => { e.stopPropagation(); await refreshQueueStats(); }}
+                                            style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(59,130,246,0.3)', background: 'transparent', color: '#3b82f6' }}>
+                                            ↻ Refresh
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      {/* Top row — Target, Sent, In Queue, Delivered */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                                         {[
                                           { label: 'TARGET', value: target, color: 'var(--green)' },
-                                          { label: 'SENT', value: sent, color: 'var(--green)' },
-                                          { label: 'DELIVERED', value: delivered, color: 'var(--green)' },
+                                          { label: 'IN QUEUE', value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)' },
+                                          { label: 'SENT', value: sent, color: sent > 0 ? 'var(--green)' : 'var(--text-muted)' },
+                                          { label: 'DELIVERED', value: delivered, color: delivered > 0 ? 'var(--green)' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
-                                            <div style={{ fontSize: 22, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
+                                            <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
                                             <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px', marginTop: 2 }}>{m.label}</div>
                                           </div>
                                         ))}
                                       </div>
+
+                                      {/* Blocked warning + Retry button */}
+                                      {blocked > 0 && (
+                                        <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.3)', fontSize: 12, color: '#f97316' }}>
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                            <span>⚠ <strong>{fmt(blocked)}</strong> entries blocked — {missingConfig ? 'fix node config above then click Retry' : 'no template/channel was set when they ran'}</span>
+                                            <button
+                                              onClick={async (e) => {
+                                                e.stopPropagation();
+                                                try {
+                                                  const r = await retryBlockedEntries(selected, node.id);
+                                                  hotToast.success(`Retried ${r.data?.retried || 0} blocked entries — processing now…`);
+                                                  // Immediately process so emails go out without waiting for cron
+                                                  await processJourney(selected).catch(() => {});
+                                                  const [d, cd] = await Promise.all([
+                                                    getJourney(selected),
+                                                    getJourneyCampaignAnalytics(selected).catch(() => ({ data: null })),
+                                                  ]);
+                                                  setDetail(d.data);
+                                                  setCampaignData(cd.data);
+                                                  await refreshQueueStats();
+                                                } catch (err) { hotToast.error(err.message || 'Retry failed'); }
+                                              }}
+                                              style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid #f97316', background: 'rgba(249,115,22,0.1)', color: '#f97316', whiteSpace: 'nowrap' }}>
+                                              Retry Blocked
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+
                                       {/* Bottom row — Read, Clicked, Bounced, Failed */}
                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
                                         {[
@@ -1292,7 +1793,7 @@ export default function Journeys() {
                                           </div>
                                         );
                                       })()}
-                                      {/* Action buttons — Preview + Send test */}
+                                      {/* Action buttons — Preview */}
                                       <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                                         {(() => {
                                           const tpl = getNodeTemplate(node);
@@ -1320,23 +1821,6 @@ export default function Journeys() {
                                             </button>
                                           ) : null;
                                         })()}
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSegmentContacts([]); setContactSearch('');
-                                            setTestSendNode({ node, recipients: [], sending: false, results: [] });
-                                          }}
-                                          style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: 6,
-                                            fontSize: 11, fontWeight: 600, padding: '6px 12px',
-                                            borderRadius: 6, border: '1px solid var(--border-color)',
-                                            background: 'var(--bg-secondary)', color: 'var(--text-primary)',
-                                            cursor: 'pointer',
-                                          }}
-                                        >
-                                          <Send size={12} /> Send test
-                                        </button>
                                       </div>
                                     </div>
                                   );
@@ -1371,7 +1855,7 @@ export default function Journeys() {
                       );
                     })}
                     {/* Add node at end */}
-                    {(
+                    {!isJourneyStarted && (
                       <div className="flex flex-col items-center mt-2">
                         <div style={{ width: 2, height: 12, background: 'var(--border-color)' }} />
                         {addNodeAfter === nodes.length - 1 ? (
@@ -1820,9 +2304,11 @@ export default function Journeys() {
                     {(() => { const Icon = NODE_ICONS[nodeForm.type]; return <Icon size={18} color={NODE_COLORS[nodeForm.type]} />; })()}
                   </div>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>Create Node</div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{editNodeId ? 'Edit Node' : 'Create Node'}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
-                      Inserting after position {(nodeModalAfterIdx ?? 0) + 1}
+                      {editNodeId
+                        ? `Editing: ${nodeForm.label || nodeForm.type}`
+                        : `Inserting after position ${(nodeModalAfterIdx ?? 0) + 1}`}
                     </div>
                   </div>
                 </div>
@@ -1897,9 +2383,10 @@ export default function Journeys() {
                     {(nodeForm.channel === 'email' || (nodeForm.channel === 'whatsapp' && nodeForm.restChannel === 'email')) && (
                       <div>
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
-                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}
+                          {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}{nodeForm.channel === 'email' && <span style={{ color: 'var(--red)', marginLeft: 3 }}>*</span>}
                         </label>
                         <select className="form-input"
+                          style={{ borderColor: nodeForm.channel === 'email' && !nodeForm.emailTemplateId ? 'var(--red)' : undefined }}
                           value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
                           onChange={e => {
                             const val = e.target.value ? parseInt(e.target.value) : null;
@@ -1995,14 +2482,17 @@ export default function Journeys() {
                       <input type="number" min={1} max={365} className="form-input"
                         style={{ width: 100 }}
                         value={nodeForm.waitDays}
-                        onChange={e => setNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                        onChange={e => {
+                          const days = Math.max(1, parseInt(e.target.value) || 1);
+                          setNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
+                        }} />
                       <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                         {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                       {[1, 2, 3, 5, 7, 14].map(d => (
-                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d }))}
+                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
                           style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
                           {d}d
                         </button>
@@ -2048,10 +2538,16 @@ export default function Journeys() {
               </div>
 
               <div className="modal-footer">
-                <button className="btn btn-ghost" onClick={() => setShowNodeModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => handleAddNode(nodeModalAfterIdx ?? (detail?.nodes?.length ? detail.nodes.length - 1 : 0))}>
-                  <Plus size={14} /> Add Node
-                </button>
+                <button className="btn btn-ghost" onClick={() => { setShowNodeModal(false); setEditNodeId(null); }}>Cancel</button>
+                {editNodeId ? (
+                  <button className="btn btn-primary" onClick={handleSaveNodeEdit}>
+                    <CheckCircle2 size={14} /> Save Changes
+                  </button>
+                ) : (
+                  <button className="btn btn-primary" onClick={() => handleAddNode(nodeModalAfterIdx ?? (detail?.nodes?.length ? detail.nodes.length - 1 : 0))}>
+                    <Plus size={14} /> Add Node
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -2091,240 +2587,6 @@ export default function Journeys() {
         )}
 
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
-
-        {/* ═══ Test-send modal — multi-select contacts + scheduling ═══ */}
-        {testSendNode && (() => {
-          const n = testSendNode.node;
-          const ch = (n.data?.channel || '').toLowerCase();
-          const tplId = n.data?.templateId;
-          const recipients = testSendNode.recipients || [];
-
-          const triggerNode = detail?.nodes?.find(nd => nd.type === 'trigger');
-          const segmentId = triggerNode?.data?.segmentId;
-
-          const loadContacts = async () => {
-            if (segmentContactsLoading || segmentContacts.length > 0) return;
-            if (!segmentId) return;
-            setSegmentContactsLoading(true);
-            try {
-              let res;
-              if (segmentId.startsWith('custom:')) {
-                const customId = segmentId.replace('custom:', '');
-                res = await getCustomSegmentCustomers(customId, { limit: 200 });
-              } else {
-                res = await getSegmentCustomers({ segmentId, limit: 200 });
-              }
-              const list = res?.data || res?.customers || (Array.isArray(res) ? res : []);
-              setSegmentContacts(list);
-              const allAddrs = list.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
-              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
-            } catch {
-              setSegmentContacts(MOCK_TEST_CONTACTS);
-              const allAddrs = MOCK_TEST_CONTACTS.map(c => ch === 'email' ? c.email : c.phone).filter(Boolean);
-              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
-            }
-            setSegmentContactsLoading(false);
-          };
-
-          // If no segmentId, fall back to mock contacts immediately
-          if (!segmentContactsLoading && segmentContacts.length === 0) {
-            if (segmentId) {
-              loadContacts();
-            } else {
-              setSegmentContacts(MOCK_TEST_CONTACTS);
-              const allAddrs = MOCK_TEST_CONTACTS.map(c => ch === 'email' ? c.email : c.phone).filter(Boolean);
-              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
-            }
-          }
-
-          const displayContacts = segmentContacts.length > 0 ? segmentContacts : MOCK_TEST_CONTACTS;
-          const filtered = displayContacts.filter(c => {
-            const q = contactSearch.toLowerCase();
-            return !q || (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
-          });
-
-          const filteredAddrs = filtered.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
-          const allFilteredSelected = filteredAddrs.length > 0 && filteredAddrs.every(a => recipients.includes(a));
-
-          const toggleContact = (addr) => {
-            setTestSendNode(s => ({
-              ...s,
-              recipients: s.recipients.includes(addr) ? s.recipients.filter(r => r !== addr) : [...s.recipients, addr],
-              results: [],
-            }));
-          };
-
-          const toggleAll = () => {
-            if (allFilteredSelected) {
-              setTestSendNode(s => ({ ...s, recipients: s.recipients.filter(r => !filteredAddrs.includes(r)), results: [] }));
-            } else {
-              setTestSendNode(s => ({ ...s, recipients: [...new Set([...s.recipients, ...filteredAddrs])], results: [] }));
-            }
-          };
-
-          const submit = async () => {
-            if (recipients.length === 0) return;
-            setTestSendNode(s => ({ ...s, sending: true, results: [] }));
-            try {
-              const res = await testSendJourneyNodeBatch(selected, n.id, recipients);
-              const batch = res?.data || {};
-              setTestSendNode(s => ({ ...s, sending: false, results: batch.results || [] }));
-              setToast({ type: 'success', msg: `Sent ${batch.sent}/${batch.total} test ${ch}s` });
-              setTimeout(() => setToast(null), 5000);
-            } catch (err) {
-              setTestSendNode(s => ({ ...s, sending: false, results: [{ recipient: 'all', ok: false, error: err.message }] }));
-            }
-          };
-
-          return (
-            <div
-              onClick={() => !testSendNode.sending && setTestSendNode(null)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-            >
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 24, width: 520, maxWidth: '95vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: 0, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid var(--border-color)' }}
-              >
-                {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                  <Send size={18} color={NODE_COLORS.action} />
-                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Send test</h3>
-                  <button onClick={() => { setTestSendNode(null); setSegmentContacts([]); setContactSearch(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>{n.data?.label || n.id}</strong>
-                  <span style={{ marginLeft: 8 }}>· Channel: <span style={{ color: NODE_COLORS.action, fontWeight: 600 }}>{ch}</span></span>
-                  {tplId && <span style={{ marginLeft: 8 }}>· Template: {tplId}</span>}
-                </div>
-
-                {/* Contact list header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', flex: 1 }}>
-                    Contacts
-                    <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 10, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700 }}>
-                      {segmentContactsLoading ? '…' : (segmentContacts.length || MOCK_TEST_CONTACTS.length)} total
-                    </span>
-                    {!segmentId && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>(test users)</span>}
-                    {recipients.length > 0 && (
-                      <span style={{ marginLeft: 4, padding: '1px 7px', borderRadius: 10, background: 'rgba(34,197,94,0.12)', color: 'var(--green)', fontSize: 11, fontWeight: 700 }}>
-                        {recipients.length} selected
-                      </span>
-                    )}
-                  </span>
-                  <button
-                    onClick={toggleAll}
-                    style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: allFilteredSelected ? 'var(--red)' : 'var(--text-secondary)', cursor: 'pointer' }}
-                  >
-                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
-                  </button>
-                </div>
-
-                {/* Search */}
-                <input
-                  placeholder="Search by name, email or phone…"
-                  value={contactSearch}
-                  onChange={e => setContactSearch(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box', marginBottom: 8 }}
-                />
-
-                {/* Contact list */}
-                <div style={{ flex: 1, overflowY: 'auto', maxHeight: 260, border: '1px solid var(--border-color)', borderRadius: 10, marginBottom: 14 }}>
-                  {segmentContactsLoading ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading contacts…</div>
-                  ) : filtered.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No contacts match your search</div>
-                  ) : filtered.map((c, idx) => {
-                      const addr = ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number);
-                      const name = c.name || c.full_name || c.customer_name || addr || '(unnamed)';
-                      const checked = addr ? recipients.includes(addr) : false;
-                      const result = (testSendNode.results || []).find(r => r.recipient === addr);
-                      return (
-                        <div
-                          key={c.unified_id || c.id || idx}
-                          onClick={() => addr && toggleContact(addr)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
-                            cursor: addr ? 'pointer' : 'default',
-                            background: checked ? 'rgba(34,197,94,0.05)' : 'transparent',
-                            borderBottom: idx < filtered.length - 1 ? '1px solid var(--border-color)' : 'none',
-                          }}
-                        >
-                          {/* Checkbox */}
-                          <div style={{ width: 18, height: 18, borderRadius: 4, border: checked ? '2px solid var(--green)' : '2px solid var(--border-color)', background: checked ? 'var(--green)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
-                            {checked && <span style={{ color: 'white', fontSize: 11, fontWeight: 700, lineHeight: 1 }}>✓</span>}
-                          </div>
-                          {/* Avatar */}
-                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: checked ? 'rgba(34,197,94,0.15)' : 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: checked ? 'var(--green)' : 'var(--text-muted)', flexShrink: 0 }}>
-                            {(name[0] || '?').toUpperCase()}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr || <span style={{ color: 'var(--red)' }}>no {ch}</span>}</div>
-                          </div>
-                          {result && (
-                            <span style={{ fontSize: 11, fontWeight: 600, color: result.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
-                              {result.ok ? '✓ Sent' : '✗ Failed'}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                {/* Send log */}
-                {(testSendNode.results || []).length > 0 && (
-                  <div style={{ marginBottom: 12, border: '1px solid var(--border-color)', borderRadius: 10, overflow: 'hidden' }}>
-                    <div style={{ padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>Send Log</span>
-                      {(() => {
-                        const ok = (testSendNode.results || []).filter(r => r.ok).length;
-                        const total = (testSendNode.results || []).length;
-                        return (
-                          <>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)' }}>{ok} sent</span>
-                            {total - ok > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)', marginLeft: 6 }}>{total - ok} failed</span>}
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div style={{ maxHeight: 180, overflowY: 'auto' }}>
-                      {(testSendNode.results || []).map((r, i) => (
-                        <div key={i} style={{ padding: '8px 12px', borderBottom: i < testSendNode.results.length - 1 ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: r.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>{r.ok ? '✓' : '✗'}</span>
-                            <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.recipient}</span>
-                            {r.ok && r.provider && <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>via {r.provider}{r.simulated ? ' (simulated)' : ''}</span>}
-                          </div>
-                          {r.ok && r.externalId && <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 20 }}>ID: {r.externalId}</div>}
-                          {r.ok && r.resolvedUser && <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 20 }}>Matched: {r.resolvedUser.name} (uid {r.resolvedUser.unifiedId})</div>}
-                          {!r.ok && <div style={{ fontSize: 11, color: 'var(--red)', paddingLeft: 20 }}>{r.error}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    onClick={() => { setTestSendNode(null); setSegmentContacts([]); setContactSearch(''); }}
-                    disabled={testSendNode.sending}
-                    className="btn btn-ghost"
-                  >Close</button>
-                  <button
-                    type="button"
-                    onClick={submit}
-                    disabled={recipients.length === 0 || testSendNode.sending}
-                    className="btn btn-primary"
-                  >
-                    {testSendNode.sending ? `Sending…` : `Send to ${recipients.length}`}
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
         {/* ── Template Preview Modal (inside detail view) ───── */}
         <AnimatePresence>
@@ -2610,6 +2872,18 @@ export default function Journeys() {
                   </div>
                 </div>
 
+                {/* Scheduled-start mini badge on card */}
+                {j.status === 'draft' && j.scheduled_start_at && new Date(j.scheduled_start_at) > new Date() && (
+                  <div className="flex items-center gap-1.5 mt-2.5 mb-0.5" style={{
+                    padding: '5px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                    background: 'var(--orange-dim)', color: 'var(--orange)',
+                    border: '1px solid rgba(255,153,51,0.3)',
+                  }}>
+                    <Clock size={11} />
+                    Starts {new Date(j.scheduled_start_at).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })} Dubai
+                  </div>
+                )}
+
                 {/* Footer: date + delete */}
                 <div className="flex justify-between items-center" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
                   <span className="text-secondary" style={{ fontSize: 11 }}>{j.created_at ? new Date(j.created_at).toLocaleDateString() : ''}</span>
@@ -2833,7 +3107,7 @@ export default function Journeys() {
               {/* Segment */}
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment</label>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
                   {segmentsLoading && (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)' }}>
                       <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Loading…
@@ -2843,8 +3117,9 @@ export default function Journeys() {
                 <select className="form-input"
                   value={createForm.segmentId}
                   disabled={segmentsLoading}
+                  style={{ borderColor: !createForm.segmentId ? 'var(--red)' : undefined }}
                   onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
-                  <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment (optional) —'}</option>
+                  <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment —'}</option>
                   {allSegments.filter(s => s.group === 'standard').length > 0 && (
                     <optgroup label="Standard Segments">
                       {allSegments.filter(s => s.group === 'standard').map((s, i) => (
@@ -2890,19 +3165,28 @@ export default function Journeys() {
                 </button>
               </div>
 
-              {/* Scheduled Start Date */}
+              {/* Scheduled Start Date — Dubai time */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Start Date & Time (Dubai)</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    Start Date &amp; Time
+                  </label>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--orange)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
+                    Dubai now: {dubaiClock}
+                  </span>
+                </div>
                 <input
                   type="datetime-local"
                   className="form-input"
                   value={createForm.scheduledStartAt}
+                  min={dubaiNowForInput()}
                   onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
-                  style={{ fontSize: 12 }}
+                  style={{ fontSize: 13 }}
                 />
-                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5, lineHeight: 1.5 }}>
                   {createForm.scheduledStartAt
-                    ? `Journey will start at ${new Date(createForm.scheduledStartAt).toLocaleString('en-US', { timeZone: 'Asia/Dubai', dateStyle: 'medium', timeStyle: 'short' })} Dubai time`
+                    ? '✓ Journey will auto-start at this Dubai time'
                     : 'Leave empty to start immediately when you click "Start Journey"'}
                 </div>
               </div>
@@ -3099,10 +3383,13 @@ export default function Journeys() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <input type="number" min={1} className="form-input" style={{ width: 80, fontSize: 12, padding: '6px 10px' }}
                             value={createNodeForm.waitDays}
-                            onChange={e => setCreateNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                            onChange={e => {
+                              const days = Math.max(1, parseInt(e.target.value) || 1);
+                              setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
+                            }} />
                           <div style={{ display: 'flex', gap: 5 }}>
                             {[1, 2, 3, 7].map(d => (
-                              <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d }))}
+                              <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
                                 style={{ padding: '3px 8px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
                             ))}
                           </div>
@@ -3136,9 +3423,24 @@ export default function Journeys() {
                       </div>
                     )}
 
+                    {/* Validation message for missing template */}
+                    {createNodeForm.type === 'action' && (
+                      (createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) ||
+                      (createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) ||
+                      (createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)
+                    ) && (
+                      <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 6, padding: '4px 8px', background: 'rgba(239,68,68,0.06)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)' }}>
+                        ⚠ {createNodeForm.channel.charAt(0).toUpperCase() + createNodeForm.channel.slice(1)} template is required before adding this node
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                       <button className="btn btn-sm btn-primary"
-                        disabled={!createNodeForm.label.trim()}
+                        disabled={
+                          !createNodeForm.label.trim() ||
+                          (createNodeForm.type === 'action' && createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) ||
+                          (createNodeForm.type === 'action' && createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) ||
+                          (createNodeForm.type === 'action' && createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)
+                        }
                         onClick={() => {
                           setCreateNodes(ns => [...ns, { ...createNodeForm }]);
                           setCreateNodeForm({ ...BLANK_CREATE_NODE });

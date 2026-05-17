@@ -131,6 +131,18 @@ export const testSendJourneyNode = (id, nodeId, recipient) =>
 export const testSendJourneyNodeBatch = (id, nodeId, recipients) =>
   request(`/api/v3/journeys/${id}/nodes/${nodeId}/test-batch`, { method: 'POST', body: JSON.stringify({ recipients }) });
 
+export const bulkTestJourneyNode = (id, nodeId, email, count) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/bulk-test`, { method: 'POST', body: JSON.stringify({ email, count }) });
+
+export const segmentTestJourneyNode = (id, nodeId, testEmail, limit) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/segment-test`, { method: 'POST', body: JSON.stringify({ testEmail, limit }) });
+
+export const getNodeSendLog = (id, nodeId) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/send-log`);
+export const getJourneyQueueCounts = () => request('/api/v3/journeys/queue-counts');
+export const retryBlockedEntries = (id, nodeId) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/retry-blocked`, { method: 'POST' });
+
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });
 export const aiSegmentAnalysis = () => request('/api/v3/agents/segment-assist/analyze');
