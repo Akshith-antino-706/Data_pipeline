@@ -780,10 +780,9 @@ class JourneyService {
         const lastEvent = lastEventRes.rows[0]?.last_event || entry.entered_at;
 
         const elapsedMs = Date.now() - new Date(lastEvent).getTime();
-        const elapsed = elapsedMs / (1000 * 60 * 60 * 24);  // elapsed in days
-        const threshold = waitDays;
+        const thresholdMs = waitDays * 86_400_000; // real days
 
-        if (elapsed < threshold) {
+        if (elapsedMs < thresholdMs) {
           waited++;
           continue; // Not enough time has passed, skip
         }
@@ -1117,7 +1116,7 @@ class JourneyService {
 
         const waitDays = currentNode.data?.waitDays || 1;
         const lastEventTs = new Date(entry.last_event || entry.entered_at).getTime();
-        const fireTs = lastEventTs + waitDays * 86_400_000;
+        const fireTs = lastEventTs + waitDays * 86_400_000; // real days
 
         // Within [now+lookahead-window, now+lookahead+window]?
         if (Math.abs(fireTs - (now + lookaheadMs)) > windowMs) continue;
@@ -1308,7 +1307,22 @@ class JourneyService {
       GROUP BY current_node_id, status
     `, [journeyId]);
 
-    return { nodeStats, funnelData };
+    // Per-node fire time stats for wait node countdown timers
+    const { rows: nodeFireTimes } = await db.query(`
+      SELECT
+        current_node_id,
+        MIN(next_fire_at)   AS earliest_fire_at,
+        MAX(next_fire_at)   AS latest_fire_at,
+        MIN(last_enqueued_at) AS earliest_enqueued,
+        COUNT(*)            AS active_count
+      FROM journey_entries
+      WHERE journey_id = $1
+        AND status = 'active'
+        AND next_fire_at IS NOT NULL
+      GROUP BY current_node_id
+    `, [journeyId]);
+
+    return { nodeStats, funnelData, nodeFireTimes };
   }
 
   // ── Journey Entries (real flow data) ────────────────────────
@@ -1518,8 +1532,9 @@ class JourneyService {
     const waitDays = node.data?.waitDays || 0;
     const sendHour = node.data?.sendHour;
 
-    // Start from fromTime + waitDays
-    const target = new Date(fromTime.getTime() + waitDays * 24 * 60 * 60 * 1000);
+    const dayMs = 24 * 60 * 60 * 1000; // 1 real day
+
+    const target = new Date(fromTime.getTime() + waitDays * dayMs);
 
     // If no sendHour specified, fire immediately after wait
     if (sendHour === undefined || sendHour === null) return target;
@@ -1536,9 +1551,9 @@ class JourneyService {
     const fireUtcMs = dubaiDate.getTime() - (dubaiOffset * 60000);
     let fireAt = new Date(fireUtcMs);
 
-    // If the calculated time is in the past, push to next day
+    // If the calculated time is in the past, push forward by one day
     if (fireAt <= new Date()) {
-      fireAt = new Date(fireAt.getTime() + 24 * 60 * 60 * 1000);
+      fireAt = new Date(fireAt.getTime() + dayMs);
     }
 
     return fireAt;
