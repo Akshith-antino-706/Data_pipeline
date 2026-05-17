@@ -8,10 +8,9 @@ import {
   getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
   processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  testSendJourneyNodeBatch, getTemplates, getSegmentationTree, getSegmentCustomers,
+  getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
-  previewTemplate as fetchTemplatePreview, getJourneyEntries, bulkTestJourneyNode,
-  segmentTestJourneyNode, getNodeSendLog
+  previewTemplate as fetchTemplatePreview, getJourneyEntries
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -51,11 +50,6 @@ const STATUS_CONFIG = {
   paused: { color: 'var(--text-tertiary)', bg: 'rgba(120,113,108,0.1)', label: 'Paused' },
   completed: { color: 'var(--purple)', bg: 'var(--purple-dim)', label: 'Completed' }
 };
-
-const MOCK_TEST_CONTACTS = [
-  { id: '641522', name: 'Rocky',   email: 'rocky.86agency@gmail.com',  phone: '' },
-  { id: '641500', name: 'Avinash', email: 'avinash@antino.com',         phone: '' },
-];
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -131,11 +125,6 @@ export default function Journeys() {
   const [allTemplates, setAllTemplates] = useState({ email: [], whatsapp: [], sms: [] });
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [trackFilter] = useState('all');
-  // Test-send-from-node modal state: null when closed, { node, recipients[], scheduledAt, sending, results[] } when open
-  const [testSendNode, setTestSendNode] = useState(null);
-  const [segmentContacts, setSegmentContacts] = useState([]);
-  const [segmentContactsLoading, setSegmentContactsLoading] = useState(false);
-  const [contactSearch, setContactSearch] = useState('');
   const [previewTemplate, setPreviewTemplate] = useState(null); // { name, subject, body_html, channel }
   // Journey entries (real flow data)
   const [journeyEntries, setJourneyEntries] = useState([]);
@@ -147,15 +136,6 @@ export default function Journeys() {
   // Tracks the real live node (most entries are currently on) — set on journey open/start/process
   const [liveNodeId, setLiveNodeId] = useState(null);
 
-  // ── Simulation (test mode) ────────────────────────────────────
-  const [simActive, setSimActive] = useState(false);
-  const [simNodeIndex, setSimNodeIndex] = useState(-1);
-  const [simSendLogs, setSimSendLogs] = useState({}); // nodeId → { sending, sent, failed, total }
-  const [simLogModal, setSimLogModal] = useState(null); // nodeId whose log is open
-  const [nodeLogData, setNodeLogData] = useState({}); // nodeId → persisted send log from API
-  const [simWaitRemaining, setSimWaitRemaining] = useState(0); // countdown secs for active wait node
-  const simNodesRef = useRef([]);
-  const simSegmentCountRef = useRef(0); // actual segment customer count for this journey
   const selectedRef = useRef(selected); // always-fresh selected journey id for async callbacks
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
@@ -172,10 +152,6 @@ export default function Journeys() {
     }, 30_000);
     return () => clearInterval(t);
   }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
-  const simTimeoutRef = useRef(null);   // drives the advance between nodes
-  const simCountdownRef = useRef(null); // drives the 1-sec wait countdown display
-  const simSendPollRef = useRef(null);  // polls DB every 2s for live sent/failed counts
-
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
   const [createNodes, setCreateNodes] = useState([]);
@@ -258,14 +234,6 @@ export default function Journeys() {
     return () => clearInterval(schedCountdownRef.current);
   }, [detail?.scheduled_start_at, detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Bulk test state ───────────────────────────────────────────
-  const [bulkTestModal, setBulkTestModal] = useState(null); // { node } | null
-  const [bulkTestEmail, setBulkTestEmail] = useState('rocky.86agency@gmail.com');
-  const [bulkTestCount, setBulkTestCount] = useState(100);
-  const [bulkTestRunning, setBulkTestRunning] = useState(false);
-  const [bulkTestResult, setBulkTestResult] = useState(null); // { total, sent, failed }
-
-
   // ── Toast helper ──────────────────────────────────────────────
   const showToast = (msg, type = 'info') => {
     setToast({ msg, type });
@@ -293,128 +261,6 @@ export default function Journeys() {
     const idFromUrl = searchParams.get('id');
     if (idFromUrl && !selected) openJourney(parseInt(idFromUrl));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Simulation engine — advance only after each node's action completes ──
-  useEffect(() => {
-    if (!simActive) return;
-    const nodeList = simNodesRef.current;
-    const journeyId = selected;
-    let currentIdx = -1;
-    let cancelled = false;
-
-    const advanceToNext = () => {
-      if (cancelled) return;
-      const nextIdx = currentIdx + 1;
-      if (nextIdx >= nodeList.length) {
-        setSimActive(false);
-        setSimNodeIndex(-1);
-        setSimWaitRemaining(0);
-        hotToast.success('Simulation complete — all nodes visited!', { duration: 5000 });
-        return;
-      }
-      currentIdx = nextIdx;
-      const node = nodeList[nextIdx];
-      setSimNodeIndex(nextIdx);
-      clearInterval(simCountdownRef.current);
-      setSimWaitRemaining(0);
-
-      const label = node.data?.label || NODE_LABELS[node.type] || node.type;
-      const ch = node.data?.channel ? ` [${node.data.channel.toUpperCase()}]` : '';
-
-      if (node.type === 'action') {
-        // Send to real segment customers — each customer's email replaced by rocky's test email
-        const totalExpected = simSegmentCountRef.current || 0;
-        setSimSendLogs(prev => ({ ...prev, [node.id]: { sending: true, sent: 0, failed: 0, total: totalExpected } }));
-        hotToast(`📨 "${label}"${ch} — sending to ${totalExpected || '?'} customers…`, { duration: 8000 });
-
-        // Poll DB every 2s so the modal shows live sent/failed progress
-        clearInterval(simSendPollRef.current);
-        const pollNodeId = node.id;
-        simSendPollRef.current = setInterval(() => {
-          getNodeSendLog(journeyId, pollNodeId)
-            .then(r => {
-              if (cancelled || !r?.data) return;
-              setSimSendLogs(prev => {
-                const cur = prev[pollNodeId];
-                if (!cur?.sending) return prev; // already done, don't overwrite
-                return {
-                  ...prev,
-                  [pollNodeId]: {
-                    ...cur,
-                    sent: r.data.sent || 0,
-                    failed: r.data.failed || 0,
-                    total: r.data.total || cur.total,
-                  },
-                };
-              });
-            })
-            .catch(() => {});
-        }, 2000);
-
-        segmentTestJourneyNode(journeyId, node.id, 'rocky.86agency@gmail.com', simSegmentCountRef.current || 5000)
-          .then(res => {
-            clearInterval(simSendPollRef.current);
-            if (cancelled) return;
-            const d = res.data || {};
-            setSimSendLogs(prev => ({ ...prev, [node.id]: { sending: false, sent: d.sent ?? 0, failed: d.failed ?? 0, total: d.total ?? 0 } }));
-            hotToast.success(`✓ ${d.sent ?? 0}/${d.total ?? 0} sent`, { duration: 4000 });
-            advanceToNext();
-          })
-          .catch(err => {
-            clearInterval(simSendPollRef.current);
-            if (cancelled) return;
-            setSimSendLogs(prev => ({ ...prev, [node.id]: { sending: false, sent: 0, failed: 0, total: totalExpected, error: err.message } }));
-            hotToast.error(`Send failed: ${err.message}`, { duration: 4000 });
-            advanceToNext();
-          });
-
-      } else if (node.type === 'wait') {
-        // Countdown for waitDays × 10s, advance when it reaches 0
-        const waitDays = node.data?.waitDays || 1;
-        const totalSecs = waitDays * 10;
-        let remaining = totalSecs;
-        setSimWaitRemaining(totalSecs);
-        hotToast(`⏳ "${label}" — ${waitDays}d = ${totalSecs}s in sim`, { duration: totalSecs * 1000 });
-        simCountdownRef.current = setInterval(() => {
-          if (cancelled) { clearInterval(simCountdownRef.current); return; }
-          remaining -= 1;
-          setSimWaitRemaining(remaining);
-          if (remaining <= 0) {
-            clearInterval(simCountdownRef.current);
-            advanceToNext();
-          }
-        }, 1000);
-
-      } else {
-        // trigger, condition, goal — show briefly (1.5s) then advance
-        hotToast(
-          `Step ${nextIdx + 1}/${nodeList.length}: "${label}" — reached`,
-          { duration: 3000, icon: node.type === 'goal' ? '🎯' : node.type === 'condition' ? '🔀' : '⚡' }
-        );
-        simTimeoutRef.current = setTimeout(() => { advanceToNext(); }, 1500);
-      }
-    };
-
-    advanceToNext(); // start from trigger
-    return () => {
-      cancelled = true;
-      clearTimeout(simTimeoutRef.current);
-      clearInterval(simCountdownRef.current);
-      clearInterval(simSendPollRef.current);
-    };
-  }, [simActive]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Stop sim when leaving journey detail
-  useEffect(() => {
-    if (!selected) {
-      clearTimeout(simTimeoutRef.current);
-      clearInterval(simCountdownRef.current);
-      setSimActive(false);
-      setSimNodeIndex(-1);
-      setSimWaitRemaining(0);
-      setSimSendLogs({});
-    }
-  }, [selected]);
 
   const loadEntries = useCallback(async (journeyId, page = 1, status = '') => {
     setEntriesLoading(true);
@@ -598,7 +444,11 @@ export default function Journeys() {
           ? new Date(createForm.scheduledStartAt + ':00+04:00').toISOString()
           : null,
         nodes: [trigger, ...extraNodes],
-        edges: []
+        edges: [trigger, ...extraNodes].slice(1).map((n, i) => ({
+          id: `e_${[trigger, ...extraNodes][i].id}_${n.id}`,
+          source: [trigger, ...extraNodes][i].id,
+          target: n.id,
+        }))
       });
       const snapCount = res.data?.snapshot_count || 0;
       showToast(`Journey "${res.data?.name}" created — ${snapCount} users snapshotted`, 'success');
@@ -643,29 +493,8 @@ export default function Journeys() {
       const d = await getJourney(selected);
       setDetail(d.data);
       await loadData();
-      // Kick off test simulation
-      const nodeList = d.data?.nodes || [];
-      if (nodeList.length > 0) {
-        // Fetch actual segment customer count so simulation sends to the full segment
-        const cdRes = await getJourneyCampaignAnalytics(selected).catch(() => ({ data: null }));
-        simSegmentCountRef.current = parseInt(cdRes?.data?.target_count) || 0;
-        simNodesRef.current = nodeList;
-        setSimNodeIndex(0);
-        setSimActive(true);
-        hotToast(`🎬 Simulation started — ${nodeList.length} nodes`, { duration: 5000, icon: '▶️' });
-      }
     } catch (err) { hotToast.error(err.message || 'Failed to start journey'); }
     setStarting(false);
-  };
-
-  const stopSimulation = () => {
-    clearTimeout(simTimeoutRef.current);
-    clearInterval(simCountdownRef.current);
-    clearInterval(simSendPollRef.current);
-    setSimActive(false);
-    setSimNodeIndex(-1);
-    setSimWaitRemaining(0);
-    hotToast('⏹ Simulation stopped', { duration: 2500 });
   };
 
   const handlePause = async () => {
@@ -1210,25 +1039,6 @@ export default function Journeys() {
                       </span>
                     ))}
                   </div>
-                  {simActive && (
-                    <div className="flex items-center gap-2">
-                      <div style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                        background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid var(--green)',
-                      }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', animation: 'simDot 1s ease-in-out infinite', display: 'inline-block' }} />
-                        Node {simNodeIndex + 1} / {nodes.length}
-                      </div>
-                      <button
-                        onClick={stopSimulation}
-                        className="btn btn-sm"
-                        style={{ fontSize: 11, padding: '4px 12px', background: 'var(--red-dim)', color: 'var(--red)', border: '1px solid var(--red)' }}
-                      >
-                        ⏹ Stop Sim
-                      </button>
-                    </div>
-                  )}
                   {!isJourneyStarted && (
                     <>
                       <button
@@ -1276,7 +1086,7 @@ export default function Journeys() {
                       const hasSent = nodeStats.action_sent > 0;
                       const nStats = detail?.node_stats?.[node.id];
                       // Draft → all nodes grey. Any started status → all nodes coloured & clickable.
-                      const isNodeActive = simActive ? i <= simNodeIndex : isJourneyStarted;
+                      const isNodeActive = isJourneyStarted;
 
                       // Node lifecycle status — sourced from backend node_statuses (persists across refresh)
                       const backendStatus = detail?.node_statuses?.[node.id]; // 'pending'|'running'|'completed'
@@ -1284,8 +1094,8 @@ export default function Journeys() {
                         ? (backendStatus || 'pending').toUpperCase()
                         : null;
 
-                      // Highlight: sim drives it while sim is running; otherwise use backend node_statuses
-                      const isCurrentSimNode = simActive ? i === simNodeIndex : (backendStatus === 'running');
+                      // Highlight: use backend node_statuses
+                      const isCurrentSimNode = (backendStatus === 'running');
                       const color = isNodeActive
                         ? (NODE_COLORS[node.type] || 'var(--text-tertiary)')
                         : '#9ca3af';
@@ -1571,33 +1381,6 @@ export default function Journeys() {
                                     style={{ width: 24, height: 24, border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-dim)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>×</button>
                                 </div>
                               )}
-                              {/* Eye — send log viewer (sim-live or persisted) */}
-                              {node.type === 'action' && isJourneyStarted && (
-                                <button
-                                  title="View send log"
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    // Load persisted log if not already in memory
-                                    if (!nodeLogData[node.id]) {
-                                      getNodeSendLog(selected, node.id)
-                                        .then(r => { if (r?.data) setNodeLogData(prev => ({ ...prev, [node.id]: r.data })); })
-                                        .catch(() => {});
-                                    }
-                                    setSimLogModal(node.id);
-                                  }}
-                                  style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    width: 28, height: 28, borderRadius: 8, border: '1px solid var(--green)',
-                                    background: simSendLogs[node.id]?.sending ? 'var(--orange-dim)' : 'var(--green-dim)',
-                                    color: simSendLogs[node.id]?.sending ? 'var(--orange)' : 'var(--green)',
-                                    cursor: 'pointer', flexShrink: 0,
-                                  }}
-                                >
-                                  {simSendLogs[node.id]?.sending
-                                    ? <span style={{ fontSize: 9, fontWeight: 800 }}>...</span>
-                                    : <Eye size={13} />}
-                                </button>
-                              )}
                               <ChevronDown size={14} color="var(--text-muted)" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
                             </div>
 
@@ -1619,16 +1402,6 @@ export default function Journeys() {
                                     <span className="text-secondary text-sm">
                                       Wait <strong>{node.data.waitDays} day{node.data.waitDays !== 1 ? 's' : ''}</strong> before proceeding
                                     </span>
-                                    {isCurrentSimNode && simWaitRemaining > 0 && (
-                                      <span style={{
-                                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                                        padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-                                        background: 'var(--orange-dim)', border: '1px solid var(--orange)', color: 'var(--orange)',
-                                      }}>
-                                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
-                                        {simWaitRemaining}s remaining
-                                      </span>
-                                    )}
                                   </div>
                                 )}
                                 {node.data?.triggerType && (
@@ -1674,14 +1447,13 @@ export default function Journeys() {
                                 {/* Campaign Metrics Card — per node */}
                                 {node.type === 'action' && (() => {
                                   const camp = nodeCampaignMap?.[node.id];
-                                  const simLog = simSendLogs[node.id]; // present during simulation
-                                  const target    = simLog ? (simLog.total    || 100) : (camp?.target    || parseInt(detail?.total_entries) || 0);
-                                  const sent      = simLog ? (simLog.sent     || 0)   : (camp?.sent      || parseInt(nodeStats?.action_sent)      || 0);
-                                  const delivered = simLog ? (simLog.sent     || 0)   : (camp?.delivered  || parseInt(nodeStats?.action_delivered) || 0);
-                                  const read      = simLog ? 0                        : (camp?.read       || parseInt(nodeStats?.action_read)      || 0);
-                                  const clicked   = simLog ? 0                        : (camp?.clicked    || parseInt(nodeStats?.action_clicked)   || 0);
-                                  const bounced   = simLog ? 0                        : (camp?.bounced    || parseInt(nodeStats?.action_bounced)   || 0);
-                                  const failed    = simLog ? (simLog.failed   || 0)   : (camp?.failed     || parseInt(nodeStats?.action_failed)    || 0);
+                                  const target    = camp?.target    || parseInt(detail?.total_entries) || 0;
+                                  const sent      = camp?.sent      || parseInt(nodeStats?.action_sent)      || 0;
+                                  const delivered = camp?.delivered  || parseInt(nodeStats?.action_delivered) || 0;
+                                  const read      = camp?.read       || parseInt(nodeStats?.action_read)      || 0;
+                                  const clicked   = camp?.clicked    || parseInt(nodeStats?.action_clicked)   || 0;
+                                  const bounced   = camp?.bounced    || parseInt(nodeStats?.action_bounced)   || 0;
+                                  const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
                                   return (
                                     <div className="mt-3">
                                       {/* Top row — Target, Sent, Delivered */}
@@ -1739,7 +1511,7 @@ export default function Journeys() {
                                           </div>
                                         );
                                       })()}
-                                      {/* Action buttons — Preview + Send test */}
+                                      {/* Action buttons — Preview */}
                                       <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                                         {(() => {
                                           const tpl = getNodeTemplate(node);
@@ -1767,23 +1539,6 @@ export default function Journeys() {
                                             </button>
                                           ) : null;
                                         })()}
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSegmentContacts([]); setContactSearch('');
-                                            setTestSendNode({ node, recipients: [], sending: false, results: [] });
-                                          }}
-                                          style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: 6,
-                                            fontSize: 11, fontWeight: 600, padding: '6px 12px',
-                                            borderRadius: 6, border: '1px solid var(--border-color)',
-                                            background: 'var(--bg-secondary)', color: 'var(--text-primary)',
-                                            cursor: 'pointer',
-                                          }}
-                                        >
-                                          <Send size={12} /> Send test
-                                        </button>
                                       </div>
                                     </div>
                                   );
@@ -2539,526 +2294,6 @@ export default function Journeys() {
         )}
 
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
-
-        {/* ═══ Test-send modal — multi-select contacts + scheduling ═══ */}
-        {testSendNode && (() => {
-          const n = testSendNode.node;
-          const ch = (n.data?.channel || '').toLowerCase();
-          const tplId = n.data?.templateId;
-          const recipients = testSendNode.recipients || [];
-
-          const triggerNode = detail?.nodes?.find(nd => nd.type === 'trigger');
-          const segmentId = triggerNode?.data?.segmentId;
-
-          const loadContacts = async () => {
-            if (segmentContactsLoading || segmentContacts.length > 0) return;
-            if (!segmentId) return;
-            setSegmentContactsLoading(true);
-            try {
-              let res;
-              if (segmentId.startsWith('custom:')) {
-                const customId = segmentId.replace('custom:', '');
-                res = await getCustomSegmentCustomers(customId, { limit: 200 });
-              } else {
-                res = await getSegmentCustomers({ segmentId, limit: 200 });
-              }
-              const list = res?.data || res?.customers || (Array.isArray(res) ? res : []);
-              setSegmentContacts(list);
-              const allAddrs = list.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
-              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
-            } catch {
-              setSegmentContacts(MOCK_TEST_CONTACTS);
-              const allAddrs = MOCK_TEST_CONTACTS.map(c => ch === 'email' ? c.email : c.phone).filter(Boolean);
-              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
-            }
-            setSegmentContactsLoading(false);
-          };
-
-          // If no segmentId, fall back to mock contacts immediately
-          if (!segmentContactsLoading && segmentContacts.length === 0) {
-            if (segmentId) {
-              loadContacts();
-            } else {
-              setSegmentContacts(MOCK_TEST_CONTACTS);
-              const allAddrs = MOCK_TEST_CONTACTS.map(c => ch === 'email' ? c.email : c.phone).filter(Boolean);
-              setTestSendNode(s => ({ ...s, recipients: allAddrs }));
-            }
-          }
-
-          const displayContacts = segmentContacts.length > 0 ? segmentContacts : MOCK_TEST_CONTACTS;
-          const filtered = displayContacts.filter(c => {
-            const q = contactSearch.toLowerCase();
-            return !q || (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
-          });
-
-          const filteredAddrs = filtered.map(c => ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number)).filter(Boolean);
-          const allFilteredSelected = filteredAddrs.length > 0 && filteredAddrs.every(a => recipients.includes(a));
-
-          const toggleContact = (addr) => {
-            setTestSendNode(s => ({
-              ...s,
-              recipients: s.recipients.includes(addr) ? s.recipients.filter(r => r !== addr) : [...s.recipients, addr],
-              results: [],
-            }));
-          };
-
-          const toggleAll = () => {
-            if (allFilteredSelected) {
-              setTestSendNode(s => ({ ...s, recipients: s.recipients.filter(r => !filteredAddrs.includes(r)), results: [] }));
-            } else {
-              setTestSendNode(s => ({ ...s, recipients: [...new Set([...s.recipients, ...filteredAddrs])], results: [] }));
-            }
-          };
-
-          const submit = async () => {
-            if (recipients.length === 0) return;
-            setTestSendNode(s => ({ ...s, sending: true, results: [] }));
-            try {
-              const res = await testSendJourneyNodeBatch(selected, n.id, recipients);
-              const batch = res?.data || {};
-              setTestSendNode(s => ({ ...s, sending: false, results: batch.results || [] }));
-              setToast({ type: 'success', msg: `Sent ${batch.sent}/${batch.total} test ${ch}s` });
-              setTimeout(() => setToast(null), 5000);
-            } catch (err) {
-              setTestSendNode(s => ({ ...s, sending: false, results: [{ recipient: 'all', ok: false, error: err.message }] }));
-            }
-          };
-
-          return (
-            <div
-              onClick={() => !testSendNode.sending && setTestSendNode(null)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-            >
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{ background: 'var(--bg-card)', borderRadius: 14, padding: 24, width: 520, maxWidth: '95vw', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: 0, boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid var(--border-color)' }}
-              >
-                {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                  <Send size={18} color={NODE_COLORS.action} />
-                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', flex: 1 }}>Send test</h3>
-                  <button onClick={() => { setTestSendNode(null); setSegmentContacts([]); setContactSearch(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 20, lineHeight: 1 }}>×</button>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>{n.data?.label || n.id}</strong>
-                  <span style={{ marginLeft: 8 }}>· Channel: <span style={{ color: NODE_COLORS.action, fontWeight: 600 }}>{ch}</span></span>
-                  {tplId && <span style={{ marginLeft: 8 }}>· Template: {tplId}</span>}
-                </div>
-
-                {/* Contact list header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', flex: 1 }}>
-                    Contacts
-                    <span style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 10, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700 }}>
-                      {segmentContactsLoading ? '…' : (segmentContacts.length || MOCK_TEST_CONTACTS.length)} total
-                    </span>
-                    {!segmentId && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>(test users)</span>}
-                    {recipients.length > 0 && (
-                      <span style={{ marginLeft: 4, padding: '1px 7px', borderRadius: 10, background: 'rgba(34,197,94,0.12)', color: 'var(--green)', fontSize: 11, fontWeight: 700 }}>
-                        {recipients.length} selected
-                      </span>
-                    )}
-                  </span>
-                  <button
-                    onClick={toggleAll}
-                    style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: allFilteredSelected ? 'var(--red)' : 'var(--text-secondary)', cursor: 'pointer' }}
-                  >
-                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
-                  </button>
-                </div>
-
-                {/* Search */}
-                <input
-                  placeholder="Search by name, email or phone…"
-                  value={contactSearch}
-                  onChange={e => setContactSearch(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box', marginBottom: 8 }}
-                />
-
-                {/* Contact list */}
-                <div style={{ flex: 1, overflowY: 'auto', maxHeight: 260, border: '1px solid var(--border-color)', borderRadius: 10, marginBottom: 14 }}>
-                  {segmentContactsLoading ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading contacts…</div>
-                  ) : filtered.length === 0 ? (
-                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No contacts match your search</div>
-                  ) : filtered.map((c, idx) => {
-                      const addr = ch === 'email' ? (c.email || c.email_address) : (c.phone || c.mobile || c.phone_number);
-                      const name = c.name || c.full_name || c.customer_name || addr || '(unnamed)';
-                      const checked = addr ? recipients.includes(addr) : false;
-                      const result = (testSendNode.results || []).find(r => r.recipient === addr);
-                      return (
-                        <div
-                          key={c.unified_id || c.id || idx}
-                          onClick={() => addr && toggleContact(addr)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
-                            cursor: addr ? 'pointer' : 'default',
-                            background: checked ? 'rgba(34,197,94,0.05)' : 'transparent',
-                            borderBottom: idx < filtered.length - 1 ? '1px solid var(--border-color)' : 'none',
-                          }}
-                        >
-                          {/* Checkbox */}
-                          <div style={{ width: 18, height: 18, borderRadius: 4, border: checked ? '2px solid var(--green)' : '2px solid var(--border-color)', background: checked ? 'var(--green)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
-                            {checked && <span style={{ color: 'white', fontSize: 11, fontWeight: 700, lineHeight: 1 }}>✓</span>}
-                          </div>
-                          {/* Avatar */}
-                          <div style={{ width: 28, height: 28, borderRadius: '50%', background: checked ? 'rgba(34,197,94,0.15)' : 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: checked ? 'var(--green)' : 'var(--text-muted)', flexShrink: 0 }}>
-                            {(name[0] || '?').toUpperCase()}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr || <span style={{ color: 'var(--red)' }}>no {ch}</span>}</div>
-                          </div>
-                          {result && (
-                            <span style={{ fontSize: 11, fontWeight: 600, color: result.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>
-                              {result.ok ? '✓ Sent' : '✗ Failed'}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                {/* Send log */}
-                {(testSendNode.results || []).length > 0 && (
-                  <div style={{ marginBottom: 12, border: '1px solid var(--border-color)', borderRadius: 10, overflow: 'hidden' }}>
-                    <div style={{ padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>Send Log</span>
-                      {(() => {
-                        const ok = (testSendNode.results || []).filter(r => r.ok).length;
-                        const total = (testSendNode.results || []).length;
-                        return (
-                          <>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)' }}>{ok} sent</span>
-                            {total - ok > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--red)', marginLeft: 6 }}>{total - ok} failed</span>}
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div style={{ maxHeight: 180, overflowY: 'auto' }}>
-                      {(testSendNode.results || []).map((r, i) => (
-                        <div key={i} style={{ padding: '8px 12px', borderBottom: i < testSendNode.results.length - 1 ? '1px solid var(--border-color)' : 'none', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: r.ok ? 'var(--green)' : 'var(--red)', flexShrink: 0 }}>{r.ok ? '✓' : '✗'}</span>
-                            <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.recipient}</span>
-                            {r.ok && r.provider && <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>via {r.provider}{r.simulated ? ' (simulated)' : ''}</span>}
-                          </div>
-                          {r.ok && r.externalId && <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 20 }}>ID: {r.externalId}</div>}
-                          {r.ok && r.resolvedUser && <div style={{ fontSize: 10, color: 'var(--text-muted)', paddingLeft: 20 }}>Matched: {r.resolvedUser.name} (uid {r.resolvedUser.unifiedId})</div>}
-                          {!r.ok && <div style={{ fontSize: 11, color: 'var(--red)', paddingLeft: 20 }}>{r.error}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
-                  {/* Bulk Test — left side */}
-                  <button
-                    type="button"
-                    disabled={testSendNode.sending}
-                    onClick={() => {
-                      setTestSendNode(null);
-                      setSegmentContacts([]);
-                      setContactSearch('');
-                      setBulkTestResult(null);
-                      setBulkTestModal({ node: n });
-                    }}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
-                      border: '1px solid var(--orange)', background: 'var(--orange-dim)',
-                      color: 'var(--orange)', cursor: 'pointer', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    <Layers size={13} /> Bulk Test
-                  </button>
-
-                  <div style={{ flex: 1 }} />
-
-                  <button
-                    type="button"
-                    onClick={() => { setTestSendNode(null); setSegmentContacts([]); setContactSearch(''); }}
-                    disabled={testSendNode.sending}
-                    className="btn btn-ghost"
-                  >Close</button>
-                  <button
-                    type="button"
-                    onClick={submit}
-                    disabled={recipients.length === 0 || testSendNode.sending}
-                    className="btn btn-primary"
-                  >
-                    {testSendNode.sending ? `Sending…` : `Send to ${recipients.length}`}
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ── Bulk Test Modal ──────────────────────────────── */}
-        {bulkTestModal && (
-          <div
-            onClick={() => { if (!bulkTestRunning) setBulkTestModal(null); }}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9998 }}>
-            <div
-              onClick={e => e.stopPropagation()}
-              style={{ background: 'var(--bg-card)', borderRadius: 16, width: 480, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-
-              {/* Header */}
-              <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>Bulk Test Send</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                    Node: <strong>{bulkTestModal.node.data?.label || NODE_LABELS[bulkTestModal.node.type]}</strong>
-                  </div>
-                </div>
-                <button onClick={() => { if (!bulkTestRunning) setBulkTestModal(null); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
-              </div>
-
-              {/* Body */}
-              <div style={{ padding: '24px' }}>
-                {/* How it works callout */}
-                <div style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 10, padding: '12px 14px', marginBottom: 20, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                  <strong style={{ color: 'var(--brand-primary)' }}>How it works:</strong> Sends to{' '}
-                  <code style={{ background: 'var(--bg-secondary)', padding: '1px 5px', borderRadius: 4 }}>you+test1@gmail.com</code>,{' '}
-                  <code style={{ background: 'var(--bg-secondary)', padding: '1px 5px', borderRadius: 4 }}>+test2</code> …{' '}
-                  — Gmail delivers all of them to <strong>your one inbox</strong>. No real contacts are touched.
-                </div>
-
-                {/* Email input */}
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                  Your test email address
-                </label>
-                <input
-                  value={bulkTestEmail}
-                  onChange={e => setBulkTestEmail(e.target.value)}
-                  placeholder="rocky.86agency@gmail.com"
-                  disabled={bulkTestRunning}
-                  style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 13, marginBottom: 16, boxSizing: 'border-box', background: 'var(--bg-secondary)' }}
-                />
-
-                {/* Count slider */}
-                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                  <span>Number of emails</span>
-                  <span style={{ color: 'var(--orange)', fontWeight: 700, fontSize: 14 }}>{bulkTestCount.toLocaleString()}</span>
-                </label>
-                <input
-                  type="range"
-                  min={10} max={5000} step={10}
-                  value={bulkTestCount}
-                  onChange={e => setBulkTestCount(parseInt(e.target.value))}
-                  disabled={bulkTestRunning}
-                  style={{ width: '100%', marginBottom: 6, accentColor: 'var(--orange)' }}
-                />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 20 }}>
-                  <span>10</span><span>1,000</span><span>2,500</span><span>5,000</span>
-                </div>
-
-                {/* Quick presets */}
-                <div className="flex gap-2 mb-5">
-                  {[100, 500, 1000, 5000].map(n => (
-                    <button key={n} onClick={() => setBulkTestCount(n)} disabled={bulkTestRunning}
-                      style={{ flex: 1, padding: '5px 0', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                        border: bulkTestCount === n ? '2px solid var(--orange)' : '1px solid var(--border-color)',
-                        background: bulkTestCount === n ? 'var(--orange-dim)' : 'var(--bg-secondary)',
-                        color: bulkTestCount === n ? 'var(--orange)' : 'var(--text-secondary)' }}>
-                      {n >= 1000 ? `${n/1000}K` : n}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Estimate */}
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 20, textAlign: 'center' }}>
-                  Estimated time: ~{Math.ceil(bulkTestCount / 50 * 0.3)}s at 50 concurrent sends
-                </div>
-
-                {/* Result banner */}
-                {bulkTestResult && (
-                  <div style={{
-                    padding: '12px 16px', borderRadius: 10, marginBottom: 16,
-                    background: bulkTestResult.failed === 0 ? 'var(--green-dim)' : 'var(--orange-dim)',
-                    border: `1px solid ${bulkTestResult.failed === 0 ? 'var(--green)' : 'var(--orange)'}`,
-                  }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: bulkTestResult.failed === 0 ? 'var(--green)' : 'var(--orange)' }}>
-                      {bulkTestResult.failed === 0 ? '✓ All sent!' : `⚠ Partial success`}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                      {bulkTestResult.sent.toLocaleString()} sent · {bulkTestResult.failed} failed · {bulkTestResult.total.toLocaleString()} total
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Check your Gmail inbox for <strong>{bulkTestEmail}</strong>
-                    </div>
-                  </div>
-                )}
-
-                {/* Send button */}
-                <button
-                  disabled={bulkTestRunning || !bulkTestEmail}
-                  onClick={async () => {
-                    setBulkTestRunning(true);
-                    setBulkTestResult(null);
-                    try {
-                      const res = await bulkTestJourneyNode(selected, bulkTestModal.node.id, bulkTestEmail, bulkTestCount);
-                      setBulkTestResult(res.data);
-                      hotToast.success(`Bulk test done: ${res.data.sent} sent, ${res.data.failed} failed`);
-                    } catch (err) {
-                      hotToast.error(err.message || 'Bulk test failed');
-                    }
-                    setBulkTestRunning(false);
-                  }}
-                  style={{
-                    width: '100%', padding: '12px', borderRadius: 8, border: 'none',
-                    background: bulkTestRunning ? 'var(--border-color)' : 'var(--orange)',
-                    color: bulkTestRunning ? 'var(--text-muted)' : '#fff',
-                    fontWeight: 700, fontSize: 14, cursor: bulkTestRunning ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  }}
-                >
-                  {bulkTestRunning
-                    ? `Sending ${bulkTestCount.toLocaleString()} emails…`
-                    : `Send ${bulkTestCount.toLocaleString()} test emails →`}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Send Log Modal ───────────────────────────────── */}
-        {simLogModal && (() => {
-          const simLog = simSendLogs[simLogModal];
-          const persisted = nodeLogData[simLogModal] || nodeCampaignMap[simLogModal];
-          // Live sim takes precedence; fall back to persisted DB data
-          const isSending = simLog?.sending;
-          const total     = simLog ? (simLog.total   || 0) : (persisted?.total     || persisted?.target || 0);
-          const sent      = simLog ? (simLog.sent    || 0) : (persisted?.sent      || 0);
-          const failed    = simLog ? (simLog.failed  || 0) : (persisted?.failed    || 0);
-          const delivered = simLog ? (simLog.sent    || 0) : (persisted?.delivered || 0);
-          const read      = simLog ? 0                     : (persisted?.read      || 0);
-          const clicked   = simLog ? 0                     : (persisted?.clicked   || 0);
-          const bounced   = simLog ? 0                     : (persisted?.bounced   || 0);
-          const startedAt  = persisted?.startedAt  || persisted?.started_at;
-          const completedAt = persisted?.completedAt || persisted?.completed_at;
-          const hasData = total > 0 || sent > 0;
-          const logNode = (detail?.nodes || []).find(n => n.id === simLogModal);
-          const label = logNode?.data?.label || 'Action node';
-          const mockEmail = 'rocky.86agency@gmail.com';
-          const fmtDt = (iso) => iso ? new Date(iso).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', dateStyle: 'medium', timeStyle: 'short' }) : null;
-          return (
-            <div onClick={() => setSimLogModal(null)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-              <div onClick={e => e.stopPropagation()}
-                style={{ background: 'var(--bg-card)', borderRadius: 16, width: 500, maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-
-                {/* Header */}
-                <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div className="flex items-center gap-2">
-                    <Eye size={16} color="var(--green)" />
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>Email Send Log</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{label}</div>
-                    </div>
-                  </div>
-                  <button onClick={() => setSimLogModal(null)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
-                </div>
-
-                <div style={{ padding: '20px 22px' }}>
-                  {isSending ? (
-                    <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--orange)' }}>
-                      <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 6 }}>{sent} / {total}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Sending emails…</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Real customer data · delivering to {mockEmail}</div>
-                    </div>
-                  ) : !hasData ? (
-                    <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)' }}>
-                      <Mail size={28} style={{ margin: '0 auto 10px', opacity: 0.3 }} />
-                      <div style={{ fontSize: 13 }}>No sends recorded yet for this node.</div>
-                      <div style={{ fontSize: 11, marginTop: 4 }}>Run the journey simulation to send emails.</div>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Top stats — Queued / Sent / Failed */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-                        {[
-                          { label: 'QUEUED', value: total, color: 'var(--text-primary)' },
-                          { label: 'SENT', value: sent, color: 'var(--green)' },
-                          { label: 'FAILED', value: failed, color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
-                        ].map(s => (
-                          <div key={s.label} style={{ textAlign: 'center', padding: '14px 8px', background: 'var(--bg-secondary)', borderRadius: 10, border: '1px solid var(--border-color)' }}>
-                            <div style={{ fontSize: 28, fontWeight: 800, color: s.color, lineHeight: 1 }}>{s.value}</div>
-                            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: 'var(--text-muted)', marginTop: 4 }}>{s.label}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Secondary stats row */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
-                        {[
-                          { label: 'Delivered', value: delivered, color: 'var(--green)' },
-                          { label: 'Read', value: read, color: 'var(--brand-primary)' },
-                          { label: 'Clicked', value: clicked, color: 'var(--purple)' },
-                          { label: 'Bounced', value: bounced, color: 'var(--orange)' },
-                        ].map(s => (
-                          <div key={s.label} style={{ textAlign: 'center', padding: '10px 4px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: s.value > 0 ? s.color : 'var(--text-muted)' }}>{s.value}</div>
-                            <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Send rate bar */}
-                      {total > 0 && (
-                        <div style={{ marginBottom: 16 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
-                            <span>Delivery rate</span>
-                            <span>{total > 0 ? Math.round((sent / total) * 100) : 0}%</span>
-                          </div>
-                          <div style={{ height: 6, background: 'var(--bg-secondary)', borderRadius: 4, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${total > 0 ? Math.round((sent / total) * 100) : 0}%`, background: 'var(--green)', borderRadius: 4, transition: 'width 0.4s' }} />
-                          </div>
-                          {failed > 0 && (
-                            <div style={{ height: 4, background: 'var(--bg-secondary)', borderRadius: 4, overflow: 'hidden', marginTop: 3 }}>
-                              <div style={{ height: '100%', width: `${total > 0 ? Math.round((failed / total) * 100) : 0}%`, background: 'var(--red)', borderRadius: 4 }} />
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Timestamps */}
-                      {(startedAt || completedAt) && (
-                        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                          {startedAt && (
-                            <div style={{ flex: 1, padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 10 }}>
-                              <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>Started (Dubai)</div>
-                              <div style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{fmtDt(startedAt)}</div>
-                            </div>
-                          )}
-                          {completedAt && (
-                            <div style={{ flex: 1, padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 10 }}>
-                              <div style={{ color: 'var(--text-muted)', marginBottom: 2 }}>Completed (Dubai)</div>
-                              <div style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>{fmtDt(completedAt)}</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Mock email info */}
-                      <div style={{ padding: '10px 14px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, fontSize: 11, color: 'var(--text-secondary)' }}>
-                        <strong style={{ color: 'var(--brand-primary)' }}>Check Gmail:</strong>{' '}
-                        {sent} email{sent !== 1 ? 's' : ''} delivered to{' '}
-                        <code style={{ background: 'var(--bg-card)', padding: '1px 5px', borderRadius: 4, fontSize: 10 }}>{mockEmail}</code>
-                        {' '}— each rendered with real customer data.
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
         {/* ── Template Preview Modal (inside detail view) ───── */}
         <AnimatePresence>
