@@ -788,7 +788,7 @@ export default function Journeys() {
           sent: parseInt(matched.sent_count) || 0,
           delivered: parseInt(matched.delivered_count) || 0,
           read: parseInt(matched.read_count) || 0,
-          clicked: parseInt(matched.click_count) || 0,
+          clicked: parseInt(matched.gtm_click_count) || parseInt(matched.click_count) || 0,
           bounced: parseInt(matched.bounce_count) || 0,
           failed: parseInt(matched.fail_count) || 0,
           startedAt: matched.started_at || null,
@@ -1658,8 +1658,8 @@ export default function Journeys() {
                                   const target    = camp?.target    || parseInt(detail?.total_entries) || 0;
                                   const sent      = camp?.sent      || parseInt(nodeStats?.action_sent)      || 0;
                                   const delivered = camp?.delivered  || parseInt(nodeStats?.action_delivered) || 0;
-                                  const read      = camp?.read       || parseInt(nodeStats?.action_read)      || 0;
-                                  const clicked   = camp?.clicked    || parseInt(nodeStats?.action_clicked)   || 0;
+                                  const read      = campaignData?.opens?.[node.id] || camp?.read || parseInt(nodeStats?.action_read) || 0;
+                                  const clicked   = campaignData?.gtm_clicks?.[node.id] || camp?.clicked || parseInt(nodeStats?.action_clicked) || 0;
                                   const bounced   = camp?.bounced    || parseInt(nodeStats?.action_bounced)   || 0;
                                   const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
                                   const blocked   = parseInt(nodeStats?.action_blocked) || 0;
@@ -1707,13 +1707,12 @@ export default function Journeys() {
                                         </div>
                                       )}
 
-                                      {/* Top row — Target, Sent, In Queue, Delivered */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                                      {/* Top row — Target, In Queue, Sent */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                                         {[
                                           { label: 'TARGET', value: target, color: 'var(--green)' },
                                           { label: 'IN QUEUE', value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)' },
                                           { label: 'SENT', value: sent, color: sent > 0 ? 'var(--green)' : 'var(--text-muted)' },
-                                          { label: 'DELIVERED', value: delivered, color: delivered > 0 ? 'var(--green)' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>

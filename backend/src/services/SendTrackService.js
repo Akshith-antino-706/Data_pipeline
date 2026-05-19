@@ -10,13 +10,13 @@ export class SendTrackService {
   /**
    * Reserve a log row before sending (returns id for pixel injection).
    */
-  static async logSend({ unifiedId, email, contactName, subject, templateLabel, dayNumber, source = 'test-send' }) {
+  static async logSend({ unifiedId, email, contactName, subject, templateLabel, dayNumber, source = 'test-send', journeyId = null, nodeId = null }) {
     const { rows } = await db.query(`
       INSERT INTO email_send_log
-        (unified_id, email, contact_name, subject, template_label, day_number, source, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued')
+        (unified_id, email, contact_name, subject, template_label, day_number, source, journey_id, node_id, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued')
       RETURNING id
-    `, [unifiedId || null, email, contactName || null, subject, templateLabel, dayNumber || null, source]);
+    `, [unifiedId || null, email, contactName || null, subject, templateLabel, dayNumber || null, source, journeyId || null, nodeId || null]);
     return rows[0].id;
   }
 
@@ -94,6 +94,7 @@ export class SendTrackService {
         SELECT
           esl.id, esl.unified_id, esl.email, esl.contact_name,
           esl.subject, esl.template_label, esl.day_number, esl.source,
+          esl.journey_id, esl.node_id,
           esl.external_id, esl.provider, esl.status, esl.error_message,
           esl.sent_at, esl.opened_at, esl.clicked_at, esl.duration_ms, esl.created_at,
           uc.name   AS uc_name

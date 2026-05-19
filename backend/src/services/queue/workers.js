@@ -166,6 +166,8 @@ async function processEmail(job) {
     templateLabel: d.nodeId || 'journey',
     dayNumber: 0,
     source: 'journey',
+    journeyId: d.journeyId || null,
+    nodeId: d.nodeId || null,
   });
 
   const campaignSlug = `j${d.journeyId}_${(d.nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;

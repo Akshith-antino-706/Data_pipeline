@@ -1394,29 +1394,50 @@ class JourneyService {
         c.sent_count, c.delivered_count, c.read_count, c.click_count,
         c.bounce_count, c.fail_count, c.conversion_count, c.revenue_total,
         c.journey_node_id, c.target_count, c.started_at, c.completed_at,
-        ct.body AS template_body, ct.name AS template_name,
-        CASE WHEN c.sent_count > 0 THEN ROUND(c.delivered_count::numeric / c.sent_count * 100, 1) ELSE 0 END AS delivery_rate,
-        CASE WHEN c.delivered_count > 0 THEN ROUND(c.read_count::numeric / c.delivered_count * 100, 1) ELSE 0 END AS open_rate,
-        CASE WHEN c.delivered_count > 0 THEN ROUND(c.click_count::numeric / c.delivered_count * 100, 1) ELSE 0 END AS click_rate
+        ct.body AS template_body, ct.name AS template_name
       FROM campaigns c
       LEFT JOIN content_templates ct ON ct.id = c.template_id
       WHERE c.journey_id = $2 OR c.segment_label = $1
       ORDER BY c.created_at ASC
     `, [segmentLabel, journeyId]);
 
+    // Click counts per node from gtm_events — unique users who clicked (distinct unified_id)
+    const { rows: gtmClicks } = await db.query(`
+      SELECT node_id, COUNT(DISTINCT unified_id) AS click_count
+      FROM gtm_events
+      WHERE journey_id = $1 AND node_id IS NOT NULL
+      GROUP BY node_id
+    `, [journeyId]);
+    const gtmClickMap = Object.fromEntries(gtmClicks.map(r => [r.node_id, parseInt(r.click_count) || 0]));
+
+    // Open counts per node from email_send_log — unique users who opened (distinct unified_id)
+    const { rows: openRows } = await db.query(`
+      SELECT node_id, COUNT(DISTINCT unified_id) AS open_count
+      FROM email_send_log
+      WHERE journey_id = $1 AND node_id IS NOT NULL AND opened_at IS NOT NULL
+      GROUP BY node_id
+    `, [journeyId]);
+    const openMap = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.open_count) || 0]));
+
+    // Merge gtm click counts into each campaign row by node_id
+    const campaignsWithClicks = campaigns.map(c => ({
+      ...c,
+      gtm_click_count: gtmClickMap[c.journey_node_id] || 0,
+    }));
+
     // Aggregate totals
     const totals = {
-      total_sent: campaigns.reduce((s, c) => s + (parseInt(c.sent_count) || 0), 0),
-      total_delivered: campaigns.reduce((s, c) => s + (parseInt(c.delivered_count) || 0), 0),
-      total_read: campaigns.reduce((s, c) => s + (parseInt(c.read_count) || 0), 0),
-      total_clicked: campaigns.reduce((s, c) => s + (parseInt(c.click_count) || 0), 0),
-      total_bounced: campaigns.reduce((s, c) => s + (parseInt(c.bounce_count) || 0), 0),
-      total_failed: campaigns.reduce((s, c) => s + (parseInt(c.fail_count) || 0), 0),
-      total_conversions: campaigns.reduce((s, c) => s + (parseInt(c.conversion_count) || 0), 0),
-      total_revenue: campaigns.reduce((s, c) => s + (parseFloat(c.revenue_total) || 0), 0),
+      total_sent: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.sent_count) || 0), 0),
+      total_delivered: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.delivered_count) || 0), 0),
+      total_read: Object.values(openMap).reduce((s, n) => s + n, 0),
+      total_clicked: Object.values(gtmClickMap).reduce((s, n) => s + n, 0),
+      total_bounced: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.bounce_count) || 0), 0),
+      total_failed: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.fail_count) || 0), 0),
+      total_conversions: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.conversion_count) || 0), 0),
+      total_revenue: campaignsWithClicks.reduce((s, c) => s + (parseFloat(c.revenue_total) || 0), 0),
     };
 
-    return { journey: journey[0], campaigns, totals, target_count: targetCount };
+    return { journey: journey[0], campaigns: campaignsWithClicks, totals, target_count: targetCount, gtm_clicks: gtmClickMap, opens: openMap };
   }
 
   // ── Conversion Detection (BigQuery + Offline Booking) ──────
