@@ -18,8 +18,10 @@ const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 function buildConnection() {
   const url = process.env.REDIS_URL || DEFAULT_REDIS_URL;
   return new IORedis(url, {
-    maxRetriesPerRequest: null,                  // BullMQ requires this
+    maxRetriesPerRequest: null,   // BullMQ requires this
     enableReadyCheck: false,
+    connectTimeout: 5000,         // fail fast if Redis is down
+    retryStrategy: (times) => Math.min(times * 500, 3000),
   });
 }
 

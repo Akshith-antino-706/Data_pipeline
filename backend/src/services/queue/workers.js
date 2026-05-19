@@ -66,10 +66,40 @@ export function startWorkers() {
     limiter: { max: 10, duration: 1000 },
   });
 
+  // After all retries exhausted on the email queue: advance the entry so it doesn't block forever
+  email.on('failed', async (job, err) => {
+    const attempts = job?.opts?.attempts || 3;
+    console.error(`[Worker:email] job ${job?.id} EXHAUSTED (${job?.attemptsMade}/${attempts}): ${err.message}`);
+    if (job?.attemptsMade >= attempts && job?.data?.entryId) {
+      const d = job.data;
+      try {
+        await db.query(
+          `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+           VALUES ($1, $2, 'action_failed', 'email', $3)`,
+          [d.entryId, d.nodeId, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
+        );
+        // Now advance past the action node
+        const edges = d.edges || [];
+        const outEdge = edges.find(e => e.source === d.nodeId);
+        if (outEdge) {
+          await db.query(
+            `UPDATE journey_entries SET current_node_id = $1, bullmq_job_id = NULL WHERE entry_id = $2`,
+            [outEdge.target, d.entryId]
+          );
+        } else {
+          await db.query(
+            `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL WHERE entry_id = $1`,
+            [d.entryId]
+          );
+        }
+        console.log(`[Worker:email] entry=${d.entryId} advanced after all retries exhausted`);
+      } catch (advErr) {
+        console.error(`[Worker:email] failed to advance entry ${d.entryId}: ${advErr.message}`);
+      }
+    }
+  });
+
   for (const w of [email, wa, sms]) {
-    w.on('failed', (job, err) => {
-      console.error(`[Worker:${w.name}] job ${job?.id} failed (attempt ${job?.attemptsMade}/${job?.opts?.attempts || 1}): ${err.message}`);
-    });
     w.on('error', (err) => {
       console.error(`[Worker:${w.name}] worker error: ${err.message}`);
     });
@@ -152,6 +182,13 @@ async function processEmail(job) {
   });
   trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
 
+  // Apply test override — all journey emails go to override inbox during testing
+  const overrideTo = process.env.EMAIL_OVERRIDE_TO;
+  const actualTo   = overrideTo || d.email;
+  if (overrideTo) {
+    console.log(`[Worker:email] OVERRIDE → sending to ${overrideTo} (real: ${d.email})`);
+  }
+
   // Send via ChatheadEmailChannel (AWS Email API)
   const sendResult = await ChatheadEmailChannel.send({
     to: recipientEmail,
@@ -168,17 +205,29 @@ async function processEmail(job) {
     SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' }).catch(() => {});
   }
 
-  await _logAndAdvance(d, sendResult.success ? 'action_sent' : 'action_failed', {
+  if (!sendResult.success) {
+    // Log the failure but do NOT advance the entry — let BullMQ retry.
+    // Only advance after all retries are exhausted (handled by the failed event below).
+    await db.query(
+      `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+       VALUES ($1, $2, 'action_failed', $3, $4)`,
+      [d.entryId, d.nodeId, 'email', JSON.stringify({
+        templateId: d.templateId, track: d.track,
+        sendResult: { success: false, error: sendResult.error, provider: sendResult.provider },
+        attempt: job.attemptsMade + 1,
+        willRetry: (job.attemptsMade + 1) < (job.opts?.attempts || 3),
+      })]
+    );
+    console.error(`[Worker:email] FAILED entry=${d.entryId} attempt=${job.attemptsMade + 1}: ${sendResult.error}`);
+    throw new Error(`email send failed: ${sendResult.error || 'unknown'}`);
+  }
+
+  await _logAndAdvance(d, 'action_sent', {
     templateId: d.templateId,
     channel: 'email',
     track: d.track,
-    sendResult: { success: sendResult.success, provider: sendResult.provider, externalId: sendResult.externalId, error: sendResult.error },
-  }, sendResult.success);
-
-  if (!sendResult.success) {
-    // Surface to BullMQ so it retries with backoff
-    throw new Error(`email send failed: ${sendResult.error || 'unknown'}`);
-  }
+    sendResult: { success: true, provider: sendResult.provider, externalId: sendResult.externalId },
+  }, true);
 }
 
 async function processWA(job) {

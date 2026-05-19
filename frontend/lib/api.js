@@ -139,6 +139,9 @@ export const segmentTestJourneyNode = (id, nodeId, testEmail, limit) =>
 
 export const getNodeSendLog = (id, nodeId) =>
   request(`/api/v3/journeys/${id}/nodes/${nodeId}/send-log`);
+export const getJourneyQueueCounts = () => request('/api/v3/journeys/queue-counts');
+export const retryBlockedEntries = (id, nodeId) =>
+  request(`/api/v3/journeys/${id}/nodes/${nodeId}/retry-blocked`, { method: 'POST' });
 
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });

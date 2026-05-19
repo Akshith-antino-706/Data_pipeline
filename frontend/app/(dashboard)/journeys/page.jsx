@@ -10,7 +10,8 @@ import {
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
   getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
-  previewTemplate as fetchTemplatePreview, getJourneyEntries
+  previewTemplate as fetchTemplatePreview, getJourneyEntries,
+  getJourneyQueueCounts, retryBlockedEntries
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -117,11 +118,11 @@ export default function Journeys() {
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [flowEditMode, setFlowEditMode] = useState(false);
-  const [, setEditingNode] = useState(null); // node being edited (value unused)
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
   const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null });
   const [showNodeModal, setShowNodeModal] = useState(false);
   const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
+  const [editNodeId, setEditNodeId] = useState(null);
   const [allTemplates, setAllTemplates] = useState({ email: [], whatsapp: [], sms: [] });
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [trackFilter] = useState('all');
@@ -132,6 +133,8 @@ export default function Journeys() {
   const [entriesPage, setEntriesPage] = useState(1);
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
+  const [queueStats, setQueueStats] = useState(null); // BullMQ live counts
+  const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
 
   // Tracks the real live node (most entries are currently on) — set on journey open/start/process
   const [liveNodeId, setLiveNodeId] = useState(null);
@@ -152,6 +155,13 @@ export default function Journeys() {
     }, 30_000);
     return () => clearInterval(t);
   }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tick every second so wait-node countdown timers stay live
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
   const [createNodes, setCreateNodes] = useState([]);
@@ -304,14 +314,16 @@ export default function Journeys() {
     setExpandedNode(null);
     setLiveNodeId(null);
     try {
-      const [d, a, cd] = await Promise.all([
+      const [d, a, cd, qc] = await Promise.all([
         getJourney(id),
         getJourneyAnalytics(id).catch(() => ({ data: null })),
-        getJourneyCampaignAnalytics(id).catch(() => ({ data: null }))
+        getJourneyCampaignAnalytics(id).catch(() => ({ data: null })),
+        getJourneyQueueCounts().catch(() => ({ data: null })),
       ]);
       setDetail(d.data);
       setAnalytics(a.data);
       setCampaignData(cd.data);
+      setQueueStats(qc.data);
       loadTemplates(); // Load templates for preview buttons
       // Restore live node indicator if journey is active
       if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
@@ -347,9 +359,70 @@ export default function Journeys() {
 
   const openNodeModal = (afterIdx = null) => {
     setNodeModalAfterIdx(afterIdx);
+    setEditNodeId(null);
     setNodeForm({ ...BLANK_NODE_FORM });
     setShowNodeModal(true);
     loadTemplates();
+  };
+
+  const openNodeEditModal = (node) => {
+    const d = node.data || {};
+    const ch = (d.channel || 'email').toLowerCase();
+    setEditNodeId(node.id);
+    setNodeForm({
+      type: node.type || 'action',
+      channel: ch,
+      label: d.label || '',
+      message: d.message || '',
+      waitDays: d.waitDays || 1,
+      goalType: d.goalType || 'booking',
+      condition: d.condition || 'booked',
+      track: d.track || 'all',
+      sendHour: d.sendHour ?? null,
+      emailTemplateId: ch === 'email' ? (d.templateId || d.emailTemplateId || null) : (d.emailTemplateId || null),
+      whatsappTemplateId: ch === 'whatsapp' ? (d.templateId || d.whatsappTemplateId || null) : (d.whatsappTemplateId || null),
+      smsTemplateId: ch === 'sms' ? (d.templateId || d.smsTemplateId || null) : (d.smsTemplateId || null),
+      restChannel: d.restChannel || 'email',
+      restTemplateId: d.restTemplateId || null,
+    });
+    setShowNodeModal(true);
+    loadTemplates();
+  };
+
+  const handleSaveNodeEdit = () => {
+    if (!editNodeId) return;
+    const nodes = detail.nodes || [];
+    const resolvedTemplateId =
+      nodeForm.channel === 'email'    ? (nodeForm.emailTemplateId    || null) :
+      nodeForm.channel === 'whatsapp' ? (nodeForm.whatsappTemplateId || null) :
+      nodeForm.channel === 'sms'      ? (nodeForm.smsTemplateId      || null) : null;
+    if (nodeForm.type === 'action' && !resolvedTemplateId) {
+      return showToast('Template is required for action nodes', 'error');
+    }
+    const updated = nodes.map(n => {
+      if (n.id !== editNodeId) return n;
+      return {
+        ...n, type: nodeForm.type,
+        data: {
+          label: nodeForm.label || n.data?.label || `${nodeForm.type} step`,
+          track: nodeForm.track || 'all',
+          ...(nodeForm.type === 'action' && {
+            channel: nodeForm.channel,
+            message: nodeForm.message,
+            templateId: resolvedTemplateId,
+            sendHour: nodeForm.sendHour ?? null,
+            ...(nodeForm.channel === 'whatsapp' && { restChannel: nodeForm.restChannel || 'email', restTemplateId: nodeForm.restTemplateId || null }),
+          }),
+          ...(nodeForm.type === 'wait'      && { waitDays: nodeForm.waitDays }),
+          ...(nodeForm.type === 'condition' && { condition: nodeForm.condition }),
+          ...(nodeForm.type === 'goal'      && { goalType: nodeForm.goalType }),
+        },
+      };
+    });
+    saveNodeChanges(updated);
+    setShowNodeModal(false);
+    setEditNodeId(null);
+    setNodeForm({ ...BLANK_NODE_FORM });
   };
 
   const handleGenerate = async (strategyId) => {
@@ -471,13 +544,20 @@ export default function Journeys() {
     setEnrolling(false);
   };
 
+  const refreshQueueStats = async () => {
+    try {
+      const qc = await getJourneyQueueCounts();
+      setQueueStats(qc.data);
+    } catch { /* ignore */ }
+  };
+
   const handleProcess = async () => {
     setConfirmAction(null);
     setProcessing(true);
     try {
       const res = await processJourney(selected);
       showToast(`Processed: ${res.data?.processed || 0} entries advanced`, 'success');
-      const d = await getJourney(selected);
+      const [d] = await Promise.all([getJourney(selected), refreshQueueStats()]);
       setDetail(d.data);
       if (d.data?.status === 'active') refreshLiveNode(selected, d.data?.nodes || []);
     } catch (err) { showToast(err.message, 'error'); }
@@ -490,9 +570,8 @@ export default function Journeys() {
     try {
       const res = await startJourney(selected);
       hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
-      const d = await getJourney(selected);
+      const [d] = await Promise.all([getJourney(selected), refreshQueueStats(), loadData()]);
       setDetail(d.data);
-      await loadData();
     } catch (err) { hotToast.error(err.message || 'Failed to start journey'); }
     setStarting(false);
   };
@@ -721,6 +800,16 @@ export default function Journeys() {
           click_rate: matched.click_rate,
         };
       }
+    });
+
+    // Build per-node fire-time map for wait countdown timers
+    const nodeFireTimesMap = {};
+    (analytics?.nodeFireTimes || []).forEach(ft => {
+      nodeFireTimesMap[ft.current_node_id] = {
+        earliestFireAt: ft.earliest_fire_at ? new Date(ft.earliest_fire_at).getTime() : null,
+        latestFireAt:   ft.latest_fire_at   ? new Date(ft.latest_fire_at).getTime()   : null,
+        activeCount:    parseInt(ft.active_count) || 0,
+      };
     });
 
     const channels = getJourneyChannels(nodes);
@@ -1376,6 +1465,11 @@ export default function Journeys() {
                                       className="flex items-center justify-center"
                                       style={{ width: 24, height: 24, border: '1px solid var(--border-color)', borderRadius: 6, background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 12 }}>↓</button>
                                   )}
+                                  <button onClick={() => openNodeEditModal(node)} title="Edit node"
+                                    className="flex items-center justify-center"
+                                    style={{ width: 24, height: 24, border: '1px solid var(--brand-primary)', borderRadius: 6, background: 'rgba(59,130,246,0.08)', color: 'var(--brand-primary)', cursor: 'pointer' }}>
+                                    <Edit3 size={11} />
+                                  </button>
                                   <button onClick={() => handleDeleteNode(node.id)} title="Delete node"
                                     className="flex items-center justify-center"
                                     style={{ width: 24, height: 24, border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-dim)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>×</button>
@@ -1396,14 +1490,128 @@ export default function Journeys() {
                                     {node.data.message}
                                   </div>
                                 )}
-                                {node.data?.waitDays && (
-                                  <div className="flex items-center gap-2 flex-wrap" style={{ padding: '8px 0' }}>
-                                    <Clock size={14} color={color} />
-                                    <span className="text-secondary text-sm">
-                                      Wait <strong>{node.data.waitDays} day{node.data.waitDays !== 1 ? 's' : ''}</strong> before proceeding
-                                    </span>
-                                  </div>
-                                )}
+                                {node.data?.waitDays && (() => {
+                                  const waitDays    = node.data.waitDays;
+                                  const ft          = nodeFireTimesMap[node.id];
+                                  const fireAt      = ft?.earliestFireAt   || null;
+                                  const enqueuedAt  = ft?.earliestEnqueued || null;
+                                  const activeCount = ft?.activeCount       || 0;
+
+                                  // Remaining time — ticks every second via `now`
+                                  const remainingMs  = fireAt ? Math.max(0, fireAt - now) : null;
+                                  const remainingSec = remainingMs !== null ? Math.ceil(remainingMs / 1000) : null;
+                                  const isDue        = remainingMs === 0;
+
+                                  // Progress using real worker enqueue→fire span
+                                  const totalMs   = (fireAt && enqueuedAt) ? Math.max(1, fireAt - enqueuedAt) : null;
+                                  const elapsedMs = enqueuedAt ? Math.max(0, now - enqueuedAt) : null;
+                                  const pct       = (totalMs && elapsedMs !== null)
+                                    ? Math.min(100, Math.max(0, Math.round(elapsedMs / totalMs * 100)))
+                                    : null;
+
+                                  // Digital clock segments — zero-padded
+                                  const pad = (n) => String(n).padStart(2, '0');
+                                  const buildClock = (sec) => {
+                                    if (sec <= 0) return null;
+                                    const d  = Math.floor(sec / 86400);
+                                    const h  = Math.floor((sec % 86400) / 3600);
+                                    const m  = Math.floor((sec % 3600) / 60);
+                                    const s  = sec % 60;
+                                    if (d > 0)  return { parts: [{ v: pad(d), u: 'd' }, { v: pad(h), u: 'h' }, { v: pad(m), u: 'm' }], color: 'var(--text-secondary)' };
+                                    if (h > 0)  return { parts: [{ v: pad(h), u: 'h' }, { v: pad(m), u: 'm' }, { v: pad(s), u: 's' }], color: '#f59e0b' };
+                                    if (m > 0)  return { parts: [{ v: pad(m), u: 'm' }, { v: pad(s), u: 's' }], color: '#eab308' };
+                                    return       { parts: [{ v: pad(s), u: 's' }], color: '#22c55e' };
+                                  };
+                                  const clock = isDue ? null : buildClock(remainingSec);
+
+                                  return (
+                                    <div style={{ marginTop: 4 }}>
+                                      <div className="flex items-center gap-2" style={{ padding: '4px 0 10px' }}>
+                                        <Clock size={14} color={color} />
+                                        <span className="text-secondary text-sm">
+                                          Wait <strong>{waitDays} day{waitDays !== 1 ? 's' : ''}</strong> before proceeding
+                                        </span>
+                                      </div>
+
+                                      {remainingSec !== null ? (
+                                        <div style={{ borderRadius: 12, border: `1px solid ${isDue ? 'rgba(34,197,94,0.35)' : 'rgba(234,179,8,0.3)'}`, background: isDue ? 'rgba(34,197,94,0.07)' : 'rgba(234,179,8,0.05)', overflow: 'hidden' }}>
+
+                                          {/* Header */}
+                                          <div className="flex items-center justify-between" style={{ padding: '10px 14px 6px' }}>
+                                            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                                              {isDue ? '✓ Ready to advance' : 'Time remaining'}
+                                            </span>
+                                            {activeCount > 0 && (
+                                              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                                                {activeCount} entries waiting
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Digital countdown clock */}
+                                          <div className="flex items-end justify-center gap-1" style={{ padding: isDue ? '6px 14px 10px' : '4px 14px 10px' }}>
+                                            {isDue ? (
+                                              <span style={{ fontSize: 30, fontWeight: 900, color: '#22c55e', letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>
+                                                ✓ Due Now
+                                              </span>
+                                            ) : clock?.parts.map((p, i) => (
+                                              <div key={i} className="flex items-end gap-1">
+                                                {i > 0 && <span style={{ fontSize: 22, fontWeight: 700, color: 'rgba(120,113,108,0.4)', marginBottom: 6, lineHeight: 1 }}>:</span>}
+                                                <div style={{ textAlign: 'center' }}>
+                                                  <div style={{
+                                                    fontSize: 36, fontWeight: 900, color: clock.color,
+                                                    fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.03em',
+                                                    lineHeight: 1, minWidth: 52, textAlign: 'center',
+                                                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                                                    transition: 'color 0.3s ease',
+                                                  }}>
+                                                    {p.v}
+                                                  </div>
+                                                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 2 }}>
+                                                    {p.u === 'd' ? 'days' : p.u === 'h' ? 'hours' : p.u === 'm' ? 'mins' : 'secs'}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+
+                                          {/* Progress bar */}
+                                          <div style={{ position: 'relative', height: 5, background: 'rgba(120,113,108,0.12)', margin: '0 0 0 0' }}>
+                                            <div style={{
+                                              position: 'absolute', left: 0, top: 0, height: '100%',
+                                              width: `${pct ?? (isDue ? 100 : 0)}%`,
+                                              background: isDue ? '#22c55e' : 'linear-gradient(90deg,#ca8a04,#eab308)',
+                                              transition: 'width 1s linear',
+                                            }} />
+                                          </div>
+
+                                          {/* Footer row */}
+                                          <div className="flex gap-4 flex-wrap" style={{ padding: '7px 14px 10px' }}>
+                                            {enqueuedAt && (
+                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
+                                                Entered: <strong style={{ color: 'var(--text-secondary)' }}>{new Date(enqueuedAt).toLocaleTimeString()}</strong>
+                                              </span>
+                                            )}
+                                            {fireAt && (
+                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
+                                                Fires at: <strong style={{ color: 'var(--text-secondary)' }}>{new Date(fireAt).toLocaleTimeString()}</strong>
+                                              </span>
+                                            )}
+                                            {pct !== null && (
+                                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
+                                                <strong style={{ color: clock?.color || '#22c55e' }}>{pct}%</strong> elapsed
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(120,113,108,0.06)', border: '1px solid var(--border-color)', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                                          Waiting for entries — refreshes every 10s
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                                 {node.data?.triggerType && (
                                   <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
                                     <Zap size={14} color={color} />
@@ -1454,21 +1662,95 @@ export default function Journeys() {
                                   const clicked   = camp?.clicked    || parseInt(nodeStats?.action_clicked)   || 0;
                                   const bounced   = camp?.bounced    || parseInt(nodeStats?.action_bounced)   || 0;
                                   const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
+                                  const blocked   = parseInt(nodeStats?.action_blocked) || 0;
+                                  // BullMQ live queue depth for this channel
+                                  const ch = (node.data?.channel || '').toLowerCase();
+                                  const liveQ = queueStats?.[ch === 'whatsapp' ? 'whatsapp' : ch] || null;
+                                  const qWaiting = (liveQ?.waiting || 0) + (liveQ?.active || 0) + (liveQ?.delayed || 0);
+                                  // Node config check
+                                  const nodeChannel = node.data?.channel || '';
+                                  const nodeTemplateId = node.data?.templateId || node.data?.emailTemplateId || node.data?.whatsappTemplateId || node.data?.smsTemplateId;
+                                  const missingConfig = !nodeChannel || !nodeTemplateId;
                                   return (
                                     <div className="mt-3">
-                                      {/* Top row — Target, Sent, Delivered */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                                      {/* Node config strip — shows channel + templateId, red if missing */}
+                                      <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: missingConfig ? 'rgba(239,68,68,0.06)' : 'rgba(34,197,94,0.06)', border: `1px solid ${missingConfig ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.15)'}`, fontSize: 11, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <span style={{ color: 'var(--text-tertiary)' }}>Channel: <strong style={{ color: nodeChannel ? 'var(--text-primary)' : 'var(--red)' }}>{nodeChannel || '⚠ not set'}</strong></span>
+                                        <span style={{ color: 'var(--text-tertiary)' }}>Template ID: <strong style={{ color: nodeTemplateId ? 'var(--text-primary)' : 'var(--red)' }}>{nodeTemplateId || '⚠ not set'}</strong></span>
+                                        {missingConfig && (
+                                          <button onClick={e => { e.stopPropagation(); openNodeEditModal(node); }}
+                                            style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--red)', background: 'rgba(239,68,68,0.08)', color: 'var(--red)' }}>
+                                            Fix Node →
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {/* BullMQ live queue strip */}
+                                      {liveQ && (
+                                        <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.15)', fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <span style={{ color: '#3b82f6', fontWeight: 700 }}>📬 BullMQ Queue</span>
+                                          {[
+                                            { label: 'waiting', val: liveQ.waiting || 0, c: '#f59e0b' },
+                                            { label: 'active', val: liveQ.active || 0, c: '#3b82f6' },
+                                            { label: 'delayed', val: liveQ.delayed || 0, c: '#8b5cf6' },
+                                            { label: 'failed', val: liveQ.failed || 0, c: '#ef4444' },
+                                            { label: 'completed', val: liveQ.completed || 0, c: '#22c55e' },
+                                          ].map(({ label, val, c }) => (
+                                            <span key={label} style={{ color: 'var(--text-tertiary)' }}>
+                                              {label}: <strong style={{ color: val > 0 ? c : 'var(--text-muted)' }}>{fmt(val)}</strong>
+                                            </span>
+                                          ))}
+                                          <button onClick={async e => { e.stopPropagation(); await refreshQueueStats(); }}
+                                            style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(59,130,246,0.3)', background: 'transparent', color: '#3b82f6' }}>
+                                            ↻ Refresh
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      {/* Top row — Target, Sent, In Queue, Delivered */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                                         {[
                                           { label: 'TARGET', value: target, color: 'var(--green)' },
-                                          { label: 'SENT', value: sent, color: 'var(--green)' },
-                                          { label: 'DELIVERED', value: delivered, color: 'var(--green)' },
+                                          { label: 'IN QUEUE', value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)' },
+                                          { label: 'SENT', value: sent, color: sent > 0 ? 'var(--green)' : 'var(--text-muted)' },
+                                          { label: 'DELIVERED', value: delivered, color: delivered > 0 ? 'var(--green)' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
-                                            <div style={{ fontSize: 22, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
+                                            <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
                                             <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px', marginTop: 2 }}>{m.label}</div>
                                           </div>
                                         ))}
                                       </div>
+
+                                      {/* Blocked warning + Retry button */}
+                                      {blocked > 0 && (
+                                        <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.3)', fontSize: 12, color: '#f97316' }}>
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                            <span>⚠ <strong>{fmt(blocked)}</strong> entries blocked — {missingConfig ? 'fix node config above then click Retry' : 'no template/channel was set when they ran'}</span>
+                                            <button
+                                              onClick={async (e) => {
+                                                e.stopPropagation();
+                                                try {
+                                                  const r = await retryBlockedEntries(selected, node.id);
+                                                  hotToast.success(`Retried ${r.data?.retried || 0} blocked entries — processing now…`);
+                                                  // Immediately process so emails go out without waiting for cron
+                                                  await processJourney(selected).catch(() => {});
+                                                  const [d, cd] = await Promise.all([
+                                                    getJourney(selected),
+                                                    getJourneyCampaignAnalytics(selected).catch(() => ({ data: null })),
+                                                  ]);
+                                                  setDetail(d.data);
+                                                  setCampaignData(cd.data);
+                                                  await refreshQueueStats();
+                                                } catch (err) { hotToast.error(err.message || 'Retry failed'); }
+                                              }}
+                                              style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid #f97316', background: 'rgba(249,115,22,0.1)', color: '#f97316', whiteSpace: 'nowrap' }}>
+                                              Retry Blocked
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+
                                       {/* Bottom row — Read, Clicked, Bounced, Failed */}
                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
                                         {[
@@ -2022,9 +2304,11 @@ export default function Journeys() {
                     {(() => { const Icon = NODE_ICONS[nodeForm.type]; return <Icon size={18} color={NODE_COLORS[nodeForm.type]} />; })()}
                   </div>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>Create Node</div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{editNodeId ? 'Edit Node' : 'Create Node'}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
-                      Inserting after position {(nodeModalAfterIdx ?? 0) + 1}
+                      {editNodeId
+                        ? `Editing: ${nodeForm.label || nodeForm.type}`
+                        : `Inserting after position ${(nodeModalAfterIdx ?? 0) + 1}`}
                     </div>
                   </div>
                 </div>
@@ -2198,14 +2482,17 @@ export default function Journeys() {
                       <input type="number" min={1} max={365} className="form-input"
                         style={{ width: 100 }}
                         value={nodeForm.waitDays}
-                        onChange={e => setNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                        onChange={e => {
+                          const days = Math.max(1, parseInt(e.target.value) || 1);
+                          setNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
+                        }} />
                       <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                         {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                       {[1, 2, 3, 5, 7, 14].map(d => (
-                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d }))}
+                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
                           style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
                           {d}d
                         </button>
@@ -2251,10 +2538,16 @@ export default function Journeys() {
               </div>
 
               <div className="modal-footer">
-                <button className="btn btn-ghost" onClick={() => setShowNodeModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => handleAddNode(nodeModalAfterIdx ?? (detail?.nodes?.length ? detail.nodes.length - 1 : 0))}>
-                  <Plus size={14} /> Add Node
-                </button>
+                <button className="btn btn-ghost" onClick={() => { setShowNodeModal(false); setEditNodeId(null); }}>Cancel</button>
+                {editNodeId ? (
+                  <button className="btn btn-primary" onClick={handleSaveNodeEdit}>
+                    <CheckCircle2 size={14} /> Save Changes
+                  </button>
+                ) : (
+                  <button className="btn btn-primary" onClick={() => handleAddNode(nodeModalAfterIdx ?? (detail?.nodes?.length ? detail.nodes.length - 1 : 0))}>
+                    <Plus size={14} /> Add Node
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -3090,10 +3383,13 @@ export default function Journeys() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <input type="number" min={1} className="form-input" style={{ width: 80, fontSize: 12, padding: '6px 10px' }}
                             value={createNodeForm.waitDays}
-                            onChange={e => setCreateNodeForm(f => ({ ...f, waitDays: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                            onChange={e => {
+                              const days = Math.max(1, parseInt(e.target.value) || 1);
+                              setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
+                            }} />
                           <div style={{ display: 'flex', gap: 5 }}>
                             {[1, 2, 3, 7].map(d => (
-                              <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d }))}
+                              <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
                                 style={{ padding: '3px 8px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
                             ))}
                           </div>
@@ -3127,9 +3423,24 @@ export default function Journeys() {
                       </div>
                     )}
 
+                    {/* Validation message for missing template */}
+                    {createNodeForm.type === 'action' && (
+                      (createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) ||
+                      (createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) ||
+                      (createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)
+                    ) && (
+                      <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 6, padding: '4px 8px', background: 'rgba(239,68,68,0.06)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)' }}>
+                        ⚠ {createNodeForm.channel.charAt(0).toUpperCase() + createNodeForm.channel.slice(1)} template is required before adding this node
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                       <button className="btn btn-sm btn-primary"
-                        disabled={!createNodeForm.label.trim()}
+                        disabled={
+                          !createNodeForm.label.trim() ||
+                          (createNodeForm.type === 'action' && createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) ||
+                          (createNodeForm.type === 'action' && createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) ||
+                          (createNodeForm.type === 'action' && createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)
+                        }
                         onClick={() => {
                           setCreateNodes(ns => [...ns, { ...createNodeForm }]);
                           setCreateNodeForm({ ...BLANK_CREATE_NODE });
