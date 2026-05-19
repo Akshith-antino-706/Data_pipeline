@@ -161,7 +161,7 @@ async function processEmail(job) {
 
   const logId = await SendTrackService.logSend({
     unifiedId: d.customerId,
-    email: d.email,
+    email: recipientEmail || d.email || 'unknown',
     subject,
     templateLabel: d.nodeId || 'journey',
     dayNumber: 0,
