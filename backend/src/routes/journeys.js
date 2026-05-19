@@ -372,6 +372,96 @@ router.get('/:id/campaign-analytics', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GTM event breakdown per node for this journey
+// Every action node gets the full event-type list (0 count if no data for that node).
+// Returns { allEventTypes: [...], data: { nodeId: { sent, events: [...] } } }
+router.get('/:id/gtm-node-stats', async (req, res, next) => {
+  try {
+    const journeyId = parseInt(req.params.id);
+    const db = (await import('../config/database.js')).default;
+
+    const [{ rows: gtmRows }, { rows: sentRows }, { rows: allTypeRows }] = await Promise.all([
+      // Per-node counts (only rows that exist)
+      db.query(`
+        SELECT
+          node_id,
+          event_name,
+          COUNT(*)                   AS event_count,
+          COUNT(DISTINCT unified_id) AS unique_users,
+          SUM(event_value)           AS total_value
+        FROM gtm_events
+        WHERE journey_id = $1 AND node_id IS NOT NULL
+        GROUP BY node_id, event_name
+        ORDER BY node_id, event_count DESC
+      `, [journeyId]),
+
+      // Sent counts per node from email_send_log
+      db.query(`
+        SELECT node_id, COUNT(*) AS sent_count
+        FROM email_send_log
+        WHERE journey_id = $1
+          AND node_id IS NOT NULL
+          AND status NOT IN ('failed', 'queued')
+        GROUP BY node_id
+      `, [journeyId]),
+
+      // All distinct event types for this journey (used to fill zeros on nodes with no data)
+      db.query(`
+        SELECT DISTINCT event_name,
+          SUM(event_count) OVER (PARTITION BY event_name) AS journey_total
+        FROM (
+          SELECT event_name, COUNT(*) AS event_count
+          FROM gtm_events
+          WHERE journey_id = $1
+          GROUP BY event_name
+        ) sub
+        ORDER BY journey_total DESC
+      `, [journeyId]),
+    ]);
+
+    // All event types ordered by journey-wide total
+    const allEventTypes = allTypeRows.map(r => r.event_name);
+
+    // Build per-node lookup: { nodeId: { eventName: { count, users, value } } }
+    const nodeEventLookup = {};
+    for (const r of gtmRows) {
+      if (!nodeEventLookup[r.node_id]) nodeEventLookup[r.node_id] = {};
+      nodeEventLookup[r.node_id][r.event_name] = {
+        event_count:  parseInt(r.event_count)  || 0,
+        unique_users: parseInt(r.unique_users) || 0,
+        total_value:  parseFloat(r.total_value) || 0,
+      };
+    }
+
+    // Build per-node sent map
+    const sentByNode = {};
+    for (const r of sentRows) sentByNode[r.node_id] = parseInt(r.sent_count) || 0;
+
+    // Collect all node_ids that appear in either gtmRows or sentRows
+    const nodeIds = [...new Set([
+      ...gtmRows.map(r => r.node_id),
+      ...sentRows.map(r => r.node_id),
+    ])];
+
+    // For each node, produce the full event list (with zeros for missing types)
+    const byNode = {};
+    for (const nodeId of nodeIds) {
+      const lookup = nodeEventLookup[nodeId] || {};
+      byNode[nodeId] = {
+        sent: sentByNode[nodeId] || 0,
+        events: allEventTypes.map(name => ({
+          event_name:   name,
+          event_count:  lookup[name]?.event_count  || 0,
+          unique_users: lookup[name]?.unique_users  || 0,
+          total_value:  lookup[name]?.total_value   || 0,
+        })),
+      };
+    }
+
+    res.json({ allEventTypes, data: byNode });
+  } catch (err) { next(err); }
+});
+
 // Check conversions (BigQuery purchase + offline booking) and stop converted enrollments
 router.post('/:id/check-conversions', async (req, res, next) => {
   try {
