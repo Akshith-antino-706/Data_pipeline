@@ -4,6 +4,7 @@ import UTMService from '../services/UTMService.js';
 const router = Router();
 
 // POST /api/v3/utm/build — Build a single UTM URL
+// Body accepts optional journeyId, nodeId to embed in utm_content
 router.post('/build', async (req, res) => {
   try {
     const url = UTMService.buildUTM(req.body);
@@ -24,9 +25,11 @@ router.get('/segments', async (req, res) => {
 });
 
 // POST /api/v3/utm/segment/:label — Generate UTM for all templates in a segment
+// Body accepts optional { journeyId, nodeId }
 router.post('/segment/:label', async (req, res) => {
   try {
-    const links = await UTMService.generateForSegment(decodeURIComponent(req.params.label));
+    const { journeyId, nodeId } = req.body || {};
+    const links = await UTMService.generateForSegment(decodeURIComponent(req.params.label), { journeyId, nodeId });
     res.json({ segment: req.params.label, links });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -34,9 +37,11 @@ router.post('/segment/:label', async (req, res) => {
 });
 
 // POST /api/v3/utm/generate-all — Generate UTM for ALL segments
+// Body accepts optional { journeyId, nodeId }
 router.post('/generate-all', async (req, res) => {
   try {
-    const results = await UTMService.generateForAllSegments();
+    const { journeyId, nodeId } = req.body || {};
+    const results = await UTMService.generateForAllSegments({ journeyId, nodeId });
     const totalLinks = results.reduce((sum, r) => sum + r.links_generated, 0);
     res.json({ segments_processed: results.length, total_links: totalLinks, results });
   } catch (err) {
@@ -45,9 +50,11 @@ router.post('/generate-all', async (req, res) => {
 });
 
 // POST /api/v3/utm/campaign/:id — Generate UTM for a campaign
+// Body accepts optional { journeyId, nodeId }
 router.post('/campaign/:id', async (req, res) => {
   try {
-    const result = await UTMService.generateForCampaign(req.params.id);
+    const { journeyId, nodeId } = req.body || {};
+    const result = await UTMService.generateForCampaign(req.params.id, { journeyId, nodeId });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

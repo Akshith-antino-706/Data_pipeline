@@ -19,11 +19,15 @@ class UTMService {
   /**
    * Build a UTM URL
    */
-  static buildUTM({ baseUrl, channel, campaignName, segmentLabel, campaignId, contentNumber = 1 }) {
+  static buildUTM({ baseUrl, channel, campaignName, segmentLabel, campaignId, contentNumber = 1, journeyId, nodeId }) {
     const base = baseUrl || this.BASE_URL;
     const medium = channel || 'email';
     const campaign = `${(campaignName || 'campaign').replace(/[^a-zA-Z0-9_-]/g, '_')}_${(segmentLabel || 'all').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-    const content = campaignId ? `${medium}_camp${campaignId}` : `${medium}_${contentNumber}`;
+    let content = campaignId ? `${medium}_camp${campaignId}` : `${medium}_${contentNumber}`;
+
+    // Append journey info to utm_content if provided
+    if (journeyId) content += `_j${journeyId}`;
+    if (nodeId) content += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
     const params = new URLSearchParams({
       utm_source: 'AI_marketer',
@@ -31,6 +35,8 @@ class UTMService {
       utm_campaign: campaign,
       utm_content: content
     });
+    if (journeyId) params.set('journeyId', String(journeyId));
+    if (nodeId) params.set('nodeId', nodeId);
 
     return `${base}?${params.toString()}`;
   }
@@ -38,7 +44,7 @@ class UTMService {
   /**
    * Generate UTM link for a single campaign
    */
-  static async generateForCampaign(campaignId) {
+  static async generateForCampaign(campaignId, { journeyId, nodeId } = {}) {
     const { rows: [campaign] } = await db.query(`
       SELECT c.*, ct.cta_url AS template_cta_url
       FROM campaigns c
@@ -53,12 +59,19 @@ class UTMService {
       channel: campaign.channel,
       campaignName: campaign.name,
       segmentLabel: campaign.segment_label,
-      campaignId: campaign.id
+      campaignId: campaign.id,
+      journeyId,
+      nodeId
     });
 
+    // Build utm_content with journey info
+    let utmContent = `${campaign.channel}_camp${campaign.id}`;
+    if (journeyId) utmContent += `_j${journeyId}`;
+    if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
     const { rows: [utm] } = await db.query(`
-      INSERT INTO utm_tracking (campaign_id, template_id, segment_label, channel, utm_source, utm_medium, utm_campaign, utm_content, full_url, base_url)
-      VALUES ($1, $2, $3, $4, 'AI_marketer', $5, $6, $7, $8, $9)
+      INSERT INTO utm_tracking (campaign_id, template_id, segment_label, channel, utm_source, utm_medium, utm_campaign, utm_content, full_url, base_url, journey_id, node_id)
+      VALUES ($1, $2, $3, $4, 'AI_marketer', $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT DO NOTHING
       RETURNING utm_id
     `, [
@@ -68,9 +81,11 @@ class UTMService {
       campaign.channel,
       campaign.channel,
       `${campaign.name}_${campaign.segment_label}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
-      `${campaign.channel}_camp${campaign.id}`,
+      utmContent,
       fullUrl,
-      baseUrl
+      baseUrl,
+      journeyId || null,
+      nodeId || null
     ]);
 
     return { campaign_id: campaign.id, campaign_name: campaign.name, segment: campaign.segment_label, channel: campaign.channel, utm_url: fullUrl, utm_id: utm?.utm_id };
@@ -79,7 +94,7 @@ class UTMService {
   /**
    * Generate UTM links for ALL campaigns in a segment
    */
-  static async generateForSegment(segmentLabel) {
+  static async generateForSegment(segmentLabel, { journeyId, nodeId } = {}) {
     const { rows: campaigns } = await db.query(`
       SELECT c.id, c.name, c.segment_label, c.channel::text AS channel, c.template_id,
         ct.cta_url AS template_cta_url
@@ -97,12 +112,19 @@ class UTMService {
         channel: camp.channel,
         campaignName: camp.name,
         segmentLabel: camp.segment_label,
-        campaignId: camp.id
+        campaignId: camp.id,
+        journeyId,
+        nodeId
       });
 
+      // Build utm_content with journey info
+      let utmContent = `${camp.channel}_camp${camp.id}`;
+      if (journeyId) utmContent += `_j${journeyId}`;
+      if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
       await db.query(`
-        INSERT INTO utm_tracking (campaign_id, template_id, segment_label, channel, utm_source, utm_medium, utm_campaign, utm_content, full_url, base_url)
-        VALUES ($1, $2, $3, $4::channel_type, 'AI_marketer', $5, $6, $7, $8, $9)
+        INSERT INTO utm_tracking (campaign_id, template_id, segment_label, channel, utm_source, utm_medium, utm_campaign, utm_content, full_url, base_url, journey_id, node_id)
+        VALUES ($1, $2, $3, $4::channel_type, 'AI_marketer', $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT DO NOTHING
       `, [
         camp.id,
@@ -111,9 +133,11 @@ class UTMService {
         camp.channel,
         camp.channel,
         `${camp.name}_${camp.segment_label}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
-        `${camp.channel}_camp${camp.id}`,
+        utmContent,
         fullUrl,
-        baseUrl
+        baseUrl,
+        journeyId || null,
+        nodeId || null
       ]);
 
       results.push({
@@ -130,7 +154,7 @@ class UTMService {
   /**
    * Generate UTM links for ALL campaigns across ALL segments
    */
-  static async generateForAllSegments() {
+  static async generateForAllSegments({ journeyId, nodeId } = {}) {
     const { rows: segments } = await db.query(`
       SELECT DISTINCT segment_label FROM campaigns
       WHERE segment_label IS NOT NULL
@@ -139,7 +163,7 @@ class UTMService {
 
     const results = [];
     for (const seg of segments) {
-      const links = await this.generateForSegment(seg.segment_label);
+      const links = await this.generateForSegment(seg.segment_label, { journeyId, nodeId });
       results.push({ segment: seg.segment_label, links_generated: links.length });
     }
 
@@ -234,7 +258,7 @@ class UTMService {
    * Generate unique links for all users in a campaign's segment.
    * Each user gets their own token → tracking URL → redirect with rid param.
    */
-  static async generateUserLinks(campaignId, { baseUrl: overrideBaseUrl } = {}) {
+  static async generateUserLinks(campaignId, { baseUrl: overrideBaseUrl, journeyId, nodeId } = {}) {
     // Get campaign + its UTM link
     const { rows: [campaign] } = await db.query(`
       SELECT c.*, ct.cta_url AS template_cta_url,
@@ -249,7 +273,7 @@ class UTMService {
     // If no UTM link exists for this campaign, generate one first
     let utmId = campaign.utm_id;
     if (!utmId) {
-      const result = await this.generateForCampaign(campaignId);
+      const result = await this.generateForCampaign(campaignId, { journeyId, nodeId });
       utmId = result.utm_id;
     }
 
@@ -270,6 +294,11 @@ class UTMService {
     const baseUrl = overrideBaseUrl || campaign.template_cta_url || this.BASE_URL;
     const generated = [];
 
+    // Build utm_content with journey info
+    let utmContent = `${campaign.channel || 'email'}_camp${campaign.id}`;
+    if (journeyId) utmContent += `_j${journeyId}`;
+    if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
     for (const cust of customers) {
       const token = this.generateToken();
 
@@ -278,16 +307,18 @@ class UTMService {
         utm_source: 'AI_marketer',
         utm_medium: campaign.channel || 'email',
         utm_campaign: `${(campaign.name || 'campaign').replace(/[^a-zA-Z0-9_-]/g, '_')}_${(campaign.segment_label || 'all').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-        utm_content: `${campaign.channel || 'email'}_camp${campaign.id}`,
+        utm_content: utmContent,
         rid: cust.unified_id  // Rayna ID — GTM reads this to identify the user
       });
+      if (journeyId) destParams.set('journeyId', String(journeyId));
+      if (nodeId) destParams.set('nodeId', nodeId);
       const destinationUrl = `${baseUrl}?${destParams.toString()}`;
 
       await db.query(`
-        INSERT INTO user_utm_links (utm_id, campaign_id, unified_id, customer_email, customer_name, token, destination_url)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO user_utm_links (utm_id, campaign_id, unified_id, customer_email, customer_name, token, destination_url, journey_id, node_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (token) DO NOTHING
-      `, [utmId, campaignId, cust.unified_id, cust.email, cust.name, token, destinationUrl]);
+      `, [utmId, campaignId, cust.unified_id, cust.email, cust.name, token, destinationUrl, journeyId || null, nodeId || null]);
 
       generated.push({
         unified_id: cust.unified_id,

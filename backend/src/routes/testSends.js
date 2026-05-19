@@ -114,7 +114,7 @@ function leftoversCheck(html) {
  * open-tracking pixel so we know when the recipient actually reads the email.
  */
 
-async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber, source = 'test-send' }) {
+async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber, source = 'test-send', journeyId, nodeId }) {
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 
   const logId = await SendTrackService.logSend({
@@ -131,7 +131,7 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
   const campaignSlug = `day${dayNumber}_${templateLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
   const contentSlug  = `test_send_day${dayNumber}`;
   const utmHtml = injectClickTracking(html, {
-    logId, baseUrl, campaign: campaignSlug, content: contentSlug, unifiedId: recipient.unified_id,
+    logId, baseUrl, campaign: campaignSlug, content: contentSlug, unifiedId: recipient.unified_id, journeyId, nodeId,
   });
 
   // 2. Inject open-tracking pixel
@@ -421,13 +421,15 @@ router.post('/day1', async (req, res, next) => {
     const subject  = req.body?.subject || 'Your Rayna Tours Journey Starts Here';
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
 
     const sendOne = async (r) => {
       const data = await buildDay1WelcomeData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay1Welcome(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', source, dayNumber:1 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 1 - Welcome', source, dayNumber:1, journeyId, nodeId });
     };
 
     // For large batches (>100), respond immediately and process in background
@@ -469,12 +471,14 @@ router.post('/day2', async (req, res, next) => {
     const subject  = req.body?.subject || 'Set Sail: Cruise Highlights from Rayna Tours';
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
     const sendOne = async (r) => {
       const data = await buildDay2CruiseData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay2Cruise(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', source, dayNumber:2 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 2 - Cruise Spotlight', source, dayNumber:2, journeyId, nodeId });
     };
     if (recipients.length > 100) {
       const jobId = `day2_${Date.now()}`;
@@ -511,12 +515,14 @@ router.post('/day3', async (req, res, next) => {
     const subject  = req.body?.subject || 'Your Visa, Sorted | Rayna Tours';
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
     const sendOne = async (r) => {
       const data = await buildDay3VisaData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay3Visa(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', source, dayNumber:3 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 3 - Visa Hub', source, dayNumber:3, journeyId, nodeId });
     };
     if (recipients.length > 100) {
       const jobId = `day3_${Date.now()}`;
@@ -548,12 +554,14 @@ router.post('/day4', async (req, res, next) => {
     const subject  = req.body?.subject || 'Curated Trips Selected for You | Rayna Tours';
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
     const sendOne = async (r) => {
       const data = await buildDay4HolidaysData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay4Holidays(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', source, dayNumber:4 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 4 - Holidays', source, dayNumber:4, journeyId, nodeId });
     };
     if (recipients.length > 100) {
       const jobId = `day4_${Date.now()}`;
@@ -585,12 +593,14 @@ router.post('/day5', async (req, res, next) => {
     const subject  = req.body?.subject || 'World-Class Activities, Instantly Booked | Rayna Tours';
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
     const sendOne = async (r) => {
       const data = await buildDay5ActivitiesData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay5Activities(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', source, dayNumber:5 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 5 - Activities', source, dayNumber:5, journeyId, nodeId });
     };
     if (recipients.length > 100) {
       const jobId = `day5_${Date.now()}`;
@@ -637,12 +647,14 @@ router.post('/day6', async (req, res, next) => {
     const subject  = req.body?.subject || `${dest.name}, Your Way | Rayna Tours`;
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
     const sendOne = async (r) => {
       const data = await buildDay6DestinationData({ contactId: r.unified_id, destinationKey, ranking: ranking.ranking });
       const html = renderDay6Destination(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', source, dayNumber:6 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 6 - Destination Spotlight', source, dayNumber:6, journeyId, nodeId });
     };
     if (recipients.length > 100) {
       const jobId = `day6_${Date.now()}`;
@@ -685,12 +697,14 @@ router.post('/day7', async (req, res, next) => {
     const subject  = req.body?.subject || 'You Left Something Behind | Rayna Tours';
 
     const source = req.body?.source || 'test-send';
+    const journeyId = req.body?.journeyId;
+    const nodeId = req.body?.nodeId;
     const EmailChannel = await loadEmailChannel();
     const sendOne = async (r) => {
       const data = await buildDay7AbandonedCartData({ contactId: r.unified_id, ranking: ranking.ranking });
       const html = renderDay7AbandonedCart(template, data);
       if (!leftoversCheck(html)) return { email: r.email, success: false, error: 'placeholders left' };
-      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', source, dayNumber:7 });
+      return sendAndLog({ EmailChannel, recipient: r, subject, html, templateLabel: 'Day 7 - Abandoned Cart', source, dayNumber:7, journeyId, nodeId });
     };
     if (recipients.length > 100) {
       const jobId = `day7_${Date.now()}`;

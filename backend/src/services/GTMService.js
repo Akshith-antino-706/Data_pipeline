@@ -197,7 +197,7 @@ window.addEventListener('scroll', function() {
    * Stores both structured fields and the full raw payload.
    */
   static async recordEvent(body) {
-    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId } = body;
+    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId, journeyId, nodeId } = body;
 
     // Resolve id: explicit `rid` / `unifiedId` in payload wins, else try pulling from pageUrl,
     // else fall back to matching customerId (email) against unified_contacts.
@@ -224,11 +224,25 @@ window.addEventListener('scroll', function() {
       if (prev) resolvedUnifiedId = prev.unified_id;
     }
 
+    // Resolve journeyId / nodeId: explicit payload wins, else extract from pageUrl query params
+    let resolvedJourneyId = journeyId ? parseInt(journeyId) || null : null;
+    let resolvedNodeId = nodeId || null;
+    if (pageUrl) {
+      if (!resolvedJourneyId) {
+        const jm = /[?&]journeyId=(\d+)/.exec(pageUrl);
+        if (jm) resolvedJourneyId = parseInt(jm[1]);
+      }
+      if (!resolvedNodeId) {
+        const nm = /[?&]nodeId=([^&]+)/.exec(pageUrl);
+        if (nm) resolvedNodeId = decodeURIComponent(nm[1]);
+      }
+    }
+
     const { rows: [event] } = await db.query(`
-      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload, journey_id, node_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *
-    `, [eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body)]);
+    `, [eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body), resolvedJourneyId, resolvedNodeId]);
     return event;
   }
 

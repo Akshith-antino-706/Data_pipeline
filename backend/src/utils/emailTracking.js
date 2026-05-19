@@ -21,8 +21,15 @@
  * @param {string} opts.source     - utm_source value (default "AI_marketer")
  * @param {string} opts.medium     - utm_medium value (default "email")
  * @param {number|string} opts.unifiedId - recipient's unified_id for rid param
+ * @param {number|string} [opts.journeyId] - journey ID to append to utm_content
+ * @param {string}        [opts.nodeId]    - node ID (e.g. "trigger-1") to append to utm_content
  */
-export function injectClickTracking(html, { logId, baseUrl, campaign, content, source = 'AI_marketer', medium = 'email', unifiedId }) {
+export function injectClickTracking(html, { logId, baseUrl, campaign, content, source = 'AI_marketer', medium = 'email', unifiedId, journeyId, nodeId }) {
+  // Build utm_content with journey info if provided
+  let utmContent = content;
+  if (journeyId) utmContent += `_j${journeyId}`;
+  if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
   return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, originalUrl) => {
     // Skip our own tracking URLs and mailto links
     if (
@@ -36,8 +43,10 @@ export function injectClickTracking(html, { logId, baseUrl, campaign, content, s
       dest.searchParams.set('utm_source', source);
       dest.searchParams.set('utm_medium', medium);
       dest.searchParams.set('utm_campaign', campaign);
-      dest.searchParams.set('utm_content', content);
+      dest.searchParams.set('utm_content', utmContent);
       if (unifiedId) dest.searchParams.set('rid', String(unifiedId));
+      if (journeyId) dest.searchParams.set('journeyId', String(journeyId));
+      if (nodeId) dest.searchParams.set('nodeId', nodeId);
 
       const trackUrl = `${baseUrl}/api/track/email-send/click/${logId}?url=${encodeURIComponent(dest.toString())}`;
       return `href="${trackUrl}"`;
