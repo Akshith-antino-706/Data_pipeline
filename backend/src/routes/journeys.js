@@ -94,6 +94,19 @@ router.get('/diagnose', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// BullMQ queue depths — how many jobs are waiting/active across all journey channels
+// NOTE: must be defined BEFORE /:id routes, otherwise Express matches "queue-counts" as :id
+router.get('/queue-counts', async (_req, res, next) => {
+  try {
+    const [email, wa, sms] = await Promise.all([
+      queueCounts('email').catch(() => null),
+      queueCounts('whatsapp').catch(() => null),
+      queueCounts('sms').catch(() => null),
+    ]);
+    res.json({ data: { email, whatsapp: wa, sms } });
+  } catch (err) { next(err); }
+});
+
 // Test-send: run the full email pipeline for ONE entry and return step-by-step diagnostics
 router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
   try {
@@ -395,18 +408,6 @@ router.post('/process-all', async (_req, res, next) => {
       results.push({ journey_id: j.journey_id, ...r });
     }
     res.json({ success: true, results });
-  } catch (err) { next(err); }
-});
-
-// BullMQ queue depths — how many jobs are waiting/active across all journey channels
-router.get('/queue-counts', async (_req, res, next) => {
-  try {
-    const [email, wa, sms] = await Promise.all([
-      queueCounts('email').catch(() => null),
-      queueCounts('whatsapp').catch(() => null),
-      queueCounts('sms').catch(() => null),
-    ]);
-    res.json({ data: { email, whatsapp: wa, sms } });
   } catch (err) { next(err); }
 });
 
