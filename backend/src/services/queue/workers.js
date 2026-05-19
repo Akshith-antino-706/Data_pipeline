@@ -38,6 +38,9 @@ const WA_RATE_WINDOW    = parseInt(process.env.JOURNEY_WA_RATE_WINDOW    || '100
 
 const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
 
+// Override: redirect ALL journey emails to this address (for testing before going live)
+const EMAIL_OVERRIDE    = process.env.JOURNEY_EMAIL_OVERRIDE || null;
+
 let _workers = null;
 
 /** Start all journey workers in this process. Idempotent — safe to call once at boot. */
@@ -87,7 +90,11 @@ export async function stopWorkers() {
 
 async function processEmail(job) {
   const d = job.data;
-  if (!d.email) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
+  const recipientEmail = EMAIL_OVERRIDE || d.email;
+  if (!recipientEmail) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
+  console.log(`[Worker:email] ── Processing job ${job.id} ──`);
+  console.log(`[Worker:email]   entry=${d.entryId} customer=${d.customerId} node=${d.nodeId} journey=${d.journeyId}`);
+  console.log(`[Worker:email]   to=${recipientEmail}${EMAIL_OVERRIDE ? ` (override, real=${d.email})` : ''} template=${d.templateId}`);
 
   // Try renderDayHtml first (Day1-Day7 templates from mail_templates/ folder)
   // Falls back to EmailRenderer if renderDayHtml doesn't match the templateId
@@ -100,6 +107,7 @@ async function processEmail(job) {
   if (dayRendered?.html) {
     html    = dayRendered.html;
     subject = dayRendered.subject || 'Rayna Tours';
+    console.log(`[Worker:email]   rendered via renderDayHtml → subject="${subject}" html=${html.length} bytes`);
   } else {
     // Fallback: EmailRenderer with htmlTemplateId from DB
     const htmlTemplateId = d.htmlTemplateId || await _resolveHtmlTemplateId(d.templateId);
@@ -115,6 +123,7 @@ async function processEmail(job) {
     });
     html    = rendered.html;
     subject = rendered.subject || 'Rayna Tours';
+    console.log(`[Worker:email]   rendered via EmailRenderer → subject="${subject}" html=${html.length} bytes`);
   }
 
   // ── Inject click/open tracking ──
@@ -138,20 +147,24 @@ async function processEmail(job) {
     source: 'email',
     medium: 'journey',
     unifiedId: d.customerId,
+    journeyId: d.journeyId,
+    nodeId: d.nodeId,
   });
   trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
 
   // Send via ChatheadEmailChannel (AWS Email API)
   const sendResult = await ChatheadEmailChannel.send({
-    to: d.email,
+    to: recipientEmail,
     subject,
     html: trackedHtml,
   });
 
   // Update send log status
   if (sendResult.success) {
+    console.log(`[Worker:email]   ✓ SENT to=${recipientEmail} provider=${sendResult.provider} externalId=${sendResult.externalId} duration=${sendResult.durationMs}ms`);
     SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
   } else {
+    console.log(`[Worker:email]   ✗ FAILED to=${recipientEmail} error=${sendResult.error} duration=${sendResult.durationMs}ms`);
     SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' }).catch(() => {});
   }
 

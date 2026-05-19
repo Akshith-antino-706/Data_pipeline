@@ -68,8 +68,12 @@ export async function renderDayHtml(templateId, contactId) {
     const { _internals } = await import('./Day6DestinationRankingService.js');
     const { buildDay6DestinationData } = await import('./Day6DestinationDataService.js');
     const { renderDay6Destination }    = await import('./Day6DestinationRenderer.js');
-    const ranking = _internals.buildFallbackRanking ? _internals.buildFallbackRanking() : {};
-    const data    = await buildDay6DestinationData({ contactId, ranking });
+    const destinations = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
+    const destKey = destinations[contactId % destinations.length];
+    const ranking = _internals.buildFallbackRanking
+      ? _internals.buildFallbackRanking({ holidayCandidates: [], activityCandidates: [], cruiseCandidates: [] })
+      : {};
+    const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking });
     return { html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' };
   }
   if (id === 7) {
@@ -1482,8 +1486,8 @@ class JourneyService {
     const { rows } = await db.query(`
       SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id, je.status,
         je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
-        uc.name, uc.email, uc.mobile AS phone, uc.company_name, uc.country,
-        uc.booking_status, uc.segment_label
+        uc.name, uc.email, uc.mobile AS phone, uc.country,
+        uc.booking_status, uc.segments
       FROM journey_entries je
       JOIN unified_contacts uc ON uc.id = je.customer_id
       WHERE je.journey_id = $1
@@ -1670,7 +1674,7 @@ class JourneyService {
       SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id,
              je.entered_at, je.track, je.last_run_id,
              uc.booking_status, uc.name, uc.email, uc.mobile AS phone, uc.is_indian,
-             uc.segment_label AS current_segment,
+             uc.segments AS current_segment,
              jf.nodes, jf.edges, jf.segment_id, jf.exit_on_conversion,
              sd.segment_name AS journey_segment
       FROM journey_entries je
