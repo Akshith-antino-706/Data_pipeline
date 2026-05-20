@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -171,6 +172,11 @@ export default function Journeys() {
   const [allSegments, setAllSegments] = useState([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
+  const [changingTemplateIdx, setChangingTemplateIdx] = useState(null);
+
+  // ── Mount guard (needed for createPortal in early returns) ───
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => { setIsMounted(true); }, []);
 
   // ── Dubai live clock (for scheduled-start input) ─────────────
   const [dubaiClock, setDubaiClock] = useState('');
@@ -2647,6 +2653,429 @@ export default function Journeys() {
   }
 
   // ══════════════════════════════════════════════════════════════
+  // CREATE JOURNEY — full-page early return
+  // ══════════════════════════════════════════════════════════════
+  if (showCreate) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <button
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' }); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
+              <ArrowLeft size={15} /> Back
+            </button>
+            <div style={{ width: 1, height: 24, background: 'var(--border-color)' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <GitBranch size={17} color="var(--red)" />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>Create New Journey</div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Build an automated customer journey flow</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {createForm.name.trim() && (
+              <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
+            )}
+            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' }); }}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
+              <Plus size={14} /> Create Journey
+            </button>
+          </div>
+        </div>
+
+        {/* Body — 2 column */}
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '400px 1fr', gap: 0, maxWidth: 1200, margin: '0 auto', width: '100%', padding: '32px 28px', alignItems: 'start' }}>
+
+          {/* LEFT — Journey settings */}
+          <div style={{ paddingRight: 24 }}>
+            <div style={{ background: 'var(--card)', borderRadius: 14, border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Settings size={14} color="var(--text-tertiary)" />
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Journey Settings</span>
+              </div>
+              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {/* Name */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Journey Name *</label>
+                  <input className="form-input" type="text"
+                    placeholder="e.g., Welcome Series — New Customers"
+                    value={createForm.name}
+                    onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
+                </div>
+                {/* Description */}
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Description</label>
+                  <textarea className="form-input"
+                    placeholder="Describe the purpose and target audience..."
+                    value={createForm.description}
+                    onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
+                    style={{ minHeight: 72, resize: 'vertical' }} />
+                </div>
+                {/* Segment */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
+                    {segmentsLoading && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}><RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> Loading…</span>}
+                  </div>
+                  <select className="form-input"
+                    value={createForm.segmentId}
+                    disabled={segmentsLoading}
+                    style={{ borderColor: !createForm.segmentId ? 'var(--red)' : undefined }}
+                    onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
+                    <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment —'}</option>
+                    {allSegments.filter(s => s.group === 'standard').length > 0 && (
+                      <optgroup label="Standard Segments">
+                        {allSegments.filter(s => s.group === 'standard').map((s, i) => <option key={`std-${i}`} value={s.value}>{s.label}</option>)}
+                      </optgroup>
+                    )}
+                    {allSegments.filter(s => s.group === 'custom').length > 0 && (
+                      <optgroup label="Custom Segments">
+                        {allSegments.filter(s => s.group === 'custom').map((s, i) => <option key={`cust-${i}`} value={s.value}>{s.label}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+                {/* Exit on Conversion */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{createForm.exitOnConversion ? 'Exit on Booking' : 'Awareness Mode'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{createForm.exitOnConversion ? 'Users who book will exit the journey automatically' : 'All users receive every message — no exit on booking'}</div>
+                  </div>
+                  <button onClick={() => setCreateForm(f => ({ ...f, exitOnConversion: !f.exitOnConversion }))}
+                    style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: createForm.exitOnConversion ? 'var(--green)' : 'var(--text-tertiary)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                    <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3, left: createForm.exitOnConversion ? 23 : 3, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+                  </button>
+                </div>
+                {/* Scheduled Start */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Start Date &amp; Time</label>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--orange)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
+                      Dubai: {dubaiClock}
+                    </span>
+                  </div>
+                  <input type="datetime-local" className="form-input"
+                    value={createForm.scheduledStartAt}
+                    min={dubaiNowForInput()}
+                    onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
+                    style={{ fontSize: 13 }} />
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
+                    {createForm.scheduledStartAt ? '✓ Journey will auto-start at this Dubai time' : 'Leave empty to start immediately'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT — Journey Flow */}
+          <div>
+            <div style={{ background: 'var(--card)', borderRadius: 14, border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <GitBranch size={14} color="var(--text-tertiary)" />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Journey Flow</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '1px 8px', borderRadius: 20 }}>{createNodes.length + 1} nodes</span>
+                </div>
+                {createNodes.length > 0 && !showCreateNodeForm && (
+                  <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: '1.5px solid var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
+                    <Plus size={11} /> Add Node
+                  </button>
+                )}
+              </div>
+
+              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {/* Entry trigger */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, background: NODE_COLORS.trigger + '10', border: `1px solid ${NODE_COLORS.trigger}25` }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: NODE_COLORS.trigger + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Zap size={14} color={NODE_COLORS.trigger} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Entry Trigger</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                      {createForm.segmentId ? `Segment: ${allSegments.find(s => s.value === createForm.segmentId)?.label?.split(' (')[0] || createForm.segmentId}` : 'Segment entry — selected on the left'}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: NODE_COLORS.trigger, background: NODE_COLORS.trigger + '15', padding: '2px 8px', borderRadius: 20 }}>Trigger</span>
+                </div>
+
+                {/* Connector */}
+                {createNodes.length > 0 && <div style={{ width: 2, height: 12, background: 'var(--border-color)', margin: '0 auto' }} />}
+
+                {/* User-added nodes */}
+                {createNodes.map((n, idx) => {
+                  const color = NODE_COLORS[n.type];
+                  const Icon = NODE_ICONS[n.type];
+                  const detail = n.type === 'action' ? (n.channel ? n.channel.charAt(0).toUpperCase() + n.channel.slice(1) : 'Action')
+                    : n.type === 'wait' ? `Wait ${n.waitDays || 1} day${(n.waitDays || 1) !== 1 ? 's' : ''}`
+                    : n.type === 'condition' ? (n.condition === 'booked' ? 'Has Booked?' : n.condition === 'opened_email' ? 'Opened Email?' : n.condition === 'clicked_link' ? 'Clicked Link?' : n.condition || 'Condition')
+                    : n.type === 'goal' ? `Goal: ${n.goalType ? n.goalType.charAt(0).toUpperCase() + n.goalType.slice(1) : 'Booking'}` : '';
+                  const templateId = n.emailTemplateId || n.whatsappTemplateId || n.smsTemplateId;
+                  const isChangingTemplate = changingTemplateIdx === idx;
+                  const channelTemplates = allTemplates[n.channel] || allTemplates.email || [];
+                  const selectedTpl = channelTemplates.find(t => t.id === templateId) || null;
+                  return (
+                    <div key={idx}>
+                      <div style={{ borderRadius: 10, background: color + '08', border: `1px solid ${color}20`, overflow: 'hidden' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
+                          <div style={{ width: 30, height: 30, borderRadius: 8, background: color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Icon size={14} color={color} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.label}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{detail}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, color, background: color + '15', padding: '2px 7px', borderRadius: 20 }}>{NODE_LABELS[n.type]}</span>
+                            {n.type === 'action' && (
+                              <>
+                                <button title={selectedTpl ? 'Change template' : 'Select template'}
+                                  onClick={() => { loadTemplates(); setChangingTemplateIdx(isChangingTemplate ? null : idx); }}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 20, fontSize: 10, fontWeight: 600, cursor: 'pointer', border: `1px solid ${isChangingTemplate ? color : 'var(--border-color)'}`, background: isChangingTemplate ? color + '12' : 'var(--bg-secondary)', color: isChangingTemplate ? color : 'var(--text-secondary)', maxWidth: 120, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  <RefreshCw size={9} style={{ flexShrink: 0 }} />
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedTpl ? selectedTpl.name : 'Select Template'}</span>
+                                  <ChevronDown size={9} style={{ flexShrink: 0 }} />
+                                </button>
+                                {templateId && (
+                                  <button title="Preview template"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const tpl = selectedTpl || { id: templateId, name: 'Template', channel: n.channel || 'email' };
+                                      setPreviewTemplate({ ...tpl, body_html: null });
+                                      fetchTemplatePreview(templateId)
+                                        .then(res => setPreviewTemplate(prev => prev ? { ...prev, body_html: res.data?.html || null } : null))
+                                        .catch(() => {});
+                                    }}
+                                    style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', flexShrink: 0 }}>
+                                    <Eye size={12} />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            <button onClick={() => setCreateNodes(ns => ns.filter((_, i) => i !== idx))}
+                              style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 15, flexShrink: 0 }}>×</button>
+                          </div>
+                        </div>
+                        {n.type === 'action' && isChangingTemplate && (
+                          <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${color}20` }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', margin: '10px 0 7px' }}>Choose Template</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 200, overflowY: 'auto' }}>
+                              {channelTemplates.map(tpl => {
+                                const isSelected = templateId === tpl.id;
+                                return (
+                                  <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 7, border: isSelected ? `1.5px solid ${color}` : '1px solid var(--border-color)', background: isSelected ? color + '10' : 'var(--bg-secondary)' }}>
+                                    <div onClick={() => { setCreateNodes(ns => ns.map((node, i) => { if (i !== idx) return node; const ck = `${node.channel || 'email'}TemplateId`; return { ...node, [ck]: tpl.id, label: tpl.name || node.label }; })); setChangingTemplateIdx(null); }} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tpl.name}</div>
+                                      {tpl.subject && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tpl.subject}</div>}
+                                    </div>
+                                    {isSelected && <CheckCircle2 size={13} color={color} style={{ flexShrink: 0 }} />}
+                                    <button title="Preview" onClick={async (e) => { e.stopPropagation(); try { const res = await fetchTemplatePreview(tpl.id); setPreviewTemplate({ ...tpl, body_html: res.data?.html || null }); } catch { setPreviewTemplate(tpl); } }}
+                                      style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', flexShrink: 0 }}>
+                                      <Eye size={11} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                              {channelTemplates.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>No templates found</div>}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {idx < createNodes.length - 1 && <div style={{ width: 2, height: 12, background: 'var(--border-color)', margin: '0 auto' }} />}
+                    </div>
+                  );
+                })}
+
+                {/* Add node / node form */}
+                <div style={{ marginTop: createNodes.length > 0 ? 4 : 0 }}>
+                  {!showCreateNodeForm && createNodes.length === 0 ? (
+                    <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '12px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: '1.5px dashed var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)', marginTop: 8 }}>
+                      <Plus size={14} /> Add First Node
+                    </button>
+                  ) : showCreateNodeForm ? (
+                    <div style={{ border: '1.5px solid var(--brand-primary)', borderRadius: 12, padding: '18px', background: 'var(--brand-primary)06', marginTop: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Plus size={14} /> Add Node
+                      </div>
+                      {/* Name */}
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Node Name *</label>
+                        <input className="form-input" placeholder="e.g. Send welcome email" value={createNodeForm.label} onChange={e => setCreateNodeForm(f => ({ ...f, label: e.target.value }))} />
+                      </div>
+                      {/* Node Type */}
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 8, textTransform: 'uppercase' }}>Node Type</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {['action', 'wait', 'condition', 'goal'].map(t => {
+                            const Icon = NODE_ICONS[t]; const color = NODE_COLORS[t]; const active = createNodeForm.type === t;
+                            const TYPE_DEFAULTS = { action: { channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', label: 'Send Email' }, wait: { channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', label: 'Wait 1 Day' }, condition: { channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', label: 'Has Booked?' }, goal: { channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', label: 'Booking Goal' } };
+                            return (
+                              <button key={t} onClick={() => setCreateNodeForm(f => ({ ...f, type: t, ...TYPE_DEFAULTS[t] }))}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: active ? `1.5px solid ${color}` : '1.5px solid var(--border)', background: active ? color + '14' : 'transparent', color: active ? color : 'var(--text-secondary)' }}>
+                                <Icon size={12} /> {NODE_LABELS[t]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      {/* ACTION fields */}
+                      {createNodeForm.type === 'action' && (
+                        <>
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Channel</label>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              {[{ v: 'email', label: 'Email', color: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', color: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', color: 'var(--orange)', Icon: Smartphone }].map(ch => (
+                                <button key={ch.v} onClick={() => setCreateNodeForm(f => ({ ...f, channel: ch.v }))}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: createNodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: createNodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: createNodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
+                                  <ch.Icon size={12} /> {ch.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {createNodeForm.channel === 'email' && (
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Email Template</label>
+                              <select className="form-input" value={createNodeForm.emailTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                <option value="">— Select email template —</option>
+                                {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
+                              </select>
+                            </div>
+                          )}
+                          {createNodeForm.channel === 'whatsapp' && (
+                            <>
+                              <div style={{ marginBottom: 12 }}>
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>WhatsApp Template</label>
+                                <select className="form-input" value={createNodeForm.whatsappTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                  <option value="">— Select WhatsApp template —</option>
+                                  {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </select>
+                              </div>
+                              <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 7 }}>Rest-of-World fallback</div>
+                                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                  {['email', 'sms'].map(ch => <button key={ch} onClick={() => setCreateNodeForm(f => ({ ...f, restChannel: ch }))} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: createNodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: createNodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: createNodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>{ch}</button>)}
+                                </div>
+                                <select className="form-input" value={createNodeForm.restTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, restTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                  <option value="">— Select {createNodeForm.restChannel} template —</option>
+                                  {(createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </select>
+                              </div>
+                            </>
+                          )}
+                          {createNodeForm.channel === 'sms' && (
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>SMS Template</label>
+                              <select className="form-input" value={createNodeForm.smsTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                <option value="">— Select SMS template —</option>
+                                {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
+                            </div>
+                          )}
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <select className="form-input" style={{ width: 160 }} value={createNodeForm.sendHour ?? ''} onChange={e => setCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
+                                <option value="">Any time</option>
+                                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}</option>)}
+                              </select>
+                              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>UTC+4</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      {/* WAIT */}
+                      {createNodeForm.type === 'wait' && (
+                        <div style={{ marginBottom: 14 }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="number" min={1} className="form-input" style={{ width: 80 }} value={createNodeForm.waitDays} onChange={e => { const days = Math.max(1, parseInt(e.target.value) || 1); setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` })); }} />
+                            <div style={{ display: 'flex', gap: 5 }}>
+                              {[1, 2, 3, 7].map(d => <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))} style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>)}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* CONDITION */}
+                      {createNodeForm.type === 'condition' && (
+                        <div style={{ marginBottom: 14 }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Condition</label>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {[{ v: 'booked', l: 'Has Booked' }, { v: 'opened_email', l: 'Opened Email' }, { v: 'clicked_link', l: 'Clicked Link' }].map(c => <button key={c.v} onClick={() => setCreateNodeForm(f => ({ ...f, condition: c.v }))} style={{ padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: createNodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: createNodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>{c.l}</button>)}
+                          </div>
+                        </div>
+                      )}
+                      {/* GOAL */}
+                      {createNodeForm.type === 'goal' && (
+                        <div style={{ marginBottom: 14 }}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Goal Type</label>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {[{ v: 'booking', l: 'Booking' }, { v: 'enquiry', l: 'Enquiry' }, { v: 'registration', l: 'Registration' }].map(g => <button key={g.v} onClick={() => setCreateNodeForm(f => ({ ...f, goalType: g.v }))} style={{ padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: createNodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border)', background: createNodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: createNodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>{g.l}</button>)}
+                          </div>
+                        </div>
+                      )}
+                      {/* Validation */}
+                      {createNodeForm.type === 'action' && ((createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) || (createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) || (createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)) && (
+                        <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10, padding: '6px 10px', background: 'rgba(239,68,68,0.06)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)' }}>
+                          ⚠ {createNodeForm.channel.charAt(0).toUpperCase() + createNodeForm.channel.slice(1)} template is required
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn btn-sm btn-primary"
+                          disabled={!createNodeForm.label.trim() || (createNodeForm.type === 'action' && createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)}
+                          onClick={() => { setCreateNodes(ns => [...ns, { ...createNodeForm }]); setCreateNodeForm({ ...BLANK_CREATE_NODE }); setShowCreateNodeForm(false); }}>
+                          <Plus size={11} /> Add Node
+                        </button>
+                        <button className="btn btn-sm btn-ghost" onClick={() => setShowCreateNodeForm(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Toast */}
+        {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
+
+        {/* Template preview portal */}
+        {isMounted && previewTemplate && createPortal(
+          <div onClick={() => setPreviewTemplate(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 16, width: 680, maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+              <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>Template Preview</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{previewTemplate.name}{previewTemplate.subject && <span> — {previewTemplate.subject}</span>}</div>
+                </div>
+                <button onClick={() => setPreviewTemplate(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>×</button>
+              </div>
+              <div style={{ padding: '20px 24px', overflow: 'auto', flex: 1 }}>
+                {previewTemplate.body_html ? (
+                  <div style={{ background: '#fff', borderRadius: 8, padding: 16, border: '1px solid var(--border-color)' }}>
+                    <iframe srcDoc={previewTemplate.body_html} style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }} title="Template Preview" />
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>Loading preview…</div>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
   // JOURNEY LIST VIEW
   // ══════════════════════════════════════════════════════════════
   return (
@@ -3058,407 +3487,6 @@ export default function Journeys() {
             </div>
             <div className="modal-actions">
               <button className="btn btn-secondary" onClick={() => setShowGenerate(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Create Journey Modal ───────────────────────────────── */}
-      {showCreate && (
-        <div className="modal-overlay" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); }}>
-          <div className="modal" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 540, maxHeight: '90vh', overflowY: 'auto' }}>
-
-            {/* Header */}
-            <div className="modal-header" style={{ paddingBottom: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <GitBranch size={18} color="var(--red)" />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Create New Journey</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>Build an automated customer journey flow</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
-
-              {/* Name */}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Journey Name *</label>
-                <input className="form-input" type="text"
-                  placeholder="e.g., Welcome Series — New Customers"
-                  value={createForm.name}
-                  onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Description</label>
-                <textarea className="form-input"
-                  placeholder="Describe the purpose and target audience of this journey..."
-                  value={createForm.description}
-                  onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-                  style={{ minHeight: 70, resize: 'vertical' }} />
-              </div>
-
-              {/* Segment */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
-                  {segmentsLoading && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-tertiary)' }}>
-                      <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Loading…
-                    </span>
-                  )}
-                </div>
-                <select className="form-input"
-                  value={createForm.segmentId}
-                  disabled={segmentsLoading}
-                  style={{ borderColor: !createForm.segmentId ? 'var(--red)' : undefined }}
-                  onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
-                  <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment —'}</option>
-                  {allSegments.filter(s => s.group === 'standard').length > 0 && (
-                    <optgroup label="Standard Segments">
-                      {allSegments.filter(s => s.group === 'standard').map((s, i) => (
-                        <option key={`std-${i}`} value={s.value}>{s.label}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {allSegments.filter(s => s.group === 'custom').length > 0 && (
-                    <optgroup label="Custom Segments">
-                      {allSegments.filter(s => s.group === 'custom').map((s, i) => (
-                        <option key={`cust-${i}`} value={s.value}>{s.label}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
-
-              {/* Exit on Conversion Toggle */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {createForm.exitOnConversion ? 'Exit on Booking' : 'Awareness Mode'}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-                    {createForm.exitOnConversion
-                      ? 'Users who book will exit the journey automatically'
-                      : 'All users receive every message — no exit on booking'}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setCreateForm(f => ({ ...f, exitOnConversion: !f.exitOnConversion }))}
-                  style={{
-                    width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
-                    background: createForm.exitOnConversion ? 'var(--green)' : 'var(--text-tertiary)',
-                    position: 'relative', transition: 'background 0.2s', flexShrink: 0
-                  }}>
-                  <div style={{
-                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                    position: 'absolute', top: 3,
-                    left: createForm.exitOnConversion ? 23 : 3,
-                    transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
-                  }} />
-                </button>
-              </div>
-
-              {/* Scheduled Start Date — Dubai time */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                    Start Date &amp; Time
-                  </label>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--orange)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
-                    Dubai now: {dubaiClock}
-                  </span>
-                </div>
-                <input
-                  type="datetime-local"
-                  className="form-input"
-                  value={createForm.scheduledStartAt}
-                  min={dubaiNowForInput()}
-                  onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
-                  style={{ fontSize: 13 }}
-                />
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5, lineHeight: 1.5 }}>
-                  {createForm.scheduledStartAt
-                    ? '✓ Journey will auto-start at this Dubai time'
-                    : 'Leave empty to start immediately when you click "Start Journey"'}
-                </div>
-              </div>
-
-              {/* Nodes */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Journey Nodes</label>
-                  {createNodes.length > 0 && !showCreateNodeForm && (
-                    <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: '1.5px solid var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
-                      <Plus size={11} /> Add Node
-                    </button>
-                  )}
-                </div>
-
-                {/* Entry trigger — always shown */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: NODE_COLORS.trigger + '10', border: `1px solid ${NODE_COLORS.trigger}25` }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 7, background: NODE_COLORS.trigger + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <Zap size={13} color={NODE_COLORS.trigger} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Entry Trigger</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                        {createForm.segmentId ? `Segment: ${allSegments.find(s => s.value === createForm.segmentId)?.label?.split(' (')[0] || createForm.segmentId}` : 'Segment entry — added automatically'}
-                      </div>
-                    </div>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: NODE_COLORS.trigger, background: NODE_COLORS.trigger + '15', padding: '2px 8px', borderRadius: 20 }}>Trigger</span>
-                  </div>
-
-                  {/* User-added nodes */}
-                  {createNodes.map((n, idx) => {
-                    const color = NODE_COLORS[n.type];
-                    const Icon = NODE_ICONS[n.type];
-                    const detail = n.type === 'action'
-                      ? (n.channel ? n.channel.charAt(0).toUpperCase() + n.channel.slice(1) : 'Action')
-                      : n.type === 'wait'
-                      ? `Wait ${n.waitDays || 1} day${(n.waitDays || 1) !== 1 ? 's' : ''}`
-                      : n.type === 'condition'
-                      ? (n.condition === 'booked' ? 'Has Booked?' : n.condition === 'opened_email' ? 'Opened Email?' : n.condition === 'clicked_link' ? 'Clicked Link?' : n.condition || 'Condition')
-                      : n.type === 'goal'
-                      ? `Goal: ${n.goalType ? n.goalType.charAt(0).toUpperCase() + n.goalType.slice(1) : 'Booking'}`
-                      : '';
-                    return (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: color + '08', border: `1px solid ${color}20` }}>
-                        <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border)', flexShrink: 0, marginLeft: 8 }} />
-                        <div style={{ width: 28, height: 28, borderRadius: 7, background: color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Icon size={13} color={color} />
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.label}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{detail}</div>
-                        </div>
-                        <span style={{ fontSize: 10, fontWeight: 600, color, background: color + '15', padding: '2px 8px', borderRadius: 20, flexShrink: 0 }}>{NODE_LABELS[n.type]}</span>
-                        <button onClick={() => setCreateNodes(ns => ns.filter((_, i) => i !== idx))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 16, lineHeight: 1, padding: '0 0 0 2px', flexShrink: 0 }}>×</button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Add node button → only shown when list is empty and form is closed */}
-                {!showCreateNodeForm && createNodes.length === 0 ? (
-                  <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 16px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1.5px dashed var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
-                    <Plus size={12} /> Add Node
-                  </button>
-                ) : (
-                  <div style={{ border: '1.5px solid var(--brand-primary)', borderRadius: 12, padding: 16, background: 'var(--brand-primary)08', marginTop: 4 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Plus size={13} /> Custom Node
-                    </div>
-
-                    {/* Name */}
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Node Name *</label>
-                      <input className="form-input" style={{ fontSize: 12, padding: '6px 10px' }}
-                        placeholder="e.g. Send welcome email"
-                        value={createNodeForm.label}
-                        onChange={e => setCreateNodeForm(f => ({ ...f, label: e.target.value }))} />
-                    </div>
-
-                    {/* Node Type */}
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Node Type</label>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {['action', 'wait', 'condition', 'goal'].map(t => {
-                          const Icon = NODE_ICONS[t]; const color = NODE_COLORS[t]; const active = createNodeForm.type === t;
-                          const TYPE_DEFAULTS = {
-                            action:    { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Send Email' },
-                            wait:      { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Wait 1 Day' },
-                            condition: { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Has Booked?' },
-                            goal:      { channel: 'email',   waitDays: 1,  condition: 'booked',  goalType: 'booking',  label: 'Booking Goal' },
-                          };
-                          return (
-                            <button key={t} onClick={() => setCreateNodeForm(f => ({ ...f, type: t, ...TYPE_DEFAULTS[t] }))}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: active ? `1.5px solid ${color}` : '1.5px solid var(--border)', background: active ? color + '14' : 'transparent', color: active ? color : 'var(--text-secondary)' }}>
-                              <Icon size={11} /> {NODE_LABELS[t]}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* ACTION */}
-                    {createNodeForm.type === 'action' && (
-                      <>
-                        <div style={{ marginBottom: 10 }}>
-                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Channel</label>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            {[{ v: 'email', label: 'Email', color: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', color: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', color: 'var(--orange)', Icon: Smartphone }].map(ch => (
-                              <button key={ch.v} onClick={() => setCreateNodeForm(f => ({ ...f, channel: ch.v }))}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: createNodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: createNodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: createNodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
-                                <ch.Icon size={11} /> {ch.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        {createNodeForm.channel === 'email' && (
-                          <div style={{ marginBottom: 10 }}>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Mail Template</label>
-                            <select className="form-input" style={{ fontSize: 12 }}
-                              value={createNodeForm.emailTemplateId || ''}
-                              onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                              <option value="">— Select email template —</option>
-                              {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
-                            </select>
-                          </div>
-                        )}
-                        {createNodeForm.channel === 'whatsapp' && (
-                          <>
-                            <div style={{ marginBottom: 10 }}>
-                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                              <select className="form-input" style={{ fontSize: 12 }}
-                                value={createNodeForm.whatsappTemplateId || ''}
-                                onChange={e => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                <option value="">— Select WhatsApp template —</option>
-                                {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                              </select>
-                            </div>
-                            <div style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 6 }}>Rest-of-World fallback</div>
-                              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                                {['email', 'sms'].map(ch => (
-                                  <button key={ch} onClick={() => setCreateNodeForm(f => ({ ...f, restChannel: ch }))}
-                                    style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: createNodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: createNodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: createNodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>{ch}</button>
-                                ))}
-                              </div>
-                              <select className="form-input" style={{ fontSize: 12 }}
-                                value={createNodeForm.restTemplateId || ''}
-                                onChange={e => setCreateNodeForm(f => ({ ...f, restTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                <option value="">— Select {createNodeForm.restChannel} template —</option>
-                                {(createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                              </select>
-                            </div>
-                          </>
-                        )}
-                        {createNodeForm.channel === 'sms' && (
-                          <div style={{ marginBottom: 10 }}>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
-                            <select className="form-input" style={{ fontSize: 12 }}
-                              value={createNodeForm.smsTemplateId || ''}
-                              onChange={e => setCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                              <option value="">— Select SMS template —</option>
-                              {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                            </select>
-                          </div>
-                        )}
-                      {/* Send Hour picker */}
-                      <div style={{ marginTop: 8 }}>
-                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <select className="form-input" style={{ width: 160, fontSize: 12, padding: '6px 10px' }}
-                            value={createNodeForm.sendHour ?? ''}
-                            onChange={e => setCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
-                            <option value="">Any time</option>
-                            {Array.from({ length: 24 }, (_, h) => (
-                              <option key={h} value={h}>
-                                {h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}
-                              </option>
-                            ))}
-                          </select>
-                          <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>UTC+4</span>
-                        </div>
-                      </div>
-                      </>
-                    )}
-
-                    {/* WAIT */}
-                    {createNodeForm.type === 'wait' && (
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Days to Wait</label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <input type="number" min={1} className="form-input" style={{ width: 80, fontSize: 12, padding: '6px 10px' }}
-                            value={createNodeForm.waitDays}
-                            onChange={e => {
-                              const days = Math.max(1, parseInt(e.target.value) || 1);
-                              setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
-                            }} />
-                          <div style={{ display: 'flex', gap: 5 }}>
-                            {[1, 2, 3, 7].map(d => (
-                              <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
-                                style={{ padding: '3px 8px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CONDITION */}
-                    {createNodeForm.type === 'condition' && (
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Condition</label>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {[{ v: 'booked', l: 'Has Booked' }, { v: 'opened_email', l: 'Opened Email' }, { v: 'clicked_link', l: 'Clicked Link' }].map(c => (
-                            <button key={c.v} onClick={() => setCreateNodeForm(f => ({ ...f, condition: c.v }))}
-                              style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: createNodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: createNodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>{c.l}</button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* GOAL */}
-                    {createNodeForm.type === 'goal' && (
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Goal Type</label>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {[{ v: 'booking', l: 'Booking' }, { v: 'enquiry', l: 'Enquiry' }, { v: 'registration', l: 'Registration' }].map(g => (
-                            <button key={g.v} onClick={() => setCreateNodeForm(f => ({ ...f, goalType: g.v }))}
-                              style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: createNodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border)', background: createNodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: createNodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>{g.l}</button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Validation message for missing template */}
-                    {createNodeForm.type === 'action' && (
-                      (createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) ||
-                      (createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) ||
-                      (createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)
-                    ) && (
-                      <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 6, padding: '4px 8px', background: 'rgba(239,68,68,0.06)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)' }}>
-                        ⚠ {createNodeForm.channel.charAt(0).toUpperCase() + createNodeForm.channel.slice(1)} template is required before adding this node
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                      <button className="btn btn-sm btn-primary"
-                        disabled={
-                          !createNodeForm.label.trim() ||
-                          (createNodeForm.type === 'action' && createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) ||
-                          (createNodeForm.type === 'action' && createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) ||
-                          (createNodeForm.type === 'action' && createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)
-                        }
-                        onClick={() => {
-                          setCreateNodes(ns => [...ns, { ...createNodeForm }]);
-                          setCreateNodeForm({ ...BLANK_CREATE_NODE });
-                          setShowCreateNodeForm(false);
-                        }}>
-                        <Plus size={11} /> Add Node
-                      </button>
-                      <button className="btn btn-sm btn-ghost" onClick={() => setShowCreateNodeForm(false)}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="modal-footer justify-end mt-4">
-              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); }}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
-                <Plus size={14} /> Create Journey
-              </button>
             </div>
           </div>
         </div>
