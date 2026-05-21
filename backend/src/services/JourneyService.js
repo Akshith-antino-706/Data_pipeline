@@ -1664,7 +1664,7 @@ class JourneyService {
   /**
    * Start a journey: set active, enroll segment, set next_fire_at, run first process.
    */
-  static async startJourney(journeyId) {
+  static async startJourney(journeyId, { skipScheduleValidation = false } = {}) {
     const { rows: [journey] } = await db.query(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
@@ -1675,8 +1675,8 @@ class JourneyService {
     const edges = journey.edges || [];
     if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');
 
-    // ── Validate scheduled_start_at hasn't passed ──
-    if (journey.scheduled_start_at && new Date(journey.scheduled_start_at) < new Date()) {
+    // ── Validate scheduled_start_at hasn't passed (skip when called from auto-start cron) ──
+    if (!skipScheduleValidation && journey.scheduled_start_at && new Date(journey.scheduled_start_at) < new Date()) {
       throw new Error('Journey start date and time has already passed. Please update the start date before starting.');
     }
 
