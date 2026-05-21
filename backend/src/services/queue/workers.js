@@ -129,7 +129,7 @@ async function processEmail(job) {
   // Try renderDayHtml first (Day1-Day7 templates from mail_templates/ folder)
   // Falls back to EmailRenderer if renderDayHtml doesn't match the templateId
   let html, subject;
-  const dayRendered = await renderDayHtml(d.templateId, d.customerId).catch(err => {
+  const dayRendered = await renderDayHtml(d.templateId, d.customerId, { journeyId: d.journeyId, nodeId: d.nodeId }).catch(err => {
     console.log(`[Worker] renderDayHtml failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
     return null;
   });

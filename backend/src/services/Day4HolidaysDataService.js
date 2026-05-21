@@ -107,7 +107,7 @@ const FALLBACK_HERO_IMAGE = 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function withUtm(url, contactId, campaign = 'day4_holidays') {
+function withUtm(url, contactId, campaign = 'day4_holidays', { journeyId, nodeId } = {}) {
   if (!url) return '#';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url)) return url;
@@ -117,6 +117,8 @@ function withUtm(url, contactId, campaign = 'day4_holidays') {
     utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
@@ -174,7 +176,7 @@ async function fetchProductForKey(destKey) {
  * Hydrate a destination key into the card shape the renderer expects.
  * Falls back to catalog name + a generic image if no product is found.
  */
-async function hydrateDestination(destKey, contactId, themeFallbackPrice = '999') {
+async function hydrateDestination(destKey, contactId, themeFallbackPrice = '999', utm = {}) {
   const cfg = HOLIDAY_DESTINATIONS[destKey];
   if (!cfg) {
     throw new Error(`[Day4HolidaysDataService] unknown destination key: ${destKey}`);
@@ -187,7 +189,7 @@ async function hydrateDestination(destKey, contactId, themeFallbackPrice = '999'
       name:     product.name,
       duration: deriveDuration(product.name),
       price:    formatPrice(product.sale_price ?? product.normal_price, product.currency),
-      link:     withUtm(product.url, contactId),
+      link:     withUtm(product.url, contactId, 'day4_holidays', utm),
     };
   }
   // No product matched — emit a card with catalog fallbacks (still renders cleanly).
@@ -198,7 +200,7 @@ async function hydrateDestination(destKey, contactId, themeFallbackPrice = '999'
     name:     cfg.name,
     duration: 'Multi-Day Package',
     price:    `AED ${themeFallbackPrice}`,
-    link:     withUtm('https://www.raynatours.com/holidays', contactId),
+    link:     withUtm('https://www.raynatours.com/holidays', contactId, 'day4_holidays', utm),
   };
 }
 
@@ -230,17 +232,18 @@ function validateRanking(r) {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-export async function buildDay4HolidaysData({ contactId, ranking }) {
+export async function buildDay4HolidaysData({ contactId, ranking, journeyId, nodeId }) {
   validateRanking(ranking);
+  const utm = { journeyId, nodeId };
 
   const heroVariant = HERO_VARIANTS[ranking.hero_variant_key || 'dream_holidays'];
 
   // Hydrate cards for each section
   const [summer_escapes, eid_packages, romantic_destinations, adventure_destinations, eidSpecialProduct] = await Promise.all([
-    Promise.all(ranking.summer_keys.map(k => hydrateDestination(k, contactId, '1,499'))),
-    Promise.all(ranking.eid_keys.map(k => hydrateDestination(k, contactId, '4,999'))),
-    Promise.all(ranking.romantic_keys.map(k => hydrateDestination(k, contactId, '2,999'))),
-    Promise.all(ranking.adventure_keys.map(k => hydrateDestination(k, contactId, '1,999'))),
+    Promise.all(ranking.summer_keys.map(k => hydrateDestination(k, contactId, '1,499', utm))),
+    Promise.all(ranking.eid_keys.map(k => hydrateDestination(k, contactId, '4,999', utm))),
+    Promise.all(ranking.romantic_keys.map(k => hydrateDestination(k, contactId, '2,999', utm))),
+    Promise.all(ranking.adventure_keys.map(k => hydrateDestination(k, contactId, '1,999', utm))),
     fetchProductForKey(ranking.eid_special_key),
   ]);
 
@@ -256,7 +259,7 @@ export async function buildDay4HolidaysData({ contactId, ranking }) {
     image:   eidSpecialProduct?.image_url || FALLBACK_HERO_IMAGE,
     heading: 'Special Eid Al Adha<br />Holiday Deals',
     text:    'Complimentary hotel upgrade and early check-in when you book any 5-night package for Eid season.',
-    link:    withUtm(eidSpecialProduct?.url || `https://www.raynatours.com/holidays`, contactId),
+    link:    withUtm(eidSpecialProduct?.url || `https://www.raynatours.com/holidays`, contactId, 'day4_holidays', utm),
   };
 
   return {

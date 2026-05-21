@@ -74,7 +74,7 @@ const FOOTER_LINKS = [
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function withUtm(url, contactId, campaign = 'day7_abandoned_cart') {
+function withUtm(url, contactId, campaign = 'day7_abandoned_cart', { journeyId, nodeId } = {}) {
   if (!url) return 'https://www.raynatours.com';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url)) return url;
@@ -82,6 +82,8 @@ function withUtm(url, contactId, campaign = 'day7_abandoned_cart') {
     utm_source: 'email', utm_medium: 'journey', utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
@@ -190,7 +192,7 @@ async function fetchVisaByKey(visaKey) {
 
 // ── card mapping ──────────────────────────────────────────────────────────
 
-function mapToCard(p, contactId) {
+function mapToCard(p, contactId, utm = {}) {
   return {
     image:       p.image_url,
     category:    categoryLabel(p),
@@ -202,7 +204,7 @@ function mapToCard(p, contactId) {
     price_label: priceLabel(p),
     price:       `${p.currency || 'AED'} ${formatPrice(p.sale_price ?? p.normal_price ?? 250)}`,
     price_sub:   priceSub(p),
-    link:        withUtm(p.url, contactId),
+    link:        withUtm(p.url, contactId, 'day7_abandoned_cart', utm),
   };
 }
 
@@ -213,7 +215,8 @@ function isAllowed(p) {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-export async function buildDay7AbandonedCartData({ contactId, ranking = {} }) {
+export async function buildDay7AbandonedCartData({ contactId, ranking = {}, journeyId, nodeId }) {
+  const utm = { journeyId, nodeId };
   // 1. User's actual browse history (filtered through blocklist)
   const browsedIds   = await fetchBrowsedProductIds(contactId);
   const browsedProds = (await fetchProductsByIds(browsedIds)).filter(isAllowed);
@@ -239,7 +242,7 @@ export async function buildDay7AbandonedCartData({ contactId, ranking = {} }) {
   const ordered = [...browsedProds, ...fallbackProds];
   if (visaCard && ordered.length < 4) ordered.push(visaCard);
 
-  const items = ordered.slice(0, 4).map(p => mapToCard(p, contactId));
+  const items = ordered.slice(0, 4).map(p => mapToCard(p, contactId, utm));
 
   // 5. Hero / urgency / final variants — Anthropic can pick or default
   const heroVariant   = HERO_VARIANTS[ranking.hero_variant_key]       || HERO_VARIANTS.still_thinking;
@@ -261,7 +264,7 @@ export async function buildDay7AbandonedCartData({ contactId, ranking = {} }) {
       title:            heroVariant.title,
       subtitle:         heroVariant.subtitle,
       cta_text:         heroVariant.cta_text,
-      cta_link:         withUtm(items[0]?.link || 'https://www.raynatours.com', contactId),
+      cta_link:         withUtm(items[0]?.link || 'https://www.raynatours.com', contactId, 'day7_abandoned_cart', utm),
     },
     section: {
       eyebrow:  hasItems && browsedProds.length > 0 ? 'Recently Viewed' : 'Hand-picked For You',

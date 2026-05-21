@@ -237,7 +237,7 @@ const LOGO_URL = 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function withUtm(url, contactId, campaign = 'day1_welcome') {
+function withUtm(url, contactId, campaign = 'day1_welcome', { journeyId, nodeId } = {}) {
   if (!url) return '#';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url)) return url;
@@ -247,6 +247,8 @@ function withUtm(url, contactId, campaign = 'day1_welcome') {
     utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
@@ -318,8 +320,9 @@ async function pickHeroProductImage(holidayKey) {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-export async function buildDay1WelcomeData({ contactId, ranking }) {
+export async function buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId }) {
   validateRanking(ranking);
+  const utm = { journeyId, nodeId };
 
   const hero       = HERO_VARIANTS[ranking.hero_variant_key             || 'perfect_trip'];
   const exclusive  = EXCLUSIVE_VARIANTS[ranking.exclusive_variant_key   || 'raynow'];
@@ -327,19 +330,19 @@ export async function buildDay1WelcomeData({ contactId, ranking }) {
   // Holiday section
   const holidayItems = ranking.holiday_keys.map(k => {
     const c = HOLIDAY_DESTINATIONS[k];
-    return { name: c.name, image: c.image, link: withUtm(c.default_link, contactId) };
+    return { name: c.name, image: c.image, link: withUtm(c.default_link, contactId, 'day1_welcome', utm) };
   });
 
   // Cruise section
   const cruiseItems = ranking.cruise_keys.map(k => {
     const c = CRUISE_DESTINATIONS[k];
-    return { name: c.name, image: c.image, link: withUtm(c.default_link, contactId) };
+    return { name: c.name, image: c.image, link: withUtm(c.default_link, contactId, 'day1_welcome', utm) };
   });
 
   // Activity section
   const activityItems = ranking.activity_keys.map(k => {
     const c = ACTIVITY_DESTINATIONS[k];
-    return { name: c.name, image: c.image, link: withUtm(c.default_link, contactId) };
+    return { name: c.name, image: c.image, link: withUtm(c.default_link, contactId, 'day1_welcome', utm) };
   });
 
   // Visa section — pulled from DB visa_products
@@ -355,7 +358,7 @@ export async function buildDay1WelcomeData({ contactId, ranking }) {
     throw new Error(`[Day1WelcomeDataService] visa keys not found: ${missing.join(', ')}`);
   }
   const visaItems = orderedVisas.map(v => ({
-    name: v.name, image: v.image_url, link: withUtm(v.default_link, contactId),
+    name: v.name, image: v.image_url, link: withUtm(v.default_link, contactId, 'day1_welcome', utm),
   }));
 
   // Hero bg: prefer a real product image for the lead holiday destination.
@@ -373,7 +376,7 @@ export async function buildDay1WelcomeData({ contactId, ranking }) {
       subtitle:        hero.subtitle,
       button: {
         text: hero.button.text,
-        link: withUtm(hero.button.link, contactId),
+        link: withUtm(hero.button.link, contactId, 'day1_welcome', utm),
       },
       stats: [
         { value: '25M+',   label: 'Guests served<br />and counting'   },
@@ -383,16 +386,16 @@ export async function buildDay1WelcomeData({ contactId, ranking }) {
       ],
     },
     sections: [
-      { ...SECTION_META.holiday,  link: withUtm(SECTION_META.holiday.link,  contactId), items: holidayItems  },
-      { ...SECTION_META.cruise,   link: withUtm(SECTION_META.cruise.link,   contactId), items: cruiseItems   },
-      { ...SECTION_META.visa,     link: withUtm(SECTION_META.visa.link,     contactId), items: visaItems     },
-      { ...SECTION_META.activity, link: withUtm(SECTION_META.activity.link, contactId), items: activityItems },
+      { ...SECTION_META.holiday,  link: withUtm(SECTION_META.holiday.link,  contactId, 'day1_welcome', utm), items: holidayItems  },
+      { ...SECTION_META.cruise,   link: withUtm(SECTION_META.cruise.link,   contactId, 'day1_welcome', utm), items: cruiseItems   },
+      { ...SECTION_META.visa,     link: withUtm(SECTION_META.visa.link,     contactId, 'day1_welcome', utm), items: visaItems     },
+      { ...SECTION_META.activity, link: withUtm(SECTION_META.activity.link, contactId, 'day1_welcome', utm), items: activityItems },
     ],
     exclusiveOffer: {
       title:      exclusive.title,
       headline:   exclusive.headline,
       buttonText: exclusive.buttonText,
-      buttonLink: withUtm(exclusive.buttonLink, contactId),
+      buttonLink: withUtm(exclusive.buttonLink, contactId, 'day1_welcome', utm),
     },
     ratings: RATINGS,
   };

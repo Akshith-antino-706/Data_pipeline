@@ -222,7 +222,7 @@ const HERO_STATS = [
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function withUtm(url, contactId, campaign = 'day5_activities') {
+function withUtm(url, contactId, campaign = 'day5_activities', { journeyId, nodeId } = {}) {
   if (!url) return '#';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url)) return url;
@@ -232,6 +232,8 @@ function withUtm(url, contactId, campaign = 'day5_activities') {
     utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
@@ -277,7 +279,7 @@ async function fetchActivityCountsByCity(searchTerms) {
   return counts;
 }
 
-function hydrateActivity(catalogKey, productRow, contactId) {
+function hydrateActivity(catalogKey, productRow, contactId, utm = {}) {
   const cfg = ACTIVITY_CATALOG[catalogKey];
   if (!cfg) {
     throw new Error(`[Day5ActivitiesDataService] unknown activity key: ${catalogKey}`);
@@ -291,7 +293,7 @@ function hydrateActivity(catalogKey, productRow, contactId) {
       duration: '2-3 Hours',
       price:    'From AED —',
       imageUrl: 'https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/placeholder.jpg',
-      bookUrl:  withUtm('https://www.raynatours.com/activities', contactId),
+      bookUrl:  withUtm('https://www.raynatours.com/activities', contactId, 'day5_activities', utm),
     };
   }
   return {
@@ -300,7 +302,7 @@ function hydrateActivity(catalogKey, productRow, contactId) {
     duration: deriveDuration(productRow.page_description || productRow.name),
     price:    formatPrice(productRow.sale_price ?? productRow.normal_price, productRow.currency),
     imageUrl: productRow.image_url,
-    bookUrl:  withUtm(productRow.url, contactId),
+    bookUrl:  withUtm(productRow.url, contactId, 'day5_activities', utm),
   };
 }
 
@@ -351,8 +353,9 @@ function validateRanking(r) {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-export async function buildDay5ActivitiesData({ contactId, ranking }) {
+export async function buildDay5ActivitiesData({ contactId, ranking, journeyId, nodeId }) {
   validateRanking(ranking);
+  const utm = { journeyId, nodeId };
 
   // Pick variants
   const hero          = HERO_VARIANTS[ranking.hero_variant_key             || 'skip_the_queue'];
@@ -375,7 +378,7 @@ export async function buildDay5ActivitiesData({ contactId, ranking }) {
   const cityCounts = await fetchActivityCountsByCity(cityTerms);
 
   // Hydrate each themed section
-  const hyd = (keys) => keys.map(k => hydrateActivity(k, productsById.get(ACTIVITY_CATALOG[k].product_id), contactId));
+  const hyd = (keys) => keys.map(k => hydrateActivity(k, productsById.get(ACTIVITY_CATALOG[k].product_id), contactId, utm));
   const thrillPicks   = hyd(ranking.thrill_keys);
   const familyPicks   = hyd(ranking.family_keys);
   const iconsPicks    = hyd(ranking.icons_keys);
@@ -391,7 +394,7 @@ export async function buildDay5ActivitiesData({ contactId, ranking }) {
       city:           cfg.city,
       activitiesCount:n > 0 ? `${n}+ Activities` : 'Activities Available',
       imageUrl:       cfg.imageUrl,
-      exploreUrl:     withUtm(cfg.exploreUrl, contactId),
+      exploreUrl:     withUtm(cfg.exploreUrl, contactId, 'day5_activities', utm),
     };
   });
 
@@ -411,14 +414,14 @@ export async function buildDay5ActivitiesData({ contactId, ranking }) {
   }
 
   return {
-    navigation: NAVIGATION.map(n => ({ label: n.label, url: withUtm(n.url, contactId) })),
+    navigation: NAVIGATION.map(n => ({ label: n.label, url: withUtm(n.url, contactId, 'day5_activities', utm) })),
     hero: {
       subheading:      hero.subheading,
       title:           hero.title,
       description:     hero.description,
       backgroundImage: heroBgImage,
       buttonLabel:     hero.buttonLabel,
-      buttonUrl:       withUtm(hero.buttonUrl, contactId),
+      buttonUrl:       withUtm(hero.buttonUrl, contactId, 'day5_activities', utm),
       stats:           HERO_STATS,
     },
     topCities: {
@@ -468,7 +471,7 @@ export async function buildDay5ActivitiesData({ contactId, ranking }) {
     platforms:PLATFORMS,
     ctaFooter:{
       ...CTA_FOOTER,
-      buttonUrl: withUtm(CTA_FOOTER.buttonUrl, contactId),
+      buttonUrl: withUtm(CTA_FOOTER.buttonUrl, contactId, 'day5_activities', utm),
     },
     footer:   FOOTER,
   };

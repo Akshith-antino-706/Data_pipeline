@@ -126,7 +126,7 @@ const STATS = [
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function withUtm(url, contactId, campaign = 'day6_destination') {
+function withUtm(url, contactId, campaign = 'day6_destination', { journeyId, nodeId } = {}) {
   if (!url) return '#';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url)) return url;
@@ -134,6 +134,8 @@ function withUtm(url, contactId, campaign = 'day6_destination') {
     utm_source: 'email', utm_medium: 'journey', utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
@@ -240,7 +242,8 @@ async function fetchVisa(visaKey) {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-export async function buildDay6DestinationData({ contactId, destinationKey, ranking = {} }) {
+export async function buildDay6DestinationData({ contactId, destinationKey, ranking = {}, journeyId, nodeId }) {
+  const utm = { journeyId, nodeId };
   if (isKeyBlocked(destinationKey)) {
     throw new Error(`[Day6DestinationDataService] destination "${destinationKey}" is blocked`);
   }
@@ -272,7 +275,7 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
     duration: deriveDuration(p.name, '3N / 4D'),
     price:    formatPrice(p.sale_price ?? p.normal_price, p.currency),
     image:    p.image_url,
-    link:     withUtm(p.url, contactId),
+    link:     withUtm(p.url, contactId, 'day6_destination', utm),
   }));
 
   const activityItems = activityRows.slice(0, 4).map(p => ({
@@ -281,7 +284,7 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
     duration: deriveDuration(p.name, '2-3 Hours'),
     price:    formatPrice(p.sale_price ?? p.normal_price, p.currency),
     image:    p.image_url,
-    link:     withUtm(p.url, contactId),
+    link:     withUtm(p.url, contactId, 'day6_destination', utm),
   }));
 
   const cruiseItems = cruiseRows.slice(0, 4).map(p => ({
@@ -290,7 +293,7 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
     duration: deriveDuration(p.name, '3N / 4D'),
     price:    formatPrice(p.sale_price ?? p.normal_price, p.currency),
     image:    p.image_url,
-    link:     withUtm(p.url, contactId),
+    link:     withUtm(p.url, contactId, 'day6_destination', utm),
   }));
 
   // Visa section — graceful when no visa product exists for this country
@@ -306,7 +309,7 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
     price:       visaPrice,
     priceLabel:  visaRow ? 'Starting From' : 'Get a Quote',
     buttonText:  'Apply Now',
-    buttonLink:  withUtm(visaRow?.default_link || 'https://www.raynatours.com/visas', contactId),
+    buttonLink:  withUtm(visaRow?.default_link || 'https://www.raynatours.com/visas', contactId, 'day6_destination', utm),
   };
 
   return {
@@ -318,8 +321,8 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
       subtitle:        dest.titleSplit.subtitle,
       description:     `Iconic skylines, world-class attractions, luxury cruises and seamless visa &mdash; everything ${dest.name} in one place.`,
       buttons: [
-        { text: 'Explore Packages', link: withUtm(`https://www.raynatours.com${dest.holidayPagePath}`, contactId) },
-        { text: 'Book Activities',  link: withUtm(`https://www.raynatours.com${dest.activitiesPath}`,  contactId) },
+        { text: 'Explore Packages', link: withUtm(`https://www.raynatours.com${dest.holidayPagePath}`, contactId, 'day6_destination', utm) },
+        { text: 'Book Activities',  link: withUtm(`https://www.raynatours.com${dest.activitiesPath}`,  contactId, 'day6_destination', utm) },
       ],
     },
     stats: STATS,
@@ -350,7 +353,7 @@ export async function buildDay6DestinationData({ contactId, destinationKey, rank
       subtitle:    `Your ${dest.name} Adventure Starts Here`,
       description: `Packages, activities, cruises and visa &mdash; everything you need for the perfect ${dest.name} getaway, all in one place.`,
       buttonText:  `Explore ${dest.name}`,
-      buttonLink:  withUtm(`https://www.raynatours.com${dest.holidayPagePath}`, contactId),
+      buttonLink:  withUtm(`https://www.raynatours.com${dest.holidayPagePath}`, contactId, 'day6_destination', utm),
     },
   };
 }

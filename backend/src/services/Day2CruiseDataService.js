@@ -243,7 +243,7 @@ function titleCase(s) {
  * Append UTM params + recipient id to a Rayna URL. Leaves non-Rayna URLs alone.
  * Mirrors the rules in EmailRenderer.injectUTMLinks.
  */
-function withUtm(url, contactId, campaign = 'day2_cruise') {
+function withUtm(url, contactId, campaign = 'day2_cruise', { journeyId, nodeId } = {}) {
   if (!url) return '#';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url))   return url;
@@ -254,6 +254,8 @@ function withUtm(url, contactId, campaign = 'day2_cruise') {
     utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
 
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
@@ -320,8 +322,9 @@ function validateRanking(r) {
  * Hydrate Anthropic's ranking into the data.json shape consumed by
  * generate-email.js. See file header for input/output contract.
  */
-export async function buildDay2CruiseData({ contactId, ranking }) {
+export async function buildDay2CruiseData({ contactId, ranking, journeyId, nodeId }) {
   validateRanking(ranking);
+  const utm = { journeyId, nodeId };
 
   const heroKey      = ranking.hero_variant_key          || 'horizon';
   const regionalKey  = ranking.regional_copy_variant_key || 'mediterranean';
@@ -369,7 +372,7 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
       sub_text: cfg.sub_text,
       flag_url: cfg.flag_url,
       flag_alt: cfg.flag_alt,
-      link:     withUtm(cfg.default_link, contactId),
+      link:     withUtm(cfg.default_link, contactId, 'day2_cruise', utm),
     };
     // Last card spans both columns when the count is odd.
     if (i === arr.length - 1 && arr.length % 2 === 1) {
@@ -384,7 +387,7 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
     description: deriveBulletDescription(p),
     image:       p.image_url,
     price:       formatPrice(p.sale_price, p.currency),
-    link:        withUtm(p.url, contactId),
+    link:        withUtm(p.url, contactId, 'day2_cruise', utm),
   }));
 
   const regional_cruises = {
@@ -395,7 +398,7 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
       title:       p.name,
       description: deriveBulletDescription(p),
       image:       p.image_url,
-      link:        withUtm(p.url, contactId),
+      link:        withUtm(p.url, contactId, 'day2_cruise', utm),
     })),
   };
 
@@ -405,7 +408,7 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
       name:         cfg.name,
       destinations: cfg.destinations,
       image:        cfg.image_url,
-      link:         withUtm(cfg.default_link, contactId),
+      link:         withUtm(cfg.default_link, contactId, 'day2_cruise', utm),
     };
   });
 
@@ -427,8 +430,8 @@ export async function buildDay2CruiseData({ contactId, ranking }) {
       title:         hero.title,
       description:   hero.description,
       bg_image:      heroBgImage,
-      explore_link:  withUtm('https://www.raynatours.com/cruises', contactId),
-      view_all_link: withUtm('https://www.raynatours.com/cruises', contactId),
+      explore_link:  withUtm('https://www.raynatours.com/cruises', contactId, 'day2_cruise', utm),
+      view_all_link: withUtm('https://www.raynatours.com/cruises', contactId, 'day2_cruise', utm),
     },
     departure_cities,
     saver_packages,
