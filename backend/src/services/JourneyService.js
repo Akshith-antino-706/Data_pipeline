@@ -1889,6 +1889,11 @@ class JourneyService {
       const currentNode = nodes.find(n => n.id === row.current_node_id);
       if (!currentNode) continue;
 
+      // Action nodes fire at the next sendHour opportunity — leave next_fire_at NULL
+      // so processJourney picks them up immediately on the next cron run.
+      // Only wait nodes need a scheduled fire time.
+      if (currentNode.type !== 'wait') continue;
+
       const nextFireAt = this.calculateNextFireAt(currentNode, new Date());
       if (nextFireAt) {
         await db.query(`
