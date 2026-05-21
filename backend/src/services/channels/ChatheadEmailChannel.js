@@ -8,7 +8,7 @@
  */
 
 const DEFAULT_API_URL  = 'http://95.211.169.194/apis/aws/send/index.php';
-const DEFAULT_FROM     = 'explore@promotions.raynatours.com';
+const DEFAULT_FROM     = 'Rayna Tours <explore@promotions.raynatours.com>';
 
 function fromEmail() { return process.env.AWS_EMAIL_FROM || DEFAULT_FROM; }
 function campaignId() { return process.env.AWS_EMAIL_CAMPAIGN_ID || '1'; }
