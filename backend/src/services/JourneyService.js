@@ -40,10 +40,10 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
   }
   if (id === 3) {
-    const { _internals } = await import('./VisaRankingService.js');
+    const { rankTrendingVisas }             = await import('./VisaRankingService.js');
     const { buildDay3VisaData }             = await import('./Day3VisaDataService.js');
     const { renderDay3Visa }                = await import('./Day3VisaRenderer.js');
-    const ranking = _internals.buildFallbackRanking();
+    const { ranking } = await rankTrendingVisas();
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
     const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' };
