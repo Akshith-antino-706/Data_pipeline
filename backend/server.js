@@ -610,9 +610,28 @@ cron.schedule('*/5 * * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey engine scheduled: every 5 min (Asia/Dubai)');
 
-// ── Journey auto-start DISABLED — user must manually click "Start" ──
-// Journeys only start when the user explicitly clicks Start on the UI.
-// The scheduled_start_at is validated on start: if it has passed, start is blocked.
+// ── Journey auto-start — check every minute for scheduled journeys ──
+cron.schedule('* * * * *', async () => {
+  try {
+    const { rows: due } = await pool.query(`
+      SELECT journey_id, name FROM journey_flows
+      WHERE status = 'draft'
+        AND scheduled_start_at IS NOT NULL
+        AND scheduled_start_at <= NOW()
+    `);
+    for (const j of due) {
+      try {
+        await JourneyService.startJourney(j.journey_id, { skipScheduleValidation: true });
+        console.log(`[Cron:AutoStart] Journey ${j.journey_id} "${j.name}" auto-started`);
+      } catch (err) {
+        console.error(`[Cron:AutoStart] Journey ${j.journey_id} failed: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.error('[Cron:AutoStart] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Journey auto-start scheduled: every 1 min (Asia/Dubai)');
 
 // ── BullMQ workers — always run inline ────────────────
 try {
