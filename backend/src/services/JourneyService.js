@@ -10,6 +10,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const MAIL_TEMPLATES_DIR = path.resolve(__dirname, '..', '..', '..', 'mail_templates');
 
+// Cache rankings for 1 hour so Claude is called once per batch, not once per email
+const _rankingCache = new Map();
+async function _getCachedRanking(key, fetchFn) {
+  const cached = _rankingCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.ranking;
+  const { ranking } = await fetchFn();
+  _rankingCache.set(key, { ranking, expiresAt: Date.now() + 60 * 60 * 1000 });
+  return ranking;
+}
+
 // Render the real Day HTML for a contact using the same Day renderers.
 // Uses fallback ranking (no Claude API call) to keep sends fast.
 export async function renderDayHtml(templateId, contactId, { journeyId, nodeId } = {}) {
@@ -35,7 +45,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { default: rankTrendingCruises }    = await import('./Day2CruiseRankingService.js');
     const { buildDay2CruiseData }             = await import('./Day2CruiseDataService.js');
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
-    const { ranking } = await rankTrendingCruises();
+    const ranking = await _getCachedRanking('cruise', rankTrendingCruises);
     const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
   }
@@ -43,7 +53,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { rankTrendingVisas }             = await import('./VisaRankingService.js');
     const { buildDay3VisaData }             = await import('./Day3VisaDataService.js');
     const { renderDay3Visa }                = await import('./Day3VisaRenderer.js');
-    const { ranking } = await rankTrendingVisas();
+    const ranking = await _getCachedRanking('visa', rankTrendingVisas);
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
     const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' };
@@ -744,6 +754,11 @@ class JourneyService {
     const edges = journey.edges || [];
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
 
+    // Pre-fetch Claude ranking ONCE before any emails are enqueued.
+    // Workers share the same module-level _rankingCache, so every renderDayHtml
+    // call inside the worker gets a cache hit — Claude is never called per-email.
+    await JourneyService._prewarmRankingCache(journeyId, nodeMap);
+
     // Run id is deterministic per (journey, UTC day). This lets the T-60min
     // prewarm cron (prewarmJourneyPopularity) and the fire-time processJourney
     // call write/read snapshot rows under the SAME run_id — the prewarm
@@ -1139,6 +1154,48 @@ class JourneyService {
   }
 
   // ── processJourney helpers ────────────────────────────────────
+
+  /**
+   * Called once at the START of processJourney before any emails are enqueued.
+   * Finds which action nodes have active+due entries, checks their templateId,
+   * and pre-fetches the Claude ranking for templates that need it (2=cruise, 3=visa).
+   * Result is stored in the module-level _rankingCache so every subsequent
+   * renderDayHtml call inside the BullMQ workers gets a cache hit — Claude is
+   * called exactly once per node batch, not once per email.
+   */
+  static async _prewarmRankingCache(journeyId, nodeMap) {
+    // Find distinct action nodes that have active+due entries right now
+    const { rows: activeNodes } = await db.query(`
+      SELECT DISTINCT current_node_id
+      FROM journey_entries
+      WHERE journey_id = $1 AND status = 'active'
+        AND (next_fire_at IS NULL OR next_fire_at <= NOW())
+      LIMIT 100
+    `, [journeyId]);
+
+    const templateIds = new Set();
+    for (const { current_node_id } of activeNodes) {
+      const node = nodeMap[current_node_id];
+      if (!node || node.type !== 'action') continue;
+      const ch  = (node.data?.channel || '').toLowerCase();
+      const tid = node.data?.templateId
+        || (ch === 'email' ? node.data?.emailTemplateId : null);
+      if (tid) templateIds.add(parseInt(tid));
+    }
+
+    for (const templateId of templateIds) {
+      if (templateId === 2) {
+        const { default: rankTrendingCruises } = await import('./Day2CruiseRankingService.js');
+        await _getCachedRanking('cruise', rankTrendingCruises);
+        console.log(`[Journey ${journeyId}] Ranking pre-warmed for cruise (template 2) — Claude called once.`);
+      } else if (templateId === 3) {
+        const { rankTrendingVisas } = await import('./VisaRankingService.js');
+        await _getCachedRanking('visa', rankTrendingVisas);
+        console.log(`[Journey ${journeyId}] Ranking pre-warmed for visa (template 3) — Claude called once.`);
+      }
+      // Templates 1,4,5,6,7 use synchronous fallback — no Claude call needed.
+    }
+  }
 
   /**
    * T-60min popularity prewarm. Looks for entries that will become due to
