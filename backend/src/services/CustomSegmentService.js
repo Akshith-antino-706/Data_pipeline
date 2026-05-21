@@ -109,10 +109,18 @@ export default class CustomSegmentService {
         }
       }
 
-      // Combine sub-clauses for this condition and apply exclude if set
+      // Build all parts: field clause(s) OR GTM events clause
+      const allParts = [];
       if (sub.length > 0) {
-        const combined = sub.length === 1 ? sub[0] : `(${sub.join(' AND ')})`;
-        clauses.push(cond.exclude ? `NOT ${combined}` : combined);
+        allParts.push(sub.length === 1 ? sub[0] : `(${sub.join(' AND ')})`);
+      }
+      if (Array.isArray(cond.gtmEvents) && cond.gtmEvents.length > 0) {
+        const placeholders = cond.gtmEvents.map(e => { params.push(e); return `$${idx++}`; });
+        allParts.push(`EXISTS (SELECT 1 FROM gtm_events ge WHERE ge.unified_id = uc.id AND ge.event_name IN (${placeholders.join(',')}))`);
+      }
+      if (allParts.length > 0) {
+        const combined = allParts.length === 1 ? allParts[0] : `(${allParts.join(' OR ')})`;
+        clauses.push(cond.exclude ? `NOT (${combined})` : combined);
       }
     }
 
@@ -122,7 +130,7 @@ export default class CustomSegmentService {
   /**
    * Build full SQL with optional JOINs based on conditions.
    */
-  static buildSegmentSQL(conditions, { select = 'COUNT(*)::int AS count', orderBy = '', limitOffset = '' } = {}) {
+  static buildSegmentSQL(conditions, { select = 'COUNT(*)::int AS count', orderBy = '', limitOffset = '', operator = 'AND' } = {}) {
     const { clauses, params, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
       this.buildWhereClause(conditions);
 
@@ -154,7 +162,8 @@ export default class CustomSegmentService {
       ) booking_agg ON true
     ` : '';
 
-    const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const condJoin = operator === 'OR' ? ' OR ' : ' AND ';
+    const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(condJoin)}` : '';
 
     const sql = `
       SELECT ${select}
@@ -171,18 +180,19 @@ export default class CustomSegmentService {
 
   // ── CRUD ────────────────────────────────────────────────
 
-  static async create({ name, description, color, icon, conditions, status = 'active' }) {
-    const count = await this.getCountPreview(conditions);
+  static async create({ name, description, color, icon, conditions, status = 'active', operator = 'AND' }) {
+    const op = (operator === 'OR') ? 'OR' : 'AND';
+    const count = await this.getCountPreview(conditions, op);
 
     const { rows: [seg] } = await query(`
-      INSERT INTO custom_segments (name, description, color, icon, conditions, cached_count, cached_at, status)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+      INSERT INTO custom_segments (name, description, color, icon, conditions, cached_count, cached_at, status, condition_operator)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
       RETURNING *
-    `, [name, description || null, color || '#3b82f6', icon || 'Filter', JSON.stringify(conditions), count, status]);
+    `, [name, description || null, color || '#3b82f6', icon || 'Filter', JSON.stringify(conditions), count, status, op]);
     return seg;
   }
 
-  static async update(id, { name, description, color, icon, conditions, status }) {
+  static async update(id, { name, description, color, icon, conditions, status, operator }) {
     const updates = [];
     const params = [];
     let idx = 1;
@@ -192,9 +202,15 @@ export default class CustomSegmentService {
     if (color !== undefined)       { params.push(color);       updates.push(`color = $${idx++}`); }
     if (icon !== undefined)        { params.push(icon);        updates.push(`icon = $${idx++}`); }
     if (status !== undefined)      { params.push(status);      updates.push(`status = $${idx++}`); }
+    if (operator !== undefined) {
+      const op = operator === 'OR' ? 'OR' : 'AND';
+      params.push(op); updates.push(`condition_operator = $${idx++}`);
+    }
     if (conditions !== undefined) {
       params.push(JSON.stringify(conditions)); updates.push(`conditions = $${idx++}`);
-      const count = await this.getCountPreview(conditions);
+      const seg = await this.getById(id);
+      const op = operator ?? seg?.condition_operator ?? 'AND';
+      const count = await this.getCountPreview(conditions, op);
       params.push(count); updates.push(`cached_count = $${idx++}`);
       updates.push(`cached_at = NOW()`);
     }
@@ -232,12 +248,12 @@ export default class CustomSegmentService {
 
   // ── Count Preview ────────────────────────────────────────
 
-  static async getCountPreview(conditions) {
+  static async getCountPreview(conditions, operator = 'AND') {
     if (!conditions || conditions.length === 0) {
       const { rows: [r] } = await query('SELECT COUNT(*)::int AS count FROM unified_contacts');
       return r.count;
     }
-    const { sql, params } = this.buildSegmentSQL(conditions);
+    const { sql, params } = this.buildSegmentSQL(conditions, { operator });
     const { rows: [r] } = await query(sql, params);
     return r.count;
   }
@@ -249,6 +265,7 @@ export default class CustomSegmentService {
     if (!seg) return null;
 
     const conditions = seg.conditions || [];
+    const op = seg.condition_operator || 'AND';
 
     // Build count query
     const { clauses: countClauses, params: countParams, nextIdx: countIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
@@ -266,7 +283,7 @@ export default class CustomSegmentService {
     }
 
     // Count
-    const countBuild = this.buildSegmentSQL(conditions);
+    const countBuild = this.buildSegmentSQL(conditions, { operator: op });
     const { rows: [countRow] } = await query(countBuild.sql, countBuild.params);
     const total = countRow.count;
 
@@ -305,7 +322,8 @@ export default class CustomSegmentService {
       ) booking_agg ON true
     ` : '';
 
-    const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const condJoin = op === 'OR' ? ' OR ' : ' AND ';
+    const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(condJoin)}` : '';
 
     const sql = `
       SELECT ${selectCols}
