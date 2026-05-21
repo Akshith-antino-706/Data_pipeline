@@ -1805,8 +1805,7 @@ class JourneyService {
       JOIN unified_contacts uc ON uc.id = je.customer_id
       LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
       WHERE je.status = 'active'
-        AND je.next_fire_at IS NOT NULL
-        AND je.next_fire_at <= NOW()
+        AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
         AND jf.status = 'active'
       ORDER BY je.next_fire_at
       LIMIT 500
