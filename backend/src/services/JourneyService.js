@@ -771,6 +771,8 @@ class JourneyService {
     // Action sends are batched and enqueued at the end of the loop so we minimize
     // BullMQ round-trips. One batch per channel.
     const enqueueByChannel = { email: [], whatsapp: [], sms: [] };
+    // Collect entry IDs to stamp last_run_id in one bulk UPDATE per batch
+    let toStampIds = [];
 
     // ── BULK EXIT CHECK (scalable for 15 lakh+ users) ──
     // Exit booked + unsubscribed users in a single batch UPDATE before the per-entry loop.
@@ -816,14 +818,25 @@ class JourneyService {
       }
     }
 
-    // Re-fetch active entries after bulk exit (only the ones still active)
-    const { rows: activeEntries } = await db.query(`
-      SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
-        uc.booking_status, uc.email_unsubscribe, uc.is_indian
-      FROM journey_entries je
-      JOIN unified_contacts uc ON uc.id = je.customer_id
-      WHERE je.journey_id = $1 AND je.status = 'active'
-    `, [journeyId]);
+    // Re-fetch active entries after bulk exit — paginated to handle 800K+ without OOM
+    const FETCH_BATCH = 5000;
+    let offset = 0;
+    let hasMore = true;
+    let firstEntry = true;
+
+    while (hasMore) {
+      const { rows: activeEntries } = await db.query(`
+        SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
+          uc.booking_status, uc.email_unsubscribe, uc.is_indian
+        FROM journey_entries je
+        JOIN unified_contacts uc ON uc.id = je.customer_id
+        WHERE je.journey_id = $1 AND je.status = 'active'
+          AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
+        ORDER BY je.entry_id
+        LIMIT $2 OFFSET $3
+      `, [journeyId, FETCH_BATCH, offset]);
+
+      if (activeEntries.length === 0) { hasMore = false; break; }
 
     for (const entry of activeEntries) {
 
@@ -831,7 +844,8 @@ class JourneyService {
       if (!currentNode) { console.log(`[DBG] entry ${entry.entry_id} — no node for '${entry.current_node_id}'`); continue; }
 
       // DEBUG: log first entry's node info
-      if (processed === 0) {
+      if (firstEntry) {
+        firstEntry = false;
         console.log(`[DBG] first entry: node=${currentNode.id}, type='${currentNode.type}', data=`, JSON.stringify(currentNode.data || {}).slice(0, 200));
       }
 
@@ -951,12 +965,8 @@ class JourneyService {
         if (!enqueueByChannel[channel]) enqueueByChannel[channel] = [];
         enqueueByChannel[channel].push({ data: jobData, opts: { jobId: `${journeyId}:${entry.entry_id}:${runId}` } });
 
-        // Stamp the entry so we can tell it's in flight + skip it on re-runs.
-        await db.query(
-          `UPDATE journey_entries SET last_run_id = $2, last_enqueued_at = NOW()
-             WHERE entry_id = $1`,
-          [entry.entry_id, runId]
-        );
+        // Collect for bulk stamp below (avoids 800K individual UPDATEs)
+        toStampIds.push(entry.entry_id);
         actioned++;
         processed++;
         // Worker advances the entry after the actual send — do NOT fall through
@@ -1061,10 +1071,20 @@ class JourneyService {
         );
       }
       processed++;
+    } // end for (entry of activeEntries)
+
+    // Bulk stamp last_run_id for all enqueued entries in this page (1 query vs N)
+    if (toStampIds.length > 0) {
+      await db.query(
+        `UPDATE journey_entries SET last_run_id = $1, last_enqueued_at = NOW()
+         WHERE entry_id = ANY($2::bigint[])`,
+        [runId, toStampIds]
+      );
+      toStampIds = [];
     }
 
     // ════════════════════════════════════════════════════════════════
-    //  Drain per-channel batches into BullMQ
+    //  Drain per-channel batches into BullMQ after each page
     // ════════════════════════════════════════════════════════════════
     const BATCH_SIZE = 1000;
     for (const [channel, jobs] of Object.entries(enqueueByChannel)) {
@@ -1084,7 +1104,12 @@ class JourneyService {
           ).catch(() => {});
         }
       }
+      enqueueByChannel[channel] = []; // reset for next page
     }
+
+    offset += activeEntries.length;
+    if (activeEntries.length < FETCH_BATCH) hasMore = false;
+    } // end while (hasMore)
 
     // Update journey stats
     await db.query(`
@@ -1848,9 +1873,10 @@ class JourneyService {
    * that moved to a new node but still have the old (expired) next_fire_at.
    */
   static async _updateNextFireAtForAdvancedEntries() {
-    // Find active entries whose next_fire_at is in the past (already fired)
-    const { rows: staleEntries } = await db.query(`
-      SELECT je.entry_id, je.current_node_id, je.journey_id, jf.nodes
+    // Group by (journey_id, current_node_id) — all entries on the same node
+    // get the same nextFireAt, so one bulk UPDATE per node instead of N per entry.
+    const { rows: staleNodes } = await db.query(`
+      SELECT DISTINCT je.journey_id, je.current_node_id, jf.nodes
       FROM journey_entries je
       JOIN journey_flows jf ON jf.journey_id = je.journey_id
       WHERE je.status = 'active'
@@ -1858,17 +1884,21 @@ class JourneyService {
         AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
     `);
 
-    for (const entry of staleEntries) {
-      const nodes = entry.nodes || [];
-      const currentNode = nodes.find(n => n.id === entry.current_node_id);
+    for (const row of staleNodes) {
+      const nodes = row.nodes || [];
+      const currentNode = nodes.find(n => n.id === row.current_node_id);
       if (!currentNode) continue;
 
       const nextFireAt = this.calculateNextFireAt(currentNode, new Date());
       if (nextFireAt) {
-        await db.query(
-          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = $2',
-          [nextFireAt, entry.entry_id]
-        );
+        await db.query(`
+          UPDATE journey_entries
+          SET next_fire_at = $1
+          WHERE journey_id = $2
+            AND current_node_id = $3
+            AND status = 'active'
+            AND (next_fire_at IS NULL OR next_fire_at <= NOW())
+        `, [nextFireAt, row.journey_id, row.current_node_id]);
       }
     }
   }
