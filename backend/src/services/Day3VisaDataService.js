@@ -135,7 +135,7 @@ const FOOTER = {
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function withUtm(url, contactId, campaign = 'day3_visa') {
+function withUtm(url, contactId, campaign = 'day3_visa', { journeyId, nodeId } = {}) {
   if (!url) return '#';
   if (!/raynatours\.com/i.test(url)) return url;
   if (/[?&]utm_source=/.test(url)) return url;
@@ -145,6 +145,8 @@ function withUtm(url, contactId, campaign = 'day3_visa') {
     utm_campaign: campaign,
   });
   if (contactId) params.set('rid', String(contactId));
+  if (journeyId) params.set('journeyId', String(journeyId));
+  if (nodeId)    params.set('nodeId', String(nodeId));
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
@@ -183,8 +185,9 @@ function validateRanking(r) {
 
 // ── public API ────────────────────────────────────────────────────────────
 
-export async function buildDay3VisaData({ contactId, ranking }) {
+export async function buildDay3VisaData({ contactId, ranking, journeyId, nodeId }) {
   validateRanking(ranking);
+  const utm = { journeyId, nodeId };
 
   // Pick variants (or defaults)
   const hero       = HERO_VARIANTS[ranking.hero_variant_key             || 'passport'];
@@ -242,7 +245,7 @@ export async function buildDay3VisaData({ contactId, ranking }) {
         flag:  v.flag_unicode || '',
         types: v.types_html   || '',
         image: v.image_url,
-        link:  withUtm(v.default_link, contactId),
+        link:  withUtm(v.default_link, contactId, 'day3_visa', utm),
       })),
     },
 
@@ -256,7 +259,7 @@ export async function buildDay3VisaData({ contactId, ranking }) {
         flag:    v.flag_unicode || '',
         details: v.details_html || '',
         image:   v.image_url,
-        link:    withUtm(v.default_link, contactId),
+        link:    withUtm(v.default_link, contactId, 'day3_visa', utm),
         status:  v.status || 'Online',
       })),
     },
@@ -267,7 +270,7 @@ export async function buildDay3VisaData({ contactId, ranking }) {
       items: popularRows.map(v => ({
         name:  v.name,
         image: v.image_url,
-        link:  withUtm(v.default_link, contactId),
+        link:  withUtm(v.default_link, contactId, 'day3_visa', utm),
       })),
     },
 
@@ -283,7 +286,7 @@ export async function buildDay3VisaData({ contactId, ranking }) {
       title:       cta.title,
       description: cta.description,
       button_text: cta.button_text,
-      link:        withUtm(cta.link, contactId),
+      link:        withUtm(cta.link, contactId, 'day3_visa', utm),
     },
 
     footer: {

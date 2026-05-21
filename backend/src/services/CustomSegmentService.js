@@ -20,90 +20,99 @@ export default class CustomSegmentService {
     let needsBookingDate = false;
 
     for (const cond of conditions) {
+      const sub = [];  // sub-clauses for this single condition
+
       switch (cond.field) {
+        case 'name': {
+          params.push(`%${cond.value}%`);
+          sub.push(`uc.name ILIKE $${idx++}`);
+          break;
+        }
         case 'booking_status': {
           const values = Array.isArray(cond.value) ? cond.value : [cond.value];
           const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          clauses.push(`uc.booking_status IN (${placeholders.join(',')})`);
+          sub.push(`uc.booking_status IN (${placeholders.join(',')})`);
           break;
         }
         case 'product_tier': {
           const values = Array.isArray(cond.value) ? cond.value : [cond.value];
           const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          clauses.push(`uc.product_tier IN (${placeholders.join(',')})`);
+          sub.push(`uc.product_tier IN (${placeholders.join(',')})`);
           break;
         }
         case 'geography': {
           const values = Array.isArray(cond.value) ? cond.value : [cond.value];
           const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          clauses.push(`uc.geography IN (${placeholders.join(',')})`);
+          sub.push(`uc.geography IN (${placeholders.join(',')})`);
           break;
         }
         case 'contact_type': {
           params.push(cond.value);
-          clauses.push(`uc.contact_type = $${idx++}`);
+          sub.push(`uc.contact_type = $${idx++}`);
           break;
         }
         case 'country': {
           if (Array.isArray(cond.value)) {
             const placeholders = cond.value.map(v => { params.push(v.toUpperCase()); return `$${idx++}`; });
-            clauses.push(`UPPER(TRIM(uc.country)) IN (${placeholders.join(',')})`);
+            sub.push(`UPPER(TRIM(uc.country)) IN (${placeholders.join(',')})`);
           } else {
             params.push(cond.value.toUpperCase());
-            clauses.push(`UPPER(TRIM(uc.country)) = $${idx++}`);
+            sub.push(`UPPER(TRIM(uc.country)) = $${idx++}`);
           }
           break;
         }
         case 'is_indian': {
           params.push(cond.value === true || cond.value === 'yes');
-          clauses.push(`uc.is_indian = $${idx++}`);
+          sub.push(`uc.is_indian = $${idx++}`);
           break;
         }
         case 'wa_status': {
-          if (cond.value === 'unsubscribed') {
-            clauses.push(`uc.wa_unsubscribe = 'yes'`);
-          } else {
-            clauses.push(`(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe <> 'yes')`);
-          }
+          sub.push(cond.value === 'unsubscribed'
+            ? `uc.wa_unsubscribe = 'yes'`
+            : `(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe <> 'yes')`);
           break;
         }
         case 'email_status': {
-          if (cond.value === 'unsubscribed') {
-            clauses.push(`uc.email_unsubscribe = 'yes'`);
-          } else {
-            clauses.push(`(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe <> 'yes')`);
-          }
+          sub.push(cond.value === 'unsubscribed'
+            ? `uc.email_unsubscribe = 'yes'`
+            : `(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe <> 'yes')`);
           break;
         }
         case 'source': {
           params.push(`%${cond.value}%`);
-          clauses.push(`uc.sources ILIKE $${idx++}`);
+          sub.push(`uc.sources ILIKE $${idx++}`);
           break;
         }
         case 'travel_date': {
           needsTravelDate = true;
-          if (cond.value && cond.value[0]) { params.push(cond.value[0]); clauses.push(`booking_agg.max_travel_date >= $${idx++}::date`); }
-          if (cond.value && cond.value[1]) { params.push(cond.value[1]); clauses.push(`booking_agg.min_travel_date <= $${idx++}::date`); }
+          if (cond.value?.[0]) { params.push(cond.value[0]); sub.push(`booking_agg.max_travel_date >= $${idx++}::date`); }
+          if (cond.value?.[1]) { params.push(cond.value[1]); sub.push(`booking_agg.min_travel_date <= $${idx++}::date`); }
           break;
         }
         case 'booking_date': {
           needsBookingDate = true;
-          if (cond.value && cond.value[0]) { params.push(cond.value[0]); clauses.push(`booking_agg.max_booking_date >= $${idx++}::date`); }
-          if (cond.value && cond.value[1]) { params.push(cond.value[1]); clauses.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
+          if (cond.value?.[0]) { params.push(cond.value[0]); sub.push(`booking_agg.max_booking_date >= $${idx++}::date`); }
+          if (cond.value?.[1]) { params.push(cond.value[1]); sub.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
           break;
         }
         case 'revenue': {
           needsRevenueJoin = true;
           if (cond.operator === 'between' && Array.isArray(cond.value)) {
-            params.push(cond.value[0]); clauses.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
-            params.push(cond.value[1]); clauses.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
+            params.push(cond.value[0]); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
+            params.push(cond.value[1]); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
           } else if (cond.operator === 'gte') {
-            params.push(cond.value); clauses.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
+            params.push(cond.value); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
           } else if (cond.operator === 'lte') {
-            params.push(cond.value); clauses.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
+            params.push(cond.value); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
           }
           break;
         }
+      }
+
+      // Combine sub-clauses for this condition and apply exclude if set
+      if (sub.length > 0) {
+        const combined = sub.length === 1 ? sub[0] : `(${sub.join(' AND ')})`;
+        clauses.push(cond.exclude ? `NOT ${combined}` : combined);
       }
     }
 

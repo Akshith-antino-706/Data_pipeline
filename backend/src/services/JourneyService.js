@@ -12,7 +12,7 @@ const MAIL_TEMPLATES_DIR = path.resolve(__dirname, '..', '..', '..', 'mail_templ
 
 // Render the real Day HTML for a contact using the same Day renderers.
 // Uses fallback ranking (no Claude API call) to keep sends fast.
-export async function renderDayHtml(templateId, contactId) {
+export async function renderDayHtml(templateId, contactId, { journeyId, nodeId } = {}) {
   const id = parseInt(templateId);
   const tplFile = (name) => fs.readFileSync(path.join(MAIL_TEMPLATES_DIR, name), 'utf8');
 
@@ -28,7 +28,7 @@ export async function renderDayHtml(templateId, contactId) {
       activityMap: _internals.ACTIVITY_DESTINATIONS || {},
       visaMap,
     });
-    const data = await buildDay1WelcomeData({ contactId, ranking });
+    const data = await buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' };
   }
   if (id === 2) {
@@ -36,7 +36,7 @@ export async function renderDayHtml(templateId, contactId) {
     const { buildDay2CruiseData }             = await import('./Day2CruiseDataService.js');
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
     const ranking = _internals.buildFallbackRanking();
-    const data    = await buildDay2CruiseData({ contactId, ranking });
+    const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
   }
   if (id === 3) {
@@ -45,7 +45,7 @@ export async function renderDayHtml(templateId, contactId) {
     const { renderDay3Visa }                = await import('./Day3VisaRenderer.js');
     const ranking = _internals.buildFallbackRanking();
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
-    const data = await buildDay3VisaData({ contactId, ranking });
+    const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' };
   }
   if (id === 4) {
@@ -53,7 +53,7 @@ export async function renderDayHtml(templateId, contactId) {
     const { buildDay4HolidaysData } = await import('./Day4HolidaysDataService.js');
     const { renderDay4Holidays }    = await import('./Day4HolidaysRenderer.js');
     const ranking = _internals.buildFallbackRanking();
-    const data    = await buildDay4HolidaysData({ contactId, ranking });
+    const data    = await buildDay4HolidaysData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' };
   }
   if (id === 5) {
@@ -61,7 +61,7 @@ export async function renderDayHtml(templateId, contactId) {
     const { buildDay5ActivitiesData } = await import('./Day5ActivitiesDataService.js');
     const { renderDay5Activities }    = await import('./Day5ActivitiesRenderer.js');
     const ranking = _internals.buildFallbackRanking();
-    const data    = await buildDay5ActivitiesData({ contactId, ranking });
+    const data    = await buildDay5ActivitiesData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' };
   }
   if (id === 6) {
@@ -73,13 +73,13 @@ export async function renderDayHtml(templateId, contactId) {
     const ranking = _internals.buildFallbackRanking
       ? _internals.buildFallbackRanking({ holidayCandidates: [], activityCandidates: [], cruiseCandidates: [] })
       : {};
-    const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking });
+    const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking, journeyId, nodeId });
     return { html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' };
   }
   if (id === 7) {
     const { buildDay7AbandonedCartData } = await import('./Day7AbandonedCartDataService.js');
     const { renderDay7AbandonedCart }    = await import('./Day7AbandonedCartRenderer.js');
-    const data = await buildDay7AbandonedCartData({ contactId });
+    const data = await buildDay7AbandonedCartData({ contactId, journeyId, nodeId });
     return { html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' };
   }
   return null; // unknown template — fall back to EmailRenderer
@@ -1881,13 +1881,18 @@ class JourneyService {
       JOIN journey_flows jf ON jf.journey_id = je.journey_id
       WHERE je.status = 'active'
         AND jf.status = 'active'
-        AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
+        AND je.next_fire_at IS NULL
     `);
 
     for (const row of staleNodes) {
       const nodes = row.nodes || [];
       const currentNode = nodes.find(n => n.id === row.current_node_id);
       if (!currentNode) continue;
+
+      // Action nodes fire at the next sendHour opportunity — leave next_fire_at NULL
+      // so processJourney picks them up immediately on the next cron run.
+      // Only wait nodes need a scheduled fire time.
+      if (currentNode.type !== 'wait') continue;
 
       const nextFireAt = this.calculateNextFireAt(currentNode, new Date());
       if (nextFireAt) {
@@ -1897,7 +1902,7 @@ class JourneyService {
           WHERE journey_id = $2
             AND current_node_id = $3
             AND status = 'active'
-            AND (next_fire_at IS NULL OR next_fire_at <= NOW())
+            AND next_fire_at IS NULL
         `, [nextFireAt, row.journey_id, row.current_node_id]);
       }
     }

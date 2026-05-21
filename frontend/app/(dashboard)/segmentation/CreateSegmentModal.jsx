@@ -6,6 +6,11 @@ import { X, Plus, Trash2, Filter, Loader2, Users } from 'lucide-react';
 import { previewSegmentCount, createCustomSegment, updateCustomSegment } from '@/lib/api';
 
 const FIELD_CONFIG = {
+  name: {
+    label: 'Contact Name', type: 'text',
+    placeholder: 'e.g. John, Ahmed',
+    defaultOperator: 'contains',
+  },
   booking_status: {
     label: 'Booking Status', type: 'multi-select',
     options: ['ON_TRIP', 'FUTURE_TRAVEL', 'PAST_BOOKING', 'CANCELLED', 'PROSPECT'],
@@ -255,6 +260,7 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
       field: newField,
       operator: cfg?.defaultOperator || 'eq',
       value: defaultValue,
+      exclude: false,
     });
   };
 
@@ -392,6 +398,29 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                     ))}
                   </select>
                 </div>
+
+                {/* Include / Exclude toggle */}
+                {cond.field && (
+                  <div style={{ display: 'flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)', minWidth: 130, flexShrink: 0 }}>
+                    {[{ label: 'Include', val: false }, { label: 'Exclude', val: true }].map(({ label, val }) => {
+                      const active = !!cond.exclude === val;
+                      const isExclude = val;
+                      return (
+                        <button key={label} type="button"
+                          onClick={() => updateCondition(idx, { ...cond, exclude: val })}
+                          style={{
+                            flex: 1, padding: '5px 8px', fontSize: 11, fontWeight: active ? 600 : 400,
+                            cursor: 'pointer', border: 'none',
+                            background: active ? (isExclude ? '#ef4444' : '#22c55e') : 'var(--background)',
+                            color: active ? '#fff' : 'var(--muted-foreground)',
+                            transition: 'all 0.15s',
+                          }}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Value input */}
                 <div style={{ flex: 1 }}>
