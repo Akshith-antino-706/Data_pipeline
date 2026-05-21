@@ -258,6 +258,67 @@ class JourneyService {
     return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, node_statuses, node_stats };
   }
 
+  /**
+   * Populate journey_entries for a journey in batches.
+   * - Standard segment: single SQL INSERT...SELECT (fast, all server-side)
+   * - Custom segment: paginated 5 000-row batches to avoid huge $3::bigint[] arrays
+   * Returns final snapshotCount and updates journey_flows.snapshot_count.
+   */
+  static async _snapshotEntries(journeyId, { customSegmentId, stdSegmentId, audience, firstNodeId }) {
+    let snapshotCount = 0;
+
+    if (customSegmentId) {
+      // Use buildSegmentSQL to get a pure-SQL subquery — no OFFSET pagination, fully server-side.
+      const seg = await CustomSegmentService.getById(customSegmentId);
+      if (!seg) throw new Error(`Custom segment ${customSegmentId} not found`);
+
+      const { sql: segSql, params: segParams } =
+        CustomSegmentService.buildSegmentSQL(seg.conditions || [], { select: 'uc.id, uc.is_indian' });
+
+      // Audience filter appended as a WHERE on the outer query
+      let audienceWhere = '';
+      if (audience === 'indian') audienceWhere = 'AND seg.is_indian = true';
+      else if (audience === 'rest') audienceWhere = 'AND seg.is_indian = false';
+
+      // segParams are $1…$N; journeyId becomes $(N+1), firstNodeId becomes $(N+2)
+      const nBase = segParams.length;
+      const { rowCount } = await db.query(`
+        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
+        SELECT $${nBase + 1}, seg.id, $${nBase + 2},
+               CASE WHEN seg.is_indian THEN 'indian' ELSE 'rest' END,
+               'snapshot'
+        FROM   (${segSql}) AS seg
+        WHERE  true ${audienceWhere}
+        ON CONFLICT DO NOTHING
+      `, [...segParams, journeyId, firstNodeId]);
+      snapshotCount = rowCount;
+
+    } else if (stdSegmentId) {
+      // Standard segment — pure SQL JOIN, PostgreSQL handles millions of rows efficiently
+      let audienceFilter = '';
+      if (audience === 'indian') audienceFilter = 'AND uc.is_indian = true';
+      else if (audience === 'rest') audienceFilter = 'AND uc.is_indian = false';
+
+      const { rowCount } = await db.query(`
+        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
+        SELECT $1, sc.customer_id, $2,
+               CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END,
+               'snapshot'
+        FROM   segment_customers sc
+        JOIN   unified_contacts uc ON uc.id = sc.customer_id
+        WHERE  sc.segment_id = $3 AND sc.is_active = true ${audienceFilter}
+        ON CONFLICT DO NOTHING
+      `, [journeyId, firstNodeId, stdSegmentId]);
+      snapshotCount = rowCount;
+    }
+
+    await db.query(
+      'UPDATE journey_flows SET snapshot_count = $1, total_entries = $1 WHERE journey_id = $2',
+      [snapshotCount, journeyId]
+    );
+    return snapshotCount;
+  }
+
   static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
@@ -274,54 +335,16 @@ class JourneyService {
       RETURNING *
     `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null]);
 
-    // ── Snapshot segment users at creation time (FIXED — never re-queried) ──
+    // ── Snapshot segment users at creation time ──────────────────────────
     const journeyId = journey.journey_id;
     const firstNodeId = (nodes || [])[0]?.id || 'node_0';
-    let snapshotCount = 0;
+    const snapshotArgs = { customSegmentId, stdSegmentId, audience, firstNodeId };
 
-    if (customSegmentId) {
-      // Custom segment — fetch users from unified_contacts via conditions
-      const segResult = await CustomSegmentService.getCustomers(customSegmentId, { page: 1, limit: 50000 });
-      const segCustomers = segResult?.data || [];
-      const toInsert = segCustomers.filter(c => {
-        if (audience === 'indian' && !c.is_indian) return false;
-        if (audience === 'rest' && c.is_indian) return false;
-        return true;
-      });
-      // Bulk insert with EXISTS check — skip IDs not in unified_contacts
-      const validIds = toInsert.map(c => c.id);
-      if (validIds.length > 0) {
-        const { rowCount } = await db.query(`
-          INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
-          SELECT $1, uc.id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END, 'snapshot'
-          FROM unified_contacts uc
-          WHERE uc.id = ANY($3::bigint[])
-          ON CONFLICT DO NOTHING
-        `, [journeyId, firstNodeId, validIds]);
-        snapshotCount = rowCount;
-      }
-    } else if (stdSegmentId) {
-      // Standard segment — query segment_customers
-      let audienceFilter = '';
-      if (audience === 'indian') audienceFilter = 'AND uc.is_indian = true';
-      else if (audience === 'rest') audienceFilter = 'AND uc.is_indian = false';
-
-      const { rowCount } = await db.query(`
-        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status)
-        SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END, 'snapshot'
-        FROM segment_customers sc
-        JOIN unified_contacts uc ON uc.id = sc.customer_id
-        WHERE sc.segment_id = $3 AND sc.is_active = true ${audienceFilter}
-      `, [journeyId, firstNodeId, stdSegmentId]);
-      snapshotCount = rowCount;
+    if (customSegmentId || stdSegmentId) {
+      // Both paths are now pure SQL — safe to await even for 1 M rows.
+      const count = await this._snapshotEntries(journeyId, snapshotArgs);
+      journey.snapshot_count = count;
     }
-
-    // Store the fixed snapshot count
-    await db.query(
-      'UPDATE journey_flows SET snapshot_count = $1, total_entries = $1 WHERE journey_id = $2',
-      [snapshotCount, journeyId]
-    );
-    journey.snapshot_count = snapshotCount;
 
     return journey;
   }
@@ -343,6 +366,33 @@ class JourneyService {
     const { rows: [journey] } = await db.query(
       `UPDATE journey_flows SET ${sets.join(', ')}, updated_at = NOW() WHERE journey_id = $1 RETURNING *`, params
     );
+
+    // If segment or audience changed, rebuild snapshot entries
+    const segmentChanged = fields.segment_id !== undefined || fields.custom_segment_id !== undefined;
+    const audienceChanged = fields.audience !== undefined;
+    if ((segmentChanged || audienceChanged) && journey) {
+      // Determine IDs from updated journey record
+      let customSegmentId = journey.custom_segment_id || null;
+      let stdSegmentId    = journey.segment_id || null;
+      const audience      = journey.audience || 'all';
+      const firstNodeId   = (Array.isArray(journey.nodes) ? journey.nodes[0]?.id : null) || 'node_0';
+
+      // Wipe existing snapshot entries first
+      await db.query(
+        `DELETE FROM journey_entries WHERE journey_id = $1 AND status = 'snapshot'`,
+        [journeyId]
+      );
+      await db.query(
+        `UPDATE journey_flows SET snapshot_count = 0, total_entries = 0 WHERE journey_id = $1`,
+        [journeyId]
+      );
+
+      const snapshotArgs = { customSegmentId, stdSegmentId, audience, firstNodeId };
+      if (customSegmentId || stdSegmentId) {
+        await this._snapshotEntries(journeyId, snapshotArgs);
+      }
+    }
+
     return journey;
   }
 
@@ -616,31 +666,43 @@ class JourneyService {
     let rows;
 
     if (journey.custom_segment_id) {
-      // Custom segment — fetch via CustomSegmentService (queries unified_contacts directly)
-      const segResult = await CustomSegmentService.getCustomers(journey.custom_segment_id, { page: 1, limit: 50000 });
-      const segCustomers = segResult?.data || [];
-
-      // Apply audience filter and exclude already-enrolled customers
-      const { rows: alreadyEnrolled } = await db.query(
-        'SELECT customer_id FROM journey_entries WHERE journey_id = $1', [journeyId]
-      );
-      const enrolledSet = new Set(alreadyEnrolled.map(r => String(r.customer_id)));
-
-      const toInsert = segCustomers.filter(c => {
-        if (enrolledSet.has(String(c.id))) return false;
-        if (journey.audience === 'indian' && !c.is_indian) return false;
-        if (journey.audience === 'rest' && c.is_indian) return false;
-        return true;
-      });
-
+      // Custom segment — paginated batch enroll (handles 1 M+ without memory/array-size issues)
+      const ENROLL_BATCH = 5_000;
+      let page = 1;
       rows = [];
-      for (const c of toInsert) {
-        const track = c.is_indian ? 'indian' : 'rest';
-        const { rows: inserted } = await db.query(
-          'INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING entry_id',
-          [journeyId, c.id, firstNodeId, track]
-        );
-        if (inserted.length) rows.push(inserted[0]);
+      while (true) {
+        const segResult = await CustomSegmentService.getCustomers(journey.custom_segment_id, { page, limit: ENROLL_BATCH });
+        const segCustomers = segResult?.data || [];
+        if (segCustomers.length === 0) break;
+
+        const ids = segCustomers
+          .filter(c => {
+            if (journey.audience === 'indian' && !c.is_indian) return false;
+            if (journey.audience === 'rest'   &&  c.is_indian) return false;
+            return true;
+          })
+          .map(c => c.id);
+
+        if (ids.length > 0) {
+          const { rows: inserted } = await db.query(`
+            INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
+            SELECT $1, uc.id, $2,
+                   CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
+            FROM   unified_contacts uc
+            WHERE  uc.id = ANY($3::bigint[])
+              AND  NOT EXISTS (
+                SELECT 1 FROM journey_entries je
+                WHERE  je.journey_id = $1 AND je.customer_id = uc.id
+              )
+            ON CONFLICT DO NOTHING
+            RETURNING entry_id
+          `, [journeyId, firstNodeId, ids]);
+          rows.push(...inserted);
+        }
+
+        if (segCustomers.length < ENROLL_BATCH) break;
+        page++;
+        await new Promise(r => setImmediate(r));
       }
     } else {
       // Standard segment — query segment_customers
