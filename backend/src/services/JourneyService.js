@@ -32,10 +32,10 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     return { html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' };
   }
   if (id === 2) {
-    const { _internals } = await import('./Day2CruiseRankingService.js');
+    const { default: rankTrendingCruises }    = await import('./Day2CruiseRankingService.js');
     const { buildDay2CruiseData }             = await import('./Day2CruiseDataService.js');
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
-    const ranking = _internals.buildFallbackRanking();
+    const { ranking } = await rankTrendingCruises();
     const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
     return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
   }
