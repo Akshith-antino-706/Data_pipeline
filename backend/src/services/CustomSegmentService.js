@@ -9,10 +9,11 @@ export default class CustomSegmentService {
 
   /**
    * Convert a conditions array into parameterized WHERE clauses.
-   * All conditions are ANDed. Returns { clauses, params, needsRevenueJoin, needsDateJoin }.
+   * Returns { clauseItems: [{clause, joinOp}], params, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate }.
+   * joinOp on clauseItems[i] = operator connecting clauseItems[i] to clauseItems[i+1].
    */
   static buildWhereClause(conditions) {
-    const clauses = [];
+    const clauseItems = [];
     const params = [];
     let idx = 1;
     let needsRevenueJoin = false;
@@ -20,118 +21,118 @@ export default class CustomSegmentService {
     let needsBookingDate = false;
 
     for (const cond of conditions) {
-      const sub = [];  // sub-clauses for this single condition
+      const sub = [];
 
-      switch (cond.field) {
-        case 'name': {
-          params.push(`%${cond.value}%`);
-          sub.push(`uc.name ILIKE $${idx++}`);
-          break;
+      if (cond.type === 'gtm') {
+        if (cond.gtmEvent) {
+          params.push(cond.gtmEvent);
+          sub.push(`EXISTS (SELECT 1 FROM gtm_events ge WHERE ge.unified_id = uc.id AND ge.event_name = $${idx++})`);
         }
-        case 'booking_status': {
-          const values = Array.isArray(cond.value) ? cond.value : [cond.value];
-          const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          sub.push(`uc.booking_status IN (${placeholders.join(',')})`);
-          break;
-        }
-        case 'product_tier': {
-          const values = Array.isArray(cond.value) ? cond.value : [cond.value];
-          const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          sub.push(`uc.product_tier IN (${placeholders.join(',')})`);
-          break;
-        }
-        case 'geography': {
-          const values = Array.isArray(cond.value) ? cond.value : [cond.value];
-          const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
-          sub.push(`uc.geography IN (${placeholders.join(',')})`);
-          break;
-        }
-        case 'contact_type': {
-          params.push(cond.value);
-          sub.push(`uc.contact_type = $${idx++}`);
-          break;
-        }
-        case 'country': {
-          if (Array.isArray(cond.value)) {
-            const placeholders = cond.value.map(v => { params.push(v.toUpperCase()); return `$${idx++}`; });
-            sub.push(`UPPER(TRIM(uc.country)) IN (${placeholders.join(',')})`);
-          } else {
-            params.push(cond.value.toUpperCase());
-            sub.push(`UPPER(TRIM(uc.country)) = $${idx++}`);
+      } else {
+        switch (cond.field) {
+          case 'name': {
+            params.push(`%${cond.value}%`);
+            sub.push(`uc.name ILIKE $${idx++}`);
+            break;
           }
-          break;
-        }
-        case 'is_indian': {
-          params.push(cond.value === true || cond.value === 'yes');
-          sub.push(`uc.is_indian = $${idx++}`);
-          break;
-        }
-        case 'wa_status': {
-          sub.push(cond.value === 'unsubscribed'
-            ? `uc.wa_unsubscribe = 'yes'`
-            : `(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe <> 'yes')`);
-          break;
-        }
-        case 'email_status': {
-          sub.push(cond.value === 'unsubscribed'
-            ? `uc.email_unsubscribe = 'yes'`
-            : `(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe <> 'yes')`);
-          break;
-        }
-        case 'source': {
-          params.push(`%${cond.value}%`);
-          sub.push(`uc.sources ILIKE $${idx++}`);
-          break;
-        }
-        case 'travel_date': {
-          needsTravelDate = true;
-          if (cond.value?.[0]) { params.push(cond.value[0]); sub.push(`booking_agg.max_travel_date >= $${idx++}::date`); }
-          if (cond.value?.[1]) { params.push(cond.value[1]); sub.push(`booking_agg.min_travel_date <= $${idx++}::date`); }
-          break;
-        }
-        case 'booking_date': {
-          needsBookingDate = true;
-          if (cond.value?.[0]) { params.push(cond.value[0]); sub.push(`booking_agg.max_booking_date >= $${idx++}::date`); }
-          if (cond.value?.[1]) { params.push(cond.value[1]); sub.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
-          break;
-        }
-        case 'revenue': {
-          needsRevenueJoin = true;
-          if (cond.operator === 'between' && Array.isArray(cond.value)) {
-            params.push(cond.value[0]); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
-            params.push(cond.value[1]); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
-          } else if (cond.operator === 'gte') {
-            params.push(cond.value); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
-          } else if (cond.operator === 'lte') {
-            params.push(cond.value); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
+          case 'booking_status': {
+            const values = Array.isArray(cond.value) ? cond.value : [cond.value];
+            const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
+            sub.push(`uc.booking_status IN (${placeholders.join(',')})`);
+            break;
           }
-          break;
+          case 'product_tier': {
+            const values = Array.isArray(cond.value) ? cond.value : [cond.value];
+            const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
+            sub.push(`uc.product_tier IN (${placeholders.join(',')})`);
+            break;
+          }
+          case 'geography': {
+            const values = Array.isArray(cond.value) ? cond.value : [cond.value];
+            const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });
+            sub.push(`uc.geography IN (${placeholders.join(',')})`);
+            break;
+          }
+          case 'contact_type': {
+            params.push(cond.value);
+            sub.push(`uc.contact_type = $${idx++}`);
+            break;
+          }
+          case 'country': {
+            if (Array.isArray(cond.value)) {
+              const placeholders = cond.value.map(v => { params.push(v.toUpperCase()); return `$${idx++}`; });
+              sub.push(`UPPER(TRIM(uc.country)) IN (${placeholders.join(',')})`);
+            } else {
+              params.push(cond.value.toUpperCase());
+              sub.push(`UPPER(TRIM(uc.country)) = $${idx++}`);
+            }
+            break;
+          }
+          case 'is_indian': {
+            params.push(cond.value === true || cond.value === 'yes');
+            sub.push(`uc.is_indian = $${idx++}`);
+            break;
+          }
+          case 'wa_status': {
+            sub.push(cond.value === 'unsubscribed'
+              ? `uc.wa_unsubscribe = 'yes'`
+              : `(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe <> 'yes')`);
+            break;
+          }
+          case 'email_status': {
+            sub.push(cond.value === 'unsubscribed'
+              ? `uc.email_unsubscribe = 'yes'`
+              : `(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe <> 'yes')`);
+            break;
+          }
+          case 'source': {
+            params.push(`%${cond.value}%`);
+            sub.push(`uc.sources ILIKE $${idx++}`);
+            break;
+          }
+          case 'travel_date': {
+            if (cond.value?.[0]) { needsTravelDate = true; params.push(cond.value[0]); sub.push(`booking_agg.max_travel_date >= $${idx++}::date`); }
+            if (cond.value?.[1]) { needsTravelDate = true; params.push(cond.value[1]); sub.push(`booking_agg.min_travel_date <= $${idx++}::date`); }
+            break;
+          }
+          case 'booking_date': {
+            if (cond.value?.[0]) { needsBookingDate = true; params.push(cond.value[0]); sub.push(`booking_agg.max_booking_date >= $${idx++}::date`); }
+            if (cond.value?.[1]) { needsBookingDate = true; params.push(cond.value[1]); sub.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
+            break;
+          }
+          case 'revenue': {
+            if (cond.operator === 'between' && Array.isArray(cond.value)) {
+              const [min, max] = cond.value;
+              if (min !== '' && min != null) { needsRevenueJoin = true; params.push(Number(min)); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`); }
+              if (max !== '' && max != null) { needsRevenueJoin = true; params.push(Number(max)); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`); }
+            } else if (cond.operator === 'gte' && cond.value !== '' && cond.value != null) {
+              needsRevenueJoin = true; params.push(Number(cond.value)); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
+            } else if (cond.operator === 'lte' && cond.value !== '' && cond.value != null) {
+              needsRevenueJoin = true; params.push(Number(cond.value)); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
+            }
+            break;
+          }
         }
       }
 
-      // Build all parts: field clause(s) OR GTM events clause
-      const allParts = [];
       if (sub.length > 0) {
-        allParts.push(sub.length === 1 ? sub[0] : `(${sub.join(' AND ')})`);
-      }
-      if (Array.isArray(cond.gtmEvents) && cond.gtmEvents.length > 0) {
-        const placeholders = cond.gtmEvents.map(e => { params.push(e); return `$${idx++}`; });
-        allParts.push(`EXISTS (SELECT 1 FROM gtm_events ge WHERE ge.unified_id = uc.id AND ge.event_name IN (${placeholders.join(',')}))`);
-      }
-      if (allParts.length > 0) {
-        const combined = allParts.length === 1 ? allParts[0] : `(${allParts.join(' OR ')})`;
-        clauses.push(cond.exclude ? `NOT (${combined})` : combined);
+        const combined = sub.length === 1 ? sub[0] : `(${sub.join(' AND ')})`;
+        clauseItems.push({
+          clause: cond.exclude ? `NOT (${combined})` : combined,
+          joinOp: cond.joinOp || 'AND',
+        });
       }
     }
 
-    return { clauses, params, nextIdx: idx, needsRevenueJoin, needsTravelDate, needsBookingDate };
+    return { clauseItems, params, nextIdx: idx, needsRevenueJoin, needsTravelDate, needsBookingDate };
   }
 
   /**
    * Build full SQL with optional JOINs based on conditions.
+   * WHERE is built using per-condition joinOp from clauseItems.
    */
-  static buildSegmentSQL(conditions, { select = 'COUNT(*)::int AS count', orderBy = '', limitOffset = '', operator = 'AND' } = {}) {
-    const { clauses, params, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
+  static buildSegmentSQL(conditions, { select = 'COUNT(*)::int AS count', orderBy = '', limitOffset = '' } = {}) {
+    const { clauseItems, params, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
       this.buildWhereClause(conditions);
 
     const needsDateJoin = needsTravelDate || needsBookingDate;
@@ -162,8 +163,14 @@ export default class CustomSegmentService {
       ) booking_agg ON true
     ` : '';
 
-    const condJoin = operator === 'OR' ? ' OR ' : ' AND ';
-    const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(condJoin)}` : '';
+    let whereSQL = '';
+    if (clauseItems.length > 0) {
+      let parts = clauseItems[0].clause;
+      for (let i = 1; i < clauseItems.length; i++) {
+        parts += ` ${clauseItems[i - 1].joinOp} ${clauseItems[i].clause}`;
+      }
+      whereSQL = `WHERE ${parts}`;
+    }
 
     const sql = `
       SELECT ${select}
@@ -182,7 +189,7 @@ export default class CustomSegmentService {
 
   static async create({ name, description, color, icon, conditions, status = 'active', operator = 'AND' }) {
     const op = (operator === 'OR') ? 'OR' : 'AND';
-    const count = await this.getCountPreview(conditions, op);
+    const count = await this.getCountPreview(conditions);
 
     const { rows: [seg] } = await query(`
       INSERT INTO custom_segments (name, description, color, icon, conditions, cached_count, cached_at, status, condition_operator)
@@ -208,9 +215,7 @@ export default class CustomSegmentService {
     }
     if (conditions !== undefined) {
       params.push(JSON.stringify(conditions)); updates.push(`conditions = $${idx++}`);
-      const seg = await this.getById(id);
-      const op = operator ?? seg?.condition_operator ?? 'AND';
-      const count = await this.getCountPreview(conditions, op);
+      const count = await this.getCountPreview(conditions);
       params.push(count); updates.push(`cached_count = $${idx++}`);
       updates.push(`cached_at = NOW()`);
     }
@@ -228,7 +233,7 @@ export default class CustomSegmentService {
   }
 
   static async getAll({ status } = {}) {
-    const cols = 'id, name, description, color, icon, conditions, cached_count, cached_at, status, created_at, updated_at';
+    const cols = 'id, name, description, color, icon, conditions, cached_count, cached_at, status, condition_operator, created_at, updated_at';
     let sql = `SELECT ${cols} FROM custom_segments WHERE is_active = true`;
     const params = [];
     if (status) {
@@ -241,19 +246,21 @@ export default class CustomSegmentService {
   }
 
   static async getById(id) {
-    const cols = 'id, name, description, color, icon, conditions, cached_count, cached_at, status, created_at, updated_at';
+    const cols = 'id, name, description, color, icon, conditions, cached_count, cached_at, status, condition_operator, created_at, updated_at';
     const { rows: [seg] } = await query(`SELECT ${cols} FROM custom_segments WHERE id = $1 AND is_active = true`, [id]);
     return seg || null;
   }
 
   // ── Count Preview ────────────────────────────────────────
 
-  static async getCountPreview(conditions, operator = 'AND') {
+  static async getCountPreview(conditions) {
     if (!conditions || conditions.length === 0) {
       const { rows: [r] } = await query('SELECT COUNT(*)::int AS count FROM unified_contacts');
       return r.count;
     }
-    const { sql, params } = this.buildSegmentSQL(conditions, { operator });
+    const { sql, params } = this.buildSegmentSQL(conditions);
+    console.log('[Segment Preview SQL]', sql);
+    console.log('[Segment Preview Params]', params);
     const { rows: [r] } = await query(sql, params);
     return r.count;
   }
@@ -265,29 +272,37 @@ export default class CustomSegmentService {
     if (!seg) return null;
 
     const conditions = seg.conditions || [];
-    const op = seg.condition_operator || 'AND';
-
-    // Build count query
-    const { clauses: countClauses, params: countParams, nextIdx: countIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
-      this.buildWhereClause(conditions);
-
-    // Add search to a copy
-    const clauses = [...countClauses];
-    const params = [...countParams];
-    let pIdx = countIdx;
-
-    if (search) {
-      params.push(`%${search}%`);
-      clauses.push(`(uc.name ILIKE $${pIdx} OR uc.email ILIKE $${pIdx} OR uc.mobile ILIKE $${pIdx})`);
-      pIdx++;
-    }
 
     // Count
-    const countBuild = this.buildSegmentSQL(conditions, { operator: op });
+    const countBuild = this.buildSegmentSQL(conditions);
     const { rows: [countRow] } = await query(countBuild.sql, countBuild.params);
     const total = countRow.count;
 
-    // Data query
+    // Build data query
+    const { clauseItems, params, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
+      this.buildWhereClause(conditions);
+
+    let pIdx = nextIdx;
+    let whereSQL = '';
+
+    if (clauseItems.length > 0) {
+      let parts = clauseItems[0].clause;
+      for (let i = 1; i < clauseItems.length; i++) {
+        parts += ` ${clauseItems[i - 1].joinOp} ${clauseItems[i].clause}`;
+      }
+      if (search) {
+        params.push(`%${search}%`);
+        whereSQL = `WHERE (${parts}) AND (uc.name ILIKE $${pIdx} OR uc.email ILIKE $${pIdx} OR uc.mobile ILIKE $${pIdx})`;
+        pIdx++;
+      } else {
+        whereSQL = `WHERE ${parts}`;
+      }
+    } else if (search) {
+      params.push(`%${search}%`);
+      whereSQL = `WHERE (uc.name ILIKE $${pIdx} OR uc.email ILIKE $${pIdx} OR uc.mobile ILIKE $${pIdx})`;
+      pIdx++;
+    }
+
     const offset = (page - 1) * limit;
     params.push(limit, offset);
 
@@ -321,9 +336,6 @@ export default class CustomSegmentService {
         ) sub
       ) booking_agg ON true
     ` : '';
-
-    const condJoin = op === 'OR' ? ' OR ' : ' AND ';
-    const whereSQL = clauses.length > 0 ? `WHERE ${clauses.join(condJoin)}` : '';
 
     const sql = `
       SELECT ${selectCols}
