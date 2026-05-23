@@ -82,6 +82,42 @@ router.get('/events/:eventName', async (req, res) => {
   }
 });
 
+// GET /api/v3/gtm/contact/:unifiedId — All GTM events for a specific contact
+router.get('/contact/:unifiedId', async (req, res) => {
+  try {
+    const { unifiedId } = req.params;
+
+    const [{ rows: summary }, { rows: events }] = await Promise.all([
+      // Grouped summary per event type
+      db.query(`
+        SELECT event_name,
+               COUNT(*)::int                          AS count,
+               MAX(created_at)                        AS last_seen,
+               COALESCE(SUM(event_value), 0)::numeric AS total_value
+        FROM gtm_events
+        WHERE unified_id = $1
+        GROUP BY event_name
+        ORDER BY count DESC
+      `, [unifiedId]),
+
+      // Latest 100 individual events
+      db.query(`
+        SELECT event_id, event_name, page_url, page_title,
+               event_value, utm_source, utm_medium, utm_campaign,
+               device_type, browser, city, country, created_at
+        FROM gtm_events
+        WHERE unified_id = $1
+        ORDER BY created_at DESC
+        LIMIT 100
+      `, [unifiedId]),
+    ]);
+
+    res.json({ success: true, summary, events, total: events.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/v3/gtm/export — BigQuery-compatible export
 router.get('/export', async (req, res) => {
   try {

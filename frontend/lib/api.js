@@ -186,6 +186,7 @@ export const getGTMAnalytics = (params = {}) => {
   return request(`/api/v3/gtm/analytics?${qs}`);
 };
 export const getGTMEventDetail = (eventName) => request(`/api/v3/gtm/events/${encodeURIComponent(eventName)}`);
+export const getContactGTMEvents = (unifiedId) => request(`/api/v3/gtm/contact/${unifiedId}`);
 export const getGTMExport = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/gtm/export?${qs}`);
@@ -260,6 +261,19 @@ export const getUnifiedContacts = (params = {}) => {
   return request(`/api/v3/unified-contacts?${qs}`);
 };
 export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
+export const updateUnifiedContact = (id, data) => request(`/api/v3/unified-contacts/${id}`, {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+});
+export const createUnifiedContact = (data) => request('/api/v3/unified-contacts', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+});
+export const deleteUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`, {
+  method: 'DELETE',
+});
 export const getUnifiedStats = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/stats${qs ? `?${qs}` : ''}`);
@@ -268,6 +282,8 @@ export const refreshSegmentationMV = () =>
   request('/api/v3/unified-contacts/refresh-segmentation-mv', { method: 'POST' });
 export const recomputeSegmentation = () =>
   request('/api/v3/unified-contacts/recompute-segmentation', { method: 'POST' });
+export const refreshSegmentationSnapshot = () =>
+  request('/api/v3/snapshot/refresh', { method: 'POST' });
 
 // ── Gupshup approval pipeline ───────────────────────────────
 export const getGupshupConfig = () => request('/api/v3/gupshup/config');

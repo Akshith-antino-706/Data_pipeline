@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, recomputeSegmentation, getGeneralSegment, getUnifiedContact, getCustomSegments, deleteCustomSegment } from '@/lib/api';
+import { getSegmentationTree, recomputeSegmentation, refreshSegmentationSnapshot, getGeneralSegment, getUnifiedContact, getCustomSegments, deleteCustomSegment } from '@/lib/api';
 import CreateSegmentModal from './CreateSegmentModal';
 import { comboToSlug } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
@@ -95,6 +95,7 @@ export default function CustomerSegmentation() {
     setRefreshing(true);
     try {
       await recomputeSegmentation();
+      await refreshSegmentationSnapshot();
       loadData();
     } catch (err) {
       console.error('Refresh failed:', err);
