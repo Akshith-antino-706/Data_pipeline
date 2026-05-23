@@ -1545,14 +1545,14 @@ class JourneyService {
       ORDER BY c.created_at ASC
     `, [segmentLabel, journeyId]);
 
-    // Click counts per node from gtm_events — unique users who clicked (distinct unified_id)
-    const { rows: gtmClicks } = await db.query(`
-      SELECT node_id, COUNT(DISTINCT unified_id) AS click_count
-      FROM gtm_events
-      WHERE journey_id = $1 AND node_id IS NOT NULL
+    // Click counts per node from email_send_log — rows with clicked_at set
+    const { rows: clickRows } = await db.query(`
+      SELECT node_id, COUNT(*) AS click_count
+      FROM email_send_log
+      WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
       GROUP BY node_id
     `, [journeyId]);
-    const gtmClickMap = Object.fromEntries(gtmClicks.map(r => [r.node_id, parseInt(r.click_count) || 0]));
+    const gtmClickMap = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.click_count) || 0]));
 
     // Open counts per node from email_send_log — unique users who opened (distinct unified_id)
     const { rows: openRows } = await db.query(`

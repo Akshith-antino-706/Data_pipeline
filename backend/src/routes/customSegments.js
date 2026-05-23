@@ -6,11 +6,11 @@ const router = Router();
 // POST /preview-count — must be before /:id to avoid conflict
 router.post('/preview-count', async (req, res, next) => {
   try {
-    const { conditions } = req.body;
+    const { conditions, operator } = req.body;
     if (!conditions || !Array.isArray(conditions)) {
       return res.status(400).json({ success: false, error: 'conditions[] is required' });
     }
-    const count = await CustomSegmentService.getCountPreview(conditions);
+    const count = await CustomSegmentService.getCountPreview(conditions, operator);
     res.json({ success: true, count });
   } catch (err) { next(err); }
 });
@@ -27,11 +27,11 @@ router.get('/', async (req, res, next) => {
 // POST / — create a new custom segment
 router.post('/', async (req, res, next) => {
   try {
-    const { name, description, color, icon, conditions, status } = req.body;
+    const { name, description, color, icon, conditions, status, operator } = req.body;
     if (!name || !conditions || !Array.isArray(conditions)) {
       return res.status(400).json({ success: false, error: 'name and conditions[] are required' });
     }
-    const data = await CustomSegmentService.create({ name, description, color, icon, conditions, status });
+    const data = await CustomSegmentService.create({ name, description, color, icon, conditions, status, operator });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });

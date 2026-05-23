@@ -29,6 +29,7 @@ import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
 import DailyBillingSync from './src/services/DailyBillingSync.js';
 import JourneyService from './src/services/JourneyService.js';
+import UnifiedContactService from './src/services/UnifiedContactService.js';
 // import BigQuerySyncService from './src/services/BigQuerySyncService.js'; // disabled
 // import MySQLSyncService from './src/services/MySQLSyncService.js'; // disabled
 // RaynaSyncService — no longer uses ACICO API; data ingested via POST /api/v3/rayna-sync/ingest
@@ -286,6 +287,25 @@ app.post('/api/v3/migrate-rfm', async (_, res) => {
   try {
     await runMigrationFile('010_rfm_utm_coupons_approval.sql');
     res.json({ success: true, message: 'RFM/UTM/Coupons/Approvals migration (010) succeeded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v3/migrate-snapshot', async (_, res) => {
+  try {
+    await runMigrationFile('077_segmentation_tree_snapshot.sql');
+    res.json({ success: true, message: 'Segmentation tree snapshot table created (077). POST /api/v3/snapshot/refresh to populate it.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Manually trigger the segmentation tree snapshot refresh (all 3 variants)
+app.post('/api/v3/snapshot/refresh', async (_, res) => {
+  try {
+    const result = await UnifiedContactService.refreshSegmentationSnapshot();
+    res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -597,6 +617,21 @@ async function runDailySyncWithRetry() {
 cron.schedule('0 1 * * *', () => { runDailySyncWithRetry(); }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time (3 retries, 10min gap)');
 
+// ── Segmentation tree snapshot — 2 AM Dubai time ─────────────────────────────
+// Runs after daily billing sync so revenue figures are fresh.
+// Sequential (B2C → B2B → All) to avoid DB pool saturation.
+async function runSnapshotRefresh() {
+  try {
+    console.log('[Cron:Snapshot] Starting nightly segmentation tree refresh...');
+    await UnifiedContactService.refreshSegmentationSnapshot();
+  } catch (err) {
+    console.error('[Cron:Snapshot] Refresh failed:', err.message);
+  }
+}
+
+cron.schedule('0 2 * * *', runSnapshotRefresh, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Segmentation tree snapshot scheduled at 2:00 AM Dubai time');
+
 // ── Journey Engine — process due entries every 5 min ──────────────
 cron.schedule('*/5 * * * *', async () => {
   try {
@@ -648,6 +683,25 @@ const HTTPS_PORT = 3443;
 app.listen(PORT, async () => {
   console.log(`  HTTP  → http://localhost:${PORT}`);
   await flushCache();
+
+  // Auto-populate snapshot table on first deploy (or after migration).
+  // Checks if any variant has computed_at = NULL, then runs a full refresh.
+  // Runs in background — does not delay server startup.
+  setTimeout(async () => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM segmentation_tree_snapshot WHERE computed_at IS NULL LIMIT 1`
+      );
+      if (rows.length > 0) {
+        console.log('[Snapshot] Snapshot table empty — running initial populate...');
+        await UnifiedContactService.refreshSegmentationSnapshot();
+      } else {
+        console.log('[Snapshot] Snapshot table already populated — skipping init populate');
+      }
+    } catch {
+      // Table not yet created (migration not run) — skip silently
+    }
+  }, 5000); // 5-second delay so server is fully ready before hitting the DB
 });
 
 // HTTPS server for GTM events (avoids mixed-content blocking)

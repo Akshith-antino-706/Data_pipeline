@@ -29,7 +29,42 @@ export default function Campaigns() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="spinner">Loading campaigns...</div>;
+  if (loading) return (
+    <div>
+      {/* Page header — keep real title visible */}
+      <div className="page-header">
+        <h2>Campaigns</h2>
+      </div>
+
+      {/* Table card skeleton */}
+      <div className="card">
+        <div className="card-header">
+          <div className="skeleton" style={{ width: 160, height: 16, borderRadius: 4 }} />
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {['Campaign', 'Channel', 'Segment', 'Status'].map(h => (
+                  <th key={h}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[...Array(8)].map((_, i) => (
+                <tr key={i}>
+                  <td><div className="skeleton" style={{ width: 180, height: 13, borderRadius: 4 }} /></td>
+                  <td><div className="skeleton" style={{ width: 70, height: 13, borderRadius: 4 }} /></td>
+                  <td><div className="skeleton" style={{ width: 120, height: 13, borderRadius: 4 }} /></td>
+                  <td><div className="skeleton" style={{ width: 56, height: 20, borderRadius: 20 }} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer}>

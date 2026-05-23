@@ -5,6 +5,14 @@ import { invalidate } from '../config/cache.js';
 
 const router = Router();
 
+// POST /api/v3/unified-contacts — create a new contact (booking_status defaults to PROSPECT)
+router.post('/', async (req, res, next) => {
+  try {
+    const contact = await UnifiedContactService.createContact(req.body);
+    res.status(201).json({ success: true, data: contact });
+  } catch (err) { next(err); }
+});
+
 // POST /api/v3/unified-contacts/sync — trigger full rebuild (extract → link → segment)
 router.post('/sync', async (_req, res, next) => {
   try {
@@ -150,6 +158,24 @@ router.get('/:id', async (req, res, next) => {
     const contact = await UnifiedContactService.getById(req.params.id);
     if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
     res.json({ success: true, data: contact });
+  } catch (err) { next(err); }
+});
+
+// PATCH /api/v3/unified-contacts/:id — update editable contact fields
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const updated = await UnifiedContactService.updateContact(req.params.id, req.body);
+    if (!updated) return res.status(404).json({ success: false, error: 'Contact not found' });
+    res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/v3/unified-contacts/:id — permanently delete a contact
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const deleted = await UnifiedContactService.deleteContact(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, error: 'Contact not found' });
+    res.json({ success: true, id: deleted.id });
   } catch (err) { next(err); }
 });
 

@@ -123,32 +123,27 @@ export default function CampaignDetail() {
   const router = useRouter();
   const { id } = useParams();
 
-  const [journey, setJourney]         = useState(null);
-  const [analytics, setAnalytics]     = useState(null);
+  const [journey, setJourney]           = useState(null);
+  const [analytics, setAnalytics]       = useState(null);
   const [campaignData, setCampaignData] = useState(null);
-  const [gtmByNode, setGtmByNode]         = useState({});
+  const [gtmByNode, setGtmByNode]       = useState({});
   const [allEventTypes, setAllEventTypes] = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState(null);
-  const [expanded, setExpanded]       = useState({});
-  const [refreshing, setRefreshing]   = useState(false);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(null);
+  const [expanded, setExpanded]         = useState({});
+  const [refreshing, setRefreshing]     = useState(false);
+  const [nodeDetailsLoaded, setNodeDetailsLoaded]   = useState(false);
+  const [nodeDetailsLoading, setNodeDetailsLoading] = useState(false);
 
+  // Initial load — only the two APIs needed for the visible page
   const load = async () => {
     try {
-      const [jRes, aRes, cRes, gRes] = await Promise.allSettled([
+      const [jRes, cRes] = await Promise.allSettled([
         getJourney(id),
-        getJourneyAnalytics(id),
         getJourneyCampaignAnalytics(id),
-        getJourneyGtmNodeStats(id),
       ]);
       if (jRes.status === 'fulfilled') setJourney(jRes.value.data || jRes.value);
-      if (aRes.status === 'fulfilled') setAnalytics(aRes.value);
       if (cRes.status === 'fulfilled') setCampaignData(cRes.value.data || cRes.value);
-      if (gRes.status === 'fulfilled') {
-        const g = gRes.value;
-        setGtmByNode(g.data || {});
-        setAllEventTypes(g.allEventTypes || []);
-      }
     } catch (err) {
       setError(err.message || 'Failed to load');
     } finally {
@@ -156,11 +151,103 @@ export default function CampaignDetail() {
     }
   };
 
+  // Lazy-load node detail APIs (analytics + GTM) — called on first expand
+  const loadNodeDetails = async () => {
+    if (nodeDetailsLoaded || nodeDetailsLoading) return;
+    setNodeDetailsLoading(true);
+    try {
+      const [aRes, gRes] = await Promise.allSettled([
+        getJourneyAnalytics(id),
+        getJourneyGtmNodeStats(id),
+      ]);
+      if (aRes.status === 'fulfilled') setAnalytics(aRes.value.data || aRes.value);
+      if (gRes.status === 'fulfilled') {
+        const g = gRes.value;
+        setGtmByNode(g.data || {});
+        setAllEventTypes(g.allEventTypes || []);
+      }
+      setNodeDetailsLoaded(true);
+    } finally {
+      setNodeDetailsLoading(false);
+    }
+  };
+
   useEffect(() => { load(); }, [id]);
 
-  const refresh = async () => { setRefreshing(true); await load().finally(() => setRefreshing(false)); };
+  const refresh = async () => {
+    setRefreshing(true);
+    setNodeDetailsLoaded(false);
+    await load();
+    if (Object.values(expanded).some(Boolean)) await loadNodeDetails();
+    setRefreshing(false);
+  };
 
-  if (loading) return <div className="spinner">Loading…</div>;
+  const toggleExpand = (nodeId) => {
+    const willExpand = !expanded[nodeId];
+    setExpanded(prev => ({ ...prev, [nodeId]: !prev[nodeId] }));
+    if (willExpand) loadNodeDetails();
+  };
+
+  if (loading) return (
+    <div>
+      {/* Header skeleton */}
+      <div className="page-header" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="skeleton" style={{ width: 32, height: 32, borderRadius: 8 }} />
+          <div>
+            <div className="skeleton" style={{ width: 220, height: 20, borderRadius: 6, marginBottom: 8 }} />
+            <div className="skeleton" style={{ width: 140, height: 12, borderRadius: 4 }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div className="skeleton" style={{ width: 32, height: 32, borderRadius: 8 }} />
+          <div className="skeleton" style={{ width: 64, height: 24, borderRadius: 20 }} />
+        </div>
+      </div>
+
+      {/* Top stat tiles — labels visible, values shimmer */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+        {[
+          { label: 'TARGET', color: 'var(--green)' },
+          { label: 'SENT',   color: 'var(--green)' },
+          { label: 'OPENED', color: '#3b82f6' },
+          { label: 'CLICKED',color: 'var(--purple)' },
+        ].map(({ label }) => (
+          <div key={label} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '16px 10px', textAlign: 'center' }}>
+            <div className="skeleton" style={{ width: 70, height: 28, borderRadius: 6, margin: '0 auto 10px' }} />
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: 'var(--text-muted)' }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Node cards — section title visible, card content shimmers */}
+      <div className="card">
+        <div className="card-header">
+          <h3>Journey Nodes</h3>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 0' }}>
+          {[...Array(4)].map((_, i) => (
+            <div key={i} style={{ borderRadius: 10, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="skeleton" style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0 }} />
+                <div className="skeleton" style={{ width: 16, height: 16, borderRadius: 4, flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div className="skeleton" style={{ width: 140, height: 14, borderRadius: 4, marginBottom: 6 }} />
+                  <div className="skeleton" style={{ width: 80, height: 10, borderRadius: 4 }} />
+                </div>
+                <div className="skeleton" style={{ width: 60, height: 20, borderRadius: 20 }} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[...Array(3)].map((_, j) => (
+                    <div key={j} className="skeleton" style={{ width: 56, height: 20, borderRadius: 20 }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
   if (error)   return <div className="empty" style={{ padding: 32 }}>{error}</div>;
   if (!journey) return <div className="empty" style={{ padding: 32 }}>Journey not found</div>;
 
@@ -180,17 +267,26 @@ export default function CampaignDetail() {
     funnelMap[row.current_node_id][row.status] = parseInt(row.count) || 0;
   }
 
-  // Campaign map by node
+  // Campaign map by node — same logic as journey detail screen
   const nodeCampaignMap = {};
-  for (const c of (campaignData?.campaigns || [])) {
-    if (c.journey_node_id) nodeCampaignMap[c.journey_node_id] = c;
-  }
+  const _campaigns = campaignData?.campaigns || [];
+  const _actionNodes = nodes.filter(n => n.type === 'action');
+  const _campsByChannel = {};
+  _campaigns.forEach(c => {
+    const ch = (c.channel || '').toLowerCase();
+    if (!_campsByChannel[ch]) _campsByChannel[ch] = [];
+    _campsByChannel[ch].push(c);
+  });
+  _actionNodes.forEach(n => {
+    const ch = (n.data?.channel || '').toLowerCase();
+    const matched = _campaigns.find(c => c.journey_node_id === n.id)
+      || (_campsByChannel[ch] && _campsByChannel[ch].shift());
+    if (matched) nodeCampaignMap[n.id] = matched;
+  });
 
   const gtmClicks    = campaignData?.gtm_clicks || {};
   const opens        = campaignData?.opens || {};
   const globalTarget = parseInt(campaignData?.target_count) || parseInt(journey.total_entries) || 0;
-
-  const toggleExpand = (nodeId) => setExpanded(prev => ({ ...prev, [nodeId]: !prev[nodeId] }));
 
   return (
     <motion.div initial="hidden" animate="visible" variants={stagger}>
@@ -262,7 +358,7 @@ export default function CampaignDetail() {
               const target  = parseInt(camp?.target_count) || globalTarget;
               const opened  = opens[node.id]     || parseInt(ns.action_read)    || 0;
               const clicked = gtmClicks[node.id] || parseInt(ns.action_clicked) || 0;
-              const failed  = parseInt(ns.action_failed)  || parseInt(camp?.fail_count) || 0;
+              const failed  = parseInt(camp?.fail_count) || parseInt(ns.action_failed) || 0;
               const blocked = parseInt(ns.action_blocked) || 0;
               const inQueue = funnel.active || 0;
 
@@ -358,6 +454,18 @@ export default function CampaignDetail() {
                         >
                           <div style={{ padding: '0 14px 16px 14px', borderTop: '1px solid var(--border-color)' }}>
 
+                            {/* Loading shimmer while node detail APIs are in-flight */}
+                            {nodeDetailsLoading && (
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 14 }}>
+                                {[...Array(4)].map((_, i) => (
+                                  <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
+                                    <div className="skeleton" style={{ width: 60, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
+                                    <div className="skeleton" style={{ width: 40, height: 8, borderRadius: 4, margin: '0 auto' }} />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
                             {/* Row 1 — primary */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 14 }}>
                               <StatTile label="TARGET"  value={target}  color="var(--green)" />
@@ -369,11 +477,9 @@ export default function CampaignDetail() {
                             </div>
 
                             {/* Row 2 — secondary */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 8 }}>
-                              <StatTile label="IN QUEUE"  value={inQueue}  color={inQueue > 0 ? '#f59e0b' : 'var(--text-muted)'} />
-                              <StatTile label="FAILED"    value={failed}   color={failed > 0 ? 'var(--red)' : 'var(--text-muted)'} />
-                              <StatTile label="BLOCKED"   value={blocked}  color={blocked > 0 ? '#f97316' : 'var(--text-muted)'} />
-                              <StatTile label="DELIVERED" value={parseInt(camp?.delivered_count) || 0} />
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
+                              <StatTile label="FAILED"  value={failed}  color={failed > 0 ? 'var(--red)' : 'var(--text-muted)'} />
+                              <StatTile label="BOUNCED" value={parseInt(camp?.bounce_count) || 0} color="var(--text-muted)" />
                             </div>
 
                             {/* Funnel bars */}

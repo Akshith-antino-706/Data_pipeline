@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSegmentationTree, recomputeSegmentation, getGeneralSegment, getUnifiedContact, getCustomSegments, deleteCustomSegment } from '@/lib/api';
+import { getSegmentationTree, recomputeSegmentation, refreshSegmentationSnapshot, getGeneralSegment, getUnifiedContact, getCustomSegments, deleteCustomSegment } from '@/lib/api';
 import CreateSegmentModal from './CreateSegmentModal';
 import { comboToSlug } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
@@ -29,72 +29,6 @@ function SkeletonBox({ width, height = 20, borderRadius = 'var(--radius)', style
   return <div style={{ width, height, borderRadius, ...shimmer, ...style }} />;
 }
 
-function SegmentationSkeleton() {
-  return (
-    <div style={{ padding: '28px 32px' }}>
-      {/* Header skeleton */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
-        <div>
-          <SkeletonBox width={260} height={26} style={{ marginBottom: 8 }} />
-          <SkeletonBox width={340} height={13} />
-        </div>
-        <SkeletonBox width={100} height={36} borderRadius="var(--radius)" />
-      </div>
-
-      {/* KPI Cards skeleton — 4 cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '20px 24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <SkeletonBox width={16} height={16} borderRadius={4} />
-              <SkeletonBox width={90} height={10} />
-            </div>
-            <SkeletonBox width={100} height={24} />
-          </div>
-        ))}
-      </div>
-
-      {/* Revenue Breakdown skeleton — 4 source cards */}
-      <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 32 }}>
-        <SkeletonBox width={320} height={10} style={{ marginBottom: 14 }} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-              <SkeletonBox width={32} height={32} borderRadius="var(--radius)" />
-              <div>
-                <SkeletonBox width={50} height={12} style={{ marginBottom: 6 }} />
-                <SkeletonBox width={80} height={10} style={{ marginBottom: 4 }} />
-                <SkeletonBox width={70} height={14} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Step 1 heading skeleton */}
-      <SkeletonBox width={200} height={13} style={{ marginBottom: 16 }} />
-
-      {/* Status cards skeleton — 3×2 grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '18px 20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <SkeletonBox width={36} height={36} borderRadius="var(--radius)" />
-              <div>
-                <SkeletonBox width={90} height={14} style={{ marginBottom: 6 }} />
-                <SkeletonBox width={130} height={10} />
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <SkeletonBox width={80} height={28} />
-              <SkeletonBox width={120} height={12} />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 const fmt = (n) => (n || 0).toLocaleString();
 const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -123,7 +57,8 @@ const PIE_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#f97316', '#647
 export default function CustomerSegmentation() {
   const router = useRouter();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [treeLoading, setTreeLoading] = useState(true);
+  const [generalLoading, setGeneralLoading] = useState(true);
   const [expandedStatus, setExpandedStatus] = useState(null);
   const [breakdownModal, setBreakdownModal] = useState(null);
   const [userDetail, setUserDetail] = useState(null);
@@ -136,18 +71,21 @@ export default function CustomerSegmentation() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [customSegments, setCustomSegments] = useState([]);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = businessType === 'All' ? {} : { businessType };
-      const [tree, gen] = await Promise.all([
-        getSegmentationTree(params),
-        getGeneralSegment(params).catch(() => ({ data: null })),
-      ]);
-      setData(tree);
-      setGeneralSeg(gen?.data || null);
-    } catch (err) { console.error('Failed to load segmentation:', err); }
-    setLoading(false);
+  const loadData = useCallback(() => {
+    const params = businessType === 'All' ? {} : { businessType };
+
+    // Fire both independently so each section renders as soon as its data arrives
+    setTreeLoading(true);
+    getSegmentationTree(params)
+      .then(tree => setData(tree))
+      .catch(err => console.error('Failed to load segmentation tree:', err))
+      .finally(() => setTreeLoading(false));
+
+    setGeneralLoading(true);
+    getGeneralSegment(params)
+      .then(gen => setGeneralSeg(gen?.data || null))
+      .catch(() => setGeneralSeg(null))
+      .finally(() => setGeneralLoading(false));
   }, [businessType]);
 
   // Full recompute — re-runs ON_TRIP / FUTURE_TRAVEL / PAST_BOOKING rules against
@@ -157,7 +95,8 @@ export default function CustomerSegmentation() {
     setRefreshing(true);
     try {
       await recomputeSegmentation();
-      await loadData();
+      await refreshSegmentationSnapshot();
+      loadData();
     } catch (err) {
       console.error('Refresh failed:', err);
     } finally {
@@ -258,13 +197,7 @@ export default function CustomerSegmentation() {
     return parts.join(' \u2014 ');
   };
 
-  if (loading) return <SegmentationSkeleton />;
-
-  if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>Failed to load segmentation data.</div>;
-
-  const { totals, statusCounts, breakdown, revenueByType: acicoRevenue } = data;
-
-  // Pie chart data for status distribution
+  const { totals, statusCounts = [], breakdown, revenueByType: acicoRevenue } = data || {};
   const pieData = statusCounts.map(s => ({ name: STATUS_CONFIG[s.booking_status]?.label || s.booking_status, value: s.count }));
 
   return (
@@ -289,8 +222,8 @@ export default function CustomerSegmentation() {
               <Plus size={14} />
               Create Segment
             </button>
-            <button onClick={handleRefresh} disabled={refreshing || loading}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', color: 'var(--primary-foreground)', border: 'none', borderRadius: 'var(--radius)', cursor: (refreshing || loading) ? 'wait' : 'pointer', opacity: (refreshing || loading) ? 0.7 : 1, fontSize: 13, fontWeight: 500 }}>
+            <button onClick={handleRefresh} disabled={refreshing || treeLoading}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', color: 'var(--primary-foreground)', border: 'none', borderRadius: 'var(--radius)', cursor: (refreshing || treeLoading) ? 'wait' : 'pointer', opacity: (refreshing || treeLoading) ? 0.7 : 1, fontSize: 13, fontWeight: 500 }}>
               <RefreshCw size={14} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
               {refreshing ? 'Recomputing…' : 'Refresh'}
             </button>
@@ -298,15 +231,19 @@ export default function CustomerSegmentation() {
         </div>
 
         {/* Top KPIs */}
-        <motion.div variants={staggerContainer} initial="hidden" animate="visible"
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
-          {[
-            { label: 'Total Customers', value: fmt(totals.total), icon: Users },
-            { label: 'Segmented', value: `${fmt(totals.segmented)} (${pct(totals.segmented, totals.total)})`, icon: TrendingUp },
-            { label: 'Segments', value: totals.segment_count, icon: Map },
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
+          {treeLoading ? Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '20px 24px' }}>
+              <SkeletonBox width={90} height={10} style={{ marginBottom: 10 }} />
+              <SkeletonBox width={130} height={24} />
+            </div>
+          )) : [
+            { label: 'Total Customers', value: fmt(totals?.total), icon: Users },
+            { label: 'Segmented', value: `${fmt(totals?.segmented)} (${pct(totals?.segmented, totals?.total)})`, icon: TrendingUp },
+            { label: 'Segments', value: totals?.segment_count, icon: Map },
             { label: 'Total Confirmed Revenue', value: fmtM(acicoRevenue?.total), icon: DollarSign },
           ].map((kpi, i) => (
-            <motion.div key={i} variants={fadeInUp}
+            <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07, duration: 0.35 }}
               style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '20px 24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <kpi.icon size={16} style={{ color: 'var(--muted-foreground)' }} />
@@ -315,11 +252,27 @@ export default function CustomerSegmentation() {
               <div style={{ fontSize: 22, fontWeight: 700 }}>{kpi.value}</div>
             </motion.div>
           ))}
-        </motion.div>
+        </div>
 
         {/* ACICO Revenue Breakdown */}
-        {acicoRevenue?.sources && (
-          <motion.div variants={fadeInUp} initial="hidden" animate="visible"
+        {treeLoading ? (
+          <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 32 }}>
+            <SkeletonBox width={340} height={10} style={{ marginBottom: 14 }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                  <SkeletonBox width={32} height={32} borderRadius="var(--radius)" />
+                  <div>
+                    <SkeletonBox width={50} height={12} style={{ marginBottom: 5 }} />
+                    <SkeletonBox width={80} height={10} style={{ marginBottom: 5 }} />
+                    <SkeletonBox width={70} height={13} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : acicoRevenue?.sources && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
             style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 32 }}>
             <div style={{ fontSize: 12, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 500, marginBottom: 12 }}>
               Revenue Breakdown — All-Time Confirmed (Cancelled Excluded)
@@ -353,12 +306,22 @@ export default function CustomerSegmentation() {
             Step 1 &mdash; Booking Status
           </h2>
         </div>
-        <motion.div variants={staggerContainer} initial="hidden" animate="visible"
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 32 }}>
-          {generalSeg && (() => {
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 32 }}>
+          {/* General card — independent from tree data */}
+          {generalLoading ? (
+            <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '18px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <SkeletonBox width={36} height={36} borderRadius="var(--radius)" />
+                <div><SkeletonBox width={80} height={13} style={{ marginBottom: 6 }} /><SkeletonBox width={120} height={10} /></div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <SkeletonBox width={80} height={28} /><SkeletonBox width={130} height={11} />
+              </div>
+            </div>
+          ) : generalSeg && (() => {
             const isExpanded = expandedStatus === '__general__';
             return (
-              <motion.div variants={fadeInUp}
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
                 onClick={() => setExpandedStatus(isExpanded ? null : '__general__')}
                 style={{
                   background: 'var(--card)', border: `1px solid ${isExpanded ? '#e2b340' : 'var(--border)'}`,
@@ -382,12 +345,24 @@ export default function CustomerSegmentation() {
               </motion.div>
             );
           })()}
-          {statusCounts.map((s) => {
+
+          {/* Status cards — skeleton until tree data arrives */}
+          {treeLoading ? Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '18px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <SkeletonBox width={36} height={36} borderRadius="var(--radius)" />
+                <div><SkeletonBox width={90} height={13} style={{ marginBottom: 6 }} /><SkeletonBox width={130} height={10} /></div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <SkeletonBox width={80} height={28} /><SkeletonBox width={120} height={11} />
+              </div>
+            </div>
+          )) : statusCounts.map((s, i) => {
             const cfg = STATUS_CONFIG[s.booking_status] || { label: s.booking_status, color: '#64748b', bg: 'rgba(100,116,139,0.12)', icon: Users };
             const Icon = cfg.icon;
             const isExpanded = expandedStatus === s.booking_status;
             return (
-              <motion.div key={s.booking_status} variants={fadeInUp}
+              <motion.div key={s.booking_status} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06, duration: 0.35 }}
                 onClick={() => setExpandedStatus(isExpanded ? null : s.booking_status)}
                 style={{
                   background: 'var(--card)', border: `1px solid ${isExpanded ? cfg.color : 'var(--border)'}`,
@@ -419,12 +394,12 @@ export default function CustomerSegmentation() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                   <span style={{ fontSize: 28, fontWeight: 700, color: cfg.color }}>{fmt(s.count)}</span>
-                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>{pct(s.count, totals.total)} &middot; {fmtAED(s.revenue)}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>{pct(s.count, totals?.total)} &middot; {fmtAED(s.revenue)}</span>
                 </div>
               </motion.div>
             );
           })}
-        </motion.div>
+        </div>
 
         {/* Step 2+3: Breakdown for expanded status */}
         <AnimatePresence>

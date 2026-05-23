@@ -218,6 +218,44 @@ export default class UnifiedContactService {
     return contact;
   }
 
+  static async createContact(fields) {
+    const { name, email, mobile, city, country, contact_type, geography, wa_unsubscribe, email_unsubscribe } = fields;
+    if (!name && !email && !mobile) throw new Error('At least one of name, email, or phone is required');
+    const { rows } = await pool.query(`
+      INSERT INTO unified_contacts
+        (name, email, mobile, city, country, contact_type, geography,
+         wa_unsubscribe, email_unsubscribe, booking_status, sources, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'PROSPECT','manual', NOW())
+      RETURNING *
+    `, [
+      name || null, email || null, mobile || null, city || null,
+      country || null, contact_type || 'B2C', geography || null,
+      wa_unsubscribe || 'no', email_unsubscribe || 'no',
+    ]);
+    return rows[0];
+  }
+
+  static async updateContact(id, fields) {
+    const ALLOWED = ['name', 'email', 'mobile', 'city', 'country', 'contact_type', 'wa_unsubscribe', 'email_unsubscribe'];
+    const entries = Object.entries(fields).filter(([k]) => ALLOWED.includes(k));
+    if (entries.length === 0) throw new Error('No valid fields to update');
+    const setClause = entries.map(([k], i) => `${k} = $${i + 1}`).join(', ');
+    const values = [...entries.map(([, v]) => v), id];
+    const { rows } = await pool.query(
+      `UPDATE unified_contacts SET ${setClause} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    return rows[0] || null;
+  }
+
+  static async deleteContact(id) {
+    const { rows } = await pool.query(
+      'DELETE FROM unified_contacts WHERE id = $1 RETURNING id',
+      [id]
+    );
+    return rows[0] || null;
+  }
+
   static async getFilterOptions({ businessType } = {}) {
     const btClause = businessType ? 'AND contact_type = $1' : '';
     const btParam = businessType ? [businessType] : [];
@@ -260,12 +298,137 @@ export default class UnifiedContactService {
   }
 
   /**
-   * Segmentation dashboard: 3-step decision tree overview
-   * Computed directly from unified_contacts (no materialized view)
+   * Segmentation dashboard: 3-step decision tree overview.
+   *
+   * Read path (no date filter):
+   *   Redis L1 (1h TTL) → segmentation_tree_snapshot table → live compute fallback
+   *
+   * Date-filtered requests always go through live compute + short Redis TTL
+   * because arbitrary date ranges cannot be pre-snapshotted.
+   *
+   * The snapshot table is refreshed nightly at 2 AM Dubai time by a node-cron
+   * job in server.js. On first deploy (table empty), the fallback triggers a
+   * live compute and auto-populates the table so subsequent requests are fast.
    */
   static async getSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
-    const cacheKey = `dashboard:tree:${businessType || 'all'}:${dateFrom || ''}:${dateTo || ''}`;
-    return cached(cacheKey, () => this._computeSegmentationTree({ businessType, dateFrom, dateTo }), 1800);
+    // Date-filtered: live compute + short Redis TTL (same as before)
+    if (dateFrom || dateTo) {
+      const cacheKey = `dashboard:tree:${businessType || 'all'}:${dateFrom || ''}:${dateTo || ''}`;
+      return cached(cacheKey, () => this._computeSegmentationTree({ businessType, dateFrom, dateTo }), 1800);
+    }
+
+    // Standard (no date filter): Redis → snapshot table → live fallback
+    const btKey = businessType || 'All';
+    const cacheKey = `dashboard:tree:snapshot:${btKey}`;
+
+    return cached(cacheKey, async () => {
+      // 1. Try snapshot table (single primary-key lookup, sub-millisecond)
+      try {
+        const { rows } = await pool.query(
+          `SELECT total_contacts, segment_count, total_revenue,
+                  status_counts, breakdown, revenue_by_type
+           FROM segmentation_tree_snapshot
+           WHERE business_type = $1 AND computed_at IS NOT NULL`,
+          [btKey]
+        );
+
+        if (rows.length > 0) {
+          const r = rows[0];
+          return {
+            totals: {
+              total:         r.total_contacts,
+              segmented:     r.total_contacts,
+              segment_count: r.segment_count,
+              total_revenue: parseFloat(r.total_revenue),
+            },
+            statusCounts:   r.status_counts,
+            breakdown:      r.breakdown,
+            revenueByType:  r.revenue_by_type,
+          };
+        }
+      } catch (err) {
+        // Table may not exist yet (migration not run) — fall through to live compute
+        console.warn(`[Snapshot] Table read failed for ${btKey}, falling back to live:`, err.message);
+      }
+
+      // 2. Snapshot empty / table missing — live compute then store for next request
+      console.log(`[Snapshot] No snapshot for ${btKey} — computing live and storing...`);
+      const data = await this._computeSegmentationTree({ businessType });
+
+      // Store async (don't block the response)
+      pool.query(
+        `UPDATE segmentation_tree_snapshot
+         SET total_contacts  = $1,
+             segment_count   = $2,
+             total_revenue   = $3,
+             status_counts   = $4,
+             breakdown       = $5,
+             revenue_by_type = $6,
+             computed_at     = now()
+         WHERE business_type = $7`,
+        [
+          data.totals.total,
+          data.totals.segment_count,
+          parseFloat(data.totals.total_revenue || 0),
+          JSON.stringify(data.statusCounts),
+          JSON.stringify(data.breakdown),
+          JSON.stringify(data.revenueByType),
+          btKey,
+        ]
+      ).catch(err => console.warn('[Snapshot] Auto-store failed:', err.message));
+
+      return data;
+    }, 3600); // 1-hour Redis TTL — nightly cron invalidates after table refresh
+  }
+
+  /**
+   * Recompute all 3 business-type variants and store them in
+   * segmentation_tree_snapshot. Called by the nightly cron in server.js
+   * and the POST /api/v3/snapshot/refresh manual trigger.
+   *
+   * Runs sequentially (B2C → B2B → All) to avoid saturating the DB pool.
+   * After all three are stored, invalidates Redis so the next request
+   * reads fresh data from the table.
+   */
+  static async refreshSegmentationSnapshot() {
+    console.log('[Snapshot] Starting nightly refresh...');
+    const variants = [
+      { businessType: 'B2C', key: 'B2C' },
+      { businessType: 'B2B', key: 'B2B' },
+      { businessType: undefined, key: 'All' },
+    ];
+
+    for (const { businessType, key } of variants) {
+      console.log(`[Snapshot] Computing ${key}...`);
+      const data = await this._computeSegmentationTree({ businessType });
+
+      await pool.query(
+        `UPDATE segmentation_tree_snapshot
+         SET total_contacts  = $1,
+             segment_count   = $2,
+             total_revenue   = $3,
+             status_counts   = $4,
+             breakdown       = $5,
+             revenue_by_type = $6,
+             computed_at     = now()
+         WHERE business_type = $7`,
+        [
+          data.totals.total,
+          data.totals.segment_count,
+          parseFloat(data.totals.total_revenue || 0),
+          JSON.stringify(data.statusCounts),
+          JSON.stringify(data.breakdown),
+          JSON.stringify(data.revenueByType),
+          key,
+        ]
+      );
+      console.log(`[Snapshot] ${key} stored (${data.totals.total} contacts)`);
+    }
+
+    // Invalidate Redis so next requests read the fresh table data
+    await invalidate('dashboard:tree:snapshot:*');
+    console.log('[Snapshot] Nightly refresh complete — Redis invalidated');
+    return { refreshed: ['B2C', 'B2B', 'All'], at: new Date().toISOString() };
   }
 
   static async _computeSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
