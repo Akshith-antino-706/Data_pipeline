@@ -108,7 +108,7 @@ export default function SegmentActivity() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [snapshotting, setSnapshotting] = useState(false);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(7);
   const [segmentFilter, setSegmentFilter] = useState('');
   const { businessType } = useBusinessType();
 
