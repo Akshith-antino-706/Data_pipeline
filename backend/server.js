@@ -29,6 +29,8 @@ import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
 import DailyBillingSync from './src/services/DailyBillingSync.js';
 import JourneyService from './src/services/JourneyService.js';
+import UnsubscribeSyncService from './src/services/UnsubscribeSyncService.js';
+import ContactEnrichmentService from './src/services/ContactEnrichmentService.js';
 import UnifiedContactService from './src/services/UnifiedContactService.js';
 // import BigQuerySyncService from './src/services/BigQuerySyncService.js'; // disabled
 // import MySQLSyncService from './src/services/MySQLSyncService.js'; // disabled
@@ -631,6 +633,28 @@ async function runSnapshotRefresh() {
 
 cron.schedule('0 2 * * *', runSnapshotRefresh, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Segmentation tree snapshot scheduled at 2:00 AM Dubai time');
+
+// ── Unsubscribe Sync — MySQL → RDS daily at 2 AM Dubai ──────────────
+cron.schedule('0 2 * * *', async () => {
+  try {
+    const result = await UnsubscribeSyncService.sync();
+    console.log(`[Cron:UnsubscribeSync] Done — Yes: ${result.setYes}, No: ${result.setNo}`);
+  } catch (err) {
+    console.error('[Cron:UnsubscribeSync] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Unsubscribe sync scheduled at 2:00 AM Dubai time');
+
+// ── Contact Enrichment — validate emails + format mobiles daily at 1:30 AM Dubai ──
+cron.schedule('30 1 * * *', async () => {
+  try {
+    const result = await ContactEnrichmentService.enrichNew();
+    console.log(`[Cron:Enrichment] Done — emails fixed: ${result.emailsFixed}, invalid: ${result.emailsMarkedInvalid}, mobiles formatted: ${result.mobilesFormatted}`);
+  } catch (err) {
+    console.error('[Cron:Enrichment] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Contact enrichment scheduled at 1:30 AM Dubai time (new contacts only)');
 
 // ── Journey Engine — process due entries every 5 min ──────────────
 cron.schedule('*/5 * * * *', async () => {
