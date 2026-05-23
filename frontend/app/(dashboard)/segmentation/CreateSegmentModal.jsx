@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Plus, Trash2, Filter, Loader2, Users } from 'lucide-react';
-import { previewSegmentCount, createCustomSegment, updateCustomSegment } from '@/lib/api';
+import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics } from '@/lib/api';
 
 const FIELD_CONFIG = {
   name: {
@@ -212,37 +212,68 @@ function ConditionValueInput({ fieldKey, condition, onChange }) {
   }
 }
 
-function isConditionValid(cond) {
+function isFieldValid(cond) {
   if (!cond.field) return false;
   const cfg = FIELD_CONFIG[cond.field];
   if (!cfg) return false;
-
   switch (cfg.type) {
-    case 'multi-select': return Array.isArray(cond.value) && cond.value.length > 0;
+    case 'multi-select':  return Array.isArray(cond.value) && cond.value.length > 0;
     case 'single-select': return !!cond.value;
-    case 'boolean': return cond.value === true || cond.value === false;
-    case 'text': return typeof cond.value === 'string' && cond.value.trim().length > 0;
-    case 'date-range': return Array.isArray(cond.value) && (cond.value[0] || cond.value[1]);
-    case 'number-range': {
+    case 'boolean':       return cond.value === true || cond.value === false;
+    case 'text':          return typeof cond.value === 'string' && cond.value.trim().length > 0;
+    case 'date-range':    return Array.isArray(cond.value) && !!(cond.value[0] || cond.value[1]);
+    case 'number-range':
       if (cond.operator === 'between') return Array.isArray(cond.value) && (cond.value[0] !== '' || cond.value[1] !== '');
       return cond.value !== '' && cond.value != null;
-    }
     default: return false;
   }
 }
+
+function isConditionValid(cond) {
+  if (cond.type === 'gtm') return !!cond.gtmEvent;
+  if (cond.type === 'contact') return isFieldValid(cond);
+  return false;
+}
+
+const emptyCondition = () => ({
+  type: '',
+  field: '',
+  operator: '',
+  value: null,
+  gtmEvent: '',
+  exclude: false,
+  joinOp: 'AND',
+});
 
 export default function CreateSegmentModal({ onClose, onCreated, segment = null, onUpdated }) {
   const isEditMode = !!segment;
   const [name, setName] = useState(segment?.name || '');
   const [description, setDescription] = useState(segment?.description || '');
-  const [conditions, setConditions] = useState(
-    segment?.conditions?.length > 0
-      ? segment.conditions.map(c => ({ ...c }))
-      : [{ field: '', operator: '', value: null }]
-  );
+  const [conditions, setConditions] = useState(() => {
+    if (segment?.conditions?.length > 0) {
+      return segment.conditions.map(c => ({
+        type: c.type || (c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
+        field: c.field || '',
+        operator: c.operator || '',
+        value: c.value ?? null,
+        gtmEvent: c.gtmEvent || '',
+        exclude: c.exclude || false,
+        joinOp: c.joinOp || 'AND',
+      }));
+    }
+    return [emptyCondition()];
+  });
   const [previewCount, setPreviewCount] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [gtmEventNames, setGtmEventNames] = useState([]);
+
+  useEffect(() => {
+    getGTMAnalytics().then(res => {
+      const names = (res?.top_events || []).map(e => e.event_name).filter(Boolean);
+      setGtmEventNames(names);
+    }).catch(() => {});
+  }, []);
 
   const updateCondition = (idx, updated) => {
     const next = [...conditions];
@@ -250,17 +281,23 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     setConditions(next);
   };
 
+  const changeType = (idx, type) => {
+    const cond = conditions[idx];
+    updateCondition(idx, { ...emptyCondition(), type, exclude: cond.exclude, joinOp: cond.joinOp });
+  };
+
   const changeField = (idx, newField) => {
+    if (!newField) { updateCondition(idx, { ...conditions[idx], field: '', operator: '', value: null }); return; }
     const cfg = FIELD_CONFIG[newField];
     const defaultValue = cfg?.type === 'multi-select' ? [] :
       cfg?.type === 'date-range' ? ['', ''] :
       cfg?.type === 'number-range' ? ['', ''] :
       cfg?.type === 'boolean' ? null : '';
     updateCondition(idx, {
+      ...conditions[idx],
       field: newField,
       operator: cfg?.defaultOperator || 'eq',
       value: defaultValue,
-      exclude: false,
     });
   };
 
@@ -269,12 +306,11 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   };
 
   const addCondition = () => {
-    setConditions([...conditions, { field: '', operator: '', value: null }]);
+    setConditions([...conditions, emptyCondition()]);
   };
 
   const validConditions = conditions.filter(isConditionValid);
 
-  // Debounced preview count
   const refreshPreview = useCallback(async (conds) => {
     if (!conds.length) { setPreviewCount(null); return; }
     setPreviewLoading(true);
@@ -322,8 +358,9 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     setSaving(false);
   };
 
-  // Determine which fields are already used
-  const usedFields = new Set(conditions.map(c => c.field).filter(Boolean));
+  // Fields and GTM events already chosen in other rows (for disabling duplicates)
+  const usedFields = new Set(conditions.map(c => c.type === 'contact' ? c.field : '').filter(Boolean));
+  const usedGtmEvents = new Set(conditions.map(c => c.type === 'gtm' ? c.gtmEvent : '').filter(Boolean));
 
   return (
     <motion.div
@@ -338,7 +375,7 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
         onClick={e => e.stopPropagation()}
         style={{
           background: 'var(--card)', borderRadius: 'var(--radius-xl)', padding: '24px 28px',
-          width: 720, maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto',
+          width: 620, maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto',
           border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
         }}>
 
@@ -377,70 +414,196 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
         {/* Conditions */}
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-            Conditions (all must match)
+            Conditions
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             {conditions.map((cond, idx) => (
-              <div key={idx} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px',
-                background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)',
-              }}>
-                {/* Field selector */}
-                <div style={{ minWidth: 150 }}>
-                  <select value={cond.field} onChange={e => changeField(idx, e.target.value)}
-                    style={{ ...selectStyle, width: '100%' }}>
-                    <option value="">Select field...</option>
-                    {FIELD_KEYS.map(key => (
-                      <option key={key} value={key} disabled={usedFields.has(key) && cond.field !== key}>
-                        {FIELD_CONFIG[key].label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Include / Exclude toggle */}
-                {cond.field && (
-                  <div style={{ display: 'flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)', minWidth: 130, flexShrink: 0 }}>
-                    {[{ label: 'Include', val: false }, { label: 'Exclude', val: true }].map(({ label, val }) => {
-                      const active = !!cond.exclude === val;
-                      const isExclude = val;
-                      return (
-                        <button key={label} type="button"
-                          onClick={() => updateCondition(idx, { ...cond, exclude: val })}
-                          style={{
-                            flex: 1, padding: '5px 8px', fontSize: 11, fontWeight: active ? 600 : 400,
-                            cursor: 'pointer', border: 'none',
-                            background: active ? (isExclude ? '#ef4444' : '#22c55e') : 'var(--background)',
-                            color: active ? '#fff' : 'var(--muted-foreground)',
-                            transition: 'all 0.15s',
-                          }}>
-                          {label}
-                        </button>
-                      );
-                    })}
+              <div key={idx}>
+                {/* Per-pair AND / OR segmented toggle */}
+                {idx > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0' }}>
+                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                    <div style={{
+                      display: 'flex', borderRadius: 20, overflow: 'hidden',
+                      border: '1px solid var(--border)',
+                      background: 'var(--background)',
+                    }}>
+                      {['AND', 'OR'].map(op => {
+                        const active = conditions[idx - 1].joinOp === op;
+                        const color = op === 'OR' ? '#3b82f6' : '#8b5cf6';
+                        return (
+                          <button
+                            key={op}
+                            type="button"
+                            onClick={() => updateCondition(idx - 1, { ...conditions[idx - 1], joinOp: op })}
+                            style={{
+                              padding: '4px 14px', fontSize: 10, fontWeight: 700,
+                              letterSpacing: '0.5px', cursor: 'pointer', border: 'none',
+                              background: active ? color : 'transparent',
+                              color: active ? '#fff' : 'var(--muted-foreground)',
+                              transition: 'all 0.15s',
+                            }}>
+                            {op}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                   </div>
                 )}
 
-                {/* Value input */}
-                <div style={{ flex: 1 }}>
-                  {cond.field ? (
-                    <ConditionValueInput fieldKey={cond.field} condition={cond}
-                      onChange={updated => updateCondition(idx, updated)} />
-                  ) : (
-                    <div style={{ padding: '7px 0', fontSize: 12, color: 'var(--muted-foreground)' }}>
-                      Choose a field to set the condition
+                {/* Condition card */}
+                <div style={{
+                  background: 'var(--background)', borderRadius: 'var(--radius)',
+                  border: '1px solid var(--border)', overflow: 'hidden',
+                }}>
+                  <div style={{ padding: '12px 14px' }}>
+
+                    {/* ── No type selected yet — show type picker ── */}
+                    {!cond.type && (
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginBottom: 8 }}>
+                          Select condition type:
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button type="button" onClick={() => changeType(idx, 'contact')}
+                            style={{
+                              flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
+                              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                              cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
+                              transition: 'all 0.15s', textAlign: 'left',
+                            }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Contact Property</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by profile fields</div>
+                          </button>
+                          <button type="button" onClick={() => changeType(idx, 'gtm')}
+                            style={{
+                              flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
+                              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                              cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
+                              transition: 'all 0.15s', textAlign: 'left',
+                            }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>GTM / Analytics Event</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by tracked events</div>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Contact Property ── */}
+                    {cond.type === 'contact' && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Contact Property</span>
+                          <button type="button" onClick={() => changeType(idx, '')}
+                            title="Change type"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
+                            ✕
+                          </button>
+                        </div>
+                        <select
+                          value={cond.field || ''}
+                          onChange={e => changeField(idx, e.target.value)}
+                          style={{ ...selectStyle, marginBottom: cond.field ? 10 : 0 }}>
+                          <option value="">Select a property...</option>
+                          {FIELD_KEYS.map(key => {
+                            const taken = usedFields.has(key) && cond.field !== key;
+                            return (
+                              <option key={key} value={key} disabled={taken}>
+                                {FIELD_CONFIG[key].label}{taken ? ' (already used)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {cond.field && (
+                          <ConditionValueInput
+                            fieldKey={cond.field}
+                            condition={cond}
+                            onChange={updated => updateCondition(idx, updated)}
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── GTM / Analytics Event ── */}
+                    {cond.type === 'gtm' && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>GTM / Analytics Event</span>
+                          <button type="button" onClick={() => changeType(idx, '')}
+                            title="Change type"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
+                            ✕
+                          </button>
+                        </div>
+                        <select
+                          value={cond.gtmEvent || ''}
+                          onChange={e => updateCondition(idx, { ...cond, gtmEvent: e.target.value })}
+                          style={selectStyle}>
+                          <option value="">Select an event...</option>
+                          {gtmEventNames.map(evtName => {
+                            const taken = usedGtmEvents.has(evtName) && cond.gtmEvent !== evtName;
+                            return (
+                              <option key={evtName} value={evtName} disabled={taken}>
+                                {evtName}{taken ? ' (already used)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {cond.gtmEvent && (
+                          <div style={{ marginTop: 8 }}>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 4,
+                              padding: '3px 9px', fontSize: 11, borderRadius: 20,
+                              background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
+                              border: '1px solid rgba(59,130,246,0.3)',
+                            }}>
+                              {cond.gtmEvent}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bottom bar — only shown when type is selected or Remove is needed */}
+                  {(cond.type || conditions.length > 1) && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '6px 12px', borderTop: '1px solid var(--border)',
+                      background: 'var(--card)',
+                    }}>
+                      {cond.type ? (
+                        <div style={{ display: 'flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                          {[{ label: 'Include', val: false }, { label: 'Exclude', val: true }].map(({ label, val }) => {
+                            const active = !!cond.exclude === val;
+                            return (
+                              <button key={label} type="button"
+                                onClick={() => updateCondition(idx, { ...cond, exclude: val })}
+                                style={{
+                                  padding: '4px 14px', fontSize: 11, fontWeight: active ? 600 : 400,
+                                  cursor: 'pointer', border: 'none',
+                                  background: active ? (val ? '#ef4444' : '#22c55e') : 'transparent',
+                                  color: active ? '#fff' : 'var(--muted-foreground)',
+                                  transition: 'all 0.15s',
+                                }}>
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : <div />}
+
+                      {conditions.length > 1 && (
+                        <button onClick={() => removeCondition(idx)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: '2px 4px', fontSize: 11 }}>
+                          <Trash2 size={12} /> Remove
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
-
-                {/* Remove button */}
-                {conditions.length > 1 && (
-                  <button onClick={() => removeCondition(idx)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 6, marginTop: 2 }}>
-                    <Trash2 size={14} />
-                  </button>
-                )}
               </div>
             ))}
           </div>
@@ -448,12 +611,18 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
           {/* Add condition button */}
           <button onClick={addCondition}
             style={{
-              display: 'flex', alignItems: 'center', gap: 6, marginTop: 10,
-              padding: '6px 12px', fontSize: 12, color: 'var(--primary)',
-              background: 'none', border: '1px dashed var(--border)', borderRadius: 'var(--radius)',
-              cursor: 'pointer', transition: 'border-color 0.2s',
-            }}>
-            <Plus size={13} /> Add Condition
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              marginTop: 10, width: '100%',
+              padding: '9px 16px', fontSize: 12, fontWeight: 500,
+              color: 'var(--primary)',
+              background: 'rgba(59,130,246,0.05)',
+              border: '1.5px dashed rgba(59,130,246,0.35)',
+              borderRadius: 'var(--radius)',
+              cursor: 'pointer', transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.1)'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.6)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.05)'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.35)'; }}>
+            <Plus size={14} /> Add Condition
           </button>
         </div>
 

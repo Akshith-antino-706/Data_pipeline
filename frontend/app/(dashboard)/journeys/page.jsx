@@ -308,6 +308,25 @@ export default function Journeys() {
     } catch { setLiveNodeId(null); }
   }, []);
 
+  const [nodeAnalyticsLoaded, setNodeAnalyticsLoaded]   = useState(false);
+  const [nodeAnalyticsLoading, setNodeAnalyticsLoading] = useState(false);
+
+  const loadNodeAnalytics = async (id) => {
+    if (nodeAnalyticsLoaded || nodeAnalyticsLoading) return;
+    setNodeAnalyticsLoading(true);
+    try {
+      const [a, cd] = await Promise.allSettled([
+        getJourneyAnalytics(id).catch(() => ({ data: null })),
+        getJourneyCampaignAnalytics(id).catch(() => ({ data: null })),
+      ]);
+      if (a.status === 'fulfilled') setAnalytics(a.value?.data ?? null);
+      if (cd.status === 'fulfilled') setCampaignData(cd.value?.data ?? null);
+      setNodeAnalyticsLoaded(true);
+    } finally {
+      setNodeAnalyticsLoading(false);
+    }
+  };
+
   const openJourney = async (id) => {
     setSelected(id);
     router.replace(`${pathname}?id=${id}`, { scroll: false });
@@ -319,19 +338,15 @@ export default function Journeys() {
     setDetailLoading(true);
     setExpandedNode(null);
     setLiveNodeId(null);
+    setNodeAnalyticsLoaded(false);
     try {
-      const [d, a, cd, qc] = await Promise.all([
+      const [d, qc] = await Promise.all([
         getJourney(id),
-        getJourneyAnalytics(id).catch(() => ({ data: null })),
-        getJourneyCampaignAnalytics(id).catch(() => ({ data: null })),
         getJourneyQueueCounts().catch(() => ({ data: null })),
       ]);
       setDetail(d.data);
-      setAnalytics(a.data);
-      setCampaignData(cd.data);
       setQueueStats(qc.data);
-      loadTemplates(); // Load templates for preview buttons
-      // Restore live node indicator if journey is active
+      loadTemplates();
       if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
     } catch (err) { showToast('Failed to load journey', 'error'); }
     setDetailLoading(false);
@@ -735,15 +750,22 @@ export default function Journeys() {
   // LOADING STATE
   // ══════════════════════════════════════════════════════════════
   if (loading) return (
-    <div className="pt-10">
+    <div>
       <div className="page-header">
         <div>
-          <div className="skeleton" style={{ width: 200, height: 28, marginBottom: 8 }} />
-          <div className="skeleton" style={{ width: 300, height: 16 }} />
+          <h2 style={{ margin: 0 }}>Journey Builder</h2>
+          <div className="page-header-sub">Design, automate, and optimize customer journey flows across channels</div>
         </div>
       </div>
       <div className="card-grid card-grid-4 mb-6">
-        {[1,2,3,4].map(i => <div key={i} className="card skeleton" style={{ height: 90 }} />)}
+        {[
+          'Total Journeys', 'Active Journeys', 'Total Entries', 'Avg. Conversion',
+        ].map(label => (
+          <div key={label} className="card" style={{ padding: '16px 14px' }}>
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 600, marginBottom: 8 }}>{label}</div>
+            <div className="skeleton" style={{ width: 70, height: 24, borderRadius: 6 }} />
+          </div>
+        ))}
       </div>
       {[1,2,3].map(i => <div key={i} className="card skeleton" style={{ height: 80, marginBottom: 8 }} />)}
     </div>
@@ -753,7 +775,59 @@ export default function Journeys() {
   // JOURNEY DETAIL VIEW
   // ══════════════════════════════════════════════════════════════
   if (selected) {
-    if (detailLoading || !detail) return <div className="spinner">Loading journey details...</div>;
+    if (detailLoading || !detail) return (
+      <div>
+        {/* Back + title skeleton */}
+        <div className="page-header" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="skeleton" style={{ width: 32, height: 32, borderRadius: 8 }} />
+            <div>
+              <div className="skeleton" style={{ width: 220, height: 20, borderRadius: 6, marginBottom: 8 }} />
+              <div className="skeleton" style={{ width: 140, height: 12, borderRadius: 4 }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div className="skeleton" style={{ width: 80, height: 32, borderRadius: 8 }} />
+            <div className="skeleton" style={{ width: 64, height: 24, borderRadius: 20 }} />
+          </div>
+        </div>
+        {/* Stat tiles — labels visible */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
+          {['SNAPSHOTTED', 'ACTIVE', 'BOOKED (EXIT)', 'UNSUB (EXIT)', 'COMPLETED', 'FAILED'].map(label => (
+            <div key={label} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '16px 10px', textAlign: 'center' }}>
+              <div className="skeleton" style={{ width: 60, height: 24, borderRadius: 6, margin: '0 auto 10px' }} />
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: 'var(--text-muted)' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+        {/* Node list skeleton — section title visible */}
+        <div className="card">
+          <div className="card-header">
+            <h3>Journey Nodes</h3>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 0' }}>
+            {[...Array(4)].map((_, i) => (
+              <div key={i} style={{ borderRadius: 10, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="skeleton" style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0 }} />
+                  <div className="skeleton" style={{ width: 16, height: 16, borderRadius: 4, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div className="skeleton" style={{ width: 140, height: 14, borderRadius: 4, marginBottom: 6 }} />
+                    <div className="skeleton" style={{ width: 80, height: 10, borderRadius: 4 }} />
+                  </div>
+                  <div className="skeleton" style={{ width: 60, height: 20, borderRadius: 20 }} />
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[...Array(3)].map((_, j) => (
+                      <div key={j} className="skeleton" style={{ width: 56, height: 20, borderRadius: 20 }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
 
     const nodes = detail.nodes || [];
     const edges = detail.edges || [];
@@ -981,8 +1055,6 @@ export default function Journeys() {
           const kpis = [
             { label: 'Snapshotted', value: fmt(detail.snapshot_count || stats.total_entries), color: 'kpi-blue', icon: Users },
             { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
-            { label: 'Sent', value: fmt(ct.total_sent || 0), color: 'kpi-orange', icon: Send },
-            { label: 'Delivered', value: fmt(ct.total_delivered || 0), color: 'kpi-green', icon: CheckCircle2 },
             { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
             { label: 'Unsub (Exit)', value: fmt(stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
             { label: 'Completed', value: fmt(stats.completed), color: 'kpi-blue', icon: CheckCircle2 },
@@ -1340,7 +1412,11 @@ export default function Journeys() {
 
                           {/* Node Card */}
                           <div
-                            onClick={() => setExpandedNode(isExpanded ? null : key)}
+                            onClick={() => {
+                              const opening = !isExpanded;
+                              setExpandedNode(isExpanded ? null : key);
+                              if (opening) loadNodeAnalytics(selected);
+                            }}
                             style={{
                               background: isCurrentSimNode ? color + '08' : 'var(--bg-card)',
                               borderTop: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
@@ -1657,6 +1733,18 @@ export default function Journeys() {
                                     </div>
                                   );
                                 })()}
+
+                                {/* Node analytics shimmer while lazy-loading */}
+                                {node.type === 'action' && nodeAnalyticsLoading && (
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+                                    {[...Array(4)].map((_, i) => (
+                                      <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
+                                        <div className="skeleton" style={{ width: 60, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
+                                        <div className="skeleton" style={{ width: 40, height: 8, borderRadius: 4, margin: '0 auto' }} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
 
                                 {/* Campaign Metrics Card — per node */}
                                 {node.type === 'action' && (() => {

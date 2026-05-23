@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getUnifiedContacts, getUnifiedContact, getUnifiedStats, getUnifiedFilters } from '@/lib/api';
+import { getUnifiedContacts, getUnifiedStats, getUnifiedFilters, createUnifiedContact, deleteUnifiedContact } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
-  Users, Search, Globe, MessageSquare, Mail, X, Phone, Building2,
-  Calendar, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Eye,
-  MapPin, Hash, Clock, Ticket, Map, DollarSign, Plane, Hotel, MessageCircle, Layers,
-  Filter, RotateCcw, ChevronDown, ChevronUp, FileText, Palmtree,
+  Users, Search, MessageSquare,
+  ArrowUpDown, ChevronLeft, ChevronRight, Eye,
+  Map, DollarSign, Layers,
+  Filter, RotateCcw, ChevronDown, UserPlus, X, Check, Loader2, Trash2,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
@@ -42,14 +43,19 @@ export default function UnifiedContacts() {
   const [searchInput, setSearchInput] = useState('');
   const [sortBy, setSortBy] = useState('last_seen_at');
   const [sortDir, setSortDir] = useState('DESC');
-  const [selected, setSelected] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, name }
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState({ name: '', email: '', mobile: '', city: '', country: '', contact_type: 'B2C', geography: '', wa_unsubscribe: 'no', email_unsubscribe: 'no' });
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filterOptions, setFilterOptions] = useState(null);
   const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' });
   const limit = 50;
   const { businessType } = useBusinessType();
+  const router = useRouter();
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
@@ -89,11 +95,46 @@ export default function UnifiedContacts() {
     setPage(1);
   };
 
-  const openDetail = async (id) => {
-    setDetailLoading(true);
-    try { const res = await getUnifiedContact(id); setSelected(res.data); }
-    catch { showToast('Failed to load contact'); }
-    finally { setDetailLoading(false); }
+  const openDetail = (id) => router.push('/contacts/' + id);
+
+  const handleDelete = async () => {
+    if (!deleteConfirm) return;
+    setDeleteLoading(true);
+    try {
+      await deleteUnifiedContact(deleteConfirm.id);
+      setDeleteConfirm(null);
+      showToast('Contact deleted', 'success');
+      setContacts(cs => cs.filter(c => (c.id || c.unified_id) !== deleteConfirm.id));
+      setTotal(t => t - 1);
+    } catch (err) {
+      showToast(err.message || 'Failed to delete contact');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const setAddField = (k, v) => setAddForm(f => ({ ...f, [k]: v }));
+  const openAddModal = () => {
+    setAddForm({ name: '', email: '', mobile: '', city: '', country: '', contact_type: 'B2C', geography: '', wa_unsubscribe: 'no', email_unsubscribe: 'no' });
+    setAddError(null);
+    setShowAddModal(true);
+  };
+  const handleAddSubmit = async (e) => {
+    e.preventDefault();
+    if (!addForm.name && !addForm.email && !addForm.mobile) { setAddError('Provide at least a name, email, or phone.'); return; }
+    setAddLoading(true);
+    setAddError(null);
+    try {
+      const res = await createUnifiedContact(addForm);
+      setShowAddModal(false);
+      showToast('Contact created successfully', 'success');
+      loadContacts();
+      if (res.data?.id) router.push('/contacts/' + res.data.id);
+    } catch (err) {
+      setAddError(err.message || 'Failed to create contact');
+    } finally {
+      setAddLoading(false);
+    }
   };
 
   const kpis = [
@@ -110,15 +151,16 @@ export default function UnifiedContacts() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Unified Contacts</h2>
-            <span style={{
-              fontSize: 11, fontWeight: 700, letterSpacing: 0.5, padding: '3px 10px',
-              borderRadius: 12, background: '#C9A96E', color: '#fff',
-            }}>{businessType}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, padding: '3px 10px', borderRadius: 12, background: '#C9A96E', color: '#fff' }}>{businessType}</span>
           </div>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
             {businessType === 'B2B' ? 'B2B partners & agents' : 'B2C end-customers'} &middot; across chats, tickets, CRM &amp; bookings &middot; {formatNum(total)} records
           </p>
         </div>
+        <button className="btn btn-primary" onClick={openAddModal}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600 }}>
+          <UserPlus size={16} /> Add Contact
+        </button>
       </motion.div>
 
       <motion.div variants={fadeInUp} className="kpi-strip">
@@ -174,7 +216,7 @@ export default function UnifiedContacts() {
       <AnimatePresence>
         {showFilters && (
           <motion.div variants={fadeInUp} initial="hidden" animate="visible" exit="hidden"
-            className="card" style={{ padding: '16px 20px', position: 'relative', zIndex: 20, overflow: 'visible' }}>
+            className="card" style={{ padding: '16px 20px', position: 'relative', zIndex: 100, overflow: 'visible' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>Filters</span>
               {activeFilterCount > 0 && (
@@ -266,7 +308,13 @@ export default function UnifiedContacts() {
                   <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}</span> : '\u2014'}</td>
                   <td>{totalBookings > 0 ? <span className="badge badge-blue">{totalBookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
                   <td style={{ fontSize: 12, fontWeight: 500 }}>{parseFloat(c.total_booking_revenue) > 0 ? formatAED(c.total_booking_revenue) : <span style={{ color: 'var(--text-tertiary)' }}>\u2014</span>}</td>
-                  <td><button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.id || c.unified_id); }}><Eye size={14} /></button></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.id || c.unified_id); }}><Eye size={14} /></button>
+                      <button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: c.id || c.unified_id, name: c.name || c.email || 'this contact' }); }}
+                        style={{ color: '#ef4444' }}><Trash2 size={14} /></button>
+                    </div>
+                  </td>
                 </tr>
                 );
               })}
@@ -286,200 +334,101 @@ export default function UnifiedContacts() {
         )}
       </motion.div>
 
-      {/* Detail Modal */}
+
+      {/* Delete Confirm Dialog */}
       <AnimatePresence>
-        {(selected || detailLoading) && (
-          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelected(null)}>
-            <motion.div className="modal" initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              onClick={e => e.stopPropagation()} style={{ maxWidth: 800, width: '92vw', maxHeight: '85vh', overflow: 'auto' }}>
-              {detailLoading && !selected ? (
-                <div style={{ padding: 24 }}>
-                  {/* Header skeleton */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                    <div>
-                      <div className="skeleton" style={{ width: 180, height: 20, borderRadius: 6, marginBottom: 8 }} />
-                      <div className="skeleton" style={{ width: 100, height: 12, borderRadius: 4, marginBottom: 8 }} />
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <div className="skeleton" style={{ width: 45, height: 18, borderRadius: 10 }} />
-                        <div className="skeleton" style={{ width: 45, height: 18, borderRadius: 10 }} />
-                      </div>
-                    </div>
-                    <div className="skeleton" style={{ width: 28, height: 28, borderRadius: 6 }} />
-                  </div>
-                  {/* Segment skeleton */}
-                  <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-                    <div className="skeleton" style={{ width: 70, height: 10, borderRadius: 4, marginBottom: 12 }} />
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
-                      {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 14, borderRadius: 4 }} />)}
-                    </div>
-                  </div>
-                  {/* Contact Info skeleton */}
-                  <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-                    <div className="skeleton" style={{ width: 130, height: 10, borderRadius: 4, marginBottom: 12 }} />
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
-                      {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: 14, borderRadius: 4 }} />)}
-                    </div>
-                  </div>
-                  {/* Booking Overview skeleton */}
-                  <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-                    <div className="skeleton" style={{ width: 110, height: 10, borderRadius: 4, marginBottom: 12 }} />
-                    <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
-                      <div className="skeleton" style={{ width: 120, height: 50, borderRadius: 8 }} />
-                      <div className="skeleton" style={{ width: 120, height: 50, borderRadius: 8 }} />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                      {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: 70, borderRadius: 8 }} />)}
-                    </div>
+        {deleteConfirm && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500, padding: 20 }}
+            onClick={() => !deleteLoading && setDeleteConfirm(null)}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              onClick={e => e.stopPropagation()}
+              className="card" style={{ width: '100%', maxWidth: 400, padding: 28 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Trash2 size={18} style={{ color: '#ef4444' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>Delete Contact</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>This action cannot be undone.</div>
+                </div>
+              </div>
+              <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-secondary)' }}>
+                Are you sure you want to permanently delete <strong style={{ color: 'var(--text-primary)' }}>{deleteConfirm.name}</strong>?
+              </p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn btn-ghost" onClick={() => setDeleteConfirm(null)} disabled={deleteLoading}>Cancel</button>
+                <button className="btn btn-primary" onClick={handleDelete} disabled={deleteLoading}
+                  style={{ background: '#ef4444', borderColor: '#ef4444', display: 'flex', alignItems: 'center', gap: 6, minWidth: 100 }}>
+                  {deleteLoading
+                    ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Deleting…</>
+                    : <><Trash2 size={14} /> Delete</>}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Contact Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => !addLoading && setShowAddModal(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500, padding: 20 }}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              onClick={e => e.stopPropagation()}
+              className="card" style={{ width: '100%', maxWidth: 560, padding: 28, position: 'relative' }}>
+
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Add New Contact</h3>
+                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Booking status will be set to</span>
+                    <span className="badge badge-gray" style={{ fontSize: 10, fontWeight: 700 }}>PROSPECT</span>
                   </div>
                 </div>
-              ) : selected && (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{selected.name || 'Unknown'}</h3>
-                      <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>ID: {selected.id || selected.unified_id}</span>
-                      <div style={{ marginTop: 6 }}>{selected.sources?.split(', ').map(s => <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'ticket' ? 'badge-orange' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 10, marginRight: 4 }}>{s}</span>)}</div>
-                    </div>
-                    <button className="btn btn-ghost btn-icon btn-sm" onClick={() => setSelected(null)}><X size={16} /></button>
-                  </div>
+                <button className="btn btn-ghost btn-icon btn-sm" onClick={() => !addLoading && setShowAddModal(false)}>
+                  <X size={16} />
+                </button>
+              </div>
 
-                  {/* Segment */}
-                  <Section title="Segment">
-                    <DetailRow icon={Hash} label="Status" value={selected.booking_status} color={
-                      selected.booking_status === 'ON_TRIP' ? 'var(--green)' :
-                      selected.booking_status === 'FUTURE_TRAVEL' ? 'var(--brand-primary)' :
-                      selected.booking_status === 'ACTIVE_ENQUIRY' ? 'var(--orange)' : 'var(--text-secondary)'} />
-                    <DetailRow icon={Hash} label="Product Tier" value={selected.product_tier || 'N/A'} color={selected.product_tier === 'LUXURY' ? 'var(--orange)' : undefined} />
-                    <DetailRow icon={Globe} label="Geography" value={selected.geography || 'Unknown'} />
-                    {selected.segment_label && <DetailRow icon={Layers} label="Full Segment" value={selected.segment_label} />}
-                  </Section>
-
-                  {/* Contact Info — only show fields that have data */}
-                  <Section title="Contact Information">
-                    {selected.email && <DetailRow icon={Mail} label="Email" value={selected.email} />}
-                    {(selected.phone || selected.mobile) && <DetailRow icon={Phone} label="Phone" value={selected.phone || selected.mobile} />}
-                    {selected.company_name && <DetailRow icon={Building2} label="Company" value={selected.company_name} />}
-                    {selected.designation && <DetailRow icon={Hash} label="Designation" value={selected.designation} />}
-                    {selected.city && <DetailRow icon={MapPin} label="City" value={selected.city} />}
-                    {selected.country && <DetailRow icon={Globe} label="Country" value={selected.country} />}
-                    {selected.contact_type && <DetailRow icon={Hash} label="Type" value={selected.contact_type} />}
-                    <DetailRow icon={Mail} label="Email Status" value={selected.email_unsubscribed === 'Yes' ? 'Unsubscribed' : 'Active'} color={selected.email_unsubscribed === 'Yes' ? 'var(--red)' : 'var(--green)'} />
-                    <DetailRow icon={MessageSquare} label="WA Status" value={selected.wa_unsubscribed === 'Yes' ? 'Unsubscribed' : 'Active'} color={selected.wa_unsubscribed === 'Yes' ? 'var(--red)' : 'var(--green)'} />
-                  </Section>
-
-                  {/* First & Last Message */}
-                  {(selected.first_msg_text || selected.last_msg_text) && (
-                    <Section title="Messages">
-                      {selected.first_msg_text && (
-                        <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8, maxHeight: 60, overflow: 'auto' }}>
-                          <MessageCircle size={13} style={{ color: '#25D366', marginRight: 6, verticalAlign: 'middle' }} />
-                          <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginRight: 4 }}>First:</span>
-                          {selected.first_msg_text}
-                        </div>
-                      )}
-                      {selected.last_msg_text && (
-                        <div style={{ fontSize: 13, padding: '8px 12px', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', maxHeight: 60, overflow: 'auto' }}>
-                          <MessageCircle size={13} style={{ color: 'var(--orange)', marginRight: 6, verticalAlign: 'middle' }} />
-                          <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginRight: 4 }}>Last:</span>
-                          {selected.last_msg_text}
-                        </div>
-                      )}
-                    </Section>
-                  )}
-
-                  {/* Chat Activity — only show if has chats */}
-                  {selected.total_chats > 0 && (
-                    <Section title="Chat Activity">
-                      <DetailRow icon={MessageSquare} label="Total Chats" value={selected.total_chats} color="#25D366" />
-                      {selected.chat_departments && <DetailRow icon={Hash} label="Departments" value={selected.chat_departments} />}
-                      {selected.first_chat_at && <DetailRow icon={Clock} label="First Chat" value={formatDateTime(selected.first_chat_at)} />}
-                      {selected.last_chat_at && <DetailRow icon={Clock} label="Last Chat" value={formatDateTime(selected.last_chat_at)} />}
-                    </Section>
-                  )}
-
-                  {/* Booking Summary with per-type breakdown */}
-                  {(() => {
-                    const types = [
-                      { key: 'tour', label: 'Tours', icon: Palmtree, color: '#10b981', count: selected.total_tour_bookings || 0, rows: selected.rayna_tours },
-                      { key: 'package', label: 'Packages', icon: Layers, color: '#8b5cf6', count: selected.total_package_bookings || 0, rows: selected.rayna_packages },
-                      { key: 'hotel', label: 'Hotels', icon: Hotel, color: '#6366f1', count: selected.total_hotel_bookings || 0, rows: selected.rayna_hotels },
-                      { key: 'visa', label: 'Visas', icon: FileText, color: '#f59e0b', count: selected.total_visa_bookings || 0, rows: selected.rayna_visas },
-                      { key: 'other', label: 'Others', icon: Ticket, color: '#ec4899', count: selected.total_other_bookings || 0, rows: selected.rayna_others },
-                      { key: 'flight', label: 'Flights', icon: Plane, color: '#3b82f6', count: selected.total_flight_bookings || 0, rows: selected.rayna_flights },
-                    ];
-                    const totalBookings = types.reduce((s, t) => s + t.count, 0);
-                    const totalRevenue = selected.total_booking_revenue || 0;
-                    const allRows = types.flatMap(t => t.rows || []);
-                    const cancelledCount = allRows.filter(r => r.is_cancel === '1').length;
-                    const cancelledRevenue = allRows.filter(r => r.is_cancel === '1').reduce((s, r) => s + (parseFloat(r.selling_price) || 0), 0);
-                    const hasBookings = totalBookings > 0;
-
-                    return hasBookings ? (
-                      <>
-                        <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-                          <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 12, letterSpacing: 0.5, fontWeight: 600 }}>Booking Overview</div>
-                          <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-                            <div style={{ padding: '10px 16px', borderRadius: 8, background: 'var(--brand-primary-alpha, rgba(201,169,110,0.1))', border: '1px solid var(--brand-primary, #C9A96E)' }}>
-                              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Total Bookings</div>
-                              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--brand-primary, #C9A96E)' }}>{totalBookings}</div>
-                            </div>
-                            <div style={{ padding: '10px 16px', borderRadius: 8, background: 'rgba(16,185,129,0.08)', border: '1px solid #10b981' }}>
-                              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Total Revenue</div>
-                              <div style={{ fontSize: 22, fontWeight: 700, color: '#10b981' }}>{formatAED(totalRevenue)}</div>
-                            </div>
-                            {cancelledCount > 0 && (
-                              <div style={{ padding: '10px 16px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444' }}>
-                                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' }}>Cancelled</div>
-                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                                  <span style={{ fontSize: 22, fontWeight: 700, color: '#ef4444' }}>{cancelledCount}</span>
-                                  <span style={{ fontSize: 11, color: '#ef4444', opacity: 0.7 }}>{formatAED(cancelledRevenue)}</span>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                            {types.map(t => {
-                              const rev = (t.rows || []).filter(r => r.is_cancel !== '1').reduce((s, r) => s + (parseFloat(r.selling_price) || 0), 0);
-                              const pct = totalRevenue > 0 ? (rev / totalRevenue * 100) : 0;
-                              return (
-                                <div key={t.key} style={{ padding: '10px 12px', borderRadius: 8, background: `${t.color}08`, border: `1px solid ${t.color}30` }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                                    <t.icon size={14} style={{ color: t.color }} />
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: t.color }}>{t.label}</span>
-                                  </div>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                    <span style={{ fontSize: 16, fontWeight: 700 }}>{t.count}</span>
-                                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{formatAED(rev)}</span>
-                                  </div>
-                                  <div style={{ height: 4, borderRadius: 2, background: `${t.color}20`, marginTop: 6 }}>
-                                    <div style={{ height: '100%', borderRadius: 2, background: t.color, width: `${Math.min(pct, 100)}%`, transition: 'width 0.3s ease' }} />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {/* Expandable Booking Tables */}
-                        {types.filter(t => t.count > 0).map(t => (
-                          <BookingTable key={t.key} icon={t.icon} title={`${t.label} Bookings`} color={t.color} rows={t.rows} columns={bookingColumns} />
-                        ))}
-                      </>
-                    ) : null;
-                  })()}
-
-                  <BookingTable icon={MessageSquare} title="Chats" color="#25D366" rows={selected.chats_list} columns={chatTableColumns} />
-
-                  {/* Timeline — only show if has dates */}
-                  {(selected.first_seen_at || selected.last_seen_at || selected.created_at) && (
-                    <Section title="Timeline">
-                      {selected.first_seen_at && <DetailRow icon={Calendar} label="First Seen" value={formatDateTime(selected.first_seen_at)} />}
-                      {selected.last_seen_at && <DetailRow icon={Clock} label="Last Seen" value={formatDateTime(selected.last_seen_at)} />}
-                      {selected.created_at && <DetailRow icon={Calendar} label="Created" value={formatDateTime(selected.created_at)} />}
-                    </Section>
-                  )}
-                </>
+              {addError && (
+                <div style={{ marginBottom: 16, padding: '9px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444', fontSize: 13, color: '#ef4444' }}>
+                  {addError}
+                </div>
               )}
+
+              <form onSubmit={handleAddSubmit}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' }}>
+                  <AddField label="Full Name *" value={addForm.name} onChange={v => setAddField('name', v)} placeholder="e.g. John Smith" />
+                  <AddField label="Email" value={addForm.email} onChange={v => setAddField('email', v)} type="email" placeholder="e.g. john@example.com" />
+                  <AddField label="Phone / Mobile" value={addForm.mobile} onChange={v => setAddField('mobile', v)} type="tel" placeholder="e.g. +971501234567" />
+                  <AddField label="City" value={addForm.city} onChange={v => setAddField('city', v)} placeholder="e.g. Dubai" />
+                  <AddField label="Country" value={addForm.country} onChange={v => setAddField('country', v)} placeholder="e.g. United Arab Emirates" />
+                  <AddSelect label="Contact Type" value={addForm.contact_type} onChange={v => setAddField('contact_type', v)}
+                    options={[{ value: 'B2C', label: 'B2C — Individual' }, { value: 'B2B', label: 'B2B — Business' }]} />
+                  <AddSelect label="Geography" value={addForm.geography} onChange={v => setAddField('geography', v)}
+                    options={[{ value: '', label: 'Unknown' }, { value: 'LOCAL', label: 'Local (UAE)' }, { value: 'INTERNATIONAL', label: 'International' }]} />
+                  <AddSelect label="WA Status" value={addForm.wa_unsubscribe} onChange={v => setAddField('wa_unsubscribe', v)}
+                    options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
+                  <AddSelect label="Email Status" value={addForm.email_unsubscribe} onChange={v => setAddField('email_unsubscribe', v)}
+                    options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
+                  <button type="button" className="btn btn-ghost" onClick={() => !addLoading && setShowAddModal(false)} disabled={addLoading}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={addLoading}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 110 }}>
+                    {addLoading
+                      ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Creating…</>
+                      : <><Check size={14} /> Create Contact</>}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </motion.div>
         )}
@@ -494,27 +443,6 @@ export default function UnifiedContacts() {
         )}
       </AnimatePresence>
     </motion.div>
-  );
-}
-
-function Section({ title, children }) {
-  return (
-    <div className="card" style={{ padding: 16, marginBottom: 12 }}>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>{title}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px' }}>{children}</div>
-    </div>
-  );
-}
-
-function DetailRow({ icon: Icon, label, value, color, truncate }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <Icon size={13} style={{ color: color || 'var(--text-tertiary)', flexShrink: 0 }} />
-      <span style={{ fontSize: 11, color: 'var(--text-tertiary)', minWidth: 70 }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)',
-        ...(truncate ? { maxHeight: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 250 } : {})
-      }}>{value || '\u2014'}</span>
-    </div>
   );
 }
 
@@ -540,24 +468,24 @@ function UCFilterSelect({ label, value, onChange, options, labels }) {
       <label style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, display: 'block', marginBottom: 4 }}>{label}</label>
       <button type="button" onClick={() => { setOpen(o => !o); setFilterText(''); }}
         style={{ width: '100%', padding: '7px 10px', fontSize: 13, borderRadius: 6, textAlign: 'left',
-          border: '1px solid var(--border)', background: 'var(--card-bg)', color: value ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          border: '1px solid var(--border)', background: 'var(--bg-card)', color: value ? 'var(--text-primary)' : 'var(--text-tertiary)',
           cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayValue}</span>
         <ChevronDown size={13} style={{ flexShrink: 0, opacity: 0.5 }} />
       </button>
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 50,
-          background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 8,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 220, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 300,
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.2)', maxHeight: 220, display: 'flex', flexDirection: 'column' }}>
           {showSearch && (
             <input autoFocus type="text" placeholder="Search..." value={filterText}
               onChange={e => setFilterText(e.target.value)}
-              style={{ padding: '8px 10px', fontSize: 12, border: 'none', borderBottom: '1px solid var(--border)', outline: 'none', background: 'transparent', color: 'var(--text-primary)' }} />
+              style={{ padding: '8px 10px', fontSize: 12, border: 'none', borderBottom: '1px solid var(--border)', outline: 'none', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
           )}
           <div style={{ overflowY: 'auto', flex: 1 }}>
             <div onClick={() => { onChange(''); setOpen(false); }}
               style={{ padding: '7px 10px', fontSize: 12, cursor: 'pointer', color: !value ? 'var(--brand-primary)' : 'var(--text-primary)', fontWeight: !value ? 600 : 400 }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'var(--hover-bg)'; }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>All</div>
             {filtered.map((o) => {
               const display = labels ? labels[options.indexOf(o)] || o : o;
@@ -565,7 +493,7 @@ function UCFilterSelect({ label, value, onChange, options, labels }) {
               return (
                 <div key={o} onClick={() => { onChange(o); setOpen(false); }}
                   style={{ padding: '7px 10px', fontSize: 12, cursor: 'pointer', color: isSelected ? 'var(--brand-primary)' : 'var(--text-primary)', fontWeight: isSelected ? 600 : 400 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--hover-bg)'; }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>{display}</div>
               );
             })}
@@ -577,81 +505,27 @@ function UCFilterSelect({ label, value, onChange, options, labels }) {
   );
 }
 
-// ── Booking Detail Components ───────────────────────────────
-
-function MiniStat({ icon: Icon, label, value, color }) {
+function AddField({ label, value, onChange, type = 'text', placeholder }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <Icon size={14} style={{ color }} />
-      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{label}:</span>
-      <span style={{ fontSize: 13, fontWeight: 600, color }}>{value}</span>
+    <div>
+      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{ width: '100%', padding: '8px 10px', fontSize: 13, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
+        onFocus={e => { e.target.style.borderColor = '#C9A96E'; }}
+        onBlur={e => { e.target.style.borderColor = 'var(--border)'; }} />
     </div>
   );
 }
 
-function BookingTable({ icon: Icon, title, color, rows, columns }) {
-  const [expanded, setExpanded] = useState(false);
-  const count = rows?.length || 0;
-  if (count === 0) return null;
-
+function AddSelect({ label, value, onChange, options }) {
   return (
-    <div className="card" style={{ padding: 0, marginBottom: 12, overflow: 'hidden' }}>
-      <div onClick={() => setExpanded(e => !e)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', userSelect: 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Icon size={14} style={{ color }} />
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{title}</span>
-          <span className="badge" style={{ background: `${color}20`, color, fontSize: 11 }}>{count}</span>
-        </div>
-        {expanded ? <ChevronUp size={16} style={{ color: 'var(--text-tertiary)' }} /> : <ChevronDown size={16} style={{ color: 'var(--text-tertiary)' }} />}
-      </div>
-      {expanded && (
-        <div className="table-wrap" style={{ maxHeight: 300, overflow: 'auto' }}>
-          <table style={{ fontSize: 12 }}>
-            <thead>
-              <tr>{columns.map(c => <th key={c.key} style={{ whiteSpace: 'nowrap', fontSize: 11, padding: '8px 10px' }}>{c.label}</th>)}</tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  {columns.map(c => (
-                    <td key={c.key} style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                      {c.render ? c.render(r[c.key], r) : (r[c.key] ?? '\u2014')}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <div>
+      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>{label}</label>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', padding: '8px 10px', fontSize: 13, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
     </div>
   );
 }
 
-function formatCurrency(v) {
-  if (v == null) return '\u2014';
-  return `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
-const bookingColumns = [
-  { key: 'bill_no', label: 'Bill #' },
-  { key: 'service_name', label: 'Service', render: v => v ? (v.length > 35 ? v.slice(0, 35) + '...' : v) : '\u2014' },
-  { key: 'travel_date', label: 'Travel Date', render: v => formatDate(v) },
-  { key: 'booking_date', label: 'Booked', render: v => formatDate(v) },
-  { key: 'guest_name', label: 'Guest' },
-  { key: 'nationality', label: 'Nationality' },
-  { key: 'selling_price', label: 'Amount', render: v => formatCurrency(v) },
-  { key: 'is_cancel', label: 'Status', render: v => v === '1' ? '\u274C Cancelled' : '\u2705 Active' },
-];
-
-const chatTableColumns = [
-  { key: 'wa_name', label: 'WA Name' },
-  { key: 'wa_id', label: 'WA ID' },
-  { key: 'country', label: 'Country' },
-  { key: 'status', label: 'Status', render: v => v === 0 ? 'Open' : v === 1 ? 'Resolved' : v },
-  { key: 'last_short', label: 'Last Msg', render: v => v ? (v.length > 30 ? v.slice(0, 30) + '...' : v) : '\u2014' },
-  { key: 'last_msg_at', label: 'Last Msg At', render: v => formatDateTime(v) },
-];
