@@ -17,7 +17,8 @@ const cancelFilter = () => `is_cancel <> '1'`;
 export default class UnifiedContactService {
 
   static async getAll({ page = 1, limit = 50, search, sortBy, sortDir, source, country,
-    contactType, businessType, bookingStatus, productTier, geography, hasBookings, waStatus, emailStatus } = {}) {
+    contactType, businessType, bookingStatus, productTier, geography, hasBookings, waStatus, emailStatus,
+    bookingDateFrom, bookingDateTo, travelDateFrom, travelDateTo } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -67,10 +68,43 @@ export default class UnifiedContactService {
     }
     if (hasBookings === 'yes') conditions.push(`uc.booking_status NOT IN ('PROSPECT')`);
     else if (hasBookings === 'no') conditions.push(`uc.booking_status = 'PROSPECT'`);
-    if (waStatus === 'unsubscribed') conditions.push(`uc.wa_unsubscribe = 'yes'`);
-    else if (waStatus === 'active') conditions.push(`(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe = 'no')`);
-    if (emailStatus === 'unsubscribed') conditions.push(`uc.email_unsubscribe = 'yes'`);
-    else if (emailStatus === 'active') conditions.push(`(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe = 'no')`);
+    // Case-insensitive match — DB values may be 'Yes', 'yes', 'No', 'no'
+    if (waStatus === 'unsubscribed') conditions.push(`LOWER(uc.wa_unsubscribe) = 'yes'`);
+    else if (waStatus === 'active') conditions.push(`(uc.wa_unsubscribe IS NULL OR LOWER(uc.wa_unsubscribe) = 'no')`);
+    if (emailStatus === 'unsubscribed') conditions.push(`LOWER(uc.email_unsubscribe) = 'yes'`);
+    else if (emailStatus === 'active') conditions.push(`(uc.email_unsubscribe IS NULL OR LOWER(uc.email_unsubscribe) = 'no')`);
+
+    // booking_date stored as DD/MM/YYYY text → parse with TO_DATE before comparing
+    if (bookingDateFrom || bookingDateTo) {
+      const clauses = [];
+      if (bookingDateFrom) { params.push(bookingDateFrom); clauses.push(`TO_DATE(bd.booking_date, 'DD/MM/YYYY') >= $${idx++}::date`); }
+      if (bookingDateTo)   { params.push(bookingDateTo);   clauses.push(`TO_DATE(bd.booking_date, 'DD/MM/YYYY') < $${idx++}::date + INTERVAL '1 day'`); }
+      conditions.push(`EXISTS (
+        SELECT 1 FROM (
+          SELECT booking_date FROM rayna_tours     WHERE unified_id = uc.id AND is_cancel <> '1' AND booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$'
+          UNION ALL SELECT booking_date FROM rayna_packages WHERE unified_id = uc.id AND is_cancel <> '1' AND booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$'
+          UNION ALL SELECT booking_date FROM rayna_hotels   WHERE unified_id = uc.id AND is_cancel <> '1' AND booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$'
+          UNION ALL SELECT booking_date FROM rayna_others   WHERE unified_id = uc.id AND is_cancel <> '1' AND booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$'
+          UNION ALL SELECT booking_date FROM rayna_flights  WHERE unified_id = uc.id AND is_cancel <> '1' AND booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$'
+        ) bd WHERE ${clauses.join(' AND ')}
+      )`);
+    }
+
+    // travel_date stored as YYYY-MM-DD text → cast directly to date
+    if (travelDateFrom || travelDateTo) {
+      const clauses = [];
+      if (travelDateFrom) { params.push(travelDateFrom); clauses.push(`td.travel_date::date >= $${idx++}::date`); }
+      if (travelDateTo)   { params.push(travelDateTo);   clauses.push(`td.travel_date::date < $${idx++}::date + INTERVAL '1 day'`); }
+      conditions.push(`EXISTS (
+        SELECT 1 FROM (
+          SELECT travel_date FROM rayna_tours     WHERE unified_id = uc.id AND is_cancel <> '1' AND travel_date IS NOT NULL AND travel_date <> ''
+          UNION ALL SELECT travel_date FROM rayna_packages WHERE unified_id = uc.id AND is_cancel <> '1' AND travel_date IS NOT NULL AND travel_date <> ''
+          UNION ALL SELECT travel_date FROM rayna_hotels   WHERE unified_id = uc.id AND is_cancel <> '1' AND travel_date IS NOT NULL AND travel_date <> ''
+          UNION ALL SELECT travel_date FROM rayna_others   WHERE unified_id = uc.id AND is_cancel <> '1' AND travel_date IS NOT NULL AND travel_date <> ''
+          UNION ALL SELECT travel_date FROM rayna_flights  WHERE unified_id = uc.id AND is_cancel <> '1' AND travel_date IS NOT NULL AND travel_date <> ''
+        ) td WHERE ${clauses.join(' AND ')}
+      )`);
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -236,7 +270,7 @@ export default class UnifiedContactService {
   }
 
   static async updateContact(id, fields) {
-    const ALLOWED = ['name', 'email', 'mobile', 'city', 'country', 'contact_type', 'wa_unsubscribe', 'email_unsubscribe'];
+    const ALLOWED = ['name', 'email', 'mobile', 'city', 'country', 'contact_type', 'wa_unsubscribe', 'email_unsubscribe', 'actual_email', 'actual_mobile', 'mobile_country'];
     const entries = Object.entries(fields).filter(([k]) => ALLOWED.includes(k));
     if (entries.length === 0) throw new Error('No valid fields to update');
     const setClause = entries.map(([k], i) => `${k} = $${i + 1}`).join(', ');
@@ -288,13 +322,15 @@ export default class UnifiedContactService {
       ${btClause}
     `, btParam);
 
-    // Compute total revenue from rayna tables
+    // Compute total revenue and total booking count from rayna tables
     const revenueSQL = RAYNA_TABLES.map(t =>
-      `SELECT COALESCE(SUM(selling_price), 0) AS rev FROM ${t} WHERE ${cancelFilter(t)}`
+      `SELECT COALESCE(SUM(selling_price), 0) AS rev, COUNT(*) FILTER (WHERE ${cancelFilter()}) AS cnt FROM ${t}`
     ).join(' UNION ALL ');
-    const { rows: revRows } = await pool.query(`SELECT SUM(rev)::numeric AS total_revenue FROM (${revenueSQL}) t`);
+    const { rows: revRows } = await pool.query(
+      `SELECT SUM(rev)::numeric AS total_revenue, SUM(cnt)::int AS total_bookings FROM (${revenueSQL}) t`
+    );
 
-    return { ...rows[0], total_revenue: revRows[0].total_revenue || 0 };
+    return { ...rows[0], total_revenue: revRows[0].total_revenue || 0, total_bookings: revRows[0].total_bookings || 0 };
   }
 
   /**

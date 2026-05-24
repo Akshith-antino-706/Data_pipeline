@@ -75,14 +75,14 @@ export default class CustomSegmentService {
           }
           case 'wa_status': {
             sub.push(cond.value === 'unsubscribed'
-              ? `uc.wa_unsubscribe = 'yes'`
-              : `(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe <> 'yes')`);
+              ? `LOWER(uc.wa_unsubscribe) = 'yes'`
+              : `(uc.wa_unsubscribe IS NULL OR LOWER(uc.wa_unsubscribe) <> 'yes')`);
             break;
           }
           case 'email_status': {
             sub.push(cond.value === 'unsubscribed'
-              ? `uc.email_unsubscribe = 'yes'`
-              : `(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe <> 'yes')`);
+              ? `LOWER(uc.email_unsubscribe) = 'yes'`
+              : `(uc.email_unsubscribe IS NULL OR LOWER(uc.email_unsubscribe) <> 'yes')`);
             break;
           }
           case 'source': {
@@ -149,7 +149,7 @@ export default class CustomSegmentService {
 
     const dateSelectParts = [];
     if (needsTravelDate) dateSelectParts.push(`MIN(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS min_travel_date, MAX(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS max_travel_date`);
-    if (needsBookingDate) dateSelectParts.push(`MIN(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS min_booking_date, MAX(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS max_booking_date`);
+    if (needsBookingDate) dateSelectParts.push(`MIN(CASE WHEN bd ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(bd, 'DD/MM/YYYY') END) AS min_booking_date, MAX(CASE WHEN bd ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(bd, 'DD/MM/YYYY') END) AS max_booking_date`);
 
     const dateJoin = needsDateJoin ? `
       LEFT JOIN LATERAL (
@@ -313,7 +313,7 @@ export default class CustomSegmentService {
     const needsDateJoin = needsTravelDate || needsBookingDate;
     const dateSelectParts = [];
     if (needsTravelDate) dateSelectParts.push(`MIN(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS min_travel_date, MAX(CASE WHEN td ~ '^\\d{4}-\\d{2}-\\d{2}' THEN td::date END) AS max_travel_date`);
-    if (needsBookingDate) dateSelectParts.push(`MIN(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS min_booking_date, MAX(CASE WHEN bd ~ '^\\d{4}-\\d{2}-\\d{2}' THEN bd::date END) AS max_booking_date`);
+    if (needsBookingDate) dateSelectParts.push(`MIN(CASE WHEN bd ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(bd, 'DD/MM/YYYY') END) AS min_booking_date, MAX(CASE WHEN bd ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(bd, 'DD/MM/YYYY') END) AS max_booking_date`);
 
     const revenueJoin = needsRevenueJoin ? `
       LEFT JOIN LATERAL (
