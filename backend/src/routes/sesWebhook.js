@@ -91,6 +91,25 @@ router.post('/ses', async (req, res) => {
         VALUES ($1, $2, $3, $4, $5, $6)
       `, [eventType, email?.toLowerCase(), messageId, bounceType, complaintType, JSON.stringify(message)]);
 
+      // ── Update email_send_log status via messageId ──
+      if (messageId) {
+        const statusMap = {
+          Delivery:  { status: 'delivered' },
+          Bounce:    { status: 'bounced' },
+          Complaint: { status: 'complained' },
+          Open:      { status: 'opened',  extra: ", opened_at = COALESCE(opened_at, NOW())" },
+          Click:     { status: 'clicked', extra: ", opened_at = COALESCE(opened_at, NOW()), clicked_at = COALESCE(clicked_at, NOW())" },
+        };
+        const mapping = statusMap[eventType];
+        if (mapping) {
+          await db.query(`
+            UPDATE email_send_log
+            SET status = $1 ${mapping.extra || ''}
+            WHERE external_id = $2 AND status NOT IN ('bounced', 'complained')
+          `, [mapping.status, messageId]);
+        }
+      }
+
       // Auto-unsubscribe on permanent bounce or complaint
       if (email && (eventType === 'Complaint' || (eventType === 'Bounce' && bounceType === 'Permanent'))) {
         await db.query(`
