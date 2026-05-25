@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, createTemplate, updateTemplate } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces } from 'lucide-react';
+import { getTemplates, previewTemplate, createTemplate, updateTemplate, deleteTemplate } from '@/lib/api';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2 } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -36,6 +36,8 @@ export default function Content() {
   const [form, setForm] = useState({ ...BLANK_FORM });
   const [dynVars, setDynVars] = useState([]); // [{ key: 'first_name', value: '' }, ...]
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // template object to confirm
 
   function extractVars(html) {
     const matches = [...html.matchAll(/\{\{(\w+)\}\}/g)];
@@ -100,6 +102,22 @@ export default function Content() {
       }
     });
     return result;
+  }
+
+  async function confirmAndDelete() {
+    if (!confirmDelete) return;
+    const id = confirmDelete.id;
+    setDeleting(id);
+    setConfirmDelete(null);
+    try {
+      await deleteTemplate(id);
+      setTemplates(prev => prev.filter(t => t.id !== id));
+      hotToast.success('Template deleted');
+    } catch (err) {
+      hotToast.error(err.message || 'Failed to delete template');
+    } finally {
+      setDeleting(null);
+    }
   }
 
   async function handleSave() {
@@ -218,11 +236,63 @@ export default function Content() {
                 <button className="btn btn-secondary btn-sm" onClick={() => openEdit(t)} style={{ gap: 6 }}>
                   <Edit2 size={14} /> Edit
                 </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setConfirmDelete(t)}
+                  disabled={deleting === t.id}
+                  style={{ gap: 6, color: 'var(--red, #ef4444)', marginLeft: 'auto' }}
+                  title="Delete template"
+                >
+                  <Trash2 size={14} />
+                  {deleting === t.id ? '…' : 'Delete'}
+                </button>
               </div>
             </div>
           );
         })}
       </motion.div>
+
+      {/* ── Delete Confirm Modal ── */}
+      <AnimatePresence>
+        {confirmDelete && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+            onClick={() => setConfirmDelete(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 12 }}
+              transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+              onClick={e => e.stopPropagation()}
+              style={{ background: 'var(--card)', borderRadius: 16, width: '100%', maxWidth: 420, boxShadow: '0 24px 80px rgba(0,0,0,0.3)', overflow: 'hidden' }}
+            >
+              <div style={{ padding: '28px 28px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(239,68,68,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Trash2 size={20} color="#ef4444" />
+                  </div>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Delete Template</div>
+                </div>
+                <div style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, paddingLeft: 54 }}>
+                  Are you sure you want to delete <strong style={{ color: 'var(--text-primary)' }}>{confirmDelete.name}</strong>? This action cannot be undone.
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 28px', borderTop: '1px solid var(--border)' }}>
+                <button className="btn btn-ghost" onClick={() => setConfirmDelete(null)}>Cancel</button>
+                <button
+                  className="btn btn-sm"
+                  onClick={confirmAndDelete}
+                  style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 8, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Trash2 size={14} /> Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Preview Modal ── */}
       {preview && (

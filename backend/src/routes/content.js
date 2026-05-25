@@ -205,4 +205,13 @@ router.post('/templates/:id/reject', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// DELETE /api/v2/content/templates/:id
+router.delete('/templates/:id', async (req, res, next) => {
+  try {
+    const deleted = await ContentService.delete(req.params.id);
+    if (!deleted) return res.status(404).json({ success: false, error: 'Template not found' });
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 export default router;

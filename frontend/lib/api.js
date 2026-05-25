@@ -54,6 +54,7 @@ export const getTemplate = (id) => request(`/api/v2/content/templates/${id}`);
 export const previewTemplate = (id) => request(`/api/v2/content/templates/${id}/preview`);
 export const createTemplate = (data) => request('/api/v2/content/templates', { method: 'POST', body: JSON.stringify(data) });
 export const updateTemplate = (id, data) => request(`/api/v2/content/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteTemplate = (id) => request(`/api/v2/content/templates/${id}`, { method: 'DELETE' });
 export const approveTemplate = (id) => request(`/api/v2/content/templates/${id}/approve`, { method: 'POST', body: JSON.stringify({ approvedBy: 'admin' }) });
 export const rejectTemplate = (id) => request(`/api/v2/content/templates/${id}/reject`, { method: 'POST' });
 export const generateContent = (data) => request('/api/v2/content/generate', { method: 'POST', body: JSON.stringify(data) });
@@ -361,6 +362,12 @@ export const previewSegmentCount = (conditions, operator) => request('/api/v3/cu
 export const getCustomSegmentCustomers = (id, params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/custom-segments/${id}/customers?${qs}`);
+};
+
+// ── Send Log ─────────────────────────────────────────────────────────────────
+export const getSendLog = (params = {}) => {
+  const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))).toString();
+  return request(`/api/v3/test-sends/send-log${qs ? '?' + qs : ''}`);
 };
 
 // ── Email UTM Visit Tracking ──────────────────────────────────────────────────

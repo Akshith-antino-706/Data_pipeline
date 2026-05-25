@@ -74,7 +74,7 @@ export class SendTrackService {
    * @param {string}  [opts.dateFrom]    - ISO date
    * @param {string}  [opts.dateTo]      - ISO date
    */
-  static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo } = {}) {
+  static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -85,6 +85,11 @@ export class SendTrackService {
     if (source)     { conditions.push(`esl.source = $${idx++}`);                params.push(source); }
     if (dateFrom)   { conditions.push(`esl.created_at >= $${idx++}`);           params.push(dateFrom); }
     if (dateTo)     { conditions.push(`esl.created_at <= $${idx++}`);           params.push(dateTo); }
+    if (subscriptionStatus === 'unsubscribed') {
+      conditions.push(`uc.email_unsubscribe = 'Yes'`);
+    } else if (subscriptionStatus === 'active') {
+      conditions.push(`(uc.email_unsubscribe IS NULL OR uc.email_unsubscribe != 'Yes')`);
+    }
 
     const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (page - 1) * limit;
@@ -97,7 +102,8 @@ export class SendTrackService {
           esl.journey_id, esl.node_id,
           esl.external_id, esl.provider, esl.status, esl.error_message,
           esl.sent_at, esl.opened_at, esl.clicked_at, esl.duration_ms, esl.created_at,
-          uc.name   AS uc_name
+          uc.name AS uc_name,
+          uc.email_unsubscribe AS email_unsubscribed
         FROM email_send_log esl
         LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id
         ${where}
@@ -105,7 +111,12 @@ export class SendTrackService {
         LIMIT $${idx} OFFSET $${idx + 1}
       `, [...params, limit, offset]),
 
-      db.query(`SELECT COUNT(*) AS total FROM email_send_log esl ${where}`, params),
+      db.query(`
+        SELECT COUNT(*) AS total
+        FROM email_send_log esl
+        LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id
+        ${where}
+      `, params),
     ]);
 
     return { rows, total: parseInt(countRows[0].total), page, limit };
