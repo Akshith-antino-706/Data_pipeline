@@ -14,8 +14,14 @@ import {
 const fadeIn = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35 } } };
 const stagger = { hidden: {}, visible: { transition: { staggerChildren: 0.07 } } };
 
-function formatDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
-function formatDateTime(d) { if (!d) return '—'; const dt = new Date(d); return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+function parseDate(d) {
+  if (!d) return null;
+  const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(d));
+  const dt = ddmmyyyy ? new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`) : new Date(d);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+function formatDate(d) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+function formatDateTime(d) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
 function formatAED(n) { return `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 function formatCurrency(v) { if (v == null) return '—'; return `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 
@@ -69,6 +75,9 @@ export default function ContactProfile() {
       contact_type:      contact.contact_type || '',
       wa_unsubscribe:    contact.wa_unsubscribe || 'no',
       email_unsubscribe: contact.email_unsubscribe || 'no',
+      actual_email:      contact.actual_email || '',
+      actual_mobile:     contact.actual_mobile || '',
+      mobile_country:    contact.mobile_country || '',
     });
     setSaveError(null);
     setEditing(true);
@@ -214,23 +223,29 @@ export default function ContactProfile() {
                 options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
               <EditSelect label="WA Status" value={editForm.wa_unsubscribe} onChange={v => setField('wa_unsubscribe', v)}
                 options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
+              <EditField label="Actual Email"  value={editForm.actual_email}   onChange={v => setField('actual_email', v)}  type="email" />
+              <EditField label="Actual Mobile" value={editForm.actual_mobile}  onChange={v => setField('actual_mobile', v)} type="tel" />
+              <EditField label="Mobile Country" value={editForm.mobile_country} onChange={v => setField('mobile_country', v)} />
             </div>
           ) : (
             /* View mode */
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 32px' }}>
-              {contact.email                        && <DetailRow icon={Mail}          label="Email"        value={contact.email} />}
-              {(contact.phone || contact.mobile)    && <DetailRow icon={Phone}         label="Phone"        value={contact.phone || contact.mobile} />}
-              {contact.company_name                 && <DetailRow icon={Building2}     label="Company"      value={contact.company_name} />}
-              {contact.designation                  && <DetailRow icon={Hash}          label="Designation"  value={contact.designation} />}
-              {contact.city                         && <DetailRow icon={MapPin}        label="City"         value={contact.city} />}
-              {contact.country                      && <DetailRow icon={Globe}         label="Country"      value={contact.country} />}
-              {contact.contact_type                 && <DetailRow icon={Hash}          label="Type"         value={contact.contact_type} />}
+              {contact.email                        && <DetailRow icon={Mail}          label="Email"          value={contact.email} />}
+              {(contact.phone || contact.mobile)    && <DetailRow icon={Phone}         label="Phone"          value={contact.phone || contact.mobile} />}
+              {contact.actual_email                 && <DetailRow icon={Mail}          label="Actual Email"   value={contact.actual_email} />}
+              {contact.actual_mobile                && <DetailRow icon={Phone}         label="Actual Mobile"  value={contact.actual_mobile} />}
+              {contact.mobile_country               && <DetailRow icon={Globe}         label="Mobile Country" value={contact.mobile_country} />}
+              {contact.company_name                 && <DetailRow icon={Building2}     label="Company"        value={contact.company_name} />}
+              {contact.designation                  && <DetailRow icon={Hash}          label="Designation"    value={contact.designation} />}
+              {contact.city                         && <DetailRow icon={MapPin}        label="City"           value={contact.city} />}
+              {contact.country                      && <DetailRow icon={Globe}         label="Country"        value={contact.country} />}
+              {contact.contact_type                 && <DetailRow icon={Hash}          label="Type"           value={contact.contact_type} />}
               <DetailRow icon={Mail}         label="Email Status"
-                value={contact.email_unsubscribe === 'yes' ? 'Unsubscribed' : 'Active'}
-                color={contact.email_unsubscribe === 'yes' ? 'var(--red)' : 'var(--green)'} />
+                value={(contact.email_unsubscribe || '').toLowerCase() === 'yes' ? 'Unsubscribed' : 'Active'}
+                color={(contact.email_unsubscribe || '').toLowerCase() === 'yes' ? 'var(--red)' : 'var(--green)'} />
               <DetailRow icon={MessageSquare} label="WA Status"
-                value={contact.wa_unsubscribe === 'yes' ? 'Unsubscribed' : 'Active'}
-                color={contact.wa_unsubscribe === 'yes' ? 'var(--red)' : 'var(--green)'} />
+                value={(contact.wa_unsubscribe || '').toLowerCase() === 'yes' ? 'Unsubscribed' : 'Active'}
+                color={(contact.wa_unsubscribe || '').toLowerCase() === 'yes' ? 'var(--red)' : 'var(--green)'} />
             </div>
           )}
         </div>

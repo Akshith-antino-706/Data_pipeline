@@ -169,10 +169,11 @@ export default function Journeys() {
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null };
   const [createNodeForm, setCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
+  const [editCreateNodeIdx, setEditCreateNodeIdx] = useState(null);
+  const [editCreateNodeForm, setEditCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
   const [allSegments, setAllSegments] = useState([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
-  const [changingTemplateIdx, setChangingTemplateIdx] = useState(null);
 
   // ── Mount guard (needed for createPortal in early returns) ───
   const [isMounted, setIsMounted] = useState(false);
@@ -2907,7 +2908,6 @@ export default function Journeys() {
                     : n.type === 'condition' ? (n.condition === 'booked' ? 'Has Booked?' : n.condition === 'opened_email' ? 'Opened Email?' : n.condition === 'clicked_link' ? 'Clicked Link?' : n.condition || 'Condition')
                     : n.type === 'goal' ? `Goal: ${n.goalType ? n.goalType.charAt(0).toUpperCase() + n.goalType.slice(1) : 'Booking'}` : '';
                   const templateId = n.emailTemplateId || n.whatsappTemplateId || n.smsTemplateId;
-                  const isChangingTemplate = changingTemplateIdx === idx;
                   const channelTemplates = allTemplates[n.channel] || allTemplates.email || [];
                   const selectedTpl = channelTemplates.find(t => t.id === templateId) || null;
                   return (
@@ -2923,56 +2923,137 @@ export default function Journeys() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                             <span style={{ fontSize: 10, fontWeight: 600, color, background: color + '15', padding: '2px 7px', borderRadius: 20 }}>{NODE_LABELS[n.type]}</span>
-                            {n.type === 'action' && (
-                              <>
-                                <button title={selectedTpl ? 'Change template' : 'Select template'}
-                                  onClick={() => { loadTemplates(); setChangingTemplateIdx(isChangingTemplate ? null : idx); }}
-                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 20, fontSize: 10, fontWeight: 600, cursor: 'pointer', border: `1px solid ${isChangingTemplate ? color : 'var(--border-color)'}`, background: isChangingTemplate ? color + '12' : 'var(--bg-secondary)', color: isChangingTemplate ? color : 'var(--text-secondary)', maxWidth: 120, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  <RefreshCw size={9} style={{ flexShrink: 0 }} />
-                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedTpl ? selectedTpl.name : 'Select Template'}</span>
-                                  <ChevronDown size={9} style={{ flexShrink: 0 }} />
-                                </button>
-                                {templateId && (
-                                  <button title="Preview template"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const tpl = selectedTpl || { id: templateId, name: 'Template', channel: n.channel || 'email' };
-                                      setPreviewTemplate({ ...tpl, body_html: null });
-                                      fetchTemplatePreview(templateId)
-                                        .then(res => setPreviewTemplate(prev => prev ? { ...prev, body_html: res.data?.html || null } : null))
-                                        .catch(() => {});
-                                    }}
-                                    style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', flexShrink: 0 }}>
-                                    <Eye size={12} />
-                                  </button>
-                                )}
-                              </>
+                            {n.type === 'action' && templateId && (
+                              <button title="Preview template"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const tpl = selectedTpl || { id: templateId, name: 'Template', channel: n.channel || 'email' };
+                                  setPreviewTemplate({ ...tpl, body_html: null });
+                                  fetchTemplatePreview(templateId)
+                                    .then(res => setPreviewTemplate(prev => prev ? { ...prev, body_html: res.data?.html || null } : null))
+                                    .catch(() => {});
+                                }}
+                                style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', flexShrink: 0 }}>
+                                <Eye size={12} />
+                              </button>
                             )}
-                            <button onClick={() => setCreateNodes(ns => ns.filter((_, i) => i !== idx))}
+                            <button title="Edit node"
+                              onClick={() => { loadTemplates(); setEditCreateNodeIdx(editCreateNodeIdx === idx ? null : idx); setEditCreateNodeForm({ ...n }); }}
+                              style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${editCreateNodeIdx === idx ? color : 'var(--border-color)'}`, background: editCreateNodeIdx === idx ? color + '14' : 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: editCreateNodeIdx === idx ? color : 'var(--text-secondary)', flexShrink: 0 }}>
+                              <Edit3 size={11} />
+                            </button>
+                            <button onClick={() => { setCreateNodes(ns => ns.filter((_, i) => i !== idx)); if (editCreateNodeIdx === idx) setEditCreateNodeIdx(null); }}
                               style={{ width: 28, height: 28, borderRadius: 7, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 15, flexShrink: 0 }}>×</button>
                           </div>
                         </div>
-                        {n.type === 'action' && isChangingTemplate && (
-                          <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${color}20` }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', margin: '10px 0 7px' }}>Choose Template</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 200, overflowY: 'auto' }}>
-                              {channelTemplates.map(tpl => {
-                                const isSelected = templateId === tpl.id;
-                                return (
-                                  <div key={tpl.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 7, border: isSelected ? `1.5px solid ${color}` : '1px solid var(--border-color)', background: isSelected ? color + '10' : 'var(--bg-secondary)' }}>
-                                    <div onClick={() => { setCreateNodes(ns => ns.map((node, i) => { if (i !== idx) return node; const ck = `${node.channel || 'email'}TemplateId`; return { ...node, [ck]: tpl.id, label: tpl.name || node.label }; })); setChangingTemplateIdx(null); }} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
-                                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tpl.name}</div>
-                                      {tpl.subject && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tpl.subject}</div>}
-                                    </div>
-                                    {isSelected && <CheckCircle2 size={13} color={color} style={{ flexShrink: 0 }} />}
-                                    <button title="Preview" onClick={async (e) => { e.stopPropagation(); try { const res = await fetchTemplatePreview(tpl.id); setPreviewTemplate({ ...tpl, body_html: res.data?.html || null }); } catch { setPreviewTemplate(tpl); } }}
-                                      style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', flexShrink: 0 }}>
-                                      <Eye size={11} />
-                                    </button>
+                        {/* ── Inline Edit Panel ── */}
+                        {editCreateNodeIdx === idx && (
+                          <div style={{ padding: '14px', borderTop: `1px solid ${color}20`, background: color + '04' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <Edit3 size={10} /> Edit Node
+                            </div>
+                            {/* Label */}
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Node Name</label>
+                              <input className="form-input" value={editCreateNodeForm.label} onChange={e => setEditCreateNodeForm(f => ({ ...f, label: e.target.value }))} />
+                            </div>
+                            {/* ACTION: channel + templates */}
+                            {editCreateNodeForm.type === 'action' && (
+                              <>
+                                <div style={{ marginBottom: 10 }}>
+                                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Channel</label>
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    {[{ v: 'email', label: 'Email', c: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', c: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', c: 'var(--orange)', Icon: Smartphone }].map(ch => (
+                                      <button key={ch.v} onClick={() => setEditCreateNodeForm(f => ({ ...f, channel: ch.v }))}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: editCreateNodeForm.channel === ch.v ? `1.5px solid ${ch.c}` : '1.5px solid var(--border-color)', background: editCreateNodeForm.channel === ch.v ? ch.c + '14' : 'transparent', color: editCreateNodeForm.channel === ch.v ? ch.c : 'var(--text-secondary)' }}>
+                                        <ch.Icon size={11} /> {ch.label}
+                                      </button>
+                                    ))}
                                   </div>
-                                );
-                              })}
-                              {channelTemplates.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0' }}>No templates found</div>}
+                                </div>
+                                {editCreateNodeForm.channel === 'email' && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Email Template</label>
+                                    <select className="form-input" value={editCreateNodeForm.emailTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                      <option value="">— Select email template —</option>
+                                      {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
+                                    </select>
+                                  </div>
+                                )}
+                                {editCreateNodeForm.channel === 'whatsapp' && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
+                                    <select className="form-input" value={editCreateNodeForm.whatsappTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                      <option value="">— Select WhatsApp template —</option>
+                                      {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                    </select>
+                                  </div>
+                                )}
+                                {editCreateNodeForm.channel === 'sms' && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
+                                    <select className="form-input" value={editCreateNodeForm.smsTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                      <option value="">— Select SMS template —</option>
+                                      {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                    </select>
+                                  </div>
+                                )}
+                                <div style={{ marginBottom: 10 }}>
+                                  <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
+                                  <select className="form-input" style={{ width: 160 }} value={editCreateNodeForm.sendHour ?? ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
+                                    <option value="">Any time</option>
+                                    {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}</option>)}
+                                  </select>
+                                </div>
+                              </>
+                            )}
+                            {/* WAIT */}
+                            {editCreateNodeForm.type === 'wait' && (
+                              <div style={{ marginBottom: 10 }}>
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <input type="number" min={1} className="form-input" style={{ width: 80 }} value={editCreateNodeForm.waitDays}
+                                    onChange={e => { const d = Math.max(1, parseInt(e.target.value) || 1); setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` })); }} />
+                                  <div style={{ display: 'flex', gap: 5 }}>
+                                    {[1, 2, 3, 7].map(d => (
+                                      <button key={d} onClick={() => setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
+                                        style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: editCreateNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: editCreateNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {/* CONDITION */}
+                            {editCreateNodeForm.type === 'condition' && (
+                              <div style={{ marginBottom: 10 }}>
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Condition</label>
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                  {[{ v: 'booked', l: 'Has Booked' }, { v: 'opened_email', l: 'Opened Email' }, { v: 'clicked_link', l: 'Clicked Link' }].map(c => (
+                                    <button key={c.v} onClick={() => setEditCreateNodeForm(f => ({ ...f, condition: c.v }))}
+                                      style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: editCreateNodeForm.condition === c.v ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.condition === c.v ? 'var(--yellow)14' : 'transparent', color: editCreateNodeForm.condition === c.v ? 'var(--yellow)' : 'var(--text-secondary)' }}>{c.l}</button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {/* GOAL */}
+                            {editCreateNodeForm.type === 'goal' && (
+                              <div style={{ marginBottom: 10 }}>
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Goal Type</label>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  {[{ v: 'booking', l: 'Booking' }, { v: 'enquiry', l: 'Enquiry' }, { v: 'registration', l: 'Registration' }].map(g => (
+                                    <button key={g.v} onClick={() => setEditCreateNodeForm(f => ({ ...f, goalType: g.v }))}
+                                      style={{ padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: editCreateNodeForm.goalType === g.v ? '1.5px solid var(--purple)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.goalType === g.v ? 'var(--purple)14' : 'transparent', color: editCreateNodeForm.goalType === g.v ? 'var(--purple)' : 'var(--text-secondary)' }}>{g.l}</button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                              <button className="btn btn-sm btn-primary"
+                                disabled={!editCreateNodeForm.label.trim()}
+                                onClick={() => { setCreateNodes(ns => ns.map((node, i) => i === idx ? { ...editCreateNodeForm } : node)); setEditCreateNodeIdx(null); }}>
+                                <CheckCircle2 size={11} /> Save
+                              </button>
+                              <button className="btn btn-sm btn-ghost" onClick={() => setEditCreateNodeIdx(null)}>Cancel</button>
                             </div>
                           </div>
                         )}

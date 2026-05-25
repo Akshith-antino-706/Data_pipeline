@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { getSegmentationTree, getSegmentActivity } from '@/lib/api';
+import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats } from '@/lib/api';
 import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
@@ -35,6 +35,23 @@ export default function Dashboard() {
   const { businessType } = useBusinessType();
 
   // ── email schedule summary ─────────────────────────────────────────
+  const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null });
+
+  useEffect(() => {
+    const btParam = businessType === 'All' ? {} : { businessType };
+    Promise.allSettled([
+      getUnifiedStats(btParam),
+      getCampaigns({ limit: 1 }),
+      getJourneys({ limit: 1 }),
+    ]).then(([contacts, campaigns, journeys]) => {
+      setQuickStats({
+        contacts:  contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts  ?? null : null,
+        campaigns: campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
+        journeys:  journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
+      });
+    });
+  }, [businessType]);
+
   const [schedSummary, setSchedSummary] = useState({ running: 0, total: 0, lastSentDay: null, lastSentAt: null });
   useEffect(() => {
     fetch(`${API_BASE}/api/v3/test-sends/schedule/list`)
@@ -187,35 +204,38 @@ export default function Dashboard() {
       </motion.div>
 
       {/* Quick Actions — always visible */}
-      <motion.div variants={fadeInUp} className="card-grid card-grid-4 mb-24">
-        <Link href="/contacts" className="card action-card">
-          <UserCheck size={24} color="var(--blue)" className="mb-8" />
-          <div className="action-title">Contacts</div>
-          <div className="action-desc">Unified customer database</div>
-        </Link>
-        <Link href="/campaigns" className="card action-card">
-          <Megaphone size={24} color="var(--green)" className="mb-8" />
-          <div className="action-title">Campaigns</div>
-          <div className="action-desc">Execute & Track</div>
-        </Link>
-        <Link href="/journeys" className="card action-card">
-          <GitBranch size={24} color="var(--purple)" className="mb-8" />
-          <div className="action-title">Journeys</div>
-          <div className="action-desc">Flow Builder</div>
-        </Link>
-        <Link href="/segment-activity" className="card action-card">
-          <Activity size={24} color="var(--orange)" className="mb-8" />
+      <motion.div variants={fadeInUp} className="card-grid card-grid-3 mb-24">
+        {[
+          { href: '/contacts',  Icon: UserCheck, color: 'var(--blue)',   label: 'Contacts',  val: quickStats.contacts },
+          { href: '/campaigns', Icon: Megaphone, color: 'var(--green)',  label: 'Campaigns', val: quickStats.campaigns },
+          { href: '/journeys',  Icon: GitBranch, color: 'var(--purple)', label: 'Journeys',  val: quickStats.journeys },
+        ].map((item) => (
+          <Link key={item.href} href={item.href} className="card action-card" style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: '20px 24px' }}>
+            <div style={{ width: 48, height: 48, borderRadius: 12, background: `color-mix(in srgb, ${item.color} 12%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <item.Icon size={22} color={item.color} />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{item.label}</div>
+              {item.val === null
+                ? <div className="skeleton" style={{ width: 80, height: 22, borderRadius: 4, marginTop: 4 }} />
+                : <div style={{ fontSize: 22, fontWeight: 700, color: item.color, marginTop: 2, letterSpacing: -0.5 }}>{fmt(item.val)}</div>
+              }
+            </div>
+          </Link>
+        ))}
+        {/* <Link href="/segment-activity" className="card action-card">
+          <Activity size={24} color="var(--orange)" />
           <div className="action-title">Segment Activity</div>
           <div className="action-desc">Daily entries, exits & reach</div>
-        </Link>
+        </Link> */}
       </motion.div>
 
       {/* Email Schedule Status — always visible (own useEffect) */}
-      <motion.div variants={fadeInUp}>
+      {/* <motion.div variants={fadeInUp}>
         <div className="card mb-24">
           <div className="card-header">
             <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Mail size={16} color="#e2b340" /> Email Schedules
+              <Mail size={16} color="#e2b340" /> Email Scheduless
             </h3>
             <Link href="/test-sends" className="btn btn-sm btn-ghost">Manage</Link>
           </div>
@@ -254,7 +274,7 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      </motion.div>
+      </motion.div> */}
 
       {/* Last 7 Days Activity */}
       <motion.div variants={fadeInUp}>

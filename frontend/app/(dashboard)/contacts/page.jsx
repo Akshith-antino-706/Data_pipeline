@@ -6,17 +6,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { getUnifiedContacts, getUnifiedStats, getUnifiedFilters, createUnifiedContact, deleteUnifiedContact } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import {
-  Users, Search, MessageSquare,
+  Users, Search, Ticket,
   ArrowUpDown, ChevronLeft, ChevronRight, Eye,
-  Map, DollarSign, Layers,
+  DollarSign,
   Filter, RotateCcw, ChevronDown, UserPlus, X, Check, Loader2, Trash2,
 } from 'lucide-react';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
-function formatDate(d) { if (!d) return '\u2014'; return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
-function formatDateTime(d) { if (!d) return '\u2014'; const dt = new Date(d); return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
 function formatNum(n) { return (n || 0).toLocaleString(); }
 function formatAED(n) { return `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 
@@ -52,7 +50,7 @@ export default function UnifiedContacts() {
   const [addError, setAddError] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filterOptions, setFilterOptions] = useState(null);
-  const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' });
+  const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '', bookingDateFrom: '', bookingDateTo: '', travelDateFrom: '', travelDateTo: '' });
   const limit = 50;
   const { businessType } = useBusinessType();
   const router = useRouter();
@@ -61,7 +59,7 @@ export default function UnifiedContacts() {
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
   const updateFilter = (key, value) => { setFilters(f => ({ ...f, [key]: value })); setPage(1); };
-  const clearFilters = () => { setFilters({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '' }); setPage(1); };
+  const clearFilters = () => { setFilters({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '', bookingDateFrom: '', bookingDateTo: '', travelDateFrom: '', travelDateTo: '' }); setPage(1); };
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
@@ -139,9 +137,7 @@ export default function UnifiedContacts() {
 
   const kpis = [
     { label: 'Total Contacts', value: formatNum(stats?.total_contacts), icon: Users, color: 'var(--brand-primary)' },
-    { label: 'With Chats', value: formatNum(stats?.with_chats), icon: MessageSquare, color: '#25D366' },
-    { label: 'With Bookings', value: formatNum(stats?.with_travel), icon: Map, color: 'var(--green)' },
-    { label: 'Multi-Source', value: formatNum(stats?.multi_source), icon: Layers, color: 'var(--purple)' },
+    { label: 'Total Bookings', value: formatNum(stats?.total_bookings), icon: Ticket, color: 'var(--green)' },
     { label: 'Total Revenue', value: formatAED(stats?.total_revenue), icon: DollarSign, color: 'var(--yellow)' },
   ];
 
@@ -248,6 +244,12 @@ export default function UnifiedContacts() {
                 options={['active', 'unsubscribed']} labels={['Active', 'Unsubscribed']} />
               <UCFilterSelect label="Email Status" value={filters.emailStatus} onChange={v => updateFilter('emailStatus', v)}
                 options={['active', 'unsubscribed']} labels={['Active', 'Unsubscribed']} />
+              <DateRangeFilter label="Booking Date"
+                from={filters.bookingDateFrom} to={filters.bookingDateTo}
+                onFrom={v => updateFilter('bookingDateFrom', v)} onTo={v => updateFilter('bookingDateTo', v)} />
+              <DateRangeFilter label="Travel Date"
+                from={filters.travelDateFrom} to={filters.travelDateTo}
+                onFrom={v => updateFilter('travelDateFrom', v)} onTo={v => updateFilter('travelDateTo', v)} />
             </div>
           </motion.div>
         )}
@@ -501,6 +503,33 @@ function UCFilterSelect({ label, value, onChange, options, labels }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function DateRangeFilter({ label, from, to, onFrom, onTo }) {
+  const inputStyle = {
+    width: '100%', padding: '7px 8px', fontSize: 12, borderRadius: 6, boxSizing: 'border-box',
+    border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)',
+    outline: 'none', cursor: 'pointer',
+  };
+  return (
+    <div style={{ gridColumn: 'span 2' }}>
+      <label style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, display: 'block', marginBottom: 4 }}>{label}</label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>From</div>
+          <input type="date" value={from} onChange={e => onFrom(e.target.value)} style={inputStyle}
+            onFocus={e => { e.target.style.borderColor = '#C9A96E'; }}
+            onBlur={e => { e.target.style.borderColor = 'var(--border)'; }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>To</div>
+          <input type="date" value={to} onChange={e => onTo(e.target.value)} style={inputStyle}
+            onFocus={e => { e.target.style.borderColor = '#C9A96E'; }}
+            onBlur={e => { e.target.style.borderColor = 'var(--border)'; }} />
+        </div>
+      </div>
     </div>
   );
 }

@@ -52,8 +52,13 @@ router.get('/', async (req, res, next) => {
     const hasBookings = req.query.hasBookings || undefined;
     const waStatus = req.query.waStatus || undefined;
     const emailStatus = req.query.emailStatus || undefined;
+    const bookingDateFrom = req.query.bookingDateFrom || undefined;
+    const bookingDateTo = req.query.bookingDateTo || undefined;
+    const travelDateFrom = req.query.travelDateFrom || undefined;
+    const travelDateTo = req.query.travelDateTo || undefined;
     const result = await UnifiedContactService.getAll({ page, limit, search, sortBy, sortDir, source, country,
-      contactType, businessType, bookingStatus, productTier, geography, hasBookings, waStatus, emailStatus });
+      contactType, businessType, bookingStatus, productTier, geography, hasBookings, waStatus, emailStatus,
+      bookingDateFrom, bookingDateTo, travelDateFrom, travelDateTo });
     res.json({ success: true, ...result });
   } catch (err) { next(err); }
 });

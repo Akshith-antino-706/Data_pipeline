@@ -404,7 +404,7 @@ export default function SegmentActivity() {
       </motion.div>
       )}
       {/* Customer Detail Panel — below daily log */}
-      <AnimatePresence>
+      {/* <AnimatePresence>
         {detailSegment && (
           <motion.div variants={fadeInUp} initial="hidden" animate="visible" exit="hidden"
             style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
@@ -487,7 +487,7 @@ export default function SegmentActivity() {
             )}
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence> */}
 
       {/* Contact Detail Modal */}
       <AnimatePresence>
