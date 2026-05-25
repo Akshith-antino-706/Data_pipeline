@@ -43,6 +43,7 @@ import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
 import authRouter from './src/routes/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
+import sesWebhookRouter from './src/routes/sesWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// ── SES Webhook (before rate limiter — SNS sends many events) ──
+app.use('/api/webhooks', express.text({ type: 'text/plain' }), sesWebhookRouter);
 
 // Rate limiting — general: 200 req/min, mutations: 30 req/min
 const generalLimiter = rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many requests, slow down' } });
