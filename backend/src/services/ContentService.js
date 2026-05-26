@@ -113,4 +113,10 @@ export class ContentService {
 
     return { body, subject };
   }
+
+  /** Delete a template by ID */
+  static async delete(id) {
+    const { rows } = await query('DELETE FROM content_templates WHERE id = $1 RETURNING id', [id]);
+    return rows[0] || null;
+  }
 }

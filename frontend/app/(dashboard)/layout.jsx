@@ -3,7 +3,7 @@
 import { useState, Component } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, Mail, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, Mail, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -18,6 +18,7 @@ const NAV = [
   { href: '/journeys', icon: GitBranch, label: 'Journeys' },
   { href: '/campaigns', icon: Megaphone, label: 'Campaigns' },
   { href: '/content', icon: FileText, label: 'Content' },
+  { href: '/log', icon: ClipboardList, label: 'Send Log' },
   { href: '/utm', icon: Link2, label: 'UTM Tracking' },
   { href: '/gtm', icon: Code, label: 'GTM & BigQuery' },
   { href: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
