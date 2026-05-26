@@ -124,6 +124,8 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
     templateLabel,
     dayNumber,
     source,
+    journeyId:     journeyId || null,
+    nodeId:        nodeId || null,
   });
   console.log(`[SendQueue] QUEUED  Day${dayNumber} → ${recipient.email} (log#${logId})`);
 
