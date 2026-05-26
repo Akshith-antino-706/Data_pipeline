@@ -359,6 +359,7 @@ export const createCustomSegment = (data) => request('/api/v3/custom-segments', 
 export const updateCustomSegment = (id, data) => request(`/api/v3/custom-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteCustomSegment = (id) => request(`/api/v3/custom-segments/${id}`, { method: 'DELETE' });
 export const previewSegmentCount = (conditions, operator) => request('/api/v3/custom-segments/preview-count', { method: 'POST', body: JSON.stringify({ conditions, operator }) });
+export const searchContactsByEmail = (q) => { const qs = new URLSearchParams({ q }).toString(); return request(`/api/v3/test-sends/search-contacts?${qs}`); };
 export const getCustomSegmentCustomers = (id, params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/custom-segments/${id}/customers?${qs}`);

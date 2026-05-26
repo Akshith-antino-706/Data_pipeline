@@ -194,9 +194,16 @@ export default function Journeys() {
     return () => clearInterval(t);
   }, []);
 
-  // Returns current Dubai time as "YYYY-MM-DDTHH:mm" for datetime-local min
-  const dubaiNowForInput = () => {
-    const now = new Date();
+  // Convert sendHour (null | integer legacy | "HH:MM" string) to time input value
+  const sendHourToTime = (v) => {
+    if (v === null || v === undefined || v === '') return '';
+    if (typeof v === 'number') return `${String(v).padStart(2, '0')}:00`;
+    return v;
+  };
+
+  // Returns Dubai time (+ offsetMins) as "YYYY-MM-DDTHH:mm" for datetime-local
+  const dubaiNowForInput = (offsetMins = 0) => {
+    const now = new Date(Date.now() + offsetMins * 60000);
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', hour12: false,
@@ -500,7 +507,7 @@ export default function Journeys() {
   useEffect(() => {
     if (showCreate) {
       loadSegments();
-      setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput() }));
+      setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput(10) }));
     }
   }, [showCreate]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1451,9 +1458,10 @@ export default function Journeys() {
                                   </span>
                                   {nodeLifecycle && (() => {
                                     const lcConfig = {
-                                      PENDING:   { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', dot: null },
+                                      PENDING:   { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', dot: null  },
                                       RUNNING:   { bg: color + '20',             color,            dot: true  },
                                       COMPLETED: { bg: 'rgba(34,197,94,0.12)',   color: '#22c55e', dot: null  },
+                                      PAUSED:    { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c', dot: null  },
                                     }[nodeLifecycle];
                                     return (
                                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: lcConfig.bg, color: lcConfig.color, letterSpacing: '0.8px', textTransform: 'uppercase' }}>
@@ -1752,10 +1760,10 @@ export default function Journeys() {
                                   const camp = nodeCampaignMap?.[node.id];
                                   const target    = camp?.target    || parseInt(detail?.total_entries) || 0;
                                   const sent      = camp?.sent      || parseInt(nodeStats?.action_sent)      || 0;
-                                  const delivered = camp?.delivered  || parseInt(nodeStats?.action_delivered) || 0;
-                                  const read      = campaignData?.opens?.[node.id] || camp?.read || parseInt(nodeStats?.action_read) || 0;
-                                  const clicked   = campaignData?.gtm_clicks?.[node.id] || camp?.clicked || parseInt(nodeStats?.action_clicked) || 0;
-                                  const bounced   = camp?.bounced    || parseInt(nodeStats?.action_bounced)   || 0;
+                                  const delivered = campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? parseInt(nodeStats?.action_delivered) ?? 0;
+                                  const read      = campaignData?.opens?.[node.id] ?? camp?.read ?? parseInt(nodeStats?.action_read) ?? 0;
+                                  const clicked   = campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? parseInt(nodeStats?.action_clicked) ?? 0;
+                                  const bounced   = campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? parseInt(nodeStats?.action_bounced) ?? 0;
                                   const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
                                   const blocked   = parseInt(nodeStats?.action_blocked) || 0;
                                   // BullMQ live queue depth for this channel
@@ -1802,12 +1810,13 @@ export default function Journeys() {
                                         </div>
                                       )}
 
-                                      {/* Top row — Target, In Queue, Sent */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                                      {/* Top row — Target, In Queue, Sent, Delivered */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
                                         {[
-                                          { label: 'TARGET', value: target, color: 'var(--green)' },
-                                          { label: 'IN QUEUE', value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)' },
-                                          { label: 'SENT', value: sent, color: sent > 0 ? 'var(--green)' : 'var(--text-muted)' },
+                                          { label: 'TARGET',    value: target,       color: 'var(--green)' },
+                                          { label: 'IN QUEUE',  value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)' },
+                                          { label: 'SENT',      value: sent,         color: sent > 0 ? 'var(--green)' : 'var(--text-muted)' },
+                                          { label: 'DELIVERED', value: delivered,    color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
@@ -1848,14 +1857,14 @@ export default function Journeys() {
                                       {/* Bottom row — Read, Clicked, Bounced, Failed */}
                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
                                         {[
-                                          { label: 'Read', value: read, color: 'var(--text-primary)' },
-                                          { label: 'Clicked', value: clicked, color: 'var(--text-primary)' },
+                                          { label: 'Read',    value: read,    color: 'var(--text-primary)' },
+                                          { label: 'Clicked', value: clicked, color: '#8b5cf6' },
                                           { label: 'Bounced', value: bounced, color: 'var(--orange)' },
-                                          { label: 'Failed', value: failed, color: 'var(--red)' },
+                                          { label: 'Failed',  value: failed,  color: 'var(--red)' },
                                         ].map(m => (
-                                          <div key={m.label} style={{ textAlign: 'center', padding: '6px 0' }}>
-                                            <div style={{ fontSize: 18, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
-                                            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{m.label}</div>
+                                          <div key={m.label} style={{ textAlign: 'center', padding: '6px 0', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}>
+                                            <div style={{ fontSize: 18, fontWeight: 700, color: m.value > 0 ? m.color : 'var(--text-muted)' }}>{fmt(m.value)}</div>
+                                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{m.label}</div>
                                           </div>
                                         ))}
                                       </div>
@@ -2552,16 +2561,14 @@ export default function Journeys() {
                       Send Hour (Dubai Time)
                     </label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <select className="form-input" style={{ width: 180 }}
-                        value={nodeForm.sendHour ?? ''}
-                        onChange={e => setNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
-                        <option value="">Any time (immediate)</option>
-                        {Array.from({ length: 24 }, (_, h) => (
-                          <option key={h} value={h}>
-                            {h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}
-                          </option>
-                        ))}
-                      </select>
+                      <input type="time" className="form-input" style={{ width: 140 }}
+                        value={sendHourToTime(nodeForm.sendHour)}
+                        onChange={e => setNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : e.target.value }))} />
+                      <button
+                        onClick={() => setNodeForm(f => ({ ...f, sendHour: null }))}
+                        style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}
+                        title="Clear — send any time"
+                      >Any time</button>
                       <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>UTC+4</span>
                     </div>
                   </div>
@@ -2853,11 +2860,25 @@ export default function Journeys() {
                   </div>
                   <input type="datetime-local" className="form-input"
                     value={createForm.scheduledStartAt}
-                    min={dubaiNowForInput()}
-                    onChange={e => setCreateForm(f => ({ ...f, scheduledStartAt: e.target.value }))}
+                    min={dubaiNowForInput(10)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val) {
+                        // val is local time string — compare against Dubai now+10min
+                        const selectedMs = new Date(val).getTime();
+                        const minMs = new Date(dubaiNowForInput(10).replace('T', ' ')).getTime();
+                        if (selectedMs < minMs) {
+                          setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput(10) }));
+                          return;
+                        }
+                      }
+                      setCreateForm(f => ({ ...f, scheduledStartAt: val }));
+                    }}
                     style={{ fontSize: 13 }} />
                   <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                    {createForm.scheduledStartAt ? '✓ Journey will auto-start at this Dubai time' : 'Leave empty to start immediately'}
+                    {createForm.scheduledStartAt
+                      ? '✓ Journey will auto-start at this Dubai time'
+                      : 'Defaults to 10 minutes from now if left empty'}
                   </div>
                 </div>
               </div>
@@ -3000,10 +3021,13 @@ export default function Journeys() {
                                 )}
                                 <div style={{ marginBottom: 10 }}>
                                   <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
-                                  <select className="form-input" style={{ width: 160 }} value={editCreateNodeForm.sendHour ?? ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
-                                    <option value="">Any time</option>
-                                    {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}</option>)}
-                                  </select>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <input type="time" className="form-input" style={{ width: 130 }}
+                                      value={sendHourToTime(editCreateNodeForm.sendHour)}
+                                      onChange={e => setEditCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : e.target.value }))} />
+                                    <button onClick={() => setEditCreateNodeForm(f => ({ ...f, sendHour: null }))}
+                                      style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>Any time</button>
+                                  </div>
                                 </div>
                               </>
                             )}
@@ -3152,10 +3176,11 @@ export default function Journeys() {
                           <div style={{ marginBottom: 12 }}>
                             <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <select className="form-input" style={{ width: 160 }} value={createNodeForm.sendHour ?? ''} onChange={e => setCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : parseInt(e.target.value) }))}>
-                                <option value="">Any time</option>
-                                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`}</option>)}
-                              </select>
+                              <input type="time" className="form-input" style={{ width: 130 }}
+                                value={sendHourToTime(createNodeForm.sendHour)}
+                                onChange={e => setCreateNodeForm(f => ({ ...f, sendHour: e.target.value === '' ? null : e.target.value }))} />
+                              <button onClick={() => setCreateNodeForm(f => ({ ...f, sendHour: null }))}
+                                style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>Any time</button>
                               <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>UTC+4</span>
                             </div>
                           </div>

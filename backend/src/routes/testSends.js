@@ -755,9 +755,9 @@ router.get('/send-log', async (req, res, next) => {
   try {
     const page      = Math.max(1, parseInt(req.query.page  || '1'));
     const limit     = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
-    const { status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus } = req.query;
+    const { status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId } = req.query;
 
-    const result = await SendTrackService.getLog({ page, limit, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus });
+    const result = await SendTrackService.getLog({ page, limit, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId });
     res.json({ data: result });
   } catch (err) { next(err); }
 });

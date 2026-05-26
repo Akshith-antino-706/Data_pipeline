@@ -30,32 +30,44 @@ const fadeInUp = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, t
 const stagger  = { hidden: {}, visible: { transition: { staggerChildren: 0.05 } } };
 
 // ── Node status: every node type gets a chip ──────────────────
-function getNodeStatus(nodeType, journeyStatus, sent, inQueue, funnelActive, funnelCompleted) {
+// backendStatus ('pending'|'running'|'completed'|'paused') is the server-computed
+// position-aware status; it takes precedence for paused/pending overrides.
+function getNodeStatus(nodeType, journeyStatus, sent, inQueue, funnelActive, funnelCompleted, backendStatus) {
   const hasAnyData = sent > 0 || inQueue > 0 || funnelActive > 0 || funnelCompleted > 0;
 
+  // Backend says this node is paused → honour it regardless of metrics
+  if (backendStatus === 'paused') return { label: 'paused', color: '#fb923c', bg: 'rgba(251,146,60,0.15)' };
+
   if (nodeType === 'trigger') {
-    if (journeyStatus === 'active')    return { label: 'active',    color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
-    if (journeyStatus === 'completed') return { label: 'completed', color: 'var(--purple)',      bg: 'rgba(139,92,246,0.1)' };
-    if (journeyStatus === 'paused')    return { label: 'paused',    color: '#f59e0b',            bg: 'rgba(245,158,11,0.1)' };
-    return                                    { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)' };
+    // Backend position status takes priority for trigger (no send metrics to rely on)
+    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+    if (backendStatus === 'running')   return { label: 'active',    color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+    if (journeyStatus === 'active')    return { label: 'active',    color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+    if (journeyStatus === 'completed') return { label: 'completed', color: 'var(--purple)',     bg: 'rgba(139,92,246,0.1)' };
+    return                                    { label: 'pending',   color: 'var(--text-muted)', bg: 'var(--bg-tertiary)' };
   }
 
   if (nodeType === 'wait') {
-    if (funnelActive > 0)    return { label: 'waiting',   color: '#f59e0b',           bg: 'rgba(245,158,11,0.1)' };
-    if (funnelCompleted > 0) return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
-    return                          { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)' };
+    if (funnelActive > 0)              return { label: 'waiting',   color: '#f59e0b',           bg: 'rgba(245,158,11,0.1)' };
+    if (funnelCompleted > 0)           return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
+    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
+    return                                    { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)' };
   }
 
   if (nodeType === 'action') {
     if (sent > 0 && inQueue > 0) return { label: 'running',   color: '#3b82f6',          bg: 'rgba(59,130,246,0.1)' };
     if (inQueue > 0)             return { label: 'in queue',  color: '#f59e0b',           bg: 'rgba(245,158,11,0.1)' };
     if (sent > 0)                return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
+    // No metrics yet — fall back to backend position-aware status
+    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+    if (backendStatus === 'running')   return { label: 'running',   color: '#3b82f6',          bg: 'rgba(59,130,246,0.1)' };
     return                              { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)' };
   }
 
   // condition / goal
-  if (hasAnyData) return { label: 'active',  color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
-  return                 { label: 'pending', color: 'var(--text-muted)', bg: 'var(--bg-tertiary)' };
+  if (hasAnyData)                    return { label: 'active',    color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+  if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+  return                                    { label: 'pending',   color: 'var(--text-muted)', bg: 'var(--bg-tertiary)' };
 }
 
 function StatTile({ label, value, color = 'var(--text-primary)', sub }) {
@@ -284,9 +296,11 @@ export default function CampaignDetail() {
     if (matched) nodeCampaignMap[n.id] = matched;
   });
 
-  const gtmClicks    = campaignData?.gtm_clicks || {};
-  const opens        = campaignData?.opens || {};
-  const globalTarget = parseInt(campaignData?.target_count) || parseInt(journey.total_entries) || 0;
+  const gtmClicks       = campaignData?.gtm_clicks       || {};
+  const opens           = campaignData?.opens             || {};
+  const deliveredByNode = campaignData?.delivered_by_node || {};
+  const bouncedByNode   = campaignData?.bounced_by_node   || {};
+  const globalTarget    = parseInt(campaignData?.target_count) || parseInt(journey.total_entries) || 0;
 
   return (
     <motion.div initial="hidden" animate="visible" variants={stagger}>
@@ -354,16 +368,18 @@ export default function CampaignDetail() {
                 : allEventTypes.map(name => ({ event_name: name, event_count: 0, unique_users: 0, total_value: 0 }));
 
               // Sent: email_send_log (via gtm-node-stats) is source of truth
-              const sent    = nodeGtm.sent ?? parseInt(ns.action_sent) ?? parseInt(camp?.sent_count) ?? 0;
-              const target  = parseInt(camp?.target_count) || globalTarget;
-              const opened  = opens[node.id]     || parseInt(ns.action_read)    || 0;
-              const clicked = gtmClicks[node.id] || parseInt(ns.action_clicked) || 0;
-              const failed  = parseInt(camp?.fail_count) || parseInt(ns.action_failed) || 0;
-              const blocked = parseInt(ns.action_blocked) || 0;
+              const sent      = nodeGtm.sent ?? parseInt(ns.action_sent) ?? parseInt(camp?.sent_count) ?? 0;
+              const target    = parseInt(camp?.target_count) || globalTarget;
+              const opened    = opens[node.id]           || parseInt(ns.action_read)    || 0;
+              const clicked   = gtmClicks[node.id]       || parseInt(ns.action_clicked) || 0;
+              const delivered = deliveredByNode[node.id] ?? 0;
+              const bounced   = bouncedByNode[node.id]   ?? parseInt(camp?.bounce_count) ?? 0;
+              const failed    = parseInt(camp?.fail_count) || parseInt(ns.action_failed) || 0;
               const inQueue = funnel.active || 0;
 
               const funnelCompleted = (funnel.completed || 0) + (funnel.exited || 0);
-              const nodeStatus = getNodeStatus(node.type, journey.status, sent, inQueue, inQueue, funnelCompleted);
+              const backendNodeStatus = journey.node_statuses?.[node.id]; // 'pending'|'running'|'completed'|'paused'
+              const nodeStatus = getNodeStatus(node.type, journey.status, sent, inQueue, inQueue, funnelCompleted, backendNodeStatus);
 
               const isExpanded   = !!expanded[node.id];
               const isActionNode = node.type === 'action';
@@ -456,14 +472,24 @@ export default function CampaignDetail() {
 
                             {/* Loading shimmer while node detail APIs are in-flight */}
                             {nodeDetailsLoading && (
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 14 }}>
-                                {[...Array(4)].map((_, i) => (
-                                  <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                                    <div className="skeleton" style={{ width: 60, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
-                                    <div className="skeleton" style={{ width: 40, height: 8, borderRadius: 4, margin: '0 auto' }} />
-                                  </div>
-                                ))}
-                              </div>
+                              <>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 14 }}>
+                                  {[...Array(4)].map((_, i) => (
+                                    <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
+                                      <div className="skeleton" style={{ width: 60, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
+                                      <div className="skeleton" style={{ width: 40, height: 8, borderRadius: 4, margin: '0 auto' }} />
+                                    </div>
+                                  ))}
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }}>
+                                  {[...Array(3)].map((_, i) => (
+                                    <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
+                                      <div className="skeleton" style={{ width: 60, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
+                                      <div className="skeleton" style={{ width: 40, height: 8, borderRadius: 4, margin: '0 auto' }} />
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
                             )}
 
                             {/* Row 1 — primary */}
@@ -477,9 +503,11 @@ export default function CampaignDetail() {
                             </div>
 
                             {/* Row 2 — secondary */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
-                              <StatTile label="FAILED"  value={failed}  color={failed > 0 ? 'var(--red)' : 'var(--text-muted)'} />
-                              <StatTile label="BOUNCED" value={parseInt(camp?.bounce_count) || 0} color="var(--text-muted)" />
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }}>
+                              <StatTile label="DELIVERED" value={delivered} color={delivered > 0 ? '#22c55e' : 'var(--text-muted)'}
+                                sub={sent > 0 ? `${((delivered / sent) * 100).toFixed(1)}%` : null} />
+                              <StatTile label="FAILED"    value={failed}    color={failed > 0 ? 'var(--red)' : 'var(--text-muted)'} />
+                              <StatTile label="BOUNCED"   value={bounced}   color={bounced > 0 ? 'var(--orange)' : 'var(--text-muted)'} />
                             </div>
 
                             {/* Funnel bars */}
