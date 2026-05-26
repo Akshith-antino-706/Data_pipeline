@@ -164,7 +164,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null };
@@ -525,7 +525,8 @@ export default function Journeys() {
         id: `node_${i + 1}`, type: n.type,
         data: {
           label: n.label, channel: n.channel || undefined,
-          waitDays: n.waitDays || undefined, condition: n.condition || undefined,
+          waitDays: n.waitDays || undefined,
+          condition: n.condition || undefined,
           goalType: n.goalType || undefined,
           sendHour: n.sendHour ?? undefined,
           emailTemplateId: n.emailTemplateId || undefined,
@@ -545,6 +546,9 @@ export default function Journeys() {
         scheduledStartAt: createForm.scheduledStartAt
           ? new Date(createForm.scheduledStartAt + ':00+04:00').toISOString()
           : null,
+        testMode: createForm.testMode,
+        testEmail: createForm.testMode ? (createForm.testEmail || null) : null,
+        testWaitSec: createForm.testMode ? (parseInt(createForm.testWaitSec) || 30) : 30,
         nodes: [trigger, ...extraNodes],
         edges: [trigger, ...extraNodes].slice(1).map((n, i) => ({
           id: `e_${[trigger, ...extraNodes][i].id}_${n.id}`,
@@ -554,7 +558,7 @@ export default function Journeys() {
       });
       const snapCount = res.data?.snapshot_count || 0;
       showToast(`Journey "${res.data?.name}" created — ${snapCount} users snapshotted`, 'success');
-      setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' });
+      setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       await loadData();
@@ -2594,7 +2598,7 @@ export default function Journeys() {
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                       {[1, 2, 3, 5, 7, 14].map(d => (
                         <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
-                          style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                          style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
                           {d}d
                         </button>
                       ))}
@@ -2758,7 +2762,7 @@ export default function Journeys() {
         <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' }); }}
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               <ArrowLeft size={15} /> Back
             </button>
@@ -2777,7 +2781,7 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '' }); }}>
+            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
