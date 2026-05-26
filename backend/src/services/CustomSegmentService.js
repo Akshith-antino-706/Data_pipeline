@@ -35,6 +35,12 @@ export default class CustomSegmentService {
             sub.push(`uc.name ILIKE $${idx++}`);
             break;
           }
+          case 'email': {
+            const emails = Array.isArray(cond.value) ? cond.value : [cond.value];
+            const placeholders = emails.map(v => { params.push(v.toLowerCase()); return `$${idx++}`; });
+            sub.push(`LOWER(uc.email) IN (${placeholders.join(',')})`);
+            break;
+          }
           case 'booking_status': {
             const values = Array.isArray(cond.value) ? cond.value : [cond.value];
             const placeholders = values.map(v => { params.push(v); return `$${idx++}`; });

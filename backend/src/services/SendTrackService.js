@@ -74,7 +74,7 @@ export class SendTrackService {
    * @param {string}  [opts.dateFrom]    - ISO date
    * @param {string}  [opts.dateTo]      - ISO date
    */
-  static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus } = {}) {
+  static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -85,6 +85,8 @@ export class SendTrackService {
     if (source)     { conditions.push(`esl.source = $${idx++}`);                params.push(source); }
     if (dateFrom)   { conditions.push(`esl.created_at >= $${idx++}`);           params.push(dateFrom); }
     if (dateTo)     { conditions.push(`esl.created_at <= $${idx++}`);           params.push(dateTo); }
+    if (journeyId)  { conditions.push(`esl.journey_id = $${idx++}`);            params.push(Number(journeyId)); }
+    if (nodeId)     { conditions.push(`esl.node_id = $${idx++}`);               params.push(nodeId); }
     if (subscriptionStatus === 'unsubscribed') {
       conditions.push(`uc.email_unsubscribe = 'Yes'`);
     } else if (subscriptionStatus === 'active') {

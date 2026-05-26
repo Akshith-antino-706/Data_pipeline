@@ -1,15 +1,14 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { X, Plus, Trash2, Filter, Loader2, Users } from 'lucide-react';
-import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics } from '@/lib/api';
+import { X, Plus, Trash2, Filter, Loader2, Users, Search } from 'lucide-react';
+import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics, searchContactsByEmail } from '@/lib/api';
 
 const FIELD_CONFIG = {
-  name: {
-    label: 'Contact Name', type: 'text',
-    placeholder: 'e.g. John, Ahmed',
-    defaultOperator: 'contains',
+  email: {
+    label: 'Email Address', type: 'email-search',
+    defaultOperator: 'in',
   },
   booking_status: {
     label: 'Booking Status', type: 'multi-select',
@@ -91,11 +90,120 @@ const selectStyle = {
   paddingRight: 28,
 };
 
+function EmailSearchInput({ condition, onChange }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  const selected = Array.isArray(condition.value) ? condition.value : [];
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    if (query.trim().length < 2) { setResults([]); setOpen(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await searchContactsByEmail(query.trim());
+        setResults(res?.data || []);
+        setOpen(true);
+      } catch { setResults([]); }
+      finally { setSearching(false); }
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [query]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => { if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const addEmail = (email) => {
+    if (!selected.includes(email)) onChange({ ...condition, value: [...selected, email] });
+    setQuery('');
+    setResults([]);
+    setOpen(false);
+  };
+
+  const removeEmail = (email) => {
+    onChange({ ...condition, value: selected.filter(e => e !== email) });
+  };
+
+  return (
+    <div ref={containerRef}>
+      {/* Selected chips */}
+      {selected.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+          {selected.map(email => (
+            <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 20, fontSize: 12, fontWeight: 500, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.3)' }}>
+              {email}
+              <button type="button" onClick={() => removeEmail(email)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3b82f6', padding: 0, lineHeight: 1, fontSize: 14, display: 'flex', alignItems: 'center' }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Search input */}
+      <div style={{ position: 'relative' }}>
+        <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)', pointerEvents: 'none' }} />
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Type email or name to search…"
+          style={{ ...inputStyle, paddingLeft: 28, maxWidth: 320 }}
+        />
+        {searching && <Loader2 size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite', color: 'var(--muted-foreground)' }} />}
+      </div>
+
+      {/* Dropdown */}
+      {open && results.length > 0 && (
+        <div style={{ position: 'absolute', zIndex: 50, marginTop: 4, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 220, overflowY: 'auto', minWidth: 320 }}>
+          {results.map(r => {
+            const alreadyAdded = selected.includes(r.email);
+            return (
+              <button key={r.id} type="button" onClick={() => !alreadyAdded && addEmail(r.email)} disabled={alreadyAdded}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: alreadyAdded ? 'default' : 'pointer', textAlign: 'left', borderBottom: '1px solid var(--border)', opacity: alreadyAdded ? 0.5 : 1, transition: 'background 0.1s' }}
+                onMouseEnter={e => { if (!alreadyAdded) e.currentTarget.style.background = 'var(--background)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}>
+                <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: '#3b82f6' }}>
+                  {(r.name || r.email || '?')[0].toUpperCase()}
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)' }}>{r.name || '—'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{r.email}</div>
+                </div>
+                {alreadyAdded && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#22c55e', fontWeight: 600 }}>Added</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>
+          {selected.length} email{selected.length > 1 ? 's' : ''} selected
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConditionValueInput({ fieldKey, condition, onChange }) {
   const cfg = FIELD_CONFIG[fieldKey];
   if (!cfg) return null;
 
   switch (cfg.type) {
+    case 'email-search':
+      return <EmailSearchInput condition={condition} onChange={onChange} />;
+
     case 'multi-select':
       return (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -217,6 +325,7 @@ function isFieldValid(cond) {
   const cfg = FIELD_CONFIG[cond.field];
   if (!cfg) return false;
   switch (cfg.type) {
+    case 'email-search':  return Array.isArray(cond.value) && cond.value.length > 0;
     case 'multi-select':  return Array.isArray(cond.value) && cond.value.length > 0;
     case 'single-select': return !!cond.value;
     case 'boolean':       return cond.value === true || cond.value === false;
@@ -290,6 +399,7 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     if (!newField) { updateCondition(idx, { ...conditions[idx], field: '', operator: '', value: null }); return; }
     const cfg = FIELD_CONFIG[newField];
     const defaultValue = cfg?.type === 'multi-select' ? [] :
+      cfg?.type === 'email-search' ? [] :
       cfg?.type === 'date-range' ? ['', ''] :
       cfg?.type === 'number-range' ? ['', ''] :
       cfg?.type === 'boolean' ? null : '';

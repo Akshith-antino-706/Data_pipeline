@@ -218,16 +218,31 @@ class JourneyService {
            AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
         [journeyId]
       );
-      const activeSet = new Set(activeOnNode.map(r => r.current_node_id));
+      const activeSet    = new Set(activeOnNode.map(r => r.current_node_id));
       const processedSet = new Set(processedNodes.map(r => r.node_id));
-      // Lowest index of any running node — everything before it that was processed = completed
+      const isPaused     = journey.status === 'paused';
+      // Lowest sequential index of any node currently holding active entries
       const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
       const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
       nodes.forEach((n, i) => {
-        if (activeSet.has(n.id)) node_statuses[n.id] = 'running';
-        else if (i < minRunning && processedSet.has(n.id)) node_statuses[n.id] = 'completed';
-        else if (processedSet.has(n.id)) node_statuses[n.id] = 'completed'; // processed and no active here
-        else node_statuses[n.id] = 'pending';
+        if (activeSet.has(n.id)) {
+          // This is the node contacts are parked at right now
+          node_statuses[n.id] = isPaused ? 'paused' : 'running';
+        } else if (i < minRunning) {
+          // Every node that comes before the current active node must have been
+          // processed already — mark completed by position, not by event log.
+          // (trigger_fired / wait_started events aren't in processedSet so we
+          //  can't rely on that set for these node types.)
+          node_statuses[n.id] = 'completed';
+        } else if (isPaused) {
+          // Journey is paused: every node at or after the current position → paused
+          node_statuses[n.id] = 'paused';
+        } else if (processedSet.has(n.id)) {
+          // Active journey: node after current that already has events (e.g. branching) → completed
+          node_statuses[n.id] = 'completed';
+        } else {
+          node_statuses[n.id] = 'pending';
+        }
       });
     }
 
@@ -895,7 +910,14 @@ class JourneyService {
         const sendHour = currentNode.data?.sendHour;
         if (sendHour !== undefined && sendHour !== null) {
           const dubaiNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' }));
-          if (dubaiNow.getHours() !== sendHour) {
+          const targetH = typeof sendHour === 'number' ? sendHour : parseInt(String(sendHour).split(':')[0]);
+          const targetM = typeof sendHour === 'number' ? 0 : parseInt(String(sendHour).split(':')[1] || '0');
+          const curH = dubaiNow.getHours();
+          const curM = dubaiNow.getMinutes();
+          // Allow a 5-minute window so the cron interval doesn't miss the exact minute
+          const targetTotal = targetH * 60 + targetM;
+          const curTotal = curH * 60 + curM;
+          if (curTotal < targetTotal || curTotal > targetTotal + 5) {
             waited++;
             processed++;
             continue;
@@ -1563,7 +1585,27 @@ class JourneyService {
     `, [journeyId]);
     const openMap = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.open_count) || 0]));
 
-    // Merge gtm click counts into each campaign row by node_id
+    // Delivered counts per node via SES events (event_type = 'Delivery')
+    const { rows: deliveredRows } = await db.query(`
+      SELECT esl.node_id, COUNT(*) AS delivered_count
+      FROM email_send_log esl
+      JOIN ses_events se ON se.message_id = esl.external_id
+      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Delivery'
+      GROUP BY esl.node_id
+    `, [journeyId]);
+    const deliveredByNodeMap = Object.fromEntries(deliveredRows.map(r => [r.node_id, parseInt(r.delivered_count) || 0]));
+
+    // Bounced counts per node via SES events (event_type = 'Bounce')
+    const { rows: bounceRows } = await db.query(`
+      SELECT esl.node_id, COUNT(*) AS bounce_count
+      FROM email_send_log esl
+      JOIN ses_events se ON se.message_id = esl.external_id
+      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Bounce'
+      GROUP BY esl.node_id
+    `, [journeyId]);
+    const bouncedByNodeMap = Object.fromEntries(bounceRows.map(r => [r.node_id, parseInt(r.bounce_count) || 0]));
+
+    // Merge click counts into each campaign row by node_id
     const campaignsWithClicks = campaigns.map(c => ({
       ...c,
       gtm_click_count: gtmClickMap[c.journey_node_id] || 0,
@@ -1572,16 +1614,23 @@ class JourneyService {
     // Aggregate totals
     const totals = {
       total_sent: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.sent_count) || 0), 0),
-      total_delivered: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.delivered_count) || 0), 0),
+      total_delivered: Object.values(deliveredByNodeMap).reduce((s, n) => s + n, 0),
       total_read: Object.values(openMap).reduce((s, n) => s + n, 0),
       total_clicked: Object.values(gtmClickMap).reduce((s, n) => s + n, 0),
-      total_bounced: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.bounce_count) || 0), 0),
+      total_bounced: Object.values(bouncedByNodeMap).reduce((s, n) => s + n, 0),
       total_failed: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.fail_count) || 0), 0),
       total_conversions: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.conversion_count) || 0), 0),
       total_revenue: campaignsWithClicks.reduce((s, c) => s + (parseFloat(c.revenue_total) || 0), 0),
     };
 
-    return { journey: journey[0], campaigns: campaignsWithClicks, totals, target_count: targetCount, gtm_clicks: gtmClickMap, opens: openMap };
+    return {
+      journey: journey[0], campaigns: campaignsWithClicks, totals,
+      target_count: targetCount,
+      gtm_clicks: gtmClickMap,
+      opens: openMap,
+      delivered_by_node: deliveredByNodeMap,
+      bounced_by_node: bouncedByNodeMap,
+    };
   }
 
   // ── Conversion Detection (BigQuery + Offline Booking) ──────
@@ -1708,13 +1757,16 @@ class JourneyService {
     // If no sendHour specified, fire immediately after wait
     if (sendHour === undefined || sendHour === null) return target;
 
-    // Convert target to Dubai time and set to the desired hour
+    const targetH = typeof sendHour === 'number' ? sendHour : parseInt(String(sendHour).split(':')[0]);
+    const targetM = typeof sendHour === 'number' ? 0 : parseInt(String(sendHour).split(':')[1] || '0');
+
+    // Convert target to Dubai time and set to the desired hour:minute
     const dubaiOffset = 4 * 60; // UTC+4 in minutes
     const utcMs = target.getTime() + (target.getTimezoneOffset() * 60000);
     const dubaiMs = utcMs + (dubaiOffset * 60000);
     const dubaiDate = new Date(dubaiMs);
 
-    dubaiDate.setHours(sendHour, 0, 0, 0);
+    dubaiDate.setHours(targetH, targetM, 0, 0);
 
     // Convert back to UTC
     const fireUtcMs = dubaiDate.getTime() - (dubaiOffset * 60000);
