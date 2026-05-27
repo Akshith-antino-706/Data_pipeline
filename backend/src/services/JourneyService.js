@@ -192,10 +192,14 @@ class JourneyService {
       ORDER BY node_id
     `, [journeyId]);
 
-    // Compute per-node lifecycle status from live journey_entries
-    // pending  → no entries have reached this node yet
-    // running  → ≥1 active entry is currently sitting on this node
-    // completed → entries have passed through this node and none are active here
+    // Compute per-node lifecycle status from live journey_entries.
+    // 6 possible statuses:
+    //   pending   – no entry has reached this node yet
+    //   running   – cron is actively advancing entries (trigger / condition / goal / wait elapsed)
+    //   sending   – entries are queued in BullMQ, workers are sending (action nodes)
+    //   waiting   – entries are here but next_fire_at is in the future (wait nodes serving time)
+    //   paused    – journey is paused, entries frozen at this node
+    //   completed – all entries have passed through, none remain active here
     let node_statuses = {};
     const nodes = journey.nodes || [];
     if (journey.status === 'draft') {
@@ -204,12 +208,21 @@ class JourneyService {
       nodes.forEach(n => { node_statuses[n.id] = 'completed'; });
     } else {
       // active / paused — derive from entries
-      const { rows: activeOnNode } = await db.query(
-        `SELECT current_node_id, COUNT(*) AS cnt
-         FROM journey_entries WHERE journey_id = $1 AND status = 'active'
-         GROUP BY current_node_id`,
-        [journeyId]
-      );
+      // Richer query: per-node entry breakdown
+      //   enqueued = stamped with last_enqueued_at in last 2 hours (in BullMQ queue)
+      //   in_wait  = next_fire_at is in the future (wait node time-guard active)
+      const { rows: activeOnNode } = await db.query(`
+        SELECT
+          current_node_id,
+          COUNT(*)                                                                          AS total,
+          COUNT(*) FILTER (WHERE last_enqueued_at IS NOT NULL
+            AND last_enqueued_at > NOW() - INTERVAL '2 hours')                             AS enqueued,
+          COUNT(*) FILTER (WHERE next_fire_at > NOW())                                     AS in_wait
+        FROM journey_entries
+        WHERE journey_id = $1 AND status = 'active'
+        GROUP BY current_node_id
+      `, [journeyId]);
+
       const { rows: processedNodes } = await db.query(
         `SELECT DISTINCT je.node_id
          FROM journey_events je
@@ -218,30 +231,66 @@ class JourneyService {
            AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
         [journeyId]
       );
+
+      // Build lookup maps
       const activeSet    = new Set(activeOnNode.map(r => r.current_node_id));
       const processedSet = new Set(processedNodes.map(r => r.node_id));
+      const enqueuedMap  = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.enqueued) || 0]));
+      const inWaitMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.in_wait)  || 0]));
       const isPaused     = journey.status === 'paused';
-      // Lowest sequential index of any node currently holding active entries
+
+      // Lowest sequential index among nodes currently holding active entries (used for paused boundary)
       const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
       const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
+
+      // ── Active journey: pick ONE "primary" node as the current dividing line ──
+      // Rule: nodes BEFORE primary → completed, primary → its status, nodes AFTER → pending.
+      //
+      // Priority (highest = most important / most advanced work):
+      //   6  action node with BullMQ jobs stamped (SENDING)
+      //   5  wait node with future next_fire_at  (WAITING)
+      //   4  action node without recent stamp    (RUNNING — cron will re-enqueue)
+      //   3  wait node with elapsed time         (RUNNING — cron advancing)
+      //   2  trigger / condition                 (RUNNING)
+      //   1  goal                                (MONITORING)
+      // On tie, prefer the node at the HIGHER index (further along in the journey).
+      const nodeActivePriority = (n) => {
+        if (!activeSet.has(n.id)) return 0;
+        if (n.type === 'action')  return enqueuedMap[n.id] > 0 ? 6 : 4;
+        if (n.type === 'wait')    return inWaitMap[n.id]   > 0 ? 5 : 3;
+        if (n.type === 'trigger' || n.type === 'condition') return 2;
+        if (n.type === 'goal')    return 1;
+        return 1;
+      };
+
+      let primaryIdx      = -1;
+      let primaryPriority = -1;
       nodes.forEach((n, i) => {
-        if (activeSet.has(n.id)) {
-          // This is the node contacts are parked at right now
-          node_statuses[n.id] = isPaused ? 'paused' : 'running';
-        } else if (i < minRunning) {
-          // Every node that comes before the current active node must have been
-          // processed already — mark completed by position, not by event log.
-          // (trigger_fired / wait_started events aren't in processedSet so we
-          //  can't rely on that set for these node types.)
+        const p = nodeActivePriority(n);
+        if (p > 0 && (p > primaryPriority || (p === primaryPriority && i > primaryIdx))) {
+          primaryPriority = p;
+          primaryIdx = i;
+        }
+      });
+      if (primaryIdx === -1) primaryIdx = nodes.length; // no active entries → sentinel → all completed
+
+      nodes.forEach((n, i) => {
+        if (isPaused) {
+          // PAUSED: everything strictly before earliest active node → completed, rest → paused
+          node_statuses[n.id] = i < minRunning ? 'completed' : 'paused';
+        } else if (i < primaryIdx) {
+          // BEFORE primary: completed (positional — even if cron still draining entries here)
           node_statuses[n.id] = 'completed';
-        } else if (isPaused) {
-          // Journey is paused: every node at or after the current position → paused
-          node_statuses[n.id] = 'paused';
-        } else if (processedSet.has(n.id)) {
-          // Active journey: node after current that already has events (e.g. branching) → completed
-          node_statuses[n.id] = 'completed';
+        } else if (i === primaryIdx) {
+          // PRIMARY node: assign the specific active status
+          if      (n.type === 'action' && enqueuedMap[n.id] > 0) node_statuses[n.id] = 'sending';
+          else if (n.type === 'wait'   && inWaitMap[n.id]   > 0) node_statuses[n.id] = 'waiting';
+          else if (n.type === 'goal')                             node_statuses[n.id] = 'monitoring';
+          else                                                    node_statuses[n.id] = 'running';
         } else {
-          node_statuses[n.id] = 'pending';
+          // AFTER primary: pending — even if a few entries arrived early (contacts pipeline ahead)
+          // Exception: if fully processed with zero active entries left, mark completed
+          node_statuses[n.id] = (processedSet.has(n.id) && !activeSet.has(n.id)) ? 'completed' : 'pending';
         }
       });
     }

@@ -30,44 +30,58 @@ const fadeInUp = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, t
 const stagger  = { hidden: {}, visible: { transition: { staggerChildren: 0.05 } } };
 
 // ── Node status: every node type gets a chip ──────────────────
-// backendStatus ('pending'|'running'|'completed'|'paused') is the server-computed
-// position-aware status; it takes precedence for paused/pending overrides.
+// backendStatus: 'pending'|'running'|'sending'|'waiting'|'paused'|'completed'
+// sending  = jobs in BullMQ queue (action node, workers sending emails)
+// waiting  = entries at wait node but next_fire_at is in the future
+// running  = cron actively advancing entries (trigger / condition / goal)
 function getNodeStatus(nodeType, journeyStatus, sent, inQueue, funnelActive, funnelCompleted, backendStatus) {
   const hasAnyData = sent > 0 || inQueue > 0 || funnelActive > 0 || funnelCompleted > 0;
 
-  // Backend says this node is paused → honour it regardless of metrics
+  // Paused always wins — journey paused, entries frozen here
   if (backendStatus === 'paused') return { label: 'paused', color: '#fb923c', bg: 'rgba(251,146,60,0.15)' };
 
   if (nodeType === 'trigger') {
-    // Backend position status takes priority for trigger (no send metrics to rely on)
-    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
-    if (backendStatus === 'running')   return { label: 'active',    color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
-    if (journeyStatus === 'active')    return { label: 'active',    color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
+    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)'  };
+    if (backendStatus === 'running')   return { label: 'running',   color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)'  };
+    if (journeyStatus === 'active')    return { label: 'running',   color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)'  };
     if (journeyStatus === 'completed') return { label: 'completed', color: 'var(--purple)',     bg: 'rgba(139,92,246,0.1)' };
-    return                                    { label: 'pending',   color: 'var(--text-muted)', bg: 'var(--bg-tertiary)' };
+    return                                    { label: 'pending',   color: 'var(--text-muted)', bg: 'var(--bg-tertiary)'   };
   }
 
   if (nodeType === 'wait') {
+    // Backend 'waiting' = entries here, time not yet elapsed
+    if (backendStatus === 'waiting')   return { label: 'waiting',   color: '#f59e0b',           bg: 'rgba(245,158,11,0.1)' };
     if (funnelActive > 0)              return { label: 'waiting',   color: '#f59e0b',           bg: 'rgba(245,158,11,0.1)' };
-    if (funnelCompleted > 0)           return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
-    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
-    return                                    { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)' };
+    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)'  };
+    if (funnelCompleted > 0)           return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)'  };
+    if (backendStatus === 'running')   return { label: 'running',   color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)'  };
+    return                                    { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)'   };
   }
 
   if (nodeType === 'action') {
-    if (sent > 0 && inQueue > 0) return { label: 'running',   color: '#3b82f6',          bg: 'rgba(59,130,246,0.1)' };
-    if (inQueue > 0)             return { label: 'in queue',  color: '#f59e0b',           bg: 'rgba(245,158,11,0.1)' };
-    if (sent > 0)                return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)' };
-    // No metrics yet — fall back to backend position-aware status
-    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
-    if (backendStatus === 'running')   return { label: 'running',   color: '#3b82f6',          bg: 'rgba(59,130,246,0.1)' };
-    return                              { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)' };
+    // Backend 'sending' = jobs are in BullMQ, workers actively sending
+    if (backendStatus === 'sending')   return { label: 'sending',   color: '#3b82f6',           bg: 'rgba(59,130,246,0.1)' };
+    if (sent > 0 && inQueue > 0)       return { label: 'sending',   color: '#3b82f6',           bg: 'rgba(59,130,246,0.1)' };
+    if (inQueue > 0)                   return { label: 'sending',   color: '#3b82f6',           bg: 'rgba(59,130,246,0.1)' };
+    if (sent > 0)                      return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)'  };
+    if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',       bg: 'rgba(34,197,94,0.1)'  };
+    if (backendStatus === 'running')   return { label: 'sending',   color: '#3b82f6',           bg: 'rgba(59,130,246,0.1)' };
+    return                                    { label: 'pending',   color: 'var(--text-muted)',  bg: 'var(--bg-tertiary)'   };
   }
 
-  // condition / goal
-  if (hasAnyData)                    return { label: 'active',    color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
-  if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)' };
-  return                                    { label: 'pending',   color: 'var(--text-muted)', bg: 'var(--bg-tertiary)' };
+  // goal
+  if (nodeType === 'goal') {
+    if (backendStatus === 'monitoring') return { label: 'monitoring', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)' };
+    if (backendStatus === 'completed')  return { label: 'completed',  color: 'var(--green)', bg: 'rgba(34,197,94,0.1)' };
+    if (hasAnyData)                     return { label: 'monitoring', color: '#8b5cf6', bg: 'rgba(139,92,246,0.15)' };
+    return                                     { label: 'pending',    color: 'var(--text-muted)', bg: 'var(--bg-tertiary)' };
+  }
+
+  // condition
+  if (backendStatus === 'running')   return { label: 'running',   color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)'  };
+  if (hasAnyData)                    return { label: 'running',   color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)'  };
+  if (backendStatus === 'completed') return { label: 'completed', color: 'var(--green)',      bg: 'rgba(34,197,94,0.1)'  };
+  return                                    { label: 'pending',   color: 'var(--text-muted)', bg: 'var(--bg-tertiary)'   };
 }
 
 function StatTile({ label, value, color = 'var(--text-primary)', sub }) {
@@ -378,7 +392,7 @@ export default function CampaignDetail() {
               const inQueue = funnel.active || 0;
 
               const funnelCompleted = (funnel.completed || 0) + (funnel.exited || 0);
-              const backendNodeStatus = journey.node_statuses?.[node.id]; // 'pending'|'running'|'completed'|'paused'
+              const backendNodeStatus = journey.node_statuses?.[node.id]; // 'pending'|'running'|'sending'|'waiting'|'paused'|'completed'
               const nodeStatus = getNodeStatus(node.type, journey.status, sent, inQueue, inQueue, funnelCompleted, backendNodeStatus);
 
               const isExpanded   = !!expanded[node.id];

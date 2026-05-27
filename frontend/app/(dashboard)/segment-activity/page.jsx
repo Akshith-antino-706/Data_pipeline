@@ -108,8 +108,9 @@ export default function SegmentActivity() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [snapshotting, setSnapshotting] = useState(false);
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(2);
   const [segmentFilter, setSegmentFilter] = useState('');
+  const [logLoading, setLogLoading] = useState(false);
   const { businessType } = useBusinessType();
 
   // Detail panel state
@@ -132,6 +133,18 @@ export default function SegmentActivity() {
   }, [days, segmentFilter, businessType]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const refreshLog = useCallback(async () => {
+    setLogLoading(true);
+    try {
+      const params = { days };
+      if (businessType !== 'All') params.businessType = businessType;
+      if (segmentFilter) params.segment = segmentFilter;
+      const res = await getSegmentActivity(params);
+      setData(prev => ({ ...prev, logs: res.logs }));
+    } catch (err) { console.error(err); }
+    setLogLoading(false);
+  }, [days, segmentFilter, businessType]);
 
   const handleSnapshot = async () => {
     setSnapshotting(true);
@@ -313,6 +326,7 @@ export default function SegmentActivity() {
         <select value={days} onChange={e => setDays(parseInt(e.target.value))}
           style={{ padding: '6px 10px', fontSize: 13, borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
           <option value={1}>Last 24 hours</option>
+          <option value={2}>Last 2 days</option>
           <option value={7}>Last 7 days</option>
           <option value={14}>Last 14 days</option>
           <option value={30}>Last 30 days</option>
@@ -332,12 +346,20 @@ export default function SegmentActivity() {
       <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Log</span>
-          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) })}
-            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 11, color: 'var(--muted-foreground)' }}>
-            <Download size={11} /> Export
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={refreshLog} disabled={logLoading}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: logLoading ? 'not-allowed' : 'pointer', fontSize: 11, color: 'var(--muted-foreground)', opacity: logLoading ? 0.6 : 1 }}>
+              {logLoading ? <Loader2 size={11} className="spin" /> : <RefreshCw size={11} />} Refresh
+            </button>
+            <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) })}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 11, color: 'var(--muted-foreground)' }}>
+              <Download size={11} /> Export
+            </button>
+          </div>
         </div>
-        {dates.length === 0 ? (
+        {logLoading ? (
+          <div style={{ padding: 32, textAlign: 'center' }}><Loader2 size={18} className="spin" style={{ color: 'var(--muted-foreground)' }} /></div>
+        ) : dates.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>
             No daily logs yet. Click "Snapshot Now" to capture today's data.
           </div>

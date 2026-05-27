@@ -20,7 +20,7 @@ import {
   Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
   Send, Mail, Smartphone, Bell, Globe, MessageCircle,
   TrendingUp, Pause, MoreVertical, Layers, ArrowRight,
-  ChevronDown, Sparkles, LayoutGrid, List, AlertTriangle
+  ChevronDown, ChevronUp, Sparkles, LayoutGrid, List, AlertTriangle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import hotToast from 'react-hot-toast';
@@ -115,6 +115,7 @@ export default function Journeys() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState('cards');
   const [expandedNode, setExpandedNode] = useState(null);
+  const [techExpanded, setTechExpanded] = useState({});
   const [showActions, setShowActions] = useState(null);
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState({});
@@ -1268,13 +1269,14 @@ export default function Journeys() {
                       const isNodeActive = isJourneyStarted;
 
                       // Node lifecycle status — sourced from backend node_statuses (persists across refresh)
-                      const backendStatus = detail?.node_statuses?.[node.id]; // 'pending'|'running'|'completed'
+                      // 6 states: pending | running | sending | waiting | paused | completed
+                      const backendStatus = detail?.node_statuses?.[node.id];
                       const nodeLifecycle = isJourneyStarted && detail?.status !== 'draft'
                         ? (backendStatus || 'pending').toUpperCase()
                         : null;
 
-                      // Highlight: use backend node_statuses
-                      const isCurrentSimNode = (backendStatus === 'running');
+                      // Highlight active border: any non-idle status means work is happening here
+                      const isCurrentSimNode = (backendStatus === 'running' || backendStatus === 'sending' || backendStatus === 'waiting' || backendStatus === 'monitoring');
                       const color = isNodeActive
                         ? (NODE_COLORS[node.type] || 'var(--text-tertiary)')
                         : '#9ca3af';
@@ -1462,15 +1464,18 @@ export default function Journeys() {
                                   </span>
                                   {nodeLifecycle && (() => {
                                     const lcConfig = {
-                                      PENDING:   { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', dot: null  },
-                                      RUNNING:   { bg: color + '20',             color,            dot: true  },
-                                      COMPLETED: { bg: 'rgba(34,197,94,0.12)',   color: '#22c55e', dot: null  },
-                                      PAUSED:    { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c', dot: null  },
-                                    }[nodeLifecycle];
+                                      PENDING:    { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af',  dot: false, label: 'PENDING'     },
+                                      RUNNING:    { bg: color + '20',             color,             dot: true,  label: 'RUNNING'     },
+                                      SENDING:    { bg: 'rgba(59,130,246,0.15)',  color: '#3b82f6',  dot: true,  label: 'SENDING'     },
+                                      WAITING:    { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c',  dot: false, label: 'WAITING'     },
+                                      MONITORING: { bg: 'rgba(139,92,246,0.15)', color: '#8b5cf6',  dot: true,  label: 'MONITORING'  },
+                                      PAUSED:     { bg: 'rgba(251,146,60,0.15)', color: '#fb923c',  dot: false, label: 'PAUSED'      },
+                                      COMPLETED:  { bg: 'rgba(34,197,94,0.12)',  color: '#22c55e',  dot: false, label: '✓ DONE'      },
+                                    }[nodeLifecycle] || { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', dot: false, label: nodeLifecycle };
                                     return (
                                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 20, fontSize: 9, fontWeight: 800, background: lcConfig.bg, color: lcConfig.color, letterSpacing: '0.8px', textTransform: 'uppercase' }}>
                                         {lcConfig.dot && <span style={{ width: 5, height: 5, borderRadius: '50%', background: lcConfig.color, display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />}
-                                        {nodeLifecycle === 'COMPLETED' && '✓ '}{nodeLifecycle}
+                                        {lcConfig.label}
                                       </span>
                                     );
                                   })()}
@@ -1511,8 +1516,8 @@ export default function Journeys() {
                                 })()}
                               </div>
 
-                              {/* Node stats preview — user counts + sent */}
-                              {(hasSent || nStats) && (
+                              {/* Node stats preview — hidden for pending nodes */}
+                              {backendStatus !== 'pending' && (hasSent || nStats) && (
                                 <div className="flex items-center gap-3 shrink-0">
                                   {nStats && (
                                     <div className="flex gap-2" style={{ fontSize: 10 }}>
@@ -1576,7 +1581,7 @@ export default function Journeys() {
                             {/* Expanded details */}
                             {isExpanded && (
                               <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border-color)' }}>
-                                {node.data?.message && (
+                                {!!node.data?.message && (
                                   <div style={{
                                     background: 'var(--bg-secondary)', borderRadius: 8, padding: '12px 14px',
                                     fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.7, marginBottom: 12,
@@ -1585,7 +1590,7 @@ export default function Journeys() {
                                     {node.data.message}
                                   </div>
                                 )}
-                                {node.data?.waitDays && (() => {
+                                {!!node.data?.waitDays && (() => {
                                   const waitDays    = node.data.waitDays;
                                   const ft          = nodeFireTimesMap[node.id];
                                   const fireAt      = ft?.earliestFireAt   || null;
@@ -1716,7 +1721,7 @@ export default function Journeys() {
                                     </span>
                                   </div>
                                 )}
-                                {node.data?.goalType && (
+                                {node.type === 'goal' && node.data?.goalType && (
                                   <div className="flex items-center gap-2" style={{ padding: '8px 0' }}>
                                     <Target size={14} color={color} />
                                     <span className="text-secondary text-sm">
@@ -1725,122 +1730,90 @@ export default function Journeys() {
                                   </div>
                                 )}
 
-                                {/* Triggered / Exited counts */}
-                                {(() => {
-                                  const nc = nodeEntryCountsMap[node.id];
-                                  if (!nc || (nc.triggered === 0 && nc.exited === 0)) return null;
-                                  return (
-                                    <div style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
-                                        <Users size={13} color="#3B82F6" />
-                                        <span style={{ fontSize: 15, fontWeight: 700, color: '#3B82F6' }}>{fmt(nc.triggered)}</span>
-                                        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>TRIGGERED</span>
-                                      </div>
-                                      {nc.exited > 0 && (
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
-                                          <XCircle size={13} color="var(--red)" />
-                                          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--red)' }}>{fmt(nc.exited)}</span>
-                                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>EXITED</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Node analytics shimmer while lazy-loading */}
-                                {node.type === 'action' && nodeAnalyticsLoading && (
-                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
-                                    {[...Array(4)].map((_, i) => (
-                                      <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '12px 10px', textAlign: 'center' }}>
-                                        <div className="skeleton" style={{ width: 60, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
-                                        <div className="skeleton" style={{ width: 40, height: 8, borderRadius: 4, margin: '0 auto' }} />
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
                                 {/* Campaign Metrics Card — per node */}
                                 {node.type === 'action' && (() => {
                                   const camp = nodeCampaignMap?.[node.id];
-                                  const target    = camp?.target    || parseInt(detail?.total_entries) || 0;
+                                  const nc        = nodeEntryCountsMap[node.id];
                                   const sent      = camp?.sent      || parseInt(nodeStats?.action_sent)      || 0;
-                                  const delivered = campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? parseInt(nodeStats?.action_delivered) ?? 0;
-                                  const read      = campaignData?.opens?.[node.id] ?? camp?.read ?? parseInt(nodeStats?.action_read) ?? 0;
-                                  const clicked   = campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? parseInt(nodeStats?.action_clicked) ?? 0;
-                                  const bounced   = campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? parseInt(nodeStats?.action_bounced) ?? 0;
+                                  const read      = campaignData?.opens?.[node.id] ?? camp?.read ?? (parseInt(nodeStats?.action_read) || 0);
+                                  const clicked   = campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked) || 0);
+                                  const bounced   = campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? (parseInt(nodeStats?.action_bounced) || 0);
+                                  const delivered = campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? (parseInt(nodeStats?.action_delivered) || 0);
                                   const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
                                   const blocked   = parseInt(nodeStats?.action_blocked) || 0;
-                                  // BullMQ live queue depth for this channel
                                   const ch = (node.data?.channel || '').toLowerCase();
                                   const liveQ = queueStats?.[ch === 'whatsapp' ? 'whatsapp' : ch] || null;
                                   const qWaiting = (liveQ?.waiting || 0) + (liveQ?.active || 0) + (liveQ?.delayed || 0);
-                                  // Node config check
                                   const nodeChannel = node.data?.channel || '';
                                   const nodeTemplateId = node.data?.templateId || node.data?.emailTemplateId || node.data?.whatsappTemplateId || node.data?.smsTemplateId;
                                   const missingConfig = !nodeChannel || !nodeTemplateId;
+                                  const openRate  = sent > 0 && read > 0 ? ((read / sent) * 100).toFixed(1) : null;
+                                  const clickRate = sent > 0 && clicked > 0 ? ((clicked / sent) * 100).toFixed(1) : null;
+                                  const isTechOpen = !!techExpanded[node.id];
                                   return (
                                     <div className="mt-3">
-                                      {/* Node config strip — shows channel + templateId, red if missing */}
-                                      <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: missingConfig ? 'rgba(239,68,68,0.06)' : 'rgba(34,197,94,0.06)', border: `1px solid ${missingConfig ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.15)'}`, fontSize: 11, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                                        <span style={{ color: 'var(--text-tertiary)' }}>Channel: <strong style={{ color: nodeChannel ? 'var(--text-primary)' : 'var(--red)' }}>{nodeChannel || '⚠ not set'}</strong></span>
-                                        <span style={{ color: 'var(--text-tertiary)' }}>Template ID: <strong style={{ color: nodeTemplateId ? 'var(--text-primary)' : 'var(--red)' }}>{nodeTemplateId || '⚠ not set'}</strong></span>
-                                        {missingConfig && (
+                                      {/* Missing config warning */}
+                                      {missingConfig && (
+                                        <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', fontSize: 11, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                                          <span style={{ color: 'var(--red)' }}>⚠ {!nodeChannel ? 'Channel not set' : 'Template not configured'}</span>
                                           <button onClick={e => { e.stopPropagation(); openNodeEditModal(node); }}
                                             style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--red)', background: 'rgba(239,68,68,0.08)', color: 'var(--red)' }}>
                                             Fix Node →
                                           </button>
-                                        )}
-                                      </div>
-
-                                      {/* BullMQ live queue strip */}
-                                      {liveQ && (
-                                        <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.15)', fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-                                          <span style={{ color: '#3b82f6', fontWeight: 700 }}>📬 BullMQ Queue</span>
-                                          {[
-                                            { label: 'waiting', val: liveQ.waiting || 0, c: '#f59e0b' },
-                                            { label: 'active', val: liveQ.active || 0, c: '#3b82f6' },
-                                            { label: 'delayed', val: liveQ.delayed || 0, c: '#8b5cf6' },
-                                            { label: 'failed', val: liveQ.failed || 0, c: '#ef4444' },
-                                            { label: 'completed', val: liveQ.completed || 0, c: '#22c55e' },
-                                          ].map(({ label, val, c }) => (
-                                            <span key={label} style={{ color: 'var(--text-tertiary)' }}>
-                                              {label}: <strong style={{ color: val > 0 ? c : 'var(--text-muted)' }}>{fmt(val)}</strong>
-                                            </span>
-                                          ))}
-                                          <button onClick={async e => { e.stopPropagation(); await refreshQueueStats(); }}
-                                            style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(59,130,246,0.3)', background: 'transparent', color: '#3b82f6' }}>
-                                            ↻ Refresh
-                                          </button>
                                         </div>
                                       )}
 
-                                      {/* Top row — Target, In Queue, Sent, Delivered */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                                      {/* Primary stats — SENT | PENDING | OPENED | CLICKED */}
+                                      {/* OPENED and CLICKED shimmer individually while analytics loads */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                                         {[
-                                          { label: 'TARGET',    value: target,       color: 'var(--green)' },
-                                          { label: 'IN QUEUE',  value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)' },
-                                          { label: 'SENT',      value: sent,         color: sent > 0 ? 'var(--green)' : 'var(--text-muted)' },
-                                          { label: 'DELIVERED', value: delivered,    color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
+                                          { label: 'SENT',    value: sent,          color: sent > 0 ? 'var(--green)' : 'var(--text-muted)', sub: null,                              shimmer: false },
+                                          { label: 'PENDING', value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)', sub: null,                              shimmer: false },
+                                          { label: 'OPENED',  value: read,          color: read > 0 ? '#3b82f6' : 'var(--text-muted)',    sub: openRate  ? `${openRate}%`  : null, shimmer: nodeAnalyticsLoading },
+                                          { label: 'CLICKED', value: clicked,       color: clicked > 0 ? '#8b5cf6' : 'var(--text-muted)', sub: clickRate ? `${clickRate}%` : null, shimmer: nodeAnalyticsLoading },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
-                                            <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
+                                            {m.shimmer ? (
+                                              <>
+                                                <div className="skeleton" style={{ width: 56, height: 22, borderRadius: 4, margin: '0 auto 6px' }} />
+                                                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px' }}>{m.label}</div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
+                                                <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px', marginTop: 2 }}>{m.label}</div>
+                                                {m.sub && <div style={{ fontSize: 10, color: m.color, marginTop: 2, fontWeight: 600 }}>{m.sub} rate</div>}
+                                              </>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED (always visible) */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                                        {[
+                                          { label: 'DELIVERED', value: delivered, color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
+                                          { label: 'FAILED',    value: failed,    color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
+                                          { label: 'BOUNCED',   value: bounced,   color: bounced > 0 ? 'var(--orange)' : 'var(--text-muted)' },
+                                        ].map(m => (
+                                          <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
+                                            <div style={{ fontSize: 17, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
                                             <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px', marginTop: 2 }}>{m.label}</div>
                                           </div>
                                         ))}
                                       </div>
 
-                                      {/* Blocked warning + Retry button */}
+                                      {/* Blocked contacts warning */}
                                       {blocked > 0 && (
                                         <div style={{ marginBottom: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.3)', fontSize: 12, color: '#f97316' }}>
                                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                                            <span>⚠ <strong>{fmt(blocked)}</strong> entries blocked — {missingConfig ? 'fix node config above then click Retry' : 'no template/channel was set when they ran'}</span>
+                                            <span>⚠ <strong>{fmt(blocked)}</strong> contacts skipped — template wasn't set when they ran</span>
                                             <button
                                               onClick={async (e) => {
                                                 e.stopPropagation();
                                                 try {
                                                   const r = await retryBlockedEntries(selected, node.id);
                                                   hotToast.success(`Retried ${r.data?.retried || 0} blocked entries — processing now…`);
-                                                  // Immediately process so emails go out without waiting for cron
                                                   await processJourney(selected).catch(() => {});
                                                   const [d, cd] = await Promise.all([
                                                     getJourney(selected),
@@ -1852,25 +1825,61 @@ export default function Journeys() {
                                                 } catch (err) { hotToast.error(err.message || 'Retry failed'); }
                                               }}
                                               style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid #f97316', background: 'rgba(249,115,22,0.1)', color: '#f97316', whiteSpace: 'nowrap' }}>
-                                              Retry Blocked
+                                              Retry
                                             </button>
                                           </div>
                                         </div>
                                       )}
 
-                                      {/* Bottom row — Read, Clicked, Bounced, Failed */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
-                                        {[
-                                          { label: 'Read',    value: read,    color: 'var(--text-primary)' },
-                                          { label: 'Clicked', value: clicked, color: '#8b5cf6' },
-                                          { label: 'Bounced', value: bounced, color: 'var(--orange)' },
-                                          { label: 'Failed',  value: failed,  color: 'var(--red)' },
-                                        ].map(m => (
-                                          <div key={m.label} style={{ textAlign: 'center', padding: '6px 0', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}>
-                                            <div style={{ fontSize: 18, fontWeight: 700, color: m.value > 0 ? m.color : 'var(--text-muted)' }}>{fmt(m.value)}</div>
-                                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{m.label}</div>
+                                      {/* Journey context — plain English */}
+                                      {nc && nc.triggered > 0 && (
+                                        <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: 12 }}>
+                                          <span style={{ color: 'var(--text-tertiary)' }}>
+                                            <strong style={{ color: '#3b82f6' }}>{fmt(nc.triggered)}</strong> contacts reached this step
+                                          </span>
+                                          {nc.exited > 0 && (
+                                            <span style={{ color: 'var(--text-tertiary)' }}>
+                                              {' · '}<strong style={{ color: 'var(--purple)' }}>{fmt(nc.exited)}</strong> booked after this email
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Technical Details — collapsed by default */}
+                                      <div style={{ marginBottom: 6 }}>
+                                        <button onClick={e => { e.stopPropagation(); setTechExpanded(p => ({ ...p, [node.id]: !p[node.id] })); }}
+                                          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }}>
+                                          {isTechOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                          Technical Details
+                                        </button>
+                                        {isTechOpen && (
+                                          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                            <div style={{ padding: '5px 10px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: 11, display: 'flex', gap: 14 }}>
+                                              <span style={{ color: 'var(--text-tertiary)' }}>Channel: <strong style={{ color: nodeChannel || 'var(--red)' }}>{nodeChannel || '⚠ not set'}</strong></span>
+                                              <span style={{ color: 'var(--text-tertiary)' }}>Template ID: <strong>{nodeTemplateId || '⚠ not set'}</strong></span>
+                                            </div>
+                                            {liveQ && (
+                                              <div style={{ padding: '5px 10px', borderRadius: 8, background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.15)', fontSize: 11, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+                                                <span style={{ color: '#3b82f6', fontWeight: 700 }}>📬 BullMQ</span>
+                                                {[
+                                                  { label: 'waiting', val: liveQ.waiting || 0, c: '#f59e0b' },
+                                                  { label: 'active', val: liveQ.active || 0, c: '#3b82f6' },
+                                                  { label: 'delayed', val: liveQ.delayed || 0, c: '#8b5cf6' },
+                                                  { label: 'failed', val: liveQ.failed || 0, c: '#ef4444' },
+                                                  { label: 'completed', val: liveQ.completed || 0, c: '#22c55e' },
+                                                ].map(({ label, val, c }) => (
+                                                  <span key={label} style={{ color: 'var(--text-tertiary)' }}>
+                                                    {label}: <strong style={{ color: val > 0 ? c : 'var(--text-muted)' }}>{fmt(val)}</strong>
+                                                  </span>
+                                                ))}
+                                                <button onClick={async e => { e.stopPropagation(); await refreshQueueStats(); }}
+                                                  style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(59,130,246,0.3)', background: 'transparent', color: '#3b82f6' }}>
+                                                  ↻ Refresh
+                                                </button>
+                                              </div>
+                                            )}
                                           </div>
-                                        ))}
+                                        )}
                                       </div>
                                       {/* Template preview if available */}
                                       {(camp?.template_body || node.data?.message) && (() => {
