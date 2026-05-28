@@ -121,7 +121,7 @@ export default function Journeys() {
   const [editForm, setEditForm] = useState({});
   const [flowEditMode, setFlowEditMode] = useState(false);
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
-  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null });
+  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, templateVariables: {} });
   const [showNodeModal, setShowNodeModal] = useState(false);
   const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
   const [editNodeId, setEditNodeId] = useState(null);
@@ -151,11 +151,21 @@ export default function Journeys() {
       const id = selectedRef.current;
       if (!id) return;
       try {
-        const d = await getJourney(id);
+        const [d] = await Promise.all([getJourney(id), refreshQueueStats()]);
         setDetail(d.data);
       } catch { /* silent */ }
     }, 30_000);
     return () => clearInterval(t);
+  }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh queue stats once when journey transitions to completed/paused
+  const prevStatusRef = useRef(null);
+  useEffect(() => {
+    const cur = detail?.status;
+    if (prevStatusRef.current === 'active' && (cur === 'completed' || cur === 'paused')) {
+      refreshQueueStats();
+    }
+    prevStatusRef.current = cur;
   }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tick every second so wait-node countdown timers stay live
@@ -168,7 +178,7 @@ export default function Journeys() {
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
-  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null };
+  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
   const [createNodeForm, setCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
   const [editCreateNodeIdx, setEditCreateNodeIdx] = useState(null);
   const [editCreateNodeForm, setEditCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
@@ -320,8 +330,7 @@ export default function Journeys() {
   const [nodeAnalyticsLoaded, setNodeAnalyticsLoaded]   = useState(false);
   const [nodeAnalyticsLoading, setNodeAnalyticsLoading] = useState(false);
 
-  const loadNodeAnalytics = async (id) => {
-    if (nodeAnalyticsLoaded || nodeAnalyticsLoading) return;
+  const _fetchNodeAnalytics = async (id) => {
     setNodeAnalyticsLoading(true);
     try {
       const [a, cd] = await Promise.allSettled([
@@ -334,6 +343,17 @@ export default function Journeys() {
     } finally {
       setNodeAnalyticsLoading(false);
     }
+  };
+
+  const loadNodeAnalytics = async (id) => {
+    if (nodeAnalyticsLoaded || nodeAnalyticsLoading) return;
+    await _fetchNodeAnalytics(id);
+  };
+
+  const refreshNodeAnalytics = async (id) => {
+    if (nodeAnalyticsLoading) return;
+    setNodeAnalyticsLoaded(false);
+    await _fetchNodeAnalytics(id);
   };
 
   const openJourney = async (id) => {
@@ -361,7 +381,23 @@ export default function Journeys() {
     setDetailLoading(false);
   };
 
-  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null };
+  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
+
+  // Variables that are auto-populated from contact data — don't show inputs for these
+  // Only filter vars that are purely auto-filled internals — never shown as user inputs.
+  // first_name, full_name, cta_url etc. are intentionally kept OUT so users can fill them.
+  const SYSTEM_VARS = new Set(['email', 'phone', 'country', 'city', 'company', 'segment', 'utm_link', 'unsubscribe_link']);
+
+  // Returns the custom (non-system) variable names for a given template.
+  // Always parses from body HTML (the ground truth) — the variables DB column can be stale.
+  const getTemplateCustomVars = (templateId, channel) => {
+    if (!templateId) return [];
+    const list = allTemplates[channel] || [];
+    const tpl = list.find(t => String(t.id) === String(templateId));
+    if (!tpl) return [];
+    const vars = [...new Set([...(tpl.body || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
+    return vars.filter(v => !SYSTEM_VARS.has(v));
+  };
 
   const loadTemplates = async () => {
     if (templatesLoaded) return;
@@ -414,6 +450,7 @@ export default function Journeys() {
       smsTemplateId: ch === 'sms' ? (d.templateId || d.smsTemplateId || null) : (d.smsTemplateId || null),
       restChannel: d.restChannel || 'email',
       restTemplateId: d.restTemplateId || null,
+      templateVariables: d.templateVariables || {},
     });
     setShowNodeModal(true);
     loadTemplates();
@@ -441,6 +478,7 @@ export default function Journeys() {
             message: nodeForm.message,
             templateId: resolvedTemplateId,
             sendHour: nodeForm.sendHour ?? null,
+            templateVariables: nodeForm.templateVariables || {},
             ...(nodeForm.channel === 'whatsapp' && { restChannel: nodeForm.restChannel || 'email', restTemplateId: nodeForm.restTemplateId || null }),
           }),
           ...(nodeForm.type === 'wait'      && { waitDays: nodeForm.waitDays }),
@@ -535,6 +573,7 @@ export default function Journeys() {
           smsTemplateId: n.smsTemplateId || undefined,
           restChannel: n.restChannel || undefined,
           restTemplateId: n.restTemplateId || undefined,
+          templateVariables: n.templateVariables && Object.keys(n.templateVariables).length > 0 ? n.templateVariables : undefined,
         },
         position: { x: 300, y: 50 + (i + 1) * 120 }
       }));
@@ -682,6 +721,7 @@ export default function Journeys() {
           message: nodeForm.message,
           templateId: resolvedTemplateId,
           sendHour: nodeForm.sendHour ?? null,
+          templateVariables: nodeForm.templateVariables || {},
           ...(nodeForm.channel === 'whatsapp' && {
             restChannel: nodeForm.restChannel || 'email',
             restTemplateId: nodeForm.restTemplateId || null,
@@ -908,15 +948,15 @@ export default function Journeys() {
     const channels = getJourneyChannels(nodes);
     const statusConf = STATUS_CONFIG[detail.status] || STATUS_CONFIG.draft;
 
-    // Build node analytics for charts
+    // Build node analytics for charts — opens/clicks from email_send_log (via campaignData)
     const nodeChartData = nodes
       .filter(n => n.type === 'action')
       .map(n => ({
-        name: n.data?.channel || n.data?.label || n.id,
-        sent: nodeAnalyticsMap[n.id]?.action_sent || 0,
-        delivered: nodeAnalyticsMap[n.id]?.delivered || 0,
-        opened: nodeAnalyticsMap[n.id]?.opened || 0,
-        clicked: nodeAnalyticsMap[n.id]?.clicked || 0,
+        name: n.data?.label || n.data?.channel || n.id,
+        sent: nodeAnalyticsMap[n.id]?.action_sent || nodeCampaignMap[n.id]?.sent || 0,
+        delivered: campaignData?.delivered_by_node?.[n.id] ?? nodeAnalyticsMap[n.id]?.action_delivered ?? nodeCampaignMap[n.id]?.delivered ?? 0,
+        opened: campaignData?.opens?.[n.id] ?? nodeCampaignMap[n.id]?.read ?? 0,
+        clicked: campaignData?.gtm_clicks?.[n.id] ?? nodeCampaignMap[n.id]?.clicked ?? 0,
       }));
 
     const channelDistribution = channels.map(ch => ({
@@ -1142,7 +1182,7 @@ export default function Journeys() {
             <button
               key={tab.id}
               className={`tab flex items-center gap-1.5 ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, ''); }}
+              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, ''); if (tab.id === 'analytics') loadNodeAnalytics(selected); }}
             >
               <tab.icon size={14} /> {tab.label}
             </button>
@@ -1734,16 +1774,17 @@ export default function Journeys() {
                                 {node.type === 'action' && (() => {
                                   const camp = nodeCampaignMap?.[node.id];
                                   const nc        = nodeEntryCountsMap[node.id];
-                                  const sent      = camp?.sent      || parseInt(nodeStats?.action_sent)      || 0;
+                                  const sent      = campaignData?.sent_by_node?.[node.id] ?? camp?.sent ?? parseInt(nodeStats?.action_sent) ?? 0;
                                   const read      = campaignData?.opens?.[node.id] ?? camp?.read ?? (parseInt(nodeStats?.action_read) || 0);
                                   const clicked   = campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked) || 0);
                                   const bounced   = campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? (parseInt(nodeStats?.action_bounced) || 0);
                                   const delivered = campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? (parseInt(nodeStats?.action_delivered) || 0);
-                                  const failed    = camp?.failed     || parseInt(nodeStats?.action_failed)    || 0;
+                                  const failed    = parseInt(nodeStats?.action_failed) || camp?.failed || 0;
                                   const blocked   = parseInt(nodeStats?.action_blocked) || 0;
+                                  // Per-node active entries count (from journey_entries, already in detail)
+                                  const qWaiting = detail?.node_stats?.[node.id]?.active || 0;
                                   const ch = (node.data?.channel || '').toLowerCase();
                                   const liveQ = queueStats?.[ch === 'whatsapp' ? 'whatsapp' : ch] || null;
-                                  const qWaiting = (liveQ?.waiting || 0) + (liveQ?.active || 0) + (liveQ?.delayed || 0);
                                   const nodeChannel = node.data?.channel || '';
                                   const nodeTemplateId = node.data?.templateId || node.data?.emailTemplateId || node.data?.whatsappTemplateId || node.data?.smsTemplateId;
                                   const missingConfig = !nodeChannel || !nodeTemplateId;
@@ -1919,7 +1960,7 @@ export default function Journeys() {
                                               onClick={async (e) => {
                                                 e.stopPropagation();
                                                 try {
-                                                  const res = await fetchTemplatePreview(tpl.id);
+                                                  const res = await fetchTemplatePreview(tpl.id, node.data?.templateVariables || {});
                                                   setPreviewTemplate({ ...tpl, body_html: res.data?.html || null });
                                                 } catch {
                                                   setPreviewTemplate(tpl);
@@ -2133,6 +2174,13 @@ export default function Journeys() {
         {/* ── TAB: Analytics ────────────────────────────────────── */}
         {activeTab === 'analytics' && (
           <div className="flex flex-col gap-4">
+            {/* Analytics header with refresh */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => refreshNodeAnalytics(selected)} disabled={nodeAnalyticsLoading}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: nodeAnalyticsLoading ? 'not-allowed' : 'pointer', opacity: nodeAnalyticsLoading ? 0.6 : 1 }}>
+                <RefreshCw size={12} style={nodeAnalyticsLoading ? { animation: 'spin 1s linear infinite' } : {}} /> Refresh Analytics
+              </button>
+            </div>
             {/* Entry Funnel */}
             <div className="card-grid card-grid-2">
               <div className="card">
@@ -2506,7 +2554,7 @@ export default function Journeys() {
                           value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
                           onChange={e => {
                             const val = e.target.value ? parseInt(e.target.value) : null;
-                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val } : { ...f, emailTemplateId: val });
+                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, emailTemplateId: val, templateVariables: {} });
                           }}>
                           <option value="">— Select email template —</option>
                           {allTemplates.email.map(t => (
@@ -2525,7 +2573,7 @@ export default function Journeys() {
                         </label>
                         <select className="form-input"
                           value={nodeForm.whatsappTemplateId || ''}
-                          onChange={e => setNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                          onChange={e => setNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
                           <option value="">— Select WhatsApp template —</option>
                           {allTemplates.whatsapp.map(t => (
                             <option key={t.id} value={t.id}>{t.name}{t.wa_template_name ? ` (${t.wa_template_name})` : ''}</option>
@@ -2558,7 +2606,7 @@ export default function Journeys() {
                           value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.smsTemplateId || '')}
                           onChange={e => {
                             const val = e.target.value ? parseInt(e.target.value) : null;
-                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val } : { ...f, smsTemplateId: val });
+                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, smsTemplateId: val, templateVariables: {} });
                           }}>
                           <option value="">— Select SMS template —</option>
                           {allTemplates.sms.map(t => (
@@ -2568,6 +2616,35 @@ export default function Journeys() {
                         {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
                       </div>
                     )}
+                  {/* ── Dynamic Template Variables ── */}
+                  {(() => {
+                    const tplId = nodeForm.channel === 'email' ? nodeForm.emailTemplateId
+                      : nodeForm.channel === 'whatsapp' ? nodeForm.whatsappTemplateId
+                      : nodeForm.smsTemplateId;
+                    const vars = getTemplateCustomVars(tplId, nodeForm.channel);
+                    if (vars.length === 0) return null;
+                    return (
+                      <div style={{ marginTop: 12, padding: '12px', background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 10, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                          Template Variables
+                        </div>
+                        {vars.map(v => (
+                          <div key={v} style={{ marginBottom: 8 }}>
+                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>
+                              {v.replace(/_/g, ' ')}
+                            </label>
+                            <input
+                              className="form-input"
+                              placeholder={`Enter ${v.replace(/_/g, ' ')}…`}
+                              value={nodeForm.templateVariables?.[v] || ''}
+                              onChange={e => setNodeForm(f => ({ ...f, templateVariables: { ...(f.templateVariables || {}), [v]: e.target.value } }))}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
                   {/* ── Send Hour (Dubai time) ── */}
                   <div style={{ marginTop: 12 }}>
                     <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
@@ -2963,7 +3040,7 @@ export default function Journeys() {
                                   e.stopPropagation();
                                   const tpl = selectedTpl || { id: templateId, name: 'Template', channel: n.channel || 'email' };
                                   setPreviewTemplate({ ...tpl, body_html: null });
-                                  fetchTemplatePreview(templateId)
+                                  fetchTemplatePreview(templateId, n.templateVariables || {})
                                     .then(res => setPreviewTemplate(prev => prev ? { ...prev, body_html: res.data?.html || null } : null))
                                     .catch(() => {});
                                 }}
@@ -3008,7 +3085,7 @@ export default function Journeys() {
                                 {editCreateNodeForm.channel === 'email' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Email Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.emailTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                    <select className="form-input" value={editCreateNodeForm.emailTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
                                       <option value="">— Select email template —</option>
                                       {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
                                     </select>
@@ -3017,7 +3094,7 @@ export default function Journeys() {
                                 {editCreateNodeForm.channel === 'whatsapp' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.whatsappTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                    <select className="form-input" value={editCreateNodeForm.whatsappTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
                                       <option value="">— Select WhatsApp template —</option>
                                       {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                                     </select>
@@ -3026,12 +3103,33 @@ export default function Journeys() {
                                 {editCreateNodeForm.channel === 'sms' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.smsTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                                    <select className="form-input" value={editCreateNodeForm.smsTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
                                       <option value="">— Select SMS template —</option>
                                       {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                                     </select>
                                   </div>
                                 )}
+                                {/* Dynamic template variables for editCreateNodeForm */}
+                                {(() => {
+                                  const tplId = editCreateNodeForm.channel === 'email' ? editCreateNodeForm.emailTemplateId
+                                    : editCreateNodeForm.channel === 'whatsapp' ? editCreateNodeForm.whatsappTemplateId
+                                    : editCreateNodeForm.smsTemplateId;
+                                  const vars = getTemplateCustomVars(tplId, editCreateNodeForm.channel);
+                                  if (vars.length === 0) return null;
+                                  return (
+                                    <div style={{ marginBottom: 10, padding: '10px 12px', background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Template Variables</div>
+                                      {vars.map(v => (
+                                        <div key={v} style={{ marginBottom: 6 }}>
+                                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>{v.replace(/_/g, ' ')}</label>
+                                          <input className="form-input" placeholder={`Enter ${v.replace(/_/g, ' ')}…`}
+                                            value={editCreateNodeForm.templateVariables?.[v] || ''}
+                                            onChange={e => setEditCreateNodeForm(f => ({ ...f, templateVariables: { ...(f.templateVariables || {}), [v]: e.target.value } }))} />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                                 <div style={{ marginBottom: 10 }}>
                                   <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3150,7 +3248,7 @@ export default function Journeys() {
                           {createNodeForm.channel === 'email' && (
                             <div style={{ marginBottom: 12 }}>
                               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Email Template</label>
-                              <select className="form-input" value={createNodeForm.emailTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
+                              <select className="form-input" value={createNodeForm.emailTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
                                 <option value="">— Select email template —</option>
                                 {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
                               </select>
@@ -3186,6 +3284,27 @@ export default function Journeys() {
                               </select>
                             </div>
                           )}
+                          {/* Dynamic template variables for createNodeForm */}
+                          {(() => {
+                            const tplId = createNodeForm.channel === 'email' ? createNodeForm.emailTemplateId
+                              : createNodeForm.channel === 'whatsapp' ? createNodeForm.whatsappTemplateId
+                              : createNodeForm.smsTemplateId;
+                            const vars = getTemplateCustomVars(tplId, createNodeForm.channel);
+                            if (vars.length === 0) return null;
+                            return (
+                              <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Template Variables</div>
+                                {vars.map(v => (
+                                  <div key={v} style={{ marginBottom: 6 }}>
+                                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', display: 'block', marginBottom: 3, textTransform: 'uppercase' }}>{v.replace(/_/g, ' ')}</label>
+                                    <input className="form-input" placeholder={`Enter ${v.replace(/_/g, ' ')}…`}
+                                      value={createNodeForm.templateVariables?.[v] || ''}
+                                      onChange={e => setCreateNodeForm(f => ({ ...f, templateVariables: { ...(f.templateVariables || {}), [v]: e.target.value } }))} />
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                           <div style={{ marginBottom: 12 }}>
                             <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Send Hour (Dubai Time)</label>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -41,6 +41,11 @@ export default class EmailRenderer {
     }
 
     // 3. Build variable map
+    // Only apply extraVars entries that have non-blank values so that an empty
+    // journey-node input doesn't wipe out the contact's real first_name etc.
+    const nonEmptyExtraVars = Object.fromEntries(
+      Object.entries(extraVars).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+    );
     const vars = {
       first_name: user.name?.split(' ')[0] || 'there',
       full_name: user.name || 'Valued Customer',
@@ -50,12 +55,12 @@ export default class EmailRenderer {
       city: user.city || '',
       company: user.company_name || '',
       segment: user.booking_status || '',
-      offer_tag: extraVars.offer_tag || user.occasion_offer_tag || '',
-      holiday_name: extraVars.holiday_name || user.current_occasion || '',
-      city_name: extraVars.city_name || user.city || 'Dubai',
-      utm_link: extraVars.utm_link || 'https://www.raynatours.com',
+      offer_tag: user.occasion_offer_tag || '',
+      holiday_name: user.current_occasion || '',
+      city_name: user.city || 'Dubai',
+      utm_link: 'https://www.raynatours.com',
       unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,
-      ...extraVars,
+      ...nonEmptyExtraVars,
     };
 
     // 4. Render subject line
@@ -208,9 +213,9 @@ export default class EmailRenderer {
     let user = {};
     if (unifiedId) {
       const { rows: [u] } = await query(
-        `SELECT unified_id, name, email, phone, country, city, company_name,
+        `SELECT id, name, email, phone, country, city, company_name,
                 booking_status, occasion_offer_tag, current_occasion
-           FROM unified_contacts WHERE unified_id = $1`,
+           FROM unified_contacts WHERE id = $1`,
         [unifiedId]
       );
       user = u || {};
@@ -219,6 +224,11 @@ export default class EmailRenderer {
     const utmLink = extraVars.utm_link
       || this._buildUtmLink({ journeyId, nodeId, htmlTemplateName: tpl.name, unifiedId });
 
+    // Only apply extraVars entries that have non-blank values so that an empty
+    // journey-node input doesn't wipe out the contact's real first_name etc.
+    const nonEmptyExtraVars = Object.fromEntries(
+      Object.entries(extraVars).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+    );
     const vars = {
       first_name:       user.name?.split(' ')[0] || 'there',
       full_name:        user.name || 'Valued Traveller',
@@ -226,12 +236,12 @@ export default class EmailRenderer {
       phone:            user.phone || '',
       country:          user.country || '',
       city:             user.city || '',
-      offer_tag:        extraVars.offer_tag    || user.occasion_offer_tag || '',
-      holiday_name:     extraVars.holiday_name || user.current_occasion   || '',
-      city_name:        extraVars.city_name    || user.city || 'Dubai',
+      offer_tag:        user.occasion_offer_tag || '',
+      holiday_name:     user.current_occasion   || '',
+      city_name:        user.city || 'Dubai',
       utm_link:         utmLink,
       unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,
-      ...extraVars,
+      ...nonEmptyExtraVars,
     };
 
     let subject = (extraVars.subject_override || tpl.preview_text || tpl.name || '').toString();
@@ -486,19 +496,20 @@ export default class EmailRenderer {
 
   /**
    * Render a preview with sample data (for Content page preview)
+   * @param {number} templateId
+   * @param {object} extraVars - custom variable values from the journey node (override sample defaults)
    */
-  static async renderPreview(templateId) {
+  static async renderPreview(templateId, extraVars = {}) {
     const sampleVars = {
-      first_name: 'Akshith',
-      full_name: 'Akshith Kumar',
       offer_tag: 'PREVIEW20',
       holiday_name: 'Diwali',
       city_name: 'Dubai',
       utm_link: 'https://www.raynatours.com',
       unsubscribe_link: '#',
+      // User-supplied values override sample defaults
+      ...extraVars,
     };
 
-    // Load template
     const { rows: [tpl] } = await query(`
       SELECT ct.*, eht.html_body, eht.name as html_name
       FROM content_templates ct
@@ -512,8 +523,8 @@ export default class EmailRenderer {
     let html = tpl.html_body || tpl.body || '';
 
     for (const [key, val] of Object.entries(sampleVars)) {
-      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val);
-      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val);
+      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
+      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
     }
 
     return {

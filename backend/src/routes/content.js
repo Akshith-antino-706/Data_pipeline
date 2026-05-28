@@ -156,7 +156,6 @@ router.get('/templates/:id/preview', async (req, res, next) => {
 
     const dayMatch = (template.name || '').match(/^Day\s+(\d)\s*-/i);
     if (!dayMatch) {
-      // Non-Day templates: render body HTML directly
       return res.json({ success: true, data: { html: template.body || '<p>No content</p>' } });
     }
     const html = await renderDayTemplatePreview(parseInt(dayMatch[1]));
@@ -167,6 +166,27 @@ router.get('/templates/:id/preview', async (req, res, next) => {
       });
     }
     res.json({ success: true, data: { html } });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v2/content/templates/:id/preview — preview with custom variable values
+// Body: { variables: { offer_tag: "20% off", holiday_name: "Diwali", ... } }
+router.post('/templates/:id/preview', async (req, res, next) => {
+  try {
+    const template = await ContentService.getById(req.params.id);
+    if (!template) return res.status(404).json({ success: false, error: 'Template not found' });
+
+    // Static Day N templates use the file-based renderer, not EmailRenderer
+    const dayMatch = template.channel === 'email' && (template.name || '').match(/^Day\s+(\d)\s*-/i);
+    if (dayMatch) {
+      const html = await renderDayTemplatePreview(parseInt(dayMatch[1]));
+      if (!html) return res.status(500).json({ success: false, error: `Day ${dayMatch[1]} renderer failed` });
+      return res.json({ success: true, data: { html, subject: template.subject || '' } });
+    }
+
+    const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
+    const result = await EmailRenderer.renderPreview(parseInt(req.params.id), req.body?.variables || {});
+    res.json({ success: true, data: { html: result.html, subject: result.subject } });
   } catch (err) { next(err); }
 });
 

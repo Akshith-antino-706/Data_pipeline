@@ -129,7 +129,7 @@ async function processEmail(job) {
   // Try renderDayHtml first (Day1-Day7 templates from mail_templates/ folder)
   // Falls back to EmailRenderer if renderDayHtml doesn't match the templateId
   let html, subject;
-  const dayRendered = await renderDayHtml(d.templateId, d.customerId, { journeyId: d.journeyId, nodeId: d.nodeId }).catch(err => {
+  const dayRendered = await renderDayHtml(d.templateId, d.customerId, { journeyId: d.journeyId, nodeId: d.nodeId, extraVars: d.templateVariables || {} }).catch(err => {
     console.log(`[Worker] renderDayHtml failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
     return null;
   });
@@ -139,21 +139,30 @@ async function processEmail(job) {
     subject = dayRendered.subject || 'Rayna Tours';
     console.log(`[Worker:email]   rendered via renderDayHtml → subject="${subject}" html=${html.length} bytes`);
   } else {
-    // Fallback: EmailRenderer with htmlTemplateId from DB
+    // Fallback 1: EmailRenderer.renderForJourneyNode — needs html_template_id (linked HTML template)
     const htmlTemplateId = d.htmlTemplateId || await _resolveHtmlTemplateId(d.templateId);
-    if (!htmlTemplateId) {
-      return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
+    if (htmlTemplateId) {
+      const rendered = await EmailRenderer.renderForJourneyNode({
+        htmlTemplateId,
+        unifiedId: d.customerId,
+        journeyId: d.journeyId,
+        nodeId: d.nodeId,
+        runId: d.runId,
+        extraVars: d.templateVariables || {},
+      });
+      html    = rendered.html;
+      subject = rendered.subject || 'Rayna Tours';
+      console.log(`[Worker:email]   rendered via EmailRenderer.renderForJourneyNode → subject="${subject}" html=${html.length} bytes`);
+    } else {
+      // Fallback 2: template has HTML stored directly in content_templates.body (user-uploaded)
+      const rendered = await EmailRenderer.render(d.templateId, d.customerId, d.templateVariables || {});
+      if (!rendered?.html) {
+        return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
+      }
+      html    = rendered.html;
+      subject = rendered.subject || 'Rayna Tours';
+      console.log(`[Worker:email]   rendered via EmailRenderer.render (body fallback) → subject="${subject}" html=${html.length} bytes`);
     }
-    const rendered = await EmailRenderer.renderForJourneyNode({
-      htmlTemplateId,
-      unifiedId: d.customerId,
-      journeyId: d.journeyId,
-      nodeId: d.nodeId,
-      runId: d.runId,
-    });
-    html    = rendered.html;
-    subject = rendered.subject || 'Rayna Tours';
-    console.log(`[Worker:email]   rendered via EmailRenderer → subject="${subject}" html=${html.length} bytes`);
   }
 
   // ── Inject click/open tracking ──

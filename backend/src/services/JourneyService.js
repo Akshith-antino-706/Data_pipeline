@@ -22,9 +22,21 @@ async function _getCachedRanking(key, fetchFn) {
 
 // Render the real Day HTML for a contact using the same Day renderers.
 // Uses fallback ranking (no Claude API call) to keep sends fast.
-export async function renderDayHtml(templateId, contactId, { journeyId, nodeId } = {}) {
+export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, extraVars = {} } = {}) {
   const id = parseInt(templateId);
   const tplFile = (name) => fs.readFileSync(path.join(MAIL_TEMPLATES_DIR, name), 'utf8');
+
+  // Apply extra variable substitutions to a rendered result
+  const applyExtraVars = (result) => {
+    if (!result || !extraVars || Object.keys(extraVars).length === 0) return result;
+    let { html, subject } = result;
+    for (const [key, val] of Object.entries(extraVars)) {
+      const re = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      html    = html.replace(re, String(val ?? ''));
+      subject = subject.replace(re, String(val ?? ''));
+    }
+    return { ...result, html, subject };
+  };
 
   if (id === 1) {
     const { _internals } = await import('./Day1WelcomeRankingService.js');
@@ -39,7 +51,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
       visaMap,
     });
     const data = await buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' };
+    return applyExtraVars({ html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' });
   }
   if (id === 2) {
     const { default: rankTrendingCruises }    = await import('./Day2CruiseRankingService.js');
@@ -47,7 +59,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
     const ranking = await _getCachedRanking('cruise', rankTrendingCruises);
     const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
+    return applyExtraVars({ html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' });
   }
   if (id === 3) {
     const { rankTrendingVisas }             = await import('./VisaRankingService.js');
@@ -56,7 +68,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const ranking = await _getCachedRanking('visa', rankTrendingVisas);
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
     const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' };
+    return applyExtraVars({ html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' });
   }
   if (id === 4) {
     const { _internals } = await import('./Day4HolidaysRankingService.js');
@@ -64,7 +76,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { renderDay4Holidays }    = await import('./Day4HolidaysRenderer.js');
     const ranking = _internals.buildFallbackRanking();
     const data    = await buildDay4HolidaysData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' };
+    return applyExtraVars({ html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' });
   }
   if (id === 5) {
     const { _internals } = await import('./Day5ActivitiesRankingService.js');
@@ -72,7 +84,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { renderDay5Activities }    = await import('./Day5ActivitiesRenderer.js');
     const ranking = _internals.buildFallbackRanking();
     const data    = await buildDay5ActivitiesData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' };
+    return applyExtraVars({ html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' });
   }
   if (id === 6) {
     const { _internals } = await import('./Day6DestinationRankingService.js');
@@ -84,13 +96,13 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
       ? _internals.buildFallbackRanking({ holidayCandidates: [], activityCandidates: [], cruiseCandidates: [] })
       : {};
     const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking, journeyId, nodeId });
-    return { html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' };
+    return applyExtraVars({ html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' });
   }
   if (id === 7) {
     const { buildDay7AbandonedCartData } = await import('./Day7AbandonedCartDataService.js');
     const { renderDay7AbandonedCart }    = await import('./Day7AbandonedCartRenderer.js');
     const data = await buildDay7AbandonedCartData({ contactId, journeyId, nodeId });
-    return { html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' };
+    return applyExtraVars({ html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' });
   }
   return null; // unknown template — fall back to EmailRenderer
 }
@@ -1015,23 +1027,24 @@ class JourneyService {
         const recipientEmail = (journey.test_mode && journey.test_email) ? journey.test_email : entry.email;
 
         const jobData = {
-          entryId:        entry.entry_id,
-          customerId:     entry.customer_id,
+          entryId:           entry.entry_id,
+          customerId:        entry.customer_id,
           journeyId,
-          nodeId:         currentNode.id,
+          nodeId:            currentNode.id,
           runId,
           channel,
           templateId,
           htmlTemplateId,
-          name:           entry.name,
-          email:          recipientEmail,
-          phone:          entry.phone,
-          isIndian:       entry.is_indian,
-          track:          entryTrack,
+          name:              entry.name,
+          email:             recipientEmail,
+          phone:             entry.phone,
+          isIndian:          entry.is_indian,
+          track:             entryTrack,
           autoPaired,
-          originalChannel: rawChannel,
+          originalChannel:   rawChannel,
           edges,
-          nodes:          nodeMap,
+          nodes:             nodeMap,
+          templateVariables: currentNode.data?.templateVariables || {},
         };
 
         if (!channel || !templateId) {

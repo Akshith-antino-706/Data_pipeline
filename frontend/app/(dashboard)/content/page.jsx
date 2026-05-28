@@ -15,7 +15,9 @@ const CHANNELS = [
   { key: 'push', label: 'Push', icon: Bell },
 ];
 
-const BLANK_FORM = { name: '', channel: 'email', subject: '', body: '', ctaText: '', ctaUrl: '', fileName: '' };
+const BLANK_FORM = { name: '', channel: 'email', subject: '', body: '', fileName: '' };
+
+const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link']);
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -74,8 +76,6 @@ export default function Content() {
       channel: tpl.channel || 'email',
       subject: tpl.subject || '',
       body,
-      ctaText: tpl.cta_text || '',
-      ctaUrl: tpl.cta_url || '',
       fileName: body ? 'existing-template.html' : '',
     });
     setDynVars(extractVars(body));
@@ -92,16 +92,6 @@ export default function Content() {
       setDynVars(extractVars(html));
     };
     reader.readAsText(file);
-  }
-
-  function applyVars(html) {
-    let result = html;
-    dynVars.forEach(({ key, value }) => {
-      if (value.trim()) {
-        result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value.trim());
-      }
-    });
-    return result;
   }
 
   async function confirmAndDelete() {
@@ -125,16 +115,14 @@ export default function Content() {
     if (!form.body.trim()) { hotToast.error('Please upload an HTML file'); return; }
 
     setSaving(true);
-    const resolvedBody = applyVars(form.body);
     try {
       const payload = {
         name: form.name.trim(),
         channel: form.channel,
         subject: form.subject.trim() || null,
-        body: resolvedBody,
-        bodyPlain: stripHtml(resolvedBody),
-        ctaText: form.ctaText.trim() || null,
-        ctaUrl: form.ctaUrl.trim() || null,
+        body: form.body,
+        bodyPlain: stripHtml(form.body),
+        variables: dynVars.map(v => v.key),
       };
 
       if (modal === 'create') {
@@ -423,68 +411,18 @@ export default function Content() {
                   </div>
                 </div>
 
-                {/* Dynamic Variables */}
-                {form.body && dynVars.length === 0 && (
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
-                    No <code style={{ fontSize: 11 }}>{`{{variables}}`}</code> found in this template.
-                  </div>
-                )}
-                {dynVars.length > 0 && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-                      <Braces size={14} color="var(--brand-primary)" />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                        Template Variables ({dynVars.length})
+                {/* Show detected custom variables as read-only chips (system vars excluded) */}
+                {form.body && dynVars.filter(v => !SYSTEM_VARS.has(v.key)).length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                    <Braces size={13} color="var(--brand-primary)" style={{ flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Variables:</span>
+                    {dynVars.filter(v => !SYSTEM_VARS.has(v.key)).map(v => (
+                      <span key={v.key} style={{ fontSize: 11, fontFamily: 'monospace', background: 'color-mix(in srgb, var(--brand-primary) 10%, transparent)', color: 'var(--brand-primary)', padding: '2px 7px', borderRadius: 5, fontWeight: 700 }}>
+                        {`{{${v.key}}}`}
                       </span>
-                    </div>
-                    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '4px 0', maxHeight: 260, overflowY: 'auto' }}>
-                      {dynVars.map((v, i) => (
-                        <div key={v.key} style={{ display: 'grid', gridTemplateColumns: '140px 1fr', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: i < dynVars.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 11, fontFamily: 'monospace', background: 'color-mix(in srgb, var(--brand-primary) 10%, transparent)', color: 'var(--brand-primary)', padding: '2px 7px', borderRadius: 5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {`{{${v.key}}}`}
-                            </span>
-                          </div>
-                          <input
-                            className="form-input"
-                            style={{ fontSize: 12, padding: '5px 10px' }}
-                            placeholder={`Value for ${v.key}`}
-                            value={v.value}
-                            onChange={e => {
-                              const val = e.target.value;
-                              setDynVars(prev => prev.map((d, idx) => idx === i ? { ...d, value: val } : d));
-                            }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                      Filled values will be baked into the saved HTML. Leave blank to keep as a dynamic placeholder.
-                    </div>
+                    ))}
                   </div>
                 )}
-
-                {/* CTA */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>CTA Text</label>
-                    <input
-                      className="form-input"
-                      placeholder="e.g. Book Now"
-                      value={form.ctaText}
-                      onChange={e => setForm(f => ({ ...f, ctaText: e.target.value }))}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>CTA URL</label>
-                    <input
-                      className="form-input"
-                      placeholder="https://..."
-                      value={form.ctaUrl}
-                      onChange={e => setForm(f => ({ ...f, ctaUrl: e.target.value }))}
-                    />
-                  </div>
-                </div>
               </div>
 
               {/* Footer */}
