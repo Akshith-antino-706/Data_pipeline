@@ -23,7 +23,7 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
-import { renderDayHtml } from '../JourneyService.js';
+import JourneyService, { renderDayHtml } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 
@@ -80,11 +80,18 @@ export function startWorkers() {
         );
         // Now advance past the action node
         const edges = d.edges || [];
+        const nodeMap = d.nodes || {};
         const outEdge = edges.find(e => e.source === d.nodeId);
         if (outEdge) {
+          const nextNode = nodeMap[outEdge.target];
+          const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
           await db.query(
-            `UPDATE journey_entries SET current_node_id = $1, bullmq_job_id = NULL WHERE entry_id = $2`,
-            [outEdge.target, d.entryId]
+            `UPDATE journey_entries
+             SET current_node_id = $1, bullmq_job_id = NULL,
+                 last_run_id = NULL, last_enqueued_at = NULL,
+                 next_fire_at = $3
+             WHERE entry_id = $2`,
+            [outEdge.target, d.entryId, nextFireAt]
           );
         } else {
           await db.query(
@@ -347,9 +354,15 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
   const chosen = trackEdges[0] || outEdges[0];
 
   if (chosen) {
+    const nextNode = nodeMap[chosen.target];
+    const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
     await db.query(
-      `UPDATE journey_entries SET current_node_id = $1, bullmq_job_id = NULL WHERE entry_id = $2`,
-      [chosen.target, d.entryId]
+      `UPDATE journey_entries
+       SET current_node_id = $1, bullmq_job_id = NULL,
+           last_run_id = NULL, last_enqueued_at = NULL,
+           next_fire_at = $3
+       WHERE entry_id = $2`,
+      [chosen.target, d.entryId, nextFireAt]
     );
   } else {
     await db.query(

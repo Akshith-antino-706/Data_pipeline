@@ -864,6 +864,9 @@ class JourneyService {
     const enqueueByChannel = { email: [], whatsapp: [], sms: [] };
     // Collect entry IDs to stamp last_run_id in one bulk UPDATE per batch
     let toStampIds = [];
+    // Collect sendHour-blocked entries: nextWindowAt ISO → { at, ids[] }
+    // Bulk-updated after each page so the cron SQL skips them until the window opens
+    let waitedEntries = new Map();
 
     // ── BULK EXIT CHECK (scalable for 15 lakh+ users) ──
     // Exit booked + unsubscribed users in a single batch UPDATE before the per-entry loop.
@@ -942,21 +945,23 @@ class JourneyService {
 
       const entryTrack = entry.track || 'all';
 
-      // ── WAIT node: check if enough time has elapsed ──
+      // ── WAIT node: check if wait has elapsed ──
+      // Primary guard: the SQL fetch query already filters next_fire_at <= NOW(),
+      // so when next_fire_at is properly set (calculateNextFireAt sets it to
+      // entered_at + waitDays when the entry arrives here), reaching this code
+      // means the wait is done — fall straight through to advance.
+      // Fallback for legacy entries where next_fire_at was never set (NULL):
+      // use entered_at as the reference point.
       if (currentNode.type === 'wait') {
-        const lastEventRes = await db.query(`
-          SELECT MAX(created_at) as last_event FROM journey_events WHERE entry_id = $1
-        `, [entry.entry_id]);
-        const lastEvent = lastEventRes.rows[0]?.last_event || entry.entered_at;
-        const elapsedMs = Date.now() - new Date(lastEvent).getTime();
-
-        const thresholdMs = (currentNode.data?.waitDays || 1) * 86_400_000;
-
-        if (elapsedMs < thresholdMs) {
-          waited++;
-          continue; // Not enough time has passed, skip
+        if (!entry.next_fire_at) {
+          const waitDays = currentNode.data?.waitDays || 1;
+          const elapsedMs = Date.now() - new Date(entry.entered_at).getTime();
+          if (elapsedMs < waitDays * 86_400_000) {
+            waited++;
+            continue;
+          }
         }
-        // Time elapsed — fall through to advance to next node
+        // Wait complete — fall through to advance to next node
       }
 
       // ── ACTION node: enqueue a BullMQ job for the worker to send + advance ──
@@ -978,6 +983,18 @@ class JourneyService {
           const targetTotal = targetH * 60 + targetM;
           const curTotal = curH * 60 + curM;
           if (curTotal < targetTotal || curTotal > targetTotal + 5) {
+            // Compute exact UTC time when the window next opens so the cron
+            // SQL (next_fire_at <= NOW) skips this entry until then instead of
+            // loading and blocking it on every 5-minute tick.
+            const _dayMs = 24 * 60 * 60 * 1000;
+            const _dubaiOffset = 4 * 60; // UTC+4 in minutes
+            const _dubaiDate = new Date(Date.now() + _dubaiOffset * 60000);
+            _dubaiDate.setHours(targetH, targetM, 0, 0);
+            let _nextWindow = new Date(_dubaiDate.getTime() - _dubaiOffset * 60000);
+            if (_nextWindow <= new Date()) _nextWindow = new Date(_nextWindow.getTime() + _dayMs);
+            const _key = _nextWindow.toISOString();
+            if (!waitedEntries.has(_key)) waitedEntries.set(_key, { at: _nextWindow, ids: [] });
+            waitedEntries.get(_key).ids.push(entry.entry_id);
             waited++;
             processed++;
             continue;
@@ -1128,7 +1145,12 @@ class JourneyService {
         const nextNodeId = result ? (yesEdge?.target || outEdges[0]?.target) : (noEdge?.target || outEdges[0]?.target);
 
         if (nextNodeId) {
-          await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [nextNodeId, entry.entry_id]);
+          const nextNode = nodeMap[nextNodeId];
+          const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
+          await db.query(
+            'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2, last_run_id = NULL WHERE entry_id = $3',
+            [nextNodeId, nextFireAt, entry.entry_id]
+          );
         }
         conditioned++;
         processed++;
@@ -1162,7 +1184,12 @@ class JourneyService {
       const chosen = trackEdges[0] || outEdges[0];  // fall back to any edge if no track-match
 
       if (chosen) {
-        await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [chosen.target, entry.entry_id]);
+        const nextNode = nodeMap[chosen.target];
+        const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
+        await db.query(
+          'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2, last_run_id = NULL WHERE entry_id = $3',
+          [chosen.target, nextFireAt, entry.entry_id]
+        );
       } else {
         await db.query(
           "UPDATE journey_entries SET status = 'completed', completed_at = NOW() WHERE entry_id = $1",
@@ -1180,6 +1207,17 @@ class JourneyService {
         [runId, toStampIds]
       );
       toStampIds = [];
+    }
+
+    // Bulk update next_fire_at for sendHour-blocked entries (one query per unique window time)
+    if (waitedEntries.size > 0) {
+      for (const { at, ids } of waitedEntries.values()) {
+        await db.query(
+          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = ANY($2::bigint[])',
+          [at, ids]
+        );
+      }
+      waitedEntries = new Map();
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1808,7 +1846,10 @@ class JourneyService {
   static calculateNextFireAt(node, fromTime = new Date()) {
     if (!node) return null;
 
-    const waitDays = node.data?.waitDays || 0;
+    // Wait nodes default to 1 day if waitDays not configured — all other node
+    // types default to 0 (fire immediately unless waitDays is explicitly set).
+    const defaultWait = node.type === 'wait' ? 1 : 0;
+    const waitDays = node.data?.waitDays ?? defaultWait;
     const sendHour = node.data?.sendHour;
     const dayMs    = 24 * 60 * 60 * 1000;
 
