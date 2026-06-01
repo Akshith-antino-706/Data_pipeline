@@ -12,7 +12,7 @@ import {
   getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
-  getJourneyQueueCounts, retryBlockedEntries
+  getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -137,6 +137,7 @@ export default function Journeys() {
   const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
   const [queueStats, setQueueStats] = useState(null); // BullMQ live counts
   const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
+  const [timeline, setTimeline] = useState(null); // per-node predicted trigger times
 
   // Tracks the real live node (most entries are currently on) — set on journey open/start/process
   const [liveNodeId, setLiveNodeId] = useState(null);
@@ -368,13 +369,16 @@ export default function Journeys() {
     setExpandedNode(null);
     setLiveNodeId(null);
     setNodeAnalyticsLoaded(false);
+    setTimeline(null);
     try {
-      const [d, qc] = await Promise.all([
+      const [d, qc, tl] = await Promise.all([
         getJourney(id),
         getJourneyQueueCounts().catch(() => ({ data: null })),
+        getJourneyTimeline(id).catch(() => ({ data: null })),
       ]);
       setDetail(d.data);
       setQueueStats(qc.data);
+      setTimeline(tl?.data || null);
       loadTemplates();
       if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
     } catch (err) { showToast('Failed to load journey', 'error'); }
@@ -1553,6 +1557,26 @@ export default function Journeys() {
                                       <Mail size={9} /> {tpl.name}{tpl.subject ? ` — ${tpl.subject}` : ''}
                                     </div>
                                   ) : null;
+                                })()}
+                                {/* Per-node predicted trigger time from timeline API */}
+                                {(() => {
+                                  const tl = Array.isArray(timeline) ? timeline.find(t => t.nodeId === node.id) : null;
+                                  if (!tl) return null;
+                                  const time = tl.triggeredAt || tl.nextFireAt || tl.predictedAt;
+                                  if (!time) return null;
+                                  const label = tl.status === 'completed' ? 'Triggered' : tl.status === 'active' ? 'Next fire' : 'Predicted';
+                                  const dotColor = tl.status === 'completed' ? '#22c55e' : tl.status === 'active' ? '#fb923c' : 'var(--text-muted)';
+                                  const formatted = new Date(time).toLocaleString('en-IN', {
+                                    timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric',
+                                    hour: '2-digit', minute: '2-digit', hour12: true,
+                                  });
+                                  return (
+                                    <div style={{ fontSize: 10, color: dotColor, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <Clock size={9} />
+                                      <span style={{ color: 'var(--text-tertiary)' }}>{label}:</span>
+                                      <strong style={{ color: dotColor }}>{formatted} IST</strong>
+                                    </div>
+                                  );
                                 })()}
                               </div>
 
@@ -2748,22 +2772,35 @@ export default function Journeys() {
         {confirmAction && (
           <div className="confirm-overlay" onClick={() => setConfirmAction(null)}>
             <div className="confirm-dialog" onClick={e => e.stopPropagation()}>
-              <AlertCircle size={32} color={confirmAction === 'delete' ? 'var(--red)' : confirmAction === 'start' ? 'var(--green)' : 'var(--orange)'} style={{ marginBottom: 12 }} />
-              <h3>
-                {confirmAction === 'start' ? 'Start This Journey?' :
-                 confirmAction === 'enroll' ? 'Enroll Segment Customers?' :
-                 confirmAction === 'process' ? 'Process Journey?' :
-                 'Delete Journey?'}
-              </h3>
-              <p>
-                {confirmAction === 'start'
-                  ? 'This will enroll all segment customers, activate the journey, and begin automatic processing every 15 minutes. You can pause it anytime.'
-                  : confirmAction === 'enroll'
-                  ? 'This will enroll all customers from the associated segment into this journey. This action cannot be undone.'
-                  : confirmAction === 'process'
-                  ? 'This will advance all active entries to their next step in the journey flow.'
-                  : 'This will permanently delete this journey and all associated entries and events. This cannot be undone.'}
-              </p>
+              {(() => {
+                const hasSchedule = confirmAction === 'start' && detail?.scheduled_start_at && new Date(detail.scheduled_start_at) > new Date();
+                const schedStr = hasSchedule
+                  ? new Date(detail.scheduled_start_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
+                  : null;
+                return (
+                  <>
+                    <AlertCircle size={32} color={confirmAction === 'delete' ? 'var(--red)' : hasSchedule ? 'var(--orange)' : confirmAction === 'start' ? 'var(--green)' : 'var(--orange)'} style={{ marginBottom: 12 }} />
+                    <h3>
+                      {confirmAction === 'start'
+                        ? hasSchedule ? 'Cancel Schedule & Start Now?' : 'Start This Journey?'
+                        : confirmAction === 'enroll' ? 'Enroll Segment Customers?'
+                        : confirmAction === 'process' ? 'Process Journey?'
+                        : 'Delete Journey?'}
+                    </h3>
+                    <p>
+                      {confirmAction === 'start'
+                        ? hasSchedule
+                          ? `This will cancel the scheduled auto-start (${schedStr} IST) and start the journey immediately instead. Users will begin receiving messages right now.`
+                          : 'This will enroll all segment customers, activate the journey, and begin automatic processing every 15 minutes. You can pause it anytime.'
+                        : confirmAction === 'enroll'
+                        ? 'This will enroll all customers from the associated segment into this journey. This action cannot be undone.'
+                        : confirmAction === 'process'
+                        ? 'This will advance all active entries to their next step in the journey flow.'
+                        : 'This will permanently delete this journey and all associated entries and events. This cannot be undone.'}
+                    </p>
+                  </>
+                );
+              })()}
               <div className="confirm-actions">
                 <button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>Cancel</button>
                 <button

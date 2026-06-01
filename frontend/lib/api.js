@@ -148,6 +148,7 @@ export const getNodeSendLog = (id, nodeId) =>
 export const getJourneyQueueCounts = () => request('/api/v3/journeys/queue-counts');
 export const retryBlockedEntries = (id, nodeId) =>
   request(`/api/v3/journeys/${id}/nodes/${nodeId}/retry-blocked`, { method: 'POST' });
+export const getJourneyTimeline = (id) => request(`/api/v3/journeys/${id}/timeline`);
 
 // ── AI Agents ───────────────────────────────────────────────
 export const aiCopywrite = (data) => request('/api/v3/agents/copywriter/generate', { method: 'POST', body: JSON.stringify(data) });
