@@ -344,7 +344,7 @@ class JourneyService {
     return snapshotCount;
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
     let customSegmentId = null;
@@ -355,10 +355,10 @@ class JourneyService {
     }
 
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *
-    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null]);
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30]);
 
     // ── Snapshot segment users at creation time ──────────────────────────
     const journeyId = journey.journey_id;
@@ -377,7 +377,7 @@ class JourneyService {
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {
@@ -883,14 +883,13 @@ class JourneyService {
 
       // ── WAIT node: check if enough time has elapsed ──
       if (currentNode.type === 'wait') {
-        const waitDays = currentNode.data?.waitDays || 1;
         const lastEventRes = await db.query(`
           SELECT MAX(created_at) as last_event FROM journey_events WHERE entry_id = $1
         `, [entry.entry_id]);
         const lastEvent = lastEventRes.rows[0]?.last_event || entry.entered_at;
-
         const elapsedMs = Date.now() - new Date(lastEvent).getTime();
-        const thresholdMs = waitDays * 86_400_000; // real days
+
+        const thresholdMs = (currentNode.data?.waitDays || 1) * 86_400_000;
 
         if (elapsedMs < thresholdMs) {
           waited++;
@@ -906,9 +905,9 @@ class JourneyService {
       // journey_events insert → entry advance. This is what scales the journey
       // run from a synchronous loop to ~18 lakh recipients.
       if (currentNode.type === 'action') {
-        // ── SEND-HOUR GATE (Dubai timezone) ──
+        // ── SEND-HOUR GATE (Dubai timezone) — skipped entirely in test mode ──
         const sendHour = currentNode.data?.sendHour;
-        if (sendHour !== undefined && sendHour !== null) {
+        if (!journey.test_mode && sendHour !== undefined && sendHour !== null) {
           const dubaiNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' }));
           const targetH = typeof sendHour === 'number' ? sendHour : parseInt(String(sendHour).split(':')[0]);
           const targetM = typeof sendHour === 'number' ? 0 : parseInt(String(sendHour).split(':')[1] || '0');
@@ -963,7 +962,8 @@ class JourneyService {
           snapshottedNodes.add(currentNode.id);
         }
 
-        const recipientEmail = entry.email;
+        // In test mode: redirect all emails to the journey's test_email address
+        const recipientEmail = (journey.test_mode && journey.test_email) ? journey.test_email : entry.email;
 
         const jobData = {
           entryId:        entry.entry_id,
@@ -1284,9 +1284,8 @@ class JourneyService {
         // (Entries already on action nodes will fire on the very next cron.)
         if (currentNode.type !== 'wait') continue;
 
-        const waitDays = currentNode.data?.waitDays || 1;
         const lastEventTs = new Date(entry.last_event || entry.entered_at).getTime();
-        const fireTs = lastEventTs + waitDays * 86_400_000; // real days
+        const fireTs = lastEventTs + (currentNode.data?.waitDays || 1) * 86_400_000;
 
         // Within [now+lookahead-window, now+lookahead+window]?
         if (Math.abs(fireTs - (now + lookaheadMs)) > windowMs) continue;
@@ -1749,8 +1748,7 @@ class JourneyService {
 
     const waitDays = node.data?.waitDays || 0;
     const sendHour = node.data?.sendHour;
-
-    const dayMs = 24 * 60 * 60 * 1000; // 1 real day
+    const dayMs    = 24 * 60 * 60 * 1000;
 
     const target = new Date(fromTime.getTime() + waitDays * dayMs);
 
@@ -1806,7 +1804,6 @@ class JourneyService {
     if (journey.status === 'active') throw new Error('Journey is already active');
 
     const nodes = journey.nodes || [];
-    const edges = journey.edges || [];
     if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');
 
     // ── Validate scheduled_start_at hasn't passed (skip when called from auto-start cron) ──
@@ -1835,25 +1832,37 @@ class JourneyService {
       [journeyId]
     );
 
-    // 3. Set next_fire_at for all entries — first node fires at scheduled_start_at or NOW()
-    const firstNode = this._findFirstActionableNode(nodes, edges);
-    if (firstNode && enrolled > 0) {
-      const baseTime = journey.scheduled_start_at ? new Date(journey.scheduled_start_at) : new Date();
-      const nextFireAt = this.calculateNextFireAt(firstNode, baseTime);
+    // 3. Set next_fire_at = NOW() for all entries so processJourney picks them up immediately.
+    //    Always use NOW() regardless of scheduled_start_at — the schedule only controls WHEN
+    //    startJourney is called (by the auto-start cron). Once startJourney runs, entries must
+    //    fire immediately. Using scheduled_start_at here caused entries to be stuck at the
+    //    trigger node until the scheduled time, even after the journey was already started.
+    if (enrolled > 0) {
       await db.query(`
         UPDATE journey_entries
-        SET next_fire_at = $1
-        WHERE journey_id = $2 AND status = 'active' AND next_fire_at IS NULL
-      `, [nextFireAt, journeyId]);
-      console.log(`[Journey ${journeyId}] Set next_fire_at=${nextFireAt.toISOString()} for ${enrolled} entries (node: ${firstNode.id})`);
+        SET next_fire_at = NOW()
+        WHERE journey_id = $1 AND status = 'active' AND next_fire_at IS NULL
+      `, [journeyId]);
+      console.log(`[Journey ${journeyId}] Set next_fire_at=NOW() for ${enrolled} entries — trigger will advance immediately`);
     }
 
-    // 4. Run first process immediately (in case next_fire_at <= now)
+    // 4. Run first process immediately — advances entries past the trigger node (node_0 → node_1)
     let processResult = { processed: 0, enqueued: 0, converted: 0 };
     try {
       processResult = await this.processJourney(journeyId);
     } catch (err) {
       console.error(`[Journey ${journeyId}] First process error: ${err.message}`);
+    }
+
+    // 5. Run a second process immediately — fires the first action node (node_1) without
+    //    waiting for the next cron tick. The trigger advance and action send can't happen
+    //    in the same loop pass, so a back-to-back call handles both in one start.
+    try {
+      const secondResult = await this.processJourney(journeyId);
+      processResult.enqueued  = (processResult.enqueued  || 0) + (secondResult.enqueued  || 0);
+      processResult.converted = (processResult.converted || 0) + (secondResult.converted || 0);
+    } catch (err) {
+      console.error(`[Journey ${journeyId}] Second process error: ${err.message}`);
     }
 
     return { started: true, enrolled, ...processResult };
