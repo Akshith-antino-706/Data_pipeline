@@ -15,6 +15,8 @@ import {
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
+const PAGE_SIZE_OPTIONS = [20, 30, 50];
+
 function formatNum(n) { return (n || 0).toLocaleString(); }
 function formatAED(n) { return `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 
@@ -51,7 +53,7 @@ export default function UnifiedContacts() {
   const [showFilters, setShowFilters] = useState(false);
   const [filterOptions, setFilterOptions] = useState(null);
   const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '', bookingDateFrom: '', bookingDateTo: '', travelDateFrom: '', travelDateTo: '' });
-  const limit = 50;
+  const [limit, setLimit] = useState(20);
   const { businessType } = useBusinessType();
   const router = useRouter();
 
@@ -74,7 +76,7 @@ export default function UnifiedContacts() {
       setTotalPages(res.totalPages || 1);
     } catch (err) { showToast(err.message); }
     finally { setLoading(false); }
-  }, [page, search, sortBy, sortDir, filters, businessType]);
+  }, [page, limit, search, sortBy, sortDir, filters, businessType]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
   useEffect(() => {
@@ -324,16 +326,31 @@ export default function UnifiedContacts() {
           </table>
         </div>
 
-        {totalPages > 1 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Showing {((page - 1) * limit) + 1} - {Math.min(page * limit, total)} of {formatNum(total)}</span>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={14} /> Prev</button>
-              <span style={{ fontSize: 13, padding: '0 8px' }}>Page {page} of {totalPages}</span>
-              <button className="btn btn-secondary btn-sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next <ChevronRight size={14} /></button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border-color)', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Rows per page:</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {PAGE_SIZE_OPTIONS.map(n => (
+                <button key={n} onClick={() => { setLimit(n); setPage(1); }}
+                  style={{ padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${limit === n ? 'var(--brand-primary)' : 'var(--border-color)'}`, background: limit === n ? 'color-mix(in srgb, var(--brand-primary) 12%, transparent)' : 'transparent', color: limit === n ? 'var(--brand-primary)' : 'var(--text-secondary)', transition: 'all 0.15s' }}>
+                  {n}
+                </button>
+              ))}
             </div>
+            {total > 0 && (
+              <span style={{ fontSize: 13, color: 'var(--text-tertiary)', marginLeft: 4 }}>
+                {formatNum(Math.min((page - 1) * limit + 1, total))}–{formatNum(Math.min(page * limit, total))} of {formatNum(total)}
+              </span>
+            )}
           </div>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button onClick={() => setPage(1)} disabled={page === 1} style={pageBtn(page === 1)}>«</button>
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pageBtn(page === 1)}><ChevronLeft size={14} /> Prev</button>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)', padding: '4px 10px' }}>{page} / {totalPages}</span>
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pageBtn(page === totalPages)}>Next <ChevronRight size={14} /></button>
+            <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={pageBtn(page === totalPages)}>»</button>
+          </div>
+        </div>
       </motion.div>
 
 
@@ -556,5 +573,9 @@ function AddSelect({ label, value, onChange, options }) {
       </select>
     </div>
   );
+}
+
+function pageBtn(disabled) {
+  return { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1 };
 }
 

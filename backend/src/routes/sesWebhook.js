@@ -105,7 +105,13 @@ router.post('/ses', async (req, res) => {
           await db.query(`
             UPDATE email_send_log
             SET status = $1 ${mapping.extra || ''}
-            WHERE external_id = $2 AND status NOT IN ('bounced', 'complained')
+            WHERE external_id = $2
+              AND status NOT IN ('bounced', 'complained')
+              AND CASE
+                WHEN $1 = 'delivered' THEN status IN ('queued', 'sent')
+                WHEN $1 = 'opened'    THEN status NOT IN ('clicked')
+                ELSE TRUE
+              END
           `, [mapping.status, messageId]);
         }
       }

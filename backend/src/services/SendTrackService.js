@@ -79,7 +79,9 @@ export class SendTrackService {
     const params = [];
     let idx = 1;
 
-    if (status)     { conditions.push(`esl.status = $${idx++}`);               params.push(status); }
+    if (status === 'opened')  { conditions.push(`esl.opened_at IS NOT NULL`); }
+    else if (status === 'clicked') { conditions.push(`esl.clicked_at IS NOT NULL`); }
+    else if (status) { conditions.push(`esl.status = $${idx++}`);              params.push(status); }
     if (email)      { conditions.push(`esl.email ILIKE $${idx++}`);             params.push(`%${email}%`); }
     if (dayNumber)  { conditions.push(`esl.day_number = $${idx++}`);            params.push(Number(dayNumber)); }
     if (source)     { conditions.push(`esl.source = $${idx++}`);                params.push(source); }

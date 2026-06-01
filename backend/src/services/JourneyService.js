@@ -22,9 +22,21 @@ async function _getCachedRanking(key, fetchFn) {
 
 // Render the real Day HTML for a contact using the same Day renderers.
 // Uses fallback ranking (no Claude API call) to keep sends fast.
-export async function renderDayHtml(templateId, contactId, { journeyId, nodeId } = {}) {
+export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, extraVars = {} } = {}) {
   const id = parseInt(templateId);
   const tplFile = (name) => fs.readFileSync(path.join(MAIL_TEMPLATES_DIR, name), 'utf8');
+
+  // Apply extra variable substitutions to a rendered result
+  const applyExtraVars = (result) => {
+    if (!result || !extraVars || Object.keys(extraVars).length === 0) return result;
+    let { html, subject } = result;
+    for (const [key, val] of Object.entries(extraVars)) {
+      const re = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      html    = html.replace(re, String(val ?? ''));
+      subject = subject.replace(re, String(val ?? ''));
+    }
+    return { ...result, html, subject };
+  };
 
   if (id === 1) {
     const { _internals } = await import('./Day1WelcomeRankingService.js');
@@ -39,7 +51,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
       visaMap,
     });
     const data = await buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' };
+    return applyExtraVars({ html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' });
   }
   if (id === 2) {
     const { default: rankTrendingCruises }    = await import('./Day2CruiseRankingService.js');
@@ -47,7 +59,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
     const ranking = await _getCachedRanking('cruise', rankTrendingCruises);
     const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' };
+    return applyExtraVars({ html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' });
   }
   if (id === 3) {
     const { rankTrendingVisas }             = await import('./VisaRankingService.js');
@@ -56,7 +68,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const ranking = await _getCachedRanking('visa', rankTrendingVisas);
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
     const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' };
+    return applyExtraVars({ html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' });
   }
   if (id === 4) {
     const { _internals } = await import('./Day4HolidaysRankingService.js');
@@ -64,7 +76,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { renderDay4Holidays }    = await import('./Day4HolidaysRenderer.js');
     const ranking = _internals.buildFallbackRanking();
     const data    = await buildDay4HolidaysData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' };
+    return applyExtraVars({ html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' });
   }
   if (id === 5) {
     const { _internals } = await import('./Day5ActivitiesRankingService.js');
@@ -72,7 +84,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
     const { renderDay5Activities }    = await import('./Day5ActivitiesRenderer.js');
     const ranking = _internals.buildFallbackRanking();
     const data    = await buildDay5ActivitiesData({ contactId, ranking, journeyId, nodeId });
-    return { html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' };
+    return applyExtraVars({ html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' });
   }
   if (id === 6) {
     const { _internals } = await import('./Day6DestinationRankingService.js');
@@ -84,13 +96,13 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId }
       ? _internals.buildFallbackRanking({ holidayCandidates: [], activityCandidates: [], cruiseCandidates: [] })
       : {};
     const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking, journeyId, nodeId });
-    return { html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' };
+    return applyExtraVars({ html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' });
   }
   if (id === 7) {
     const { buildDay7AbandonedCartData } = await import('./Day7AbandonedCartDataService.js');
     const { renderDay7AbandonedCart }    = await import('./Day7AbandonedCartRenderer.js');
     const data = await buildDay7AbandonedCartData({ contactId, journeyId, nodeId });
-    return { html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' };
+    return applyExtraVars({ html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' });
   }
   return null; // unknown template — fall back to EmailRenderer
 }
@@ -192,10 +204,14 @@ class JourneyService {
       ORDER BY node_id
     `, [journeyId]);
 
-    // Compute per-node lifecycle status from live journey_entries
-    // pending  → no entries have reached this node yet
-    // running  → ≥1 active entry is currently sitting on this node
-    // completed → entries have passed through this node and none are active here
+    // Compute per-node lifecycle status from live journey_entries.
+    // 6 possible statuses:
+    //   pending   – no entry has reached this node yet
+    //   running   – cron is actively advancing entries (trigger / condition / goal / wait elapsed)
+    //   sending   – entries are queued in BullMQ, workers are sending (action nodes)
+    //   waiting   – entries are here but next_fire_at is in the future (wait nodes serving time)
+    //   paused    – journey is paused, entries frozen at this node
+    //   completed – all entries have passed through, none remain active here
     let node_statuses = {};
     const nodes = journey.nodes || [];
     if (journey.status === 'draft') {
@@ -204,12 +220,21 @@ class JourneyService {
       nodes.forEach(n => { node_statuses[n.id] = 'completed'; });
     } else {
       // active / paused — derive from entries
-      const { rows: activeOnNode } = await db.query(
-        `SELECT current_node_id, COUNT(*) AS cnt
-         FROM journey_entries WHERE journey_id = $1 AND status = 'active'
-         GROUP BY current_node_id`,
-        [journeyId]
-      );
+      // Richer query: per-node entry breakdown
+      //   enqueued = stamped with last_enqueued_at in last 2 hours (in BullMQ queue)
+      //   in_wait  = next_fire_at is in the future (wait node time-guard active)
+      const { rows: activeOnNode } = await db.query(`
+        SELECT
+          current_node_id,
+          COUNT(*)                                                                          AS total,
+          COUNT(*) FILTER (WHERE last_enqueued_at IS NOT NULL
+            AND last_enqueued_at > NOW() - INTERVAL '2 hours')                             AS enqueued,
+          COUNT(*) FILTER (WHERE next_fire_at > NOW())                                     AS in_wait
+        FROM journey_entries
+        WHERE journey_id = $1 AND status = 'active'
+        GROUP BY current_node_id
+      `, [journeyId]);
+
       const { rows: processedNodes } = await db.query(
         `SELECT DISTINCT je.node_id
          FROM journey_events je
@@ -218,30 +243,66 @@ class JourneyService {
            AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
         [journeyId]
       );
+
+      // Build lookup maps
       const activeSet    = new Set(activeOnNode.map(r => r.current_node_id));
       const processedSet = new Set(processedNodes.map(r => r.node_id));
+      const enqueuedMap  = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.enqueued) || 0]));
+      const inWaitMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.in_wait)  || 0]));
       const isPaused     = journey.status === 'paused';
-      // Lowest sequential index of any node currently holding active entries
+
+      // Lowest sequential index among nodes currently holding active entries (used for paused boundary)
       const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
       const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
+
+      // ── Active journey: pick ONE "primary" node as the current dividing line ──
+      // Rule: nodes BEFORE primary → completed, primary → its status, nodes AFTER → pending.
+      //
+      // Priority (highest = most important / most advanced work):
+      //   6  action node with BullMQ jobs stamped (SENDING)
+      //   5  wait node with future next_fire_at  (WAITING)
+      //   4  action node without recent stamp    (RUNNING — cron will re-enqueue)
+      //   3  wait node with elapsed time         (RUNNING — cron advancing)
+      //   2  trigger / condition                 (RUNNING)
+      //   1  goal                                (MONITORING)
+      // On tie, prefer the node at the HIGHER index (further along in the journey).
+      const nodeActivePriority = (n) => {
+        if (!activeSet.has(n.id)) return 0;
+        if (n.type === 'action')  return enqueuedMap[n.id] > 0 ? 6 : 4;
+        if (n.type === 'wait')    return inWaitMap[n.id]   > 0 ? 5 : 3;
+        if (n.type === 'trigger' || n.type === 'condition') return 2;
+        if (n.type === 'goal')    return 1;
+        return 1;
+      };
+
+      let primaryIdx      = -1;
+      let primaryPriority = -1;
       nodes.forEach((n, i) => {
-        if (activeSet.has(n.id)) {
-          // This is the node contacts are parked at right now
-          node_statuses[n.id] = isPaused ? 'paused' : 'running';
-        } else if (i < minRunning) {
-          // Every node that comes before the current active node must have been
-          // processed already — mark completed by position, not by event log.
-          // (trigger_fired / wait_started events aren't in processedSet so we
-          //  can't rely on that set for these node types.)
+        const p = nodeActivePriority(n);
+        if (p > 0 && (p > primaryPriority || (p === primaryPriority && i > primaryIdx))) {
+          primaryPriority = p;
+          primaryIdx = i;
+        }
+      });
+      if (primaryIdx === -1) primaryIdx = nodes.length; // no active entries → sentinel → all completed
+
+      nodes.forEach((n, i) => {
+        if (isPaused) {
+          // PAUSED: everything strictly before earliest active node → completed, rest → paused
+          node_statuses[n.id] = i < minRunning ? 'completed' : 'paused';
+        } else if (i < primaryIdx) {
+          // BEFORE primary: completed (positional — even if cron still draining entries here)
           node_statuses[n.id] = 'completed';
-        } else if (isPaused) {
-          // Journey is paused: every node at or after the current position → paused
-          node_statuses[n.id] = 'paused';
-        } else if (processedSet.has(n.id)) {
-          // Active journey: node after current that already has events (e.g. branching) → completed
-          node_statuses[n.id] = 'completed';
+        } else if (i === primaryIdx) {
+          // PRIMARY node: assign the specific active status
+          if      (n.type === 'action' && enqueuedMap[n.id] > 0) node_statuses[n.id] = 'sending';
+          else if (n.type === 'wait'   && inWaitMap[n.id]   > 0) node_statuses[n.id] = 'waiting';
+          else if (n.type === 'goal')                             node_statuses[n.id] = 'monitoring';
+          else                                                    node_statuses[n.id] = 'running';
         } else {
-          node_statuses[n.id] = 'pending';
+          // AFTER primary: pending — even if a few entries arrived early (contacts pipeline ahead)
+          // Exception: if fully processed with zero active entries left, mark completed
+          node_statuses[n.id] = (processedSet.has(n.id) && !activeSet.has(n.id)) ? 'completed' : 'pending';
         }
       });
     }
@@ -803,6 +864,9 @@ class JourneyService {
     const enqueueByChannel = { email: [], whatsapp: [], sms: [] };
     // Collect entry IDs to stamp last_run_id in one bulk UPDATE per batch
     let toStampIds = [];
+    // Collect sendHour-blocked entries: nextWindowAt ISO → { at, ids[] }
+    // Bulk-updated after each page so the cron SQL skips them until the window opens
+    let waitedEntries = new Map();
 
     // ── BULK EXIT CHECK (scalable for 15 lakh+ users) ──
     // Exit booked + unsubscribed users in a single batch UPDATE before the per-entry loop.
@@ -881,21 +945,23 @@ class JourneyService {
 
       const entryTrack = entry.track || 'all';
 
-      // ── WAIT node: check if enough time has elapsed ──
+      // ── WAIT node: check if wait has elapsed ──
+      // Primary guard: the SQL fetch query already filters next_fire_at <= NOW(),
+      // so when next_fire_at is properly set (calculateNextFireAt sets it to
+      // entered_at + waitDays when the entry arrives here), reaching this code
+      // means the wait is done — fall straight through to advance.
+      // Fallback for legacy entries where next_fire_at was never set (NULL):
+      // use entered_at as the reference point.
       if (currentNode.type === 'wait') {
-        const lastEventRes = await db.query(`
-          SELECT MAX(created_at) as last_event FROM journey_events WHERE entry_id = $1
-        `, [entry.entry_id]);
-        const lastEvent = lastEventRes.rows[0]?.last_event || entry.entered_at;
-        const elapsedMs = Date.now() - new Date(lastEvent).getTime();
-
-        const thresholdMs = (currentNode.data?.waitDays || 1) * 86_400_000;
-
-        if (elapsedMs < thresholdMs) {
-          waited++;
-          continue; // Not enough time has passed, skip
+        if (!entry.next_fire_at) {
+          const waitDays = currentNode.data?.waitDays || 1;
+          const elapsedMs = Date.now() - new Date(entry.entered_at).getTime();
+          if (elapsedMs < waitDays * 86_400_000) {
+            waited++;
+            continue;
+          }
         }
-        // Time elapsed — fall through to advance to next node
+        // Wait complete — fall through to advance to next node
       }
 
       // ── ACTION node: enqueue a BullMQ job for the worker to send + advance ──
@@ -917,6 +983,18 @@ class JourneyService {
           const targetTotal = targetH * 60 + targetM;
           const curTotal = curH * 60 + curM;
           if (curTotal < targetTotal || curTotal > targetTotal + 5) {
+            // Compute exact UTC time when the window next opens so the cron
+            // SQL (next_fire_at <= NOW) skips this entry until then instead of
+            // loading and blocking it on every 5-minute tick.
+            const _dayMs = 24 * 60 * 60 * 1000;
+            const _dubaiOffset = 4 * 60; // UTC+4 in minutes
+            const _dubaiDate = new Date(Date.now() + _dubaiOffset * 60000);
+            _dubaiDate.setHours(targetH, targetM, 0, 0);
+            let _nextWindow = new Date(_dubaiDate.getTime() - _dubaiOffset * 60000);
+            if (_nextWindow <= new Date()) _nextWindow = new Date(_nextWindow.getTime() + _dayMs);
+            const _key = _nextWindow.toISOString();
+            if (!waitedEntries.has(_key)) waitedEntries.set(_key, { at: _nextWindow, ids: [] });
+            waitedEntries.get(_key).ids.push(entry.entry_id);
             waited++;
             processed++;
             continue;
@@ -966,23 +1044,24 @@ class JourneyService {
         const recipientEmail = (journey.test_mode && journey.test_email) ? journey.test_email : entry.email;
 
         const jobData = {
-          entryId:        entry.entry_id,
-          customerId:     entry.customer_id,
+          entryId:           entry.entry_id,
+          customerId:        entry.customer_id,
           journeyId,
-          nodeId:         currentNode.id,
+          nodeId:            currentNode.id,
           runId,
           channel,
           templateId,
           htmlTemplateId,
-          name:           entry.name,
-          email:          recipientEmail,
-          phone:          entry.phone,
-          isIndian:       entry.is_indian,
-          track:          entryTrack,
+          name:              entry.name,
+          email:             recipientEmail,
+          phone:             entry.phone,
+          isIndian:          entry.is_indian,
+          track:             entryTrack,
           autoPaired,
-          originalChannel: rawChannel,
+          originalChannel:   rawChannel,
           edges,
-          nodes:          nodeMap,
+          nodes:             nodeMap,
+          templateVariables: currentNode.data?.templateVariables || {},
         };
 
         if (!channel || !templateId) {
@@ -1066,7 +1145,12 @@ class JourneyService {
         const nextNodeId = result ? (yesEdge?.target || outEdges[0]?.target) : (noEdge?.target || outEdges[0]?.target);
 
         if (nextNodeId) {
-          await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [nextNodeId, entry.entry_id]);
+          const nextNode = nodeMap[nextNodeId];
+          const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
+          await db.query(
+            'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2, last_run_id = NULL WHERE entry_id = $3',
+            [nextNodeId, nextFireAt, entry.entry_id]
+          );
         }
         conditioned++;
         processed++;
@@ -1100,7 +1184,12 @@ class JourneyService {
       const chosen = trackEdges[0] || outEdges[0];  // fall back to any edge if no track-match
 
       if (chosen) {
-        await db.query('UPDATE journey_entries SET current_node_id = $1 WHERE entry_id = $2', [chosen.target, entry.entry_id]);
+        const nextNode = nodeMap[chosen.target];
+        const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
+        await db.query(
+          'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2, last_run_id = NULL WHERE entry_id = $3',
+          [chosen.target, nextFireAt, entry.entry_id]
+        );
       } else {
         await db.query(
           "UPDATE journey_entries SET status = 'completed', completed_at = NOW() WHERE entry_id = $1",
@@ -1118,6 +1207,17 @@ class JourneyService {
         [runId, toStampIds]
       );
       toStampIds = [];
+    }
+
+    // Bulk update next_fire_at for sendHour-blocked entries (one query per unique window time)
+    if (waitedEntries.size > 0) {
+      for (const { at, ids } of waitedEntries.values()) {
+        await db.query(
+          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = ANY($2::bigint[])',
+          [at, ids]
+        );
+      }
+      waitedEntries = new Map();
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1746,7 +1846,10 @@ class JourneyService {
   static calculateNextFireAt(node, fromTime = new Date()) {
     if (!node) return null;
 
-    const waitDays = node.data?.waitDays || 0;
+    // Wait nodes default to 1 day if waitDays not configured — all other node
+    // types default to 0 (fire immediately unless waitDays is explicitly set).
+    const defaultWait = node.type === 'wait' ? 1 : 0;
+    const waitDays = node.data?.waitDays ?? defaultWait;
     const sendHour = node.data?.sendHour;
     const dayMs    = 24 * 60 * 60 * 1000;
 

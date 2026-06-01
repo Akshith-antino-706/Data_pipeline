@@ -23,7 +23,7 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
-import { renderDayHtml } from '../JourneyService.js';
+import JourneyService, { renderDayHtml } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 
@@ -80,11 +80,18 @@ export function startWorkers() {
         );
         // Now advance past the action node
         const edges = d.edges || [];
+        const nodeMap = d.nodes || {};
         const outEdge = edges.find(e => e.source === d.nodeId);
         if (outEdge) {
+          const nextNode = nodeMap[outEdge.target];
+          const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
           await db.query(
-            `UPDATE journey_entries SET current_node_id = $1, bullmq_job_id = NULL WHERE entry_id = $2`,
-            [outEdge.target, d.entryId]
+            `UPDATE journey_entries
+             SET current_node_id = $1, bullmq_job_id = NULL,
+                 last_run_id = NULL, last_enqueued_at = NULL,
+                 next_fire_at = $3
+             WHERE entry_id = $2`,
+            [outEdge.target, d.entryId, nextFireAt]
           );
         } else {
           await db.query(
@@ -129,7 +136,7 @@ async function processEmail(job) {
   // Try renderDayHtml first (Day1-Day7 templates from mail_templates/ folder)
   // Falls back to EmailRenderer if renderDayHtml doesn't match the templateId
   let html, subject;
-  const dayRendered = await renderDayHtml(d.templateId, d.customerId, { journeyId: d.journeyId, nodeId: d.nodeId }).catch(err => {
+  const dayRendered = await renderDayHtml(d.templateId, d.customerId, { journeyId: d.journeyId, nodeId: d.nodeId, extraVars: d.templateVariables || {} }).catch(err => {
     console.log(`[Worker] renderDayHtml failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
     return null;
   });
@@ -139,21 +146,30 @@ async function processEmail(job) {
     subject = dayRendered.subject || 'Rayna Tours';
     console.log(`[Worker:email]   rendered via renderDayHtml → subject="${subject}" html=${html.length} bytes`);
   } else {
-    // Fallback: EmailRenderer with htmlTemplateId from DB
+    // Fallback 1: EmailRenderer.renderForJourneyNode — needs html_template_id (linked HTML template)
     const htmlTemplateId = d.htmlTemplateId || await _resolveHtmlTemplateId(d.templateId);
-    if (!htmlTemplateId) {
-      return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
+    if (htmlTemplateId) {
+      const rendered = await EmailRenderer.renderForJourneyNode({
+        htmlTemplateId,
+        unifiedId: d.customerId,
+        journeyId: d.journeyId,
+        nodeId: d.nodeId,
+        runId: d.runId,
+        extraVars: d.templateVariables || {},
+      });
+      html    = rendered.html;
+      subject = rendered.subject || 'Rayna Tours';
+      console.log(`[Worker:email]   rendered via EmailRenderer.renderForJourneyNode → subject="${subject}" html=${html.length} bytes`);
+    } else {
+      // Fallback 2: template has HTML stored directly in content_templates.body (user-uploaded)
+      const rendered = await EmailRenderer.render(d.templateId, d.customerId, d.templateVariables || {});
+      if (!rendered?.html) {
+        return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
+      }
+      html    = rendered.html;
+      subject = rendered.subject || 'Rayna Tours';
+      console.log(`[Worker:email]   rendered via EmailRenderer.render (body fallback) → subject="${subject}" html=${html.length} bytes`);
     }
-    const rendered = await EmailRenderer.renderForJourneyNode({
-      htmlTemplateId,
-      unifiedId: d.customerId,
-      journeyId: d.journeyId,
-      nodeId: d.nodeId,
-      runId: d.runId,
-    });
-    html    = rendered.html;
-    subject = rendered.subject || 'Rayna Tours';
-    console.log(`[Worker:email]   rendered via EmailRenderer → subject="${subject}" html=${html.length} bytes`);
   }
 
   // ── Inject click/open tracking ──
@@ -338,9 +354,15 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
   const chosen = trackEdges[0] || outEdges[0];
 
   if (chosen) {
+    const nextNode = nodeMap[chosen.target];
+    const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
     await db.query(
-      `UPDATE journey_entries SET current_node_id = $1, bullmq_job_id = NULL WHERE entry_id = $2`,
-      [chosen.target, d.entryId]
+      `UPDATE journey_entries
+       SET current_node_id = $1, bullmq_job_id = NULL,
+           last_run_id = NULL, last_enqueued_at = NULL,
+           next_fire_at = $3
+       WHERE entry_id = $2`,
+      [chosen.target, d.entryId, nextFireAt]
     );
   } else {
     await db.query(
