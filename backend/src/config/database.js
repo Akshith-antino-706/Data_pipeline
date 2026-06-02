@@ -9,7 +9,7 @@ const CONFIG = {
   user:                   process.env.DB_USER || 'raynadb',
   password:               process.env.DB_PASS || 'raynadevdb',
   ssl:                    process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
-  max:                    20,
+  max:                    parseInt(process.env.DB_POOL_MAX || '60'),
   idleTimeoutMillis:      30000,
   connectionTimeoutMillis: 30000,
 };
