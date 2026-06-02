@@ -227,6 +227,7 @@ class JourneyService {
         SELECT
           current_node_id,
           COUNT(*)                                                                          AS total,
+          COUNT(*) FILTER (WHERE next_fire_at IS NULL OR next_fire_at <= NOW())             AS due_now,
           COUNT(*) FILTER (WHERE last_enqueued_at IS NOT NULL
             AND last_enqueued_at > NOW() - INTERVAL '2 hours'
             AND (next_fire_at IS NULL OR next_fire_at <= NOW()))                           AS enqueued,
@@ -250,6 +251,7 @@ class JourneyService {
       const processedSet = new Set(processedNodes.map(r => r.node_id));
       const enqueuedMap  = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.enqueued) || 0]));
       const inWaitMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.in_wait)  || 0]));
+      const dueNowMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.due_now)  || 0]));
       const isPaused     = journey.status === 'paused';
 
       // Lowest sequential index among nodes currently holding active entries (used for paused boundary)
@@ -261,11 +263,13 @@ class JourneyService {
       // shows PENDING — even if stragglers from previous runs are sitting downstream.
       // This keeps the dashboard reflecting the main-wave's current step, not noise.
 
-      // 1. Earliest action node with entries currently firing (enqueued > 0)
+      // 1. Earliest action node with entries currently due to fire
+      // Using due_now (next_fire_at <= NOW) rather than the unreliable
+      // last_enqueued_at timestamp, which becomes stale during long bursts.
       let sendingIdx = -1;
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
-        if (n.type === 'action' && activeSet.has(n.id) && (enqueuedMap[n.id] || 0) > 0) {
+        if (n.type === 'action' && activeSet.has(n.id) && (dueNowMap[n.id] || 0) > 0) {
           sendingIdx = i;
           break;
         }
