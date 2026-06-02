@@ -669,6 +669,14 @@ class JourneyService {
    *                                     (defaults to the 4 known test users in memory)
    */
   static async enrollAll({ journeyId, channel = 'email', mode = 'full', sampleSize = null, unifiedIds = null } = {}) {
+    // Known test user emails — used when mode='test_users' and no unifiedIds given
+    const TEST_EMAILS = new Set([
+      'akshith@antino.io',
+      'anket@antino.io',
+      'vaibhav@antino.io',
+      'alok@antino.io',
+    ]);
+
     const { rows: [journey] } = await db.query(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
@@ -1151,6 +1159,12 @@ class JourneyService {
             'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2, last_run_id = NULL WHERE entry_id = $3',
             [nextNodeId, nextFireAt, entry.entry_id]
           );
+        } else {
+          // No outgoing edge for this condition branch — complete the entry instead of looping
+          await db.query(
+            `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), last_run_id = NULL WHERE entry_id = $1`,
+            [entry.entry_id]
+          );
         }
         conditioned++;
         processed++;
@@ -1508,12 +1522,12 @@ class JourneyService {
       const nextNode = nodeMap[chosen.target];
       const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
       await db.query(
-        'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2 WHERE entry_id = $3',
+        'UPDATE journey_entries SET current_node_id = $1, next_fire_at = $2, last_run_id = NULL WHERE entry_id = $3',
         [chosen.target, nextFireAt, entryId]
       );
     } else {
       await db.query(
-        "UPDATE journey_entries SET status = 'completed', completed_at = NOW(), next_fire_at = NULL WHERE entry_id = $1",
+        "UPDATE journey_entries SET status = 'completed', completed_at = NOW(), next_fire_at = NULL, last_run_id = NULL WHERE entry_id = $1",
         [entryId]
       );
     }
@@ -1846,11 +1860,13 @@ class JourneyService {
   static calculateNextFireAt(node, fromTime = new Date()) {
     if (!node) return null;
 
-    // Wait nodes default to 1 day if waitDays not configured — all other node
-    // types default to 0 (fire immediately unless waitDays is explicitly set).
-    const defaultWait = node.type === 'wait' ? 1 : 0;
-    const waitDays = node.data?.waitDays ?? defaultWait;
-    const sendHour = node.data?.sendHour;
+    // waitDays is ONLY honoured on 'wait' type nodes. Action / trigger / condition
+    // / goal nodes fire immediately (or at sendHour) — delays belong in wait nodes.
+    // sendHour is ONLY honoured on 'action' type nodes — wait nodes use pure time.
+    const isWaitNode   = node.type === 'wait';
+    const isActionNode = node.type === 'action';
+    const waitDays  = isWaitNode   ? (node.data?.waitDays ?? 1) : 0;
+    const sendHour  = isActionNode ? node.data?.sendHour : undefined;
     const dayMs    = 24 * 60 * 60 * 1000;
 
     const target = new Date(fromTime.getTime() + waitDays * dayMs);
@@ -1861,17 +1877,14 @@ class JourneyService {
     const targetH = typeof sendHour === 'number' ? sendHour : parseInt(String(sendHour).split(':')[0]);
     const targetM = typeof sendHour === 'number' ? 0 : parseInt(String(sendHour).split(':')[1] || '0');
 
-    // Convert target to Dubai time and set to the desired hour:minute
-    const dubaiOffset = 4 * 60; // UTC+4 in minutes
-    const utcMs = target.getTime() + (target.getTimezoneOffset() * 60000);
-    const dubaiMs = utcMs + (dubaiOffset * 60000);
-    const dubaiDate = new Date(dubaiMs);
-
-    dubaiDate.setHours(targetH, targetM, 0, 0);
+    // Convert target to Dubai time (UTC+4) and set the desired hour:minute.
+    // Must use UTC-based arithmetic — getTimezoneOffset() varies by server locale.
+    const dubaiOffsetMs = 4 * 60 * 60 * 1000;
+    const dubaiDate = new Date(target.getTime() + dubaiOffsetMs);
+    dubaiDate.setUTCHours(targetH, targetM, 0, 0);
 
     // Convert back to UTC
-    const fireUtcMs = dubaiDate.getTime() - (dubaiOffset * 60000);
-    let fireAt = new Date(fireUtcMs);
+    let fireAt = new Date(dubaiDate.getTime() - dubaiOffsetMs);
 
     // If the calculated time is in the past, push forward by one day
     if (fireAt <= new Date()) {
@@ -1899,7 +1912,7 @@ class JourneyService {
   /**
    * Start a journey: set active, enroll segment, set next_fire_at, run first process.
    */
-  static async startJourney(journeyId, { skipScheduleValidation = false } = {}) {
+  static async startJourney(journeyId, { skipScheduleValidation = false, manual = false } = {}) {
     const { rows: [journey] } = await db.query(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
@@ -1910,7 +1923,7 @@ class JourneyService {
     if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');
 
     // ── Validate scheduled_start_at hasn't passed (skip when called from auto-start cron) ──
-    if (!skipScheduleValidation && journey.scheduled_start_at && new Date(journey.scheduled_start_at) < new Date()) {
+    if (!skipScheduleValidation && !manual && journey.scheduled_start_at && new Date(journey.scheduled_start_at) < new Date()) {
       throw new Error('Journey start date and time has already passed. Please update the start date before starting.');
     }
 
@@ -1923,9 +1936,13 @@ class JourneyService {
       throw new Error('No users snapshotted for this journey. Please select a segment with users.');
     }
 
-    // 1. Set status to 'active'
+    // 1. Set status to 'active'. Manual start clears scheduled_start_at so the
+    //    auto-start cron won't double-fire after the user clicked Start Now.
     await db.query(
-      "UPDATE journey_flows SET status = 'active', updated_at = NOW() WHERE journey_id = $1",
+      `UPDATE journey_flows
+       SET status = 'active', updated_at = NOW()
+           ${manual ? ', scheduled_start_at = NULL' : ''}
+       WHERE journey_id = $1`,
       [journeyId]
     );
 
@@ -1983,7 +2000,8 @@ class JourneyService {
 
     const newStatus = journey.status === 'paused' ? 'active' : 'paused';
 
-    // On resume: recalculate next_fire_at for active entries so the cron picks them up
+    // On resume: recalculate next_fire_at per node so the cron picks them up.
+    // Group entries by current_node_id and bulk-update per node to avoid N+1 queries.
     if (newStatus === 'active') {
       const nodes = journey.nodes || [];
       const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
@@ -1991,12 +2009,17 @@ class JourneyService {
         `SELECT entry_id, current_node_id FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
         [journeyId]
       );
+      const grouped = new Map();
       for (const entry of activeEntries) {
-        const currentNode = nodeMap[entry.current_node_id];
+        if (!grouped.has(entry.current_node_id)) grouped.set(entry.current_node_id, []);
+        grouped.get(entry.current_node_id).push(entry.entry_id);
+      }
+      for (const [nodeId, entryIds] of grouped) {
+        const currentNode = nodeMap[nodeId];
         const nextFireAt = this.calculateNextFireAt(currentNode, new Date());
         await db.query(
-          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = $2',
-          [nextFireAt, entry.entry_id]
+          'UPDATE journey_entries SET next_fire_at = $1 WHERE entry_id = ANY($2::int[])',
+          [nextFireAt, entryIds]
         );
       }
     }
@@ -2126,6 +2149,128 @@ class JourneyService {
         `, [nextFireAt, row.journey_id, row.current_node_id]);
       }
     }
+  }
+
+  /**
+   * Per-node trigger timeline for the journey detail UI.
+   * Returns for every node:
+   *   - status: completed | active | waiting | pending
+   *   - triggeredAt  (IST) — when it fired (completed nodes, from journey_events)
+   *   - nextFireAt   (IST) — when it will fire (active/waiting nodes, from journey_entries)
+   *   - predictedAt  (IST) — estimated time for future (pending) nodes
+   *   - entryCount   — how many entries are/were at this node
+   */
+  static async getJourneyTimeline(journeyId) {
+    const { rows: [journey] } = await db.query(
+      'SELECT journey_id, nodes, edges, status, scheduled_start_at FROM journey_flows WHERE journey_id = $1',
+      [journeyId]
+    );
+    if (!journey) throw new Error('Journey not found');
+
+    const nodes = journey.nodes || [];
+    const edges = journey.edges || [];
+
+    // ── 1. Actual fire times from journey_events (completed nodes) ──
+    const { rows: eventRows } = await db.query(`
+      SELECT je.node_id,
+             MIN(je.created_at) AS first_fired_at,
+             MAX(je.created_at) AS last_fired_at,
+             COUNT(DISTINCT jen.entry_id) AS entry_count
+      FROM journey_events je
+      JOIN journey_entries jen ON jen.entry_id = je.entry_id
+      WHERE jen.journey_id = $1
+        AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')
+      GROUP BY je.node_id
+    `, [journeyId]);
+    const eventMap = Object.fromEntries(eventRows.map(r => [r.node_id, r]));
+
+    // ── 2. next_fire_at for currently active entries ──
+    const { rows: entryRows } = await db.query(`
+      SELECT current_node_id,
+             MIN(next_fire_at) AS earliest_fire,
+             MAX(next_fire_at) AS latest_fire,
+             COUNT(*) AS entry_count
+      FROM journey_entries
+      WHERE journey_id = $1 AND status = 'active'
+      GROUP BY current_node_id
+    `, [journeyId]);
+    const entryMap = Object.fromEntries(entryRows.map(r => [r.current_node_id, r]));
+
+    const IST_OFFSET = 5.5 * 60 * 60 * 1000; // +5:30 in ms
+    const toIST = (d) => d ? new Date(new Date(d).getTime() + IST_OFFSET).toISOString().replace('T', ' ').slice(0, 16) + ' IST' : null;
+
+    // ── 3. Walk nodes in order, estimate pending node times ──
+    // For pending nodes we propagate: last known time + node delays
+    let rollingTime = null; // carries forward the estimated completion time
+
+    // Seed rolling time from the earliest active next_fire_at, or NOW for draft
+    if (entryRows.length > 0) {
+      const minFire = entryRows.reduce((min, r) => (!min || r.earliest_fire < min) ? r.earliest_fire : min, null);
+      rollingTime = minFire ? new Date(minFire) : new Date();
+    } else if (eventRows.length > 0) {
+      const maxEvent = eventRows.reduce((max, r) => (!max || r.last_fired_at > max) ? r.last_fired_at : max, null);
+      rollingTime = maxEvent ? new Date(maxEvent) : new Date();
+    } else {
+      rollingTime = journey.scheduled_start_at ? new Date(journey.scheduled_start_at) : new Date();
+    }
+
+    const timeline = nodes.map((node) => {
+      const ev = eventMap[node.id];
+      const en = entryMap[node.id];
+
+      // Completed node — has real event timestamps
+      if (ev) {
+        rollingTime = new Date(ev.last_fired_at);
+        return {
+          nodeId:      node.id,
+          nodeType:    node.type,
+          label:       node.data?.label || node.type,
+          status:      'completed',
+          triggeredAt: toIST(ev.first_fired_at),
+          completedAt: toIST(ev.last_fired_at),
+          nextFireAt:  null,
+          predictedAt: null,
+          entryCount:  parseInt(ev.entry_count) || 0,
+        };
+      }
+
+      // Active node — entries sitting here with a real next_fire_at
+      if (en) {
+        rollingTime = new Date(en.latest_fire || en.earliest_fire);
+        return {
+          nodeId:      node.id,
+          nodeType:    node.type,
+          label:       node.data?.label || node.type,
+          status:      node.type === 'wait' ? 'waiting' : 'active',
+          triggeredAt: null,
+          completedAt: null,
+          nextFireAt:  toIST(en.earliest_fire),
+          latestFireAt: toIST(en.latest_fire),
+          predictedAt: null,
+          entryCount:  parseInt(en.entry_count) || 0,
+        };
+      }
+
+      // Pending node — estimate based on rolling time + node config
+      const predictedFireAt = JourneyService.calculateNextFireAt(node, rollingTime);
+      if (predictedFireAt) rollingTime = predictedFireAt;
+
+      return {
+        nodeId:      node.id,
+        nodeType:    node.type,
+        label:       node.data?.label || node.type,
+        status:      'pending',
+        triggeredAt: null,
+        completedAt: null,
+        nextFireAt:  null,
+        predictedAt: toIST(predictedFireAt),
+        entryCount:  0,
+        sendHour:    node.data?.sendHour || null,
+        waitDays:    node.type === 'wait' ? (node.data?.waitDays ?? 1) : null,
+      };
+    });
+
+    return { journeyId, journeyStatus: journey.status, scheduledStartAt: toIST(journey.scheduled_start_at), timeline };
   }
 }
 

@@ -50,13 +50,13 @@ export default class EmailRenderer {
       first_name: user.name?.split(' ')[0] || 'there',
       full_name: user.name || 'Valued Customer',
       email: user.email || '',
-      phone: user.phone || '',
+      phone: user.mobile || user.actual_mobile || '',
       country: user.country || '',
       city: user.city || '',
-      company: user.company_name || '',
+      company: '',
       segment: user.booking_status || '',
-      offer_tag: user.occasion_offer_tag || '',
-      holiday_name: user.current_occasion || '',
+      offer_tag: '',
+      holiday_name: '',
       city_name: user.city || 'Dubai',
       utm_link: 'https://www.raynatours.com',
       unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,
@@ -213,8 +213,7 @@ export default class EmailRenderer {
     let user = {};
     if (unifiedId) {
       const { rows: [u] } = await query(
-        `SELECT id, name, email, phone, country, city, company_name,
-                booking_status, occasion_offer_tag, current_occasion
+        `SELECT id, name, email, mobile, actual_mobile, country, city, booking_status
            FROM unified_contacts WHERE id = $1`,
         [unifiedId]
       );
@@ -233,11 +232,11 @@ export default class EmailRenderer {
       first_name:       user.name?.split(' ')[0] || 'there',
       full_name:        user.name || 'Valued Traveller',
       email:            user.email || '',
-      phone:            user.phone || '',
+      phone:            user.mobile || user.actual_mobile || '',
       country:          user.country || '',
       city:             user.city || '',
-      offer_tag:        user.occasion_offer_tag || '',
-      holiday_name:     user.current_occasion   || '',
+      offer_tag:        '',
+      holiday_name:     '',
       city_name:        user.city || 'Dubai',
       utm_link:         utmLink,
       unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,

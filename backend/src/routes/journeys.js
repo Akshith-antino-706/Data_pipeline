@@ -312,14 +312,15 @@ router.post('/:id/reset-entries', async (req, res, next) => {
 router.post('/:id/start', async (req, res, next) => {
   try {
     const journeyId = parseInt(req.params.id);
-    const data = await JourneyService.startJourney(journeyId);
+    // manual=true clears scheduled_start_at so the auto-start cron won't double-fire
+    const data = await JourneyService.startJourney(journeyId, { manual: true });
     res.json({ data });
-    // Fire first node immediately (don't await — respond to client first)
-    JourneyService.processJourney(journeyId).then(r => {
-      console.log(`[Journey ${journeyId}] Immediate trigger after start: processed=${r.processed}, enqueued=${r.enqueued}`);
-    }).catch(err => {
-      console.error(`[Journey ${journeyId}] Immediate trigger error: ${err.message}`);
-    });
+    // Advance trigger node + fire first action node in background (2 passes needed)
+    // Not awaited — API responds immediately, processing happens async
+    JourneyService.processJourney(journeyId)
+      .then(() => JourneyService.processJourney(journeyId))
+      .then(r => console.log(`[Journey ${journeyId}] Background start: processed=${r.processed} enqueued=${r.enqueued}`))
+      .catch(err => console.error(`[Journey ${journeyId}] Background start error: ${err.message}`));
   } catch (err) { next(err); }
 });
 
@@ -353,6 +354,14 @@ router.get('/:id/entries', async (req, res, next) => {
     const { page, limit, status } = req.query;
     const data = await JourneyService.getEntries(parseInt(req.params.id), { page: parseInt(page) || 1, limit: parseInt(limit) || 50, status });
     res.json(data);
+  } catch (err) { next(err); }
+});
+
+// Per-node predicted trigger timeline
+router.get('/:id/timeline', async (req, res, next) => {
+  try {
+    const data = await JourneyService.getJourneyTimeline(parseInt(req.params.id));
+    res.json({ data });
   } catch (err) { next(err); }
 });
 

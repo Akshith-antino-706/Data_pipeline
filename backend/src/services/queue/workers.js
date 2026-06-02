@@ -66,19 +66,19 @@ export function startWorkers() {
     limiter: { max: 10, duration: 1000 },
   });
 
-  // After all retries exhausted on the email queue: advance the entry so it doesn't block forever
-  email.on('failed', async (job, err) => {
+  // After all retries exhausted: advance the entry so it doesn't block forever.
+  // Shared handler used by email, wa, and sms queues.
+  const _onExhausted = (channel) => async (job, err) => {
     const attempts = job?.opts?.attempts || 3;
-    console.error(`[Worker:email] job ${job?.id} EXHAUSTED (${job?.attemptsMade}/${attempts}): ${err.message}`);
+    console.error(`[Worker:${channel}] job ${job?.id} EXHAUSTED (${job?.attemptsMade}/${attempts}): ${err.message}`);
     if (job?.attemptsMade >= attempts && job?.data?.entryId) {
       const d = job.data;
       try {
         await db.query(
           `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-           VALUES ($1, $2, 'action_failed', 'email', $3)`,
-          [d.entryId, d.nodeId, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
+           VALUES ($1, $2, 'action_failed', $3, $4)`,
+          [d.entryId, d.nodeId, channel, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
         );
-        // Now advance past the action node
         const edges = d.edges || [];
         const nodeMap = d.nodes || {};
         const outEdge = edges.find(e => e.source === d.nodeId);
@@ -98,13 +98,18 @@ export function startWorkers() {
             `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL WHERE entry_id = $1`,
             [d.entryId]
           );
+          await _checkJourneyCompletion(d.journeyId);
         }
-        console.log(`[Worker:email] entry=${d.entryId} advanced after all retries exhausted`);
+        console.log(`[Worker:${channel}] entry=${d.entryId} advanced after all retries exhausted`);
       } catch (advErr) {
-        console.error(`[Worker:email] failed to advance entry ${d.entryId}: ${advErr.message}`);
+        console.error(`[Worker:${channel}] failed to advance entry ${d.entryId}: ${advErr.message}`);
       }
     }
-  });
+  };
+
+  email.on('failed', _onExhausted('email'));
+  wa.on('failed',    _onExhausted('whatsapp'));
+  sms.on('failed',   _onExhausted('sms'));
 
   for (const w of [email, wa, sms]) {
     w.on('error', (err) => {
