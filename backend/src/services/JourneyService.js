@@ -255,54 +255,39 @@ class JourneyService {
       const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
       const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
 
-      // ── Active journey: pick ONE "primary" node as the current dividing line ──
-      // Rule: nodes BEFORE primary → completed, primary → its status, nodes AFTER → pending.
-      //
-      // Priority (highest = most important / most advanced work):
-      //   6  action node with BullMQ jobs stamped (SENDING)
-      //   5  wait node with future next_fire_at  (WAITING)
-      //   4  action node without recent stamp    (RUNNING — cron will re-enqueue)
-      //   3  wait node with elapsed time         (RUNNING — cron advancing)
-      //   2  trigger / condition                 (RUNNING)
-      //   1  goal                                (MONITORING)
-      // On tie, prefer the node at the HIGHER index (further along in the journey).
-      const nodeActivePriority = (n) => {
-        if (!activeSet.has(n.id)) return 0;
-        if (n.type === 'action')  return enqueuedMap[n.id] > 0 ? 6 : 4;
-        if (n.type === 'wait')    return inWaitMap[n.id]   > 0 ? 5 : 3;
-        if (n.type === 'trigger' || n.type === 'condition') return 2;
-        if (n.type === 'goal')    return 1;
-        return 1;
-      };
-
-      let primaryIdx      = -1;
-      let primaryPriority = -1;
-      nodes.forEach((n, i) => {
-        const p = nodeActivePriority(n);
-        if (p > 0 && (p > primaryPriority || (p === primaryPriority && i > primaryIdx))) {
-          primaryPriority = p;
-          primaryIdx = i;
-        }
-      });
-      if (primaryIdx === -1) primaryIdx = nodes.length; // no active entries → sentinel → all completed
-
+      // Per-node real-state status (no positional override).
+      // Each node's badge reflects its OWN current data, not its position relative
+      // to other nodes. A node only shows COMPLETED when it has truly drained.
       nodes.forEach((n, i) => {
         if (isPaused) {
           // PAUSED: everything strictly before earliest active node → completed, rest → paused
           node_statuses[n.id] = i < minRunning ? 'completed' : 'paused';
-        } else if (i < primaryIdx) {
-          // BEFORE primary: completed (positional — even if cron still draining entries here)
-          node_statuses[n.id] = 'completed';
-        } else if (i === primaryIdx) {
-          // PRIMARY node: assign the specific active status
-          if      (n.type === 'action' && enqueuedMap[n.id] > 0) node_statuses[n.id] = 'sending';
-          else if (n.type === 'wait'   && inWaitMap[n.id]   > 0) node_statuses[n.id] = 'waiting';
-          else if (n.type === 'goal')                             node_statuses[n.id] = 'monitoring';
-          else                                                    node_statuses[n.id] = 'running';
+          return;
+        }
+
+        const isActive     = activeSet.has(n.id);
+        const wasProcessed = processedSet.has(n.id);
+        const enqueued     = enqueuedMap[n.id] || 0;
+        const inWait       = inWaitMap[n.id]   || 0;
+
+        if (!isActive) {
+          // No active entries here → either completed (some passed through) or pending (never touched)
+          if (n.type === 'goal') node_statuses[n.id] = 'monitoring';
+          else                    node_statuses[n.id] = wasProcessed ? 'completed' : 'pending';
+          return;
+        }
+
+        // Has active entries — determine sub-status from node type + queue state
+        if (n.type === 'action') {
+          if      (enqueued > 0) node_statuses[n.id] = 'sending';
+          else if (inWait > 0)   node_statuses[n.id] = 'pending';   // delayed to future date
+          else                   node_statuses[n.id] = 'running';   // cron will pick up
+        } else if (n.type === 'wait') {
+          node_statuses[n.id] = inWait > 0 ? 'waiting' : 'running';
+        } else if (n.type === 'goal') {
+          node_statuses[n.id] = 'monitoring';
         } else {
-          // AFTER primary: pending — even if a few entries arrived early (contacts pipeline ahead)
-          // Exception: if fully processed with zero active entries left, mark completed
-          node_statuses[n.id] = (processedSet.has(n.id) && !activeSet.has(n.id)) ? 'completed' : 'pending';
+          node_statuses[n.id] = 'running';
         }
       });
     }
