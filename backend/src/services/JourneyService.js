@@ -39,15 +39,15 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
   };
 
   if (id === 1) {
-    const { _internals } = await import('./Day1WelcomeRankingService.js');
-    const { buildDay1WelcomeData }            = await import('./Day1WelcomeDataService.js');
+    const { _internals }                      = await import('./Day1WelcomeRankingService.js');
+    const { buildDay1WelcomeData, _internals: dataInternals } = await import('./Day1WelcomeDataService.js');
     const { renderDay1Welcome }               = await import('./Day1WelcomeRenderer.js');
     const { rows: visaRows } = await db.query("SELECT key, name FROM visa_products LIMIT 20").catch(() => ({ rows: [] }));
     const visaMap  = Object.fromEntries((visaRows || []).map(r => [r.key, r]));
     const ranking  = _internals.buildFallbackRanking({
-      holidayMap:  _internals.HOLIDAY_DESTINATIONS  || {},
-      cruiseMap:   _internals.CRUISE_DESTINATIONS   || {},
-      activityMap: _internals.ACTIVITY_DESTINATIONS || {},
+      holidayMap:  dataInternals.HOLIDAY_DESTINATIONS,
+      cruiseMap:   dataInternals.CRUISE_DESTINATIONS,
+      activityMap: dataInternals.ACTIVITY_DESTINATIONS,
       visaMap,
     });
     const data = await buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId });
