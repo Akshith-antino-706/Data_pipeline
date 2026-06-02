@@ -228,7 +228,8 @@ class JourneyService {
           current_node_id,
           COUNT(*)                                                                          AS total,
           COUNT(*) FILTER (WHERE last_enqueued_at IS NOT NULL
-            AND last_enqueued_at > NOW() - INTERVAL '2 hours')                             AS enqueued,
+            AND last_enqueued_at > NOW() - INTERVAL '2 hours'
+            AND (next_fire_at IS NULL OR next_fire_at <= NOW()))                           AS enqueued,
           COUNT(*) FILTER (WHERE next_fire_at > NOW())                                     AS in_wait
         FROM journey_entries
         WHERE journey_id = $1 AND status = 'active'
