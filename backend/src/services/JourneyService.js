@@ -256,40 +256,39 @@ class JourneyService {
       const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
       const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
 
-      // Per-node real-state status (no positional override).
-      // Each node's badge reflects its OWN current data, not its position relative
-      // to other nodes. A node only shows COMPLETED when it has truly drained.
+      // Linear "leading edge" view: only the EARLIEST action node actively sending
+      // shows SENDING; the FIRST wait node after it shows WAITING. Everything else
+      // shows PENDING — even if stragglers from previous runs are sitting downstream.
+      // This keeps the dashboard reflecting the main-wave's current step, not noise.
+
+      // 1. Earliest action node with entries currently firing (enqueued > 0)
+      let sendingIdx = -1;
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (n.type === 'action' && activeSet.has(n.id) && (enqueuedMap[n.id] || 0) > 0) {
+          sendingIdx = i;
+          break;
+        }
+      }
+
+      // 2. First wait node positioned after the sending node
+      let waitingIdx = -1;
+      if (sendingIdx !== -1) {
+        for (let i = sendingIdx + 1; i < nodes.length; i++) {
+          if (nodes[i].type === 'wait') { waitingIdx = i; break; }
+        }
+      }
+
       nodes.forEach((n, i) => {
         if (isPaused) {
-          // PAUSED: everything strictly before earliest active node → completed, rest → paused
           node_statuses[n.id] = i < minRunning ? 'completed' : 'paused';
           return;
         }
-
-        const isActive     = activeSet.has(n.id);
-        const wasProcessed = processedSet.has(n.id);
-        const enqueued     = enqueuedMap[n.id] || 0;
-        const inWait       = inWaitMap[n.id]   || 0;
-
-        if (!isActive) {
-          // No active entries here → either completed (some passed through) or pending (never touched)
-          if (n.type === 'goal') node_statuses[n.id] = 'monitoring';
-          else                    node_statuses[n.id] = wasProcessed ? 'completed' : 'pending';
-          return;
-        }
-
-        // Has active entries — determine sub-status from node type + queue state
-        if (n.type === 'action') {
-          if      (enqueued > 0) node_statuses[n.id] = 'sending';
-          else if (inWait > 0)   node_statuses[n.id] = 'pending';   // delayed to future date
-          else                   node_statuses[n.id] = 'running';   // cron will pick up
-        } else if (n.type === 'wait') {
-          node_statuses[n.id] = inWait > 0 ? 'waiting' : 'running';
-        } else if (n.type === 'goal') {
-          node_statuses[n.id] = 'monitoring';
-        } else {
-          node_statuses[n.id] = 'running';
-        }
+        if (i === sendingIdx)               node_statuses[n.id] = 'sending';
+        else if (i === waitingIdx)          node_statuses[n.id] = 'waiting';
+        else if (n.type === 'goal')         node_statuses[n.id] = 'monitoring';
+        else if (i < sendingIdx && processedSet.has(n.id)) node_statuses[n.id] = 'completed';
+        else                                node_statuses[n.id] = 'pending';
       });
     }
 
