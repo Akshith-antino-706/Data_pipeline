@@ -186,7 +186,7 @@ class JourneyService {
     //   in an email from THIS journey (sourced from unsubscribe_log, campaign='email_link').
     // pre_existing_unsub = exited as unsubscribed but never received any send from this journey
     //   (bulk-exited on first cron tick because already unsubscribed at enrollment time).
-    const [entryStatsRes, unsubLogRes] = await Promise.all([
+    const [entryStatsRes, unsubLogRes, nodeUnsubLogRes] = await Promise.all([
       db.query(`
         SELECT
           COUNT(*) AS total_entries,
@@ -208,10 +208,18 @@ class JourneyService {
           WHERE je.journey_id = $1
         ) t
       `, [journeyId]),
-      // Count distinct users who actively unsubscribed via email link from this journey
+      // Header total: distinct users who unsubscribed from this journey (any source)
       db.query(
         `SELECT COUNT(DISTINCT unified_id) AS unsubscribed_from_journey
          FROM unsubscribe_log WHERE journey_id = $1`,
+        [journeyId]
+      ),
+      // Per-node unsub counts: how many users unsubscribed attributed to each node
+      db.query(
+        `SELECT node_id, COUNT(DISTINCT unified_id) AS unsub_count
+         FROM unsubscribe_log
+         WHERE journey_id = $1 AND node_id IS NOT NULL
+         GROUP BY node_id`,
         [journeyId]
       ),
     ]);
@@ -220,6 +228,12 @@ class JourneyService {
       ...entryStatsRes.rows[0],
       unsubscribed_from_journey: parseInt(unsubLogRes.rows[0]?.unsubscribed_from_journey) || 0,
     };
+
+    // Build per-node unsub map: { node_id → count }
+    const nodeUnsubCounts = {};
+    for (const row of nodeUnsubLogRes.rows) {
+      nodeUnsubCounts[row.node_id] = parseInt(row.unsub_count) || 0;
+    }
 
     // Get per-node analytics
     const { rows: nodeAnalytics } = await db.query(`
@@ -276,7 +290,6 @@ class JourneyService {
       // Build lookup maps
       const activeSet    = new Set(activeOnNode.map(r => r.current_node_id));
       const processedSet = new Set(processedNodes.map(r => r.node_id));
-      const enqueuedMap  = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.enqueued) || 0]));
       const inWaitMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.in_wait)  || 0]));
       const dueNowMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.due_now)  || 0]));
       const isPaused     = journey.status === 'paused';
@@ -375,7 +388,7 @@ class JourneyService {
       }
     }
 
-    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, node_statuses, node_stats };
+    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats };
   }
 
   /**
@@ -2207,7 +2220,6 @@ class JourneyService {
     if (!journey) throw new Error('Journey not found');
 
     const nodes = journey.nodes || [];
-    const edges = journey.edges || [];
 
     // ── 1. Actual fire times from journey_events (completed nodes) ──
     const { rows: eventRows } = await db.query(`

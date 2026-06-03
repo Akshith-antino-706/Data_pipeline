@@ -12,7 +12,8 @@ import {
   getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
-  getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline
+  getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
+  getJourneyNodeConversions
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -96,6 +97,7 @@ export default function Journeys() {
   const [detail, setDetail] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [campaignData, setCampaignData] = useState(null);
+  const [nodeConversions, setNodeConversions] = useState(null);
   const [strategies, setStrategies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -334,12 +336,14 @@ export default function Journeys() {
   const _fetchNodeAnalytics = async (id) => {
     setNodeAnalyticsLoading(true);
     try {
-      const [a, cd] = await Promise.allSettled([
+      const [a, cd, nc] = await Promise.allSettled([
         getJourneyAnalytics(id).catch(() => ({ data: null })),
         getJourneyCampaignAnalytics(id).catch(() => ({ data: null })),
+        getJourneyNodeConversions(id).catch(() => ({ data: null })),
       ]);
-      if (a.status === 'fulfilled') setAnalytics(a.value?.data ?? null);
+      if (a.status === 'fulfilled')  setAnalytics(a.value?.data ?? null);
       if (cd.status === 'fulfilled') setCampaignData(cd.value?.data ?? null);
+      if (nc.status === 'fulfilled') setNodeConversions(nc.value?.data ?? null);
       setNodeAnalyticsLoaded(true);
     } finally {
       setNodeAnalyticsLoading(false);
@@ -363,6 +367,7 @@ export default function Journeys() {
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
+    setNodeConversions(null);
     setSuggestions(null);
     setActiveTab('flow');
     setDetailLoading(true);
@@ -898,6 +903,11 @@ export default function Journeys() {
     const nodeEntryCountsMap = {};
     (detail.nodeEntryCounts || []).forEach(nc => {
       nodeEntryCountsMap[nc.node_id] = { triggered: parseInt(nc.triggered) || 0, exited: parseInt(nc.exited) || 0 };
+    });
+    // Per-node unsub counts from unsubscribe_log (journey_id + node_id)
+    const nodeUnsubCountsMap = {};
+    Object.entries(detail.nodeUnsubCounts || {}).forEach(([nid, cnt]) => {
+      nodeUnsubCountsMap[nid] = cnt;
     });
 
     const isJourneyStarted = ['active', 'paused', 'completed'].includes(detail.status);
@@ -1583,6 +1593,18 @@ export default function Journeys() {
                               </div>
 
 
+                              {/* Trigger node: already-unsub chip from journey-segment pre_existing_unsub */}
+                              {node.type === 'trigger' && stats.pre_existing_unsub > 0 && (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0,
+                                  padding: '3px 8px', borderRadius: 8, fontSize: 10,
+                                  background: 'rgba(239,68,68,0.08)', color: '#ef4444',
+                                  fontWeight: 700, border: '1px solid rgba(239,68,68,0.2)',
+                                }}>
+                                  {fmt(stats.pre_existing_unsub)} already unsub
+                                </span>
+                              )}
+
                               {/* Node stats preview — hidden for pending/wait/trigger nodes */}
                               {backendStatus !== 'pending' && node.type !== 'wait' && node.type !== 'trigger' && (hasSent || nStats) && (
                                 <div className="flex items-center gap-3 shrink-0">
@@ -1598,9 +1620,9 @@ export default function Journeys() {
                                           {fmt(nStats.exited_booked)} booked
                                         </span>
                                       )}
-                                      {nStats.exited_unsubscribed > 0 && (
+                                      {(nodeUnsubCountsMap[node.id] || 0) > 0 && (
                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 700 }}>
-                                          {fmt(nStats.exited_unsubscribed)} unsub
+                                          {fmt(nodeUnsubCountsMap[node.id])} unsub
                                         </span>
                                       )}
                                       {nStats.completed > 0 && (
@@ -1885,7 +1907,7 @@ export default function Journeys() {
                                           { label: 'DELIVERED',    value: delivered,                          color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
                                           { label: 'FAILED',       value: failed,                             color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
                                           { label: 'BOUNCED',      value: bounced,                            color: bounced > 0 ? 'var(--orange)' : 'var(--text-muted)' },
-                                          { label: 'UNSUBSCRIBED', value: nStats?.exited_unsubscribed || 0,   color: (nStats?.exited_unsubscribed || 0) > 0 ? '#ef4444' : 'var(--text-muted)' },
+                                          { label: 'UNSUBSCRIBED', value: nodeUnsubCountsMap[node.id] || 0,  color: (nodeUnsubCountsMap[node.id] || 0) > 0 ? '#ef4444' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontSize: 17, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
@@ -1928,11 +1950,15 @@ export default function Journeys() {
                                           <span style={{ color: 'var(--text-tertiary)' }}>
                                             <strong style={{ color: '#3b82f6' }}>{fmt(nc.triggered)}</strong> contacts reached this step
                                           </span>
-                                          {nc.exited > 0 && (
-                                            <span style={{ color: 'var(--text-tertiary)' }}>
-                                              {' · '}<strong style={{ color: 'var(--purple)' }}>{fmt(nc.exited)}</strong> booked after this email
-                                            </span>
-                                          )}
+                                          {(() => {
+                                            const bookedCount = nodeConversions?.[node.id]?.converted ?? 0;
+                                            if (bookedCount === 0) return null;
+                                            return (
+                                              <span style={{ color: 'var(--text-tertiary)' }}>
+                                                {' · '}<strong style={{ color: 'var(--purple)' }}>{fmt(bookedCount)}</strong> booked after this email
+                                              </span>
+                                            );
+                                          })()}
                                         </div>
                                       )}
 

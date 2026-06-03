@@ -154,6 +154,21 @@ async function processEmail(job) {
     console.log(`[Worker:email] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
   }
+
+  // Re-check unsubscribe status at send time — user may have unsubscribed after job was enqueued
+  const { rows: [contact] } = await db.query(
+    'SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
+  );
+  if (contact?.email_unsubscribe === 'Yes') {
+    console.log(`[Worker:email] UNSUBSCRIBED — skipping send for entry=${d.entryId} customer=${d.customerId}`);
+    await db.query(
+      `INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign)
+       VALUES ($1, $2, $3, $4, 'pre_send_check')
+       ON CONFLICT DO NOTHING`,
+      [d.customerId, d.email, d.journeyId, d.nodeId]
+    ).catch(() => {});
+    return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
+  }
   console.log(`[Worker:email] ── Processing job ${job.id} ──`);
   console.log(`[Worker:email]   entry=${d.entryId} customer=${d.customerId} node=${d.nodeId} journey=${d.journeyId}`);
   console.log(`[Worker:email]   to=${recipientEmail}${EMAIL_OVERRIDE ? ` (override, real=${d.email})` : ''} template=${d.templateId}`);
@@ -282,6 +297,14 @@ async function processWA(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
   }
 
+  const { rows: [contactWA] } = await db.query(
+    'SELECT wa_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
+  );
+  if (contactWA?.wa_unsubscribe === 'Yes') {
+    console.log(`[Worker:wa] WA_UNSUBSCRIBED — skipping for entry=${d.entryId} customer=${d.customerId}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
+  }
+
   let approvalBlocked = false;
   let sendResult;
   try {
@@ -318,6 +341,14 @@ async function processSMS(job) {
   if (_isDayCrossed(d)) {
     console.log(`[Worker:sms] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
+  }
+
+  const { rows: [contactSMS] } = await db.query(
+    'SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
+  );
+  if (contactSMS?.email_unsubscribe === 'Yes') {
+    console.log(`[Worker:sms] UNSUBSCRIBED — skipping for entry=${d.entryId} customer=${d.customerId}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
   }
 
   let approvalBlocked = false;
