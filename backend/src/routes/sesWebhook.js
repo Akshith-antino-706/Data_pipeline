@@ -118,11 +118,31 @@ router.post('/ses', async (req, res) => {
 
       // Auto-unsubscribe on permanent bounce or complaint
       if (email && (eventType === 'Complaint' || (eventType === 'Bounce' && bounceType === 'Permanent'))) {
-        await db.query(`
+        const normalizedEmail = email.toLowerCase().trim();
+        const { rowCount } = await db.query(`
           UPDATE unified_contacts
           SET email_unsubscribe = 'Yes', updated_at = NOW()
           WHERE LOWER(TRIM(email)) = $1 AND email_unsubscribe <> 'Yes'
-        `, [email.toLowerCase().trim()]);
+        `, [normalizedEmail]);
+
+        if (rowCount > 0) {
+          // Log to unsubscribe_log — join email_send_log via messageId to get journey/node context
+          await db.query(`
+            INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign, source_log_id)
+            SELECT
+              COALESCE(esl.unified_id, uc.id),
+              $1,
+              esl.journey_id,
+              esl.node_id,
+              $3,
+              esl.id
+            FROM unified_contacts uc
+            LEFT JOIN email_send_log esl
+              ON esl.external_id = $2 AND esl.unified_id = uc.id
+            WHERE LOWER(TRIM(uc.email)) = $1
+            LIMIT 1
+          `, [normalizedEmail, messageId, eventType.toLowerCase()]);
+        }
         console.log(`[SES Webhook] ${eventType} (${bounceType || complaintType}) → unsubscribed: ${email}`);
       }
 

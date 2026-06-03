@@ -975,7 +975,7 @@ export default function Journeys() {
       { name: 'Active', value: parseInt(stats.active) || 0, color: 'var(--green)' },
       { name: 'Completed', value: parseInt(stats.completed) || 0, color: 'var(--brand-primary)' },
       { name: 'Booked', value: parseInt(stats.exited_booked) || 0, color: 'var(--purple)' },
-      { name: 'Unsubscribed', value: parseInt(stats.exited_unsubscribed) || 0, color: 'var(--red)' },
+      { name: 'Unsubscribed', value: parseInt(stats.unsubscribed_during_journey ?? stats.exited_unsubscribed) || 0, color: 'var(--red)' },
     ].filter(d => d.value > 0);
 
     return (
@@ -1113,7 +1113,7 @@ export default function Journeys() {
             { label: 'Snapshotted', value: fmt(detail.snapshot_count || stats.total_entries), color: 'kpi-blue', icon: Users },
             { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
             { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
-            { label: 'Unsub (Exit)', value: fmt(stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
+            { label: 'Unsub (Exit)', value: fmt(stats.unsubscribed_from_journey ?? stats.unsubscribed_during_journey ?? stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
             { label: 'Completed', value: fmt(stats.completed), color: 'kpi-blue', icon: CheckCircle2 },
             { label: 'Failed', value: fmt(ct.total_failed || 0), color: 'kpi-red', icon: XCircle },
           ];
@@ -1471,6 +1471,7 @@ export default function Journeys() {
                           {/* Node Card */}
                           <div
                             onClick={() => {
+                              if (backendStatus === 'pending') return;
                               const opening = !isExpanded;
                               setExpandedNode(isExpanded ? null : key);
                               if (opening) loadNodeAnalytics(selected);
@@ -1480,11 +1481,12 @@ export default function Journeys() {
                               borderTop: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
                               borderRight: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
                               borderBottom: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
-                              borderLeft: `4px solid ${color}`,
+                              borderLeft: `4px solid ${backendStatus === 'pending' ? '#d1d5db' : color}`,
                               borderRadius: 12,
                               padding: '14px 16px',
-                              cursor: 'pointer',
+                              cursor: backendStatus === 'pending' ? 'default' : 'pointer',
                               transition: 'all 0.3s ease',
+                              opacity: backendStatus === 'pending' ? 0.6 : 1,
                               boxShadow: isCurrentSimNode
                                 ? `0 0 0 3px ${color}40, 0 6px 20px ${color}30`
                                 : isExpanded ? `0 4px 16px ${color}15` : 'var(--shadow)',
@@ -1580,8 +1582,9 @@ export default function Journeys() {
                                 })()}
                               </div>
 
-                              {/* Node stats preview — hidden for pending nodes */}
-                              {backendStatus !== 'pending' && (hasSent || nStats) && (
+
+                              {/* Node stats preview — hidden for pending/wait/trigger nodes */}
+                              {backendStatus !== 'pending' && node.type !== 'wait' && node.type !== 'trigger' && (hasSent || nStats) && (
                                 <div className="flex items-center gap-3 shrink-0">
                                   {nStats && (
                                     <div className="flex gap-2" style={{ fontSize: 10 }}>
@@ -1616,6 +1619,26 @@ export default function Journeys() {
                                 </div>
                               )}
 
+                              {/* Refresh button — action nodes currently sending/running */}
+                              {node.type === 'action' && (backendStatus === 'sending' || backendStatus === 'running') && (
+                                <button
+                                  title="Refresh stats"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const [d] = await Promise.all([getJourney(selected), refreshQueueStats(), loadNodeAnalytics(selected)]);
+                                    setDetail(d.data);
+                                  }}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                    width: 26, height: 26, borderRadius: 6, cursor: 'pointer',
+                                    border: `1px solid ${color}40`, background: color + '10', color,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <RefreshCw size={12} />
+                                </button>
+                              )}
+
                               {/* Flow edit controls */}
                               {flowEditMode && (
                                 <div className="flex gap-0.5" style={{ marginRight: 4 }} onClick={e => e.stopPropagation()}>
@@ -1639,7 +1662,9 @@ export default function Journeys() {
                                     style={{ width: 24, height: 24, border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-dim)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>×</button>
                                 </div>
                               )}
-                              <ChevronDown size={14} color="var(--text-muted)" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
+                              {backendStatus !== 'pending' && (
+                                <ChevronDown size={14} color="var(--text-muted)" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
+                              )}
                             </div>
 
                             {/* Expanded details */}
@@ -1854,12 +1879,13 @@ export default function Journeys() {
                                         ))}
                                       </div>
 
-                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED (always visible) */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED | UNSUBSCRIBED */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                                         {[
-                                          { label: 'DELIVERED', value: delivered, color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
-                                          { label: 'FAILED',    value: failed,    color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
-                                          { label: 'BOUNCED',   value: bounced,   color: bounced > 0 ? 'var(--orange)' : 'var(--text-muted)' },
+                                          { label: 'DELIVERED',    value: delivered,                          color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
+                                          { label: 'FAILED',       value: failed,                             color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
+                                          { label: 'BOUNCED',      value: bounced,                            color: bounced > 0 ? 'var(--orange)' : 'var(--text-muted)' },
+                                          { label: 'UNSUBSCRIBED', value: nStats?.exited_unsubscribed || 0,   color: (nStats?.exited_unsubscribed || 0) > 0 ? '#ef4444' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontSize: 17, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
@@ -2006,15 +2032,17 @@ export default function Journeys() {
                                     </div>
                                   );
                                 })()}
-                                {/* Non-action node stats */}
-                                {node.type !== 'action' && Object.keys(nodeStats).length > 0 && (
+                                {/* Non-action node stats — exclude trigger node and skip 'converted' event type */}
+                                {node.type !== 'action' && node.type !== 'trigger' && Object.keys(nodeStats).length > 0 && (
                                   <div className="flex gap-4 mt-2 flex-wrap">
-                                    {Object.entries(nodeStats).map(([event, count]) => (
-                                      <div key={event} style={{ textAlign: 'center' }}>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(count)}</div>
-                                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{event.replace(/_/g, ' ')}</div>
-                                      </div>
-                                    ))}
+                                    {Object.entries(nodeStats)
+                                      .filter(([event]) => event !== 'converted')
+                                      .map(([event, count]) => (
+                                        <div key={event} style={{ textAlign: 'center' }}>
+                                          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(count)}</div>
+                                          <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{event.replace(/_/g, ' ')}</div>
+                                        </div>
+                                      ))}
                                   </div>
                                 )}
 

@@ -85,20 +85,24 @@ export function startWorkers() {
         if (outEdge) {
           const nextNode = nodeMap[outEdge.target];
           const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
-          await db.query(
+          const { rowCount } = await db.query(
             `UPDATE journey_entries
              SET current_node_id = $1, bullmq_job_id = NULL,
                  last_run_id = NULL, last_enqueued_at = NULL,
                  next_fire_at = $3
-             WHERE entry_id = $2`,
-            [outEdge.target, d.entryId, nextFireAt]
+             WHERE entry_id = $2 AND current_node_id = $4`,
+            [outEdge.target, d.entryId, nextFireAt, d.nodeId]
           );
+          if (rowCount === 0) {
+            console.log(`[Worker:${channel}] Stale exhausted job skipped for entry=${d.entryId} node=${d.nodeId}`);
+          }
         } else {
-          await db.query(
-            `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL WHERE entry_id = $1`,
-            [d.entryId]
+          const { rowCount } = await db.query(
+            `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL
+             WHERE entry_id = $1 AND current_node_id = $2`,
+            [d.entryId, d.nodeId]
           );
-          await _checkJourneyCompletion(d.journeyId);
+          if (rowCount > 0) await _checkJourneyCompletion(d.journeyId);
         }
         console.log(`[Worker:${channel}] entry=${d.entryId} advanced after all retries exhausted`);
       } catch (advErr) {
@@ -130,10 +134,26 @@ export async function stopWorkers() {
 
 // ── Job processors ─────────────────────────────────────────────
 
+/**
+ * Returns true if the current Dubai calendar date is past the date the job was enqueued.
+ * Jobs enqueued on Jun 4 must not be processed on Jun 5+ — advance the entry without sending.
+ */
+function _isDayCrossed(d) {
+  if (!d.enqueuedDubaiDate) return false; // legacy jobs without the field — let them through
+  const dubaiNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' }));
+  const todayDubai = `${dubaiNow.getFullYear()}-${String(dubaiNow.getMonth()+1).padStart(2,'0')}-${String(dubaiNow.getDate()).padStart(2,'0')}`;
+  return todayDubai !== d.enqueuedDubaiDate;
+}
+
 async function processEmail(job) {
   const d = job.data;
   const recipientEmail = EMAIL_OVERRIDE || d.email;
   if (!recipientEmail) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
+
+  if (_isDayCrossed(d)) {
+    console.log(`[Worker:email] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
+  }
   console.log(`[Worker:email] ── Processing job ${job.id} ──`);
   console.log(`[Worker:email]   entry=${d.entryId} customer=${d.customerId} node=${d.nodeId} journey=${d.journeyId}`);
   console.log(`[Worker:email]   to=${recipientEmail}${EMAIL_OVERRIDE ? ` (override, real=${d.email})` : ''} template=${d.templateId}`);
@@ -257,6 +277,11 @@ async function processWA(job) {
   const d = job.data;
   if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
 
+  if (_isDayCrossed(d)) {
+    console.log(`[Worker:wa] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
+  }
+
   let approvalBlocked = false;
   let sendResult;
   try {
@@ -289,6 +314,11 @@ async function processWA(job) {
 async function processSMS(job) {
   const d = job.data;
   if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
+
+  if (_isDayCrossed(d)) {
+    console.log(`[Worker:sms] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
+  }
 
   let approvalBlocked = false;
   let sendResult;
@@ -361,21 +391,27 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
   if (chosen) {
     const nextNode = nodeMap[chosen.target];
     const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
-    await db.query(
+    // Guard: only advance if entry is still at this node (stale job protection).
+    // A midnight re-enqueue can create two jobs for the same entry; the first to
+    // run advances the entry — the second must not overwrite that progress.
+    const { rowCount } = await db.query(
       `UPDATE journey_entries
        SET current_node_id = $1, bullmq_job_id = NULL,
            last_run_id = NULL, last_enqueued_at = NULL,
            next_fire_at = $3
-       WHERE entry_id = $2`,
-      [chosen.target, d.entryId, nextFireAt]
+       WHERE entry_id = $2 AND current_node_id = $4`,
+      [chosen.target, d.entryId, nextFireAt, d.nodeId]
     );
+    if (rowCount === 0) {
+      console.log(`[Worker] Stale job skipped advance for entry=${d.entryId} node=${d.nodeId} (already advanced)`);
+    }
   } else {
-    await db.query(
+    const { rowCount } = await db.query(
       `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL
-       WHERE entry_id = $1`,
-      [d.entryId]
+       WHERE entry_id = $1 AND current_node_id = $2`,
+      [d.entryId, d.nodeId]
     );
-    await _checkJourneyCompletion(d.journeyId);
+    if (rowCount > 0) await _checkJourneyCompletion(d.journeyId);
   }
 }
 
