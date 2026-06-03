@@ -1901,13 +1901,12 @@ export default function Journeys() {
                                         ))}
                                       </div>
 
-                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED | UNSUBSCRIBED */}
-                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED */}
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                                         {[
-                                          { label: 'DELIVERED',    value: delivered,                          color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
-                                          { label: 'FAILED',       value: failed,                             color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
-                                          { label: 'BOUNCED',      value: bounced,                            color: bounced > 0 ? 'var(--orange)' : 'var(--text-muted)' },
-                                          { label: 'UNSUBSCRIBED', value: nodeUnsubCountsMap[node.id] || 0,  color: (nodeUnsubCountsMap[node.id] || 0) > 0 ? '#ef4444' : 'var(--text-muted)' },
+                                          { label: 'DELIVERED', value: delivered, color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
+                                          { label: 'FAILED',    value: failed,    color: failed > 0 ? 'var(--red)' : 'var(--text-muted)' },
+                                          { label: 'BOUNCED',   value: bounced,   color: bounced > 0 ? 'var(--orange)' : 'var(--text-muted)' },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '10px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             <div style={{ fontSize: 17, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>

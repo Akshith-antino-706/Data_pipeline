@@ -41,6 +41,22 @@ const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
 // Override: redirect ALL journey emails to this address (for testing before going live)
 const EMAIL_OVERRIDE    = process.env.JOURNEY_EMAIL_OVERRIDE || null;
 
+// Throttle auto-processJourney calls: one trigger per journey per 20 seconds max
+const _processThrottle = new Map(); // journeyId → lastTriggerMs
+function _scheduleProcess(journeyId, nextNodeType) {
+  // Wait nodes handle their own timing via next_fire_at — no need to trigger immediately
+  if (nextNodeType === 'wait') return;
+  const now = Date.now();
+  const last = _processThrottle.get(journeyId) || 0;
+  if (now - last < 20_000) return;
+  _processThrottle.set(journeyId, now);
+  // Fire async after a short settle delay so concurrent workers can finish advancing
+  setTimeout(() => {
+    JourneyService.processJourney(journeyId)
+      .catch(e => console.error(`[Worker] Auto-process j${journeyId} failed: ${e.message}`));
+  }, 2000);
+}
+
 let _workers = null;
 
 /** Start all journey workers in this process. Idempotent — safe to call once at boot. */
@@ -155,6 +171,15 @@ async function processEmail(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
   }
 
+  // Stale-job guard: skip send if entry already advanced past this node
+  const { rows: [entryRow] } = await db.query(
+    'SELECT current_node_id, status FROM journey_entries WHERE entry_id = $1', [d.entryId]
+  );
+  if (!entryRow || entryRow.current_node_id !== d.nodeId || entryRow.status !== 'active') {
+    console.log(`[Worker:email] STALE JOB — entry=${d.entryId} is at node=${entryRow?.current_node_id} (expected ${d.nodeId}), skipping send`);
+    return;
+  }
+
   // Re-check unsubscribe status at send time — user may have unsubscribed after job was enqueued
   const { rows: [contact] } = await db.query(
     'SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
@@ -239,13 +264,6 @@ async function processEmail(job) {
     nodeId: d.nodeId,
   });
   trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
-
-  // Apply test override — all journey emails go to override inbox during testing
-  const overrideTo = process.env.EMAIL_OVERRIDE_TO;
-  const actualTo   = overrideTo || d.email;
-  if (overrideTo) {
-    console.log(`[Worker:email] OVERRIDE → sending to ${overrideTo} (real: ${d.email})`);
-  }
 
   // Send via ChatheadEmailChannel (AWS Email API)
   const sendResult = await ChatheadEmailChannel.send({
@@ -398,7 +416,7 @@ async function _resolveHtmlTemplateId(contentTemplateId) {
  *  - insert a journey_events row
  *  - advance the journey_entry to the next track-matched edge (or complete it)
  */
-async function _logAndAdvance(d, eventType, details, sendSucceeded) {
+async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
   await db.query(
     `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
      VALUES ($1, $2, $3, $4, $5)`,
@@ -421,10 +439,8 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
 
   if (chosen) {
     const nextNode = nodeMap[chosen.target];
-    const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
+    const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date(), d.testIntervalMin || null);
     // Guard: only advance if entry is still at this node (stale job protection).
-    // A midnight re-enqueue can create two jobs for the same entry; the first to
-    // run advances the entry — the second must not overwrite that progress.
     const { rowCount } = await db.query(
       `UPDATE journey_entries
        SET current_node_id = $1, bullmq_job_id = NULL,
@@ -435,6 +451,9 @@ async function _logAndAdvance(d, eventType, details, sendSucceeded) {
     );
     if (rowCount === 0) {
       console.log(`[Worker] Stale job skipped advance for entry=${d.entryId} node=${d.nodeId} (already advanced)`);
+    } else {
+      // Trigger processJourney so next action node fires immediately without waiting for cron
+      _scheduleProcess(d.journeyId, nextNode?.type);
     }
   } else {
     const { rowCount } = await db.query(

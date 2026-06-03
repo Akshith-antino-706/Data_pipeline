@@ -1056,9 +1056,12 @@ class JourneyService {
           }
         }
 
-        // Skip if this entry was already enqueued in this run — prevents double
-        // enqueue if processJourney() is re-triggered before workers drain.
-        if (entry.last_run_id === runId) {
+        // Skip if this entry was enqueued recently (within 2 min) — prevents double
+        // enqueue when processJourney() is re-triggered while workers are still draining.
+        // Time-based instead of runId so multi-node journeys can re-fire on the same day.
+        const recentlyEnqueued = entry.last_enqueued_at
+          && (Date.now() - new Date(entry.last_enqueued_at).getTime()) < 2 * 60_000;
+        if (recentlyEnqueued) {
           processed++;
           continue;
         }

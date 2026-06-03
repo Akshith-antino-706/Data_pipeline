@@ -128,10 +128,10 @@ router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
 
     // Step 2: pick one active entry on this node (or any entry for this journey)
     const { rows: entries } = await db.query(
-      `SELECT je.entry_id, je.customer_id, je.email, uc.name
+      `SELECT je.entry_id, je.customer_id, uc.email, uc.name
          FROM journey_entries je
          JOIN unified_contacts uc ON uc.id = je.customer_id
-        WHERE je.journey_id = $1 AND je.email IS NOT NULL
+        WHERE je.journey_id = $1 AND uc.email IS NOT NULL
         LIMIT 1`,
       [journeyId]
     );
