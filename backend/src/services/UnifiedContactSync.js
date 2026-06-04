@@ -559,15 +559,27 @@ export default class UnifiedContactSync {
    * Sync unsubscribe flags
    */
   static async syncUnsubscribed() {
-    const { rowCount: email } = await query(`
-      UPDATE unified_contacts uc SET email_unsubscribed = 'Yes', updated_at = NOW()
+    const { rowCount: emailCount } = await query(`
+      UPDATE unified_contacts uc SET email_unsubscribe = 'Yes', updated_at = NOW()
       FROM unsubscribed uns
       WHERE LOWER(TRIM(uc.email)) = LOWER(TRIM(uns.email))
         AND (uns.unsubscribe = 1 OR uns.hard_bounces::int > 0)
-        AND uc.email_unsubscribed = 'No'
+        AND uc.email_unsubscribe <> 'Yes'
     `);
-    console.log(`[UnifiedSync] Email unsubscribed flagged: ${email}`);
-    return email;
+
+    if (emailCount > 0) {
+      await query(`
+        INSERT INTO unsubscribe_log (unified_id, email, campaign)
+        SELECT uc.id, uc.email, 'unified_sync'
+        FROM unified_contacts uc
+        JOIN unsubscribed uns ON LOWER(TRIM(uc.email)) = LOWER(TRIM(uns.email))
+        WHERE (uns.unsubscribe = 1 OR uns.hard_bounces::int > 0)
+          AND uc.email_unsubscribe = 'Yes'
+      `);
+    }
+
+    console.log(`[UnifiedSync] Email unsubscribed flagged: ${emailCount}`);
+    return emailCount;
   }
 
   /**

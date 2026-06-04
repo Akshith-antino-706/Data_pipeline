@@ -121,7 +121,8 @@ export const pauseJourney = (id) => request(`/api/v3/journeys/${id}/pause`, { me
 export const getJourneyEntries = (id, params = {}) => { const qs = new URLSearchParams(params).toString(); return request(`/api/v3/journeys/${id}/entries?${qs}`); };
 export const getJourneyAnalytics = (id) => request(`/api/v3/journeys/${id}/analytics`);
 export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${id}/campaign-analytics`);
-export const getJourneyGtmNodeStats = (id) => request(`/api/v3/journeys/${id}/gtm-node-stats`);
+export const getJourneyGtmNodeStats    = (id) => request(`/api/v3/journeys/${id}/gtm-node-stats`);
+export const getJourneyNodeConversions = (id) => request(`/api/v3/journeys/${id}/node-conversions`);
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
 // Node-level CRUD inside a journey

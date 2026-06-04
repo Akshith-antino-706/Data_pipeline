@@ -128,10 +128,10 @@ router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
 
     // Step 2: pick one active entry on this node (or any entry for this journey)
     const { rows: entries } = await db.query(
-      `SELECT je.entry_id, je.customer_id, je.email, uc.name
+      `SELECT je.entry_id, je.customer_id, uc.email, uc.name
          FROM journey_entries je
          JOIN unified_contacts uc ON uc.id = je.customer_id
-        WHERE je.journey_id = $1 AND je.email IS NOT NULL
+        WHERE je.journey_id = $1 AND uc.email IS NOT NULL
         LIMIT 1`,
       [journeyId]
     );
@@ -468,6 +468,73 @@ router.get('/:id/gtm-node-stats', async (req, res, next) => {
     }
 
     res.json({ allEventTypes, data: byNode });
+  } catch (err) { next(err); }
+});
+
+// Per-node booking conversion stats: openers who booked within the node's send window
+router.get('/:id/node-conversions', async (req, res, next) => {
+  try {
+    const journeyId = parseInt(req.params.id);
+    const db = (await import('../config/database.js')).default;
+
+    const { rows } = await db.query(`
+      WITH node_windows AS (
+        SELECT
+          node_id,
+          MIN(created_at)::date AS node_start,
+          LEAD(MIN(created_at)::date) OVER (ORDER BY MIN(created_at)) AS node_end
+        FROM email_send_log
+        WHERE journey_id = $1
+        GROUP BY node_id
+      ),
+      openers AS (
+        SELECT DISTINCT node_id, unified_id
+        FROM email_send_log
+        WHERE journey_id = $1 AND opened_at IS NOT NULL
+      ),
+      all_bookings AS (
+        SELECT unified_id, TO_DATE(booking_date, 'DD/MM/YYYY') AS bdate FROM rayna_tours    WHERE booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+        UNION ALL SELECT unified_id, TO_DATE(booking_date, 'DD/MM/YYYY') FROM rayna_visas    WHERE booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+        UNION ALL SELECT unified_id, TO_DATE(booking_date, 'DD/MM/YYYY') FROM rayna_packages WHERE booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+        UNION ALL SELECT unified_id, TO_DATE(booking_date, 'DD/MM/YYYY') FROM rayna_flights  WHERE booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+        UNION ALL SELECT unified_id, TO_DATE(booking_date, 'DD/MM/YYYY') FROM rayna_hotels   WHERE booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+        UNION ALL SELECT unified_id, TO_DATE(booking_date, 'DD/MM/YYYY') FROM rayna_others   WHERE booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+      ),
+      converted_per_node AS (
+        SELECT DISTINCT nw.node_id, o.unified_id
+        FROM node_windows nw
+        JOIN openers o ON o.node_id = nw.node_id
+        JOIN all_bookings b ON b.unified_id = o.unified_id
+          AND b.bdate >= nw.node_start
+          AND b.bdate < COALESCE(nw.node_end, CURRENT_DATE + 1)
+      )
+      SELECT
+        nw.node_id,
+        nw.node_start,
+        nw.node_end,
+        COUNT(DISTINCT o.unified_id)   AS total_openers,
+        COUNT(DISTINCT cpn.unified_id) AS converted
+      FROM node_windows nw
+      LEFT JOIN openers o   ON o.node_id = nw.node_id
+      LEFT JOIN converted_per_node cpn ON cpn.node_id = nw.node_id AND cpn.unified_id = o.unified_id
+      GROUP BY nw.node_id, nw.node_start, nw.node_end
+      ORDER BY nw.node_start
+    `, [journeyId]);
+
+    const data = {};
+    for (const row of rows) {
+      const openers   = parseInt(row.total_openers) || 0;
+      const converted = parseInt(row.converted)     || 0;
+      data[row.node_id] = {
+        node_start:      row.node_start,
+        node_end:        row.node_end,
+        total_openers:   openers,
+        converted,
+        conversion_rate: openers > 0 ? Math.round((converted / openers) * 10000) / 100 : 0,
+      };
+    }
+
+    res.json({ data });
   } catch (err) { next(err); }
 });
 

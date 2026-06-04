@@ -50,6 +50,16 @@ export default class UnsubscribeSyncService {
             AND email_unsubscribe <> 'Yes'
         `, [unsub]);
         setYes += rowCount;
+
+        if (rowCount > 0) {
+          await db.query(`
+            INSERT INTO unsubscribe_log (unified_id, email, campaign)
+            SELECT id, email, 'mysql_sync'
+            FROM unified_contacts
+            WHERE LOWER(TRIM(email)) = ANY($1::text[])
+              AND email_unsubscribe = 'Yes'
+          `, [unsub]);
+        }
       }
 
       // Bulk update: unsubscribe = 0 → 'No'

@@ -494,12 +494,13 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
         };
       } catch { /* skip if URL invalid */ }
 
-      // Fetch email/unified_id from the log row to denormalize into utm_visits
-      const logRows = await import('./src/config/database.js')
-        .then(m => m.default.query('SELECT unified_id, email FROM email_send_log WHERE id = $1', [id]))
-        .then(r => r.rows[0] || {});
+      // Fetch email/unified_id + journey context from the log row
+      const db = await import('./src/config/database.js').then(m => m.default);
+      const logRows = await db.query(
+        'SELECT unified_id, email, journey_id, node_id FROM email_send_log WHERE id = $1', [id]
+      ).then(r => r.rows[0] || {});
 
-      await Promise.all([
+      const tasks = [
         SendTrackService.markClicked(id),
         SendTrackService.logUtmVisit({
           logId: id,
@@ -508,7 +509,43 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
           destinationUrl: destination,
           ...utmData,
         }),
-      ]);
+      ];
+
+      // ── Unsubscribe link detection ──
+      // If the destination URL contains "/unsubscribe", this click IS the unsubscribe event.
+      // Parse utm_campaign (format: j127_node_2) to get journey_id + node_id,
+      // immediately set email_unsubscribe='Yes', and insert into unsubscribe_log.
+      try {
+        const destUrl = new URL(destination);
+        const isUnsubLink = destUrl.pathname.includes('unsubscribe') || destUrl.searchParams.has('unsubscribe');
+        if (isUnsubLink && logRows.unified_id) {
+          // Parse campaign "j127_node_2" → journeyId=127, nodeId="node_2"
+          const campaign = utmData.utmCampaign || '';
+          const match = campaign.match(/^j(\d+)_(.+)$/);
+          const journeyId = match ? parseInt(match[1]) : (logRows.journey_id || null);
+          const nodeId    = match ? match[2] : (logRows.node_id || null);
+
+          tasks.push(
+            db.query(
+              `UPDATE unified_contacts SET email_unsubscribe = 'Yes', updated_at = NOW()
+               WHERE id = $1 AND email_unsubscribe <> 'Yes'`,
+              [logRows.unified_id]
+            ).then(({ rowCount }) => {
+              if (rowCount > 0) {
+                return db.query(
+                  `INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign, source_log_id)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   ON CONFLICT DO NOTHING`,
+                  [logRows.unified_id, logRows.email, journeyId, nodeId, 'email_link', id]
+                );
+              }
+            })
+          );
+          console.log(`[Track] Unsubscribe click: uid=${logRows.unified_id} email=${logRows.email} journey=${journeyId} node=${nodeId}`);
+        }
+      } catch { /* skip if destination URL is invalid */ }
+
+      await Promise.all(tasks);
     } catch (e) { console.error('[Track] email-send click error:', e.message); }
   }
 });

@@ -12,7 +12,8 @@ import {
   getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
-  getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline
+  getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
+  getJourneyNodeConversions
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -96,6 +97,7 @@ export default function Journeys() {
   const [detail, setDetail] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [campaignData, setCampaignData] = useState(null);
+  const [nodeConversions, setNodeConversions] = useState(null);
   const [strategies, setStrategies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -334,12 +336,14 @@ export default function Journeys() {
   const _fetchNodeAnalytics = async (id) => {
     setNodeAnalyticsLoading(true);
     try {
-      const [a, cd] = await Promise.allSettled([
+      const [a, cd, nc] = await Promise.allSettled([
         getJourneyAnalytics(id).catch(() => ({ data: null })),
         getJourneyCampaignAnalytics(id).catch(() => ({ data: null })),
+        getJourneyNodeConversions(id).catch(() => ({ data: null })),
       ]);
-      if (a.status === 'fulfilled') setAnalytics(a.value?.data ?? null);
+      if (a.status === 'fulfilled')  setAnalytics(a.value?.data ?? null);
       if (cd.status === 'fulfilled') setCampaignData(cd.value?.data ?? null);
+      if (nc.status === 'fulfilled') setNodeConversions(nc.value?.data ?? null);
       setNodeAnalyticsLoaded(true);
     } finally {
       setNodeAnalyticsLoading(false);
@@ -363,6 +367,7 @@ export default function Journeys() {
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
+    setNodeConversions(null);
     setSuggestions(null);
     setActiveTab('flow');
     setDetailLoading(true);
@@ -899,6 +904,11 @@ export default function Journeys() {
     (detail.nodeEntryCounts || []).forEach(nc => {
       nodeEntryCountsMap[nc.node_id] = { triggered: parseInt(nc.triggered) || 0, exited: parseInt(nc.exited) || 0 };
     });
+    // Per-node unsub counts from unsubscribe_log (journey_id + node_id)
+    const nodeUnsubCountsMap = {};
+    Object.entries(detail.nodeUnsubCounts || {}).forEach(([nid, cnt]) => {
+      nodeUnsubCountsMap[nid] = cnt;
+    });
 
     const isJourneyStarted = ['active', 'paused', 'completed'].includes(detail.status);
 
@@ -975,7 +985,7 @@ export default function Journeys() {
       { name: 'Active', value: parseInt(stats.active) || 0, color: 'var(--green)' },
       { name: 'Completed', value: parseInt(stats.completed) || 0, color: 'var(--brand-primary)' },
       { name: 'Booked', value: parseInt(stats.exited_booked) || 0, color: 'var(--purple)' },
-      { name: 'Unsubscribed', value: parseInt(stats.exited_unsubscribed) || 0, color: 'var(--red)' },
+      { name: 'Unsubscribed', value: parseInt(stats.unsubscribed_during_journey ?? stats.exited_unsubscribed) || 0, color: 'var(--red)' },
     ].filter(d => d.value > 0);
 
     return (
@@ -1113,7 +1123,7 @@ export default function Journeys() {
             { label: 'Snapshotted', value: fmt(detail.snapshot_count || stats.total_entries), color: 'kpi-blue', icon: Users },
             { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
             { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
-            { label: 'Unsub (Exit)', value: fmt(stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
+            { label: 'Unsub (Exit)', value: fmt(stats.unsubscribed_from_journey ?? stats.unsubscribed_during_journey ?? stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
             { label: 'Completed', value: fmt(stats.completed), color: 'kpi-blue', icon: CheckCircle2 },
             { label: 'Failed', value: fmt(ct.total_failed || 0), color: 'kpi-red', icon: XCircle },
           ];
@@ -1471,6 +1481,7 @@ export default function Journeys() {
                           {/* Node Card */}
                           <div
                             onClick={() => {
+                              if (backendStatus === 'pending') return;
                               const opening = !isExpanded;
                               setExpandedNode(isExpanded ? null : key);
                               if (opening) loadNodeAnalytics(selected);
@@ -1480,11 +1491,12 @@ export default function Journeys() {
                               borderTop: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
                               borderRight: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
                               borderBottom: `1px solid ${isCurrentSimNode || isExpanded ? color + '60' : 'var(--border-color)'}`,
-                              borderLeft: `4px solid ${color}`,
+                              borderLeft: `4px solid ${backendStatus === 'pending' ? '#d1d5db' : color}`,
                               borderRadius: 12,
                               padding: '14px 16px',
-                              cursor: 'pointer',
+                              cursor: backendStatus === 'pending' ? 'default' : 'pointer',
                               transition: 'all 0.3s ease',
+                              opacity: backendStatus === 'pending' ? 0.6 : 1,
                               boxShadow: isCurrentSimNode
                                 ? `0 0 0 3px ${color}40, 0 6px 20px ${color}30`
                                 : isExpanded ? `0 4px 16px ${color}15` : 'var(--shadow)',
@@ -1580,8 +1592,21 @@ export default function Journeys() {
                                 })()}
                               </div>
 
-                              {/* Node stats preview — hidden for pending nodes */}
-                              {backendStatus !== 'pending' && (hasSent || nStats) && (
+
+                              {/* Trigger node: already-unsub chip from journey-segment pre_existing_unsub */}
+                              {node.type === 'trigger' && stats.pre_existing_unsub > 0 && (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0,
+                                  padding: '3px 8px', borderRadius: 8, fontSize: 10,
+                                  background: 'rgba(239,68,68,0.08)', color: '#ef4444',
+                                  fontWeight: 700, border: '1px solid rgba(239,68,68,0.2)',
+                                }}>
+                                  {fmt(stats.pre_existing_unsub)} already unsub
+                                </span>
+                              )}
+
+                              {/* Node stats preview — hidden for pending/wait/trigger nodes */}
+                              {backendStatus !== 'pending' && node.type !== 'wait' && node.type !== 'trigger' && (hasSent || nStats) && (
                                 <div className="flex items-center gap-3 shrink-0">
                                   {nStats && (
                                     <div className="flex gap-2" style={{ fontSize: 10 }}>
@@ -1595,9 +1620,9 @@ export default function Journeys() {
                                           {fmt(nStats.exited_booked)} booked
                                         </span>
                                       )}
-                                      {nStats.exited_unsubscribed > 0 && (
+                                      {(nodeUnsubCountsMap[node.id] || 0) > 0 && (
                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 700 }}>
-                                          {fmt(nStats.exited_unsubscribed)} unsub
+                                          {fmt(nodeUnsubCountsMap[node.id])} unsub
                                         </span>
                                       )}
                                       {nStats.completed > 0 && (
@@ -1614,6 +1639,26 @@ export default function Journeys() {
                                     </div>
                                   )}
                                 </div>
+                              )}
+
+                              {/* Refresh button — action nodes currently sending/running */}
+                              {node.type === 'action' && (backendStatus === 'sending' || backendStatus === 'running') && (
+                                <button
+                                  title="Refresh stats"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const [d] = await Promise.all([getJourney(selected), refreshQueueStats(), loadNodeAnalytics(selected)]);
+                                    setDetail(d.data);
+                                  }}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                    width: 26, height: 26, borderRadius: 6, cursor: 'pointer',
+                                    border: `1px solid ${color}40`, background: color + '10', color,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <RefreshCw size={12} />
+                                </button>
                               )}
 
                               {/* Flow edit controls */}
@@ -1639,7 +1684,9 @@ export default function Journeys() {
                                     style={{ width: 24, height: 24, border: '1px solid var(--red)', borderRadius: 6, background: 'var(--red-dim)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>×</button>
                                 </div>
                               )}
-                              <ChevronDown size={14} color="var(--text-muted)" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
+                              {backendStatus !== 'pending' && (
+                                <ChevronDown size={14} color="var(--text-muted)" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
+                              )}
                             </div>
 
                             {/* Expanded details */}
@@ -1854,7 +1901,7 @@ export default function Journeys() {
                                         ))}
                                       </div>
 
-                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED (always visible) */}
+                                      {/* Secondary stats — DELIVERED | FAILED | BOUNCED */}
                                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
                                         {[
                                           { label: 'DELIVERED', value: delivered, color: delivered > 0 ? '#22c55e' : 'var(--text-muted)' },
@@ -1902,11 +1949,15 @@ export default function Journeys() {
                                           <span style={{ color: 'var(--text-tertiary)' }}>
                                             <strong style={{ color: '#3b82f6' }}>{fmt(nc.triggered)}</strong> contacts reached this step
                                           </span>
-                                          {nc.exited > 0 && (
-                                            <span style={{ color: 'var(--text-tertiary)' }}>
-                                              {' · '}<strong style={{ color: 'var(--purple)' }}>{fmt(nc.exited)}</strong> booked after this email
-                                            </span>
-                                          )}
+                                          {(() => {
+                                            const bookedCount = nodeConversions?.[node.id]?.converted ?? 0;
+                                            if (bookedCount === 0) return null;
+                                            return (
+                                              <span style={{ color: 'var(--text-tertiary)' }}>
+                                                {' · '}<strong style={{ color: 'var(--purple)' }}>{fmt(bookedCount)}</strong> booked after this email
+                                              </span>
+                                            );
+                                          })()}
                                         </div>
                                       )}
 
@@ -2006,15 +2057,17 @@ export default function Journeys() {
                                     </div>
                                   );
                                 })()}
-                                {/* Non-action node stats */}
-                                {node.type !== 'action' && Object.keys(nodeStats).length > 0 && (
+                                {/* Non-action node stats — exclude trigger node and skip 'converted' event type */}
+                                {node.type !== 'action' && node.type !== 'trigger' && Object.keys(nodeStats).length > 0 && (
                                   <div className="flex gap-4 mt-2 flex-wrap">
-                                    {Object.entries(nodeStats).map(([event, count]) => (
-                                      <div key={event} style={{ textAlign: 'center' }}>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(count)}</div>
-                                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{event.replace(/_/g, ' ')}</div>
-                                      </div>
-                                    ))}
+                                    {Object.entries(nodeStats)
+                                      .filter(([event]) => event !== 'converted')
+                                      .map(([event, count]) => (
+                                        <div key={event} style={{ textAlign: 'center' }}>
+                                          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(count)}</div>
+                                          <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{event.replace(/_/g, ' ')}</div>
+                                        </div>
+                                      ))}
                                   </div>
                                 )}
 
