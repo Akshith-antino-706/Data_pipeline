@@ -733,6 +733,19 @@ cron.schedule('* * * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey auto-start scheduled: every 1 min (Asia/Dubai)');
 
+// ── Startup env validation — fail fast in production ──
+// Catches missing TRACKING_BASE_URL before workers send emails with localhost
+// links (root cause of June 4 incident — broken click tracking for ~500k).
+if (process.env.NODE_ENV === 'production') {
+  const trackBase = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL;
+  if (!trackBase || /localhost|127\.0\.0\.1/.test(trackBase)) {
+    console.error(`[Boot] ❌ TRACKING_BASE_URL is missing or localhost in production: "${trackBase || '(unset)'}"`);
+    console.error('[Boot] Email tracking links would be broken. Set TRACKING_BASE_URL and force-recreate the container.');
+    process.exit(1);
+  }
+  console.log(`[Boot] ✓ TRACKING_BASE_URL valid: ${trackBase}`);
+}
+
 // ── BullMQ workers — always run inline ────────────────
 try {
   const { startWorkers } = await import('./src/services/queue/workers.js');

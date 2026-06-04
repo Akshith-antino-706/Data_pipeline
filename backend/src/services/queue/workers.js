@@ -240,6 +240,14 @@ async function processEmail(job) {
   // ── Inject click/open tracking ──
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 
+  // Hard-fail in production if baseUrl is localhost — prevents shipping broken
+  // tracking links to real recipients (root cause of the June 4 incident).
+  if (process.env.NODE_ENV === 'production' && /localhost|127\.0\.0\.1/.test(baseUrl)) {
+    const err = `[Worker:email] REFUSING to send — TRACKING_BASE_URL is localhost in production. Set TRACKING_BASE_URL env and force-recreate the container.`;
+    console.error(err);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'localhost_base_url', baseUrl }, false);
+  }
+
   const logId = await SendTrackService.logSend({
     unifiedId: d.customerId,
     email: recipientEmail || d.email || 'unknown',
