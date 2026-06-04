@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Upload</title>
+
+  <style>
+    *{
+      margin:0;
+      padding:0;
+      box-sizing:border-box;
+      font-family:Arial;
+    }
+
+    body{
+      background:#f4f4f4;
+      height:100vh;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+    }
+
+    .container{
+      width:350px;
+      background:#fff;
+      padding:25px;
+      border-radius:10px;
+      box-shadow:0 0 10px rgba(0,0,0,0.1);
+      text-align:center;
+    }
+
+    h2{
+      margin-bottom:20px;
+      color:#333;
+    }
+
+    input[type=file]{
+      display:none;
+    }
+
+    .choose-btn{
+      display:inline-block;
+      padding:12px 20px;
+      background:#007bff;
+      color:#fff;
+      border-radius:5px;
+      cursor:pointer;
+      margin-bottom:15px;
+    }
+
+    .file-name{
+      margin-bottom:15px;
+      color:#555;
+      font-size:14px;
+    }
+
+    .upload-btn{
+      padding:10px 20px;
+      border:none;
+      background:#28a745;
+      color:white;
+      border-radius:5px;
+      cursor:pointer;
+    }
+
+    .progress{
+      width:100%;
+      height:20px;
+      background:#ddd;
+      border-radius:10px;
+      overflow:hidden;
+      margin-top:20px;
+      display:none;
+    }
+
+    .progress-bar{
+      height:100%;
+      width:0%;
+      background:#28a745;
+      color:#fff;
+      text-align:center;
+      line-height:20px;
+      font-size:12px;
+    }
+
+    .message{
+      margin-top:15px;
+      font-size:14px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <h2>Upload File</h2>
+
+  <label for="fileInput" class="choose-btn">
+    Choose File
+  </label>
+
+  <input type="file" id="fileInput">
+
+  <div class="file-name" id="fileName">
+    No file selected
+  </div>
+
+  <button class="upload-btn" onclick="uploadFile()">
+    Upload
+  </button>
+
+  <div class="progress" id="progressBox">
+    <div class="progress-bar" id="progressBar">
+      0%
+    </div>
+  </div>
+
+  <div class="message" id="message"></div>
+
+</div>
+
+<script>
+  const fileInput = document.getElementById("fileInput");
+  const fileName = document.getElementById("fileName");
+  const progressBox = document.getElementById("progressBox");
+  const progressBar = document.getElementById("progressBar");
+  const message = document.getElementById("message");
+
+  fileInput.addEventListener("change", () => {
+    if(fileInput.files.length > 0){
+      fileName.textContent = fileInput.files[0].name;
+    }
+  });
+
+  function uploadFile(){
+
+    const file = fileInput.files[0];
+
+    if(!file){
+      alert("Please select a file");
+      return;
+    }
+
+    const formData = new FormData();
+    // ChatHead only accepts filename "sample.data" — wrap the picked file in
+    // a fresh File so the multipart filename is overridden, regardless of the
+    // name on disk.
+    const sampleFile = new File([file], "sample.data", { type: "application/octet-stream" });
+    formData.append("Filedata", sampleFile);
+    formData.append("client", 'rayna');
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.open("POST", "https://ser1.chathead.io/apis/v1/services/broadcast/data/add/", true);
+
+    // Progress Bar
+    xhr.upload.onprogress = function(e){
+
+      if(e.lengthComputable){
+
+        let percent = Math.round((e.loaded / e.total) * 100);
+
+        progressBox.style.display = "block";
+
+        progressBar.style.width = percent + "%";
+        progressBar.innerHTML = percent + "%";
+      }
+    };
+
+    // Success
+    xhr.onload = function(){
+
+      if(xhr.status === 200){
+
+        message.innerHTML = xhr.responseText;
+      }
+      else{
+        message.innerHTML = "Upload failed";
+      }
+    };
+
+    // Error
+    xhr.onerror = function(){
+      message.innerHTML = "Request error";
+    };
+
+    xhr.send(formData);
+  }
+</script>
+
+</body>
+</html>

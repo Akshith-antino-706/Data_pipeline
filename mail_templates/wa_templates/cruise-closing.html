@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{eyebrow}} — Rayna Tours</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@500;600;700&family=DM+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    width:1080px;height:1350px;overflow:hidden;
+    font-family:'DM Sans',system-ui,sans-serif;color:#2F2F2F;background:#fff;
+  }
+  .canvas{position:relative;width:1080px;height:1350px;overflow:hidden}
+
+  .bg-img{
+    position:absolute;inset:0;width:100%;height:100%;
+    background-image:url('{{heroImage}}');
+    background-size:cover;background-position:center;
+    z-index:0;
+  }
+  /* Soft white-down wash so the centered eyebrow + headline read */
+  .wash{
+    position:absolute;inset:0;z-index:1;
+    background:linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.45) 45%, rgba(255,255,255,0.65) 100%);
+  }
+
+  /* Logo + dividers row */
+  .logo-row{
+    position:absolute;left:0;right:0;top:180px;z-index:2;
+    display:flex;align-items:flex-end;justify-content:center;gap:16px;
+  }
+  .div-line{width:232px;height:2px;background:#FFFFFF;opacity:0.85}
+  .logo{width:390px;height:auto;display:block}
+
+  /* Headline block */
+  .head-block{
+    position:absolute;left:0;right:0;top:600px;z-index:2;
+    display:flex;flex-direction:column;align-items:center;gap:24px;
+    text-align:center;padding:0 80px;
+  }
+  .eyebrow{
+    font-family:'Inter',sans-serif;font-weight:600;
+    font-size:35px;line-height:1.2;color:#2F2F2F;
+    text-transform:uppercase;letter-spacing:2px;margin:0;
+  }
+  .headline{
+    font-family:'Playfair Display',serif;font-weight:700;
+    font-size:55px;line-height:1.2;color:#2F2F2F;
+    text-transform:uppercase;margin:0;
+  }
+
+  /* CTA button — gold */
+  .cta-btn{
+    position:absolute;left:50%;top:900px;transform:translateX(-50%);z-index:2;
+    display:flex;align-items:center;justify-content:center;
+    padding:20px 48px;height:61px;
+    background:#BCA073;color:#FFFFFF;
+    border-radius:12px;
+    font-family:'Inter',sans-serif;font-weight:700;font-size:18px;line-height:1.1;
+    text-transform:uppercase;letter-spacing:2px;
+  }
+
+  /* Trust pill at the bottom */
+  .trust-pill{
+    box-sizing:border-box;
+    position:absolute;left:88px;right:88px;bottom:80px;z-index:2;
+    display:flex;align-items:center;justify-content:space-between;gap:32px;
+    height:193px;padding:44px 50px 24px;
+    background:#FFFFFF;
+    border:1px solid rgba(200,167,95,0.30);
+    backdrop-filter:blur(27px);-webkit-backdrop-filter:blur(27px);
+    border-radius:24px;
+  }
+  .trust-item{display:flex;flex-direction:column;align-items:center;gap:16px;color:#2F2F2F;flex:1;text-align:center}
+  .trust-item .icon{
+    width:62px;height:62px;border-radius:50%;flex-shrink:0;
+    background:rgba(157,127,83,0.10);border:1px solid rgba(157,127,83,0.30);
+    color:#9D7F53;display:flex;align-items:center;justify-content:center;
+    font-family:'Playfair Display',serif;font-size:24px;font-weight:700;
+  }
+  .trust-item .label{
+    font-family:'DM Sans',sans-serif;font-weight:700;font-size:20px;line-height:1.4;color:#2F2F2F;
+  }
+  .trust-divider{width:1px;height:60px;background:#9D7F53;opacity:0.6;flex-shrink:0;align-self:center}
+</style>
+</head>
+<body>
+  <div class="canvas">
+    <div class="bg-img"></div>
+    <div class="wash"></div>
+
+    <div class="logo-row">
+      <span class="div-line"></span>
+      <img class="logo" src="{{logoUrl}}" alt="Rayna Tours">
+      <span class="div-line"></span>
+    </div>
+
+    <div class="head-block">
+      <p class="eyebrow">{{eyebrow}}</p>
+      <p class="headline">{{headline}}</p>
+    </div>
+
+    <span class="cta-btn">{{buttonText}}</span>
+
+    <div class="trust-pill">
+      <div class="trust-item"><div class="icon">★</div><div class="label">4.9+ Rated<br>Experiences</div></div>
+      <div class="trust-divider"></div>
+      <div class="trust-item"><div class="icon">◎</div><div class="label">1000+ Experiences<br>to Choose from</div></div>
+      <div class="trust-divider"></div>
+      <div class="trust-item"><div class="icon">♥</div><div class="label">25M+ Customer<br>Served &amp; Counting</div></div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Day {{dayNumber}} — {{title}} — Rayna Tours</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Cormorant+Garamond:ital,wght@1,400&family=DM+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    width:1080px;height:1350px;overflow:hidden;
+    font-family:'DM Sans',system-ui,sans-serif;color:#2F2F2F;background:#fff;
+  }
+  .canvas{position:relative;width:1080px;height:1350px;overflow:hidden}
+
+  .bg-img{
+    position:absolute;inset:0;width:100%;height:100%;
+    background-image:url('{{heroImage}}');
+    background-size:cover;background-position:center;
+    z-index:0;
+  }
+  /* Top white wash so logo + day title read on busy images */
+  .top-wash{
+    position:absolute;top:0;left:0;right:0;height:497px;z-index:1;
+    background:linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.85) 50%, rgba(255,255,255,0) 100%);
+  }
+
+  /* Logo + day text — centered top */
+  .upper{
+    position:absolute;left:0;right:0;top:80px;z-index:2;
+    display:flex;flex-direction:column;align-items:center;text-align:center;
+    gap:60px;padding:0 80px;
+  }
+  .logo{width:260px;height:auto;display:block;margin:0 auto}
+
+  .day-block{display:flex;flex-direction:column;align-items:center;gap:8px;max-width:920px}
+  .day-label{
+    font-family:'Barlow Condensed',sans-serif;font-weight:600;
+    font-size:50px;line-height:1.2;color:#2F2F2F;
+    text-transform:uppercase;letter-spacing:3px;margin:0;
+  }
+  .day-title{
+    font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:400;
+    font-size:40px;line-height:1.2;color:#2F2F2F;margin:0;
+  }
+
+  /* Footer contact strip — color varies per day */
+  .contact-strip{
+    position:absolute;left:0;right:0;bottom:0;z-index:2;
+    display:flex;align-items:flex-end;justify-content:space-between;
+    padding:20px 80px 40px;height:84px;gap:32px;
+    background:linear-gradient(180deg, rgba(0,0,0,0) 0%, {{footerColor}} 100%);
+  }
+  .contact-strip .item{display:flex;align-items:center;gap:12px;color:{{footerText}}}
+  .contact-strip span{
+    font-family:'DM Sans',sans-serif;font-weight:500;font-size:20px;line-height:1.2;color:{{footerText}};
+  }
+  .contact-strip svg{width:24px;height:24px;stroke:{{footerText}};fill:none;stroke-width:1.5}
+</style>
+</head>
+<body>
+  <div class="canvas">
+    <div class="bg-img"></div>
+    <div class="top-wash"></div>
+
+    <section class="upper">
+      <img class="logo" src="{{logoUrl}}" alt="Rayna Tours">
+      <div class="day-block">
+        <h1 class="day-label">Day - {{dayNumber}}</h1>
+        <p class="day-title">{{title}}</p>
+      </div>
+    </section>
+
+    <div class="contact-strip">
+      <div class="item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        <span>{{websiteUrl}}</span>
+      </div>
+      <div class="item">
+        <svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-3 2a12 12 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+        <span>{{phoneNumber}}</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

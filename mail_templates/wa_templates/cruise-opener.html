@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{eyebrow}} {{headline}} — Rayna Tours</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Playfair+Display:wght@400;700;900&family=DM+Serif+Display&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    width:1080px;height:1350px;overflow:hidden;
+    font-family:'DM Sans',system-ui,sans-serif;color:#2F2F2F;
+    background:linear-gradient(180deg, #FFFFFF 82.44%, #999999 100%);
+  }
+  .canvas{position:relative;width:1080px;height:1350px;overflow:hidden}
+
+  .bg-img{
+    position:absolute;inset:0;width:100%;height:100%;
+    background-image:url('{{heroImage}}');
+    background-size:cover;background-position:center;
+    z-index:0;
+  }
+  /* Soft white wash so the centered title is readable */
+  .top-wash{
+    position:absolute;top:0;left:0;right:0;height:428px;z-index:1;
+    background:linear-gradient(166deg, rgba(255,255,255,0.90) 15%, rgba(255,255,255,0) 78%);
+  }
+  /* Blue bottom gradient for the contact strip */
+  .bottom-wash{
+    position:absolute;left:0;right:0;bottom:0;height:188px;z-index:1;
+    background:linear-gradient(180deg, rgba(26,143,187,0) 0%, #156F9C 100%);
+  }
+
+  /* Centered logo top */
+  .logo{
+    position:absolute;left:50%;top:30px;transform:translateX(-50%);z-index:2;
+    width:260px;height:auto;display:block;
+  }
+
+  /* Title block — centered, eyebrow + huge headline */
+  .title-block{
+    position:absolute;left:0;right:0;top:200px;z-index:2;
+    display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;
+    padding:0 80px;
+  }
+  .eyebrow{
+    font-family:'Cormorant Garamond',serif;font-weight:500;
+    font-size:40px;line-height:1.2;color:#8F682E;
+    text-transform:uppercase;letter-spacing:6px;margin:0;
+  }
+  .headline{
+    font-family:'Playfair Display',serif;font-weight:900;
+    font-size:110px;line-height:1.2;color:#2F2F2F;
+    text-transform:uppercase;letter-spacing:4px;margin:0;
+  }
+
+  /* Starting-from round badge — bottom-left of opener */
+  .price-badge{
+    box-sizing:border-box;
+    position:absolute;left:80px;top:428px;z-index:3;
+    display:flex;flex-direction:column;justify-content:center;align-items:center;
+    width:201px;height:201px;padding:8px;
+    background:linear-gradient(270deg, #C1A578 0%, #8D662B 93.17%);
+    border:1px solid #C1A578;border-radius:170px;
+  }
+  .price-badge-inner{
+    box-sizing:border-box;
+    display:flex;flex-direction:column;justify-content:center;align-items:center;
+    width:185px;height:185px;padding:24px;gap:8px;
+    border:1px solid #B2B2B2;border-radius:160px;
+  }
+  .price-badge .label{
+    font-family:'DM Sans',sans-serif;font-weight:400;
+    font-size:20px;line-height:1.3;color:#FFFFFF;text-align:center;
+  }
+  .price-row{display:flex;align-items:flex-end;gap:2px}
+  .price-row .num{
+    font-family:'DM Serif Display',serif;font-weight:400;
+    font-size:56px;line-height:1;color:#FFFFFF;
+  }
+  .price-row .unit{
+    font-family:'DM Sans',sans-serif;font-weight:400;
+    font-size:20px;line-height:1.3;color:#FFFFFF;
+  }
+
+  /* Frosted trust pill above the contact strip */
+  .trust-pill{
+    box-sizing:border-box;
+    position:absolute;left:80px;right:80px;bottom:122px;z-index:2;
+    display:flex;align-items:center;justify-content:space-between;gap:32px;
+    height:110px;padding:24px 32px;
+    background:rgba(255,255,255,0.70);
+    border:1px solid rgba(255,255,255,0.50);
+    backdrop-filter:blur(27px);-webkit-backdrop-filter:blur(27px);
+    border-radius:24px;
+  }
+  .trust-item{display:flex;align-items:center;gap:10px;color:#2F2F2F;flex:1}
+  .trust-item .icon{
+    width:62px;height:62px;border-radius:50%;flex-shrink:0;
+    background:rgba(157,127,83,0.10);border:1px solid rgba(157,127,83,0.30);
+    color:#9D7F53;display:flex;align-items:center;justify-content:center;
+    font-family:'Playfair Display',serif;font-size:24px;font-weight:700;
+  }
+  .trust-item .label{
+    font-family:'DM Sans',sans-serif;font-weight:700;font-size:20px;line-height:1.4;color:#2F2F2F;
+  }
+  .trust-divider{width:1px;height:48px;background:#A7A7A7;flex-shrink:0}
+
+  /* Contact strip on the blue bottom */
+  .contact-strip{
+    position:absolute;left:0;right:0;bottom:0;z-index:2;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:24px 80px;height:88px;gap:32px;
+  }
+  .contact-strip .item{display:flex;align-items:center;gap:10px;color:#FFF9F0}
+  .contact-strip span{
+    font-family:'DM Sans',sans-serif;font-weight:500;font-size:20px;line-height:1.2;color:#FFF9F0;
+  }
+  .contact-strip svg{width:24px;height:24px;stroke:#fff;fill:none;stroke-width:1.5}
+</style>
+</head>
+<body>
+  <div class="canvas">
+    <div class="bg-img"></div>
+    <div class="top-wash"></div>
+    <div class="bottom-wash"></div>
+
+    <img class="logo" src="{{logoUrl}}" alt="Rayna Tours">
+
+    <div class="title-block">
+      <p class="eyebrow">{{eyebrow}}</p>
+      <h1 class="headline">{{headline}}</h1>
+    </div>
+
+    <div class="price-badge">
+      <div class="price-badge-inner">
+        <div class="label">Starting from</div>
+        <div class="price-row">
+          <span class="num">{{startingPrice}}</span>
+          <span class="unit">/AED</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="trust-pill">
+      <div class="trust-item"><div class="icon">★</div><div class="label">4.9+ Rated<br>Experiences</div></div>
+      <div class="trust-divider"></div>
+      <div class="trust-item"><div class="icon">◎</div><div class="label">1000+ Experiences<br>to Choose from</div></div>
+      <div class="trust-divider"></div>
+      <div class="trust-item"><div class="icon">♥</div><div class="label">25M+ Customer<br>Served &amp; Counting</div></div>
+    </div>
+
+    <div class="contact-strip">
+      <div class="item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        <span>{{websiteUrl}}</span>
+      </div>
+      <div class="item">
+        <svg viewBox="0 0 24 24"><path d="M5 4h4l2 5-3 2a12 12 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></svg>
+        <span>{{phoneNumber}}</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

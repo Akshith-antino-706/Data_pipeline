@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Day {{dayNumber}} — {{destination}} — Rayna Tours</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Barlow+Condensed:wght@500;600&family=DM+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    width:1080px;height:1350px;overflow:hidden;
+    font-family:'DM Sans',system-ui,sans-serif;color:#fff;background:#000;
+  }
+  .canvas{position:relative;width:1080px;height:1350px;overflow:hidden}
+
+  /* Blurred backdrop — same image scaled + heavily blurred + darkened */
+  .bg-blur{
+    position:absolute;inset:-40px;
+    background-image:url('{{heroImage}}');
+    background-size:cover;background-position:center;
+    filter:blur(20px) brightness(0.55);
+    z-index:0;
+  }
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,0.25);z-index:1}
+
+  .canvas-inner{
+    position:relative;z-index:2;height:100%;
+    display:flex;flex-direction:column;align-items:center;justify-content:space-between;
+    padding:80px 0 40px;
+  }
+
+  .logo{width:208px;height:auto;display:block}
+
+  .header-block{display:flex;flex-direction:column;align-items:center;gap:24px;margin-top:32px;width:100%}
+
+  /* "Day - 1" row with frosted divider */
+  .day-row{
+    display:flex;align-items:center;justify-content:center;gap:42px;
+    padding:16px 28px;border-radius:24px;
+    backdrop-filter:blur(32px);-webkit-backdrop-filter:blur(32px);
+  }
+  .day-line{width:232px;height:2px}
+  .day-line.left{background:linear-gradient(90deg, rgba(255,255,255,0) 0%, #FFFFFF 100%)}
+  .day-line.right{background:linear-gradient(90deg, #FFFFFF 0%, rgba(255,255,255,0) 100%)}
+  .day-label{
+    font-family:'Barlow Condensed',sans-serif;font-weight:600;
+    font-size:34px;line-height:1;color:#fff;letter-spacing:2px;text-transform:uppercase;
+    white-space:nowrap;
+  }
+  .destination{
+    font-family:'Playfair Display',serif;font-weight:700;
+    font-size:52px;line-height:1.15;letter-spacing:2px;text-transform:uppercase;
+    color:#fff;text-align:center;margin:0;
+  }
+
+  /* Photo card — central rounded image, takes the lower half of the canvas */
+  .photo-card{
+    width:860px;height:780px;border-radius:20px;overflow:hidden;
+    border:8px solid rgba(255,255,255,0.5);
+    box-shadow:0 8px 24px rgba(0,0,0,0.25);
+    background-image:url('{{heroImage}}');
+    background-size:cover;background-position:center;
+  }
+</style>
+</head>
+<body>
+  <div class="canvas">
+    <div class="bg-blur"></div>
+    <div class="scrim"></div>
+
+    <div class="canvas-inner">
+      <img class="logo" src="{{logoUrl}}" alt="Rayna Tours">
+
+      <div class="header-block">
+        <div class="day-row">
+          <span class="day-line left"></span>
+          <span class="day-label">Day - {{dayNumber}}</span>
+          <span class="day-line right"></span>
+        </div>
+        <h1 class="destination">{{destination}}</h1>
+      </div>
+
+      <div class="photo-card"></div>
+    </div>
+  </div>
+</body>
+</html>

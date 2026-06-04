@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chathead API Documentation — v1</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg-secondary: #f7f7f5;
+    --bg-tertiary: #f0efec;
+    --text: #1a1a18;
+    --text-secondary: #6b6b67;
+    --text-tertiary: #a0a09c;
+    --border: rgba(0,0,0,0.12);
+    --border-hover: rgba(0,0,0,0.22);
+    --green-bg: #e1f5ee;
+    --green-text: #0f6e56;
+    --green-border: #9fe1cb;
+    --blue-bg: #e6f1fb;
+    --blue-text: #185fa5;
+    --amber-border: #ef9f27;
+    --red-text: #993c1d;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a;
+      --bg-secondary: #252523;
+      --bg-tertiary: #2e2e2b;
+      --text: #e8e8e4;
+      --text-secondary: #a0a09c;
+      --text-tertiary: #6b6b67;
+      --border: rgba(255,255,255,0.1);
+      --border-hover: rgba(255,255,255,0.2);
+      --green-bg: #0d2e20;
+      --green-text: #5dcaa5;
+      --green-border: #0f6e56;
+      --blue-bg: #0c2340;
+      --blue-text: #85b7eb;
+      --amber-border: #ba7517;
+      --red-text: #f09575;
+    }
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-tertiary);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+  }
+
+  .container {
+    max-width: 780px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .page-header {
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 0.5px solid var(--border);
+  }
+  .page-header-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .page-title {
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .page-subtitle {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+  .version-pill {
+    background: var(--bg-secondary);
+    border: 0.5px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .base-url-bar {
+    margin-top: 1rem;
+    background: var(--bg-secondary);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .base-url-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+  }
+  .base-url-value {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem;
+    margin-bottom: 2rem;
+  }
+  .toc-title {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 0.75rem;
+  }
+  .toc-list { list-style: none; }
+  .toc-list li { border-bottom: 0.5px solid var(--border); }
+  .toc-list li:last-child { border-bottom: none; }
+  .toc-list a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    text-decoration: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    transition: color 0.15s;
+  }
+  .toc-list a:hover { color: var(--text); }
+  .toc-num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    min-width: 22px;
+  }
+
+  /* Method badges */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    font-family: var(--font-mono);
+  }
+  .badge-get { background: var(--green-bg); color: var(--green-text); }
+  .badge-post { background: var(--blue-bg); color: var(--blue-text); }
+
+  /* Section divider */
+  .divider-label {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin: 2rem 0 1rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .divider-label::after {
+    content: '';
+    flex: 1;
+    height: 0.5px;
+    background: var(--border);
+  }
+
+  /* Endpoint card */
+  .endpoint-card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+  .endpoint-header {
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .endpoint-header:hover { background: var(--bg-secondary); }
+  .endpoint-meta { flex: 1; min-width: 0; }
+  .endpoint-header-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+  .endpoint-title { font-size: 14px; font-weight: 500; color: var(--text); }
+  .tag {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+  }
+  .endpoint-url {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    word-break: break-all;
+    margin-bottom: 4px;
+  }
+  .endpoint-desc { font-size: 13px; color: var(--text-secondary); }
+  .chevron {
+    color: var(--text-tertiary);
+    font-size: 18px;
+    transition: transform 0.2s;
+    margin-top: 2px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .chevron.open { transform: rotate(180deg); }
+
+  /* Body sections */
+  .endpoint-body { display: none; border-top: 0.5px solid var(--border); }
+  .endpoint-body.open { display: block; }
+  .ep-section { padding: 1rem 1.25rem; border-bottom: 0.5px solid var(--border); }
+  .ep-section:last-child { border-bottom: none; }
+  .ep-section-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+    letter-spacing: 0.3px;
+  }
+
+  /* Param table */
+  .param-table { width: 100%; border-collapse: collapse; }
+  .param-table tr { border-bottom: 0.5px solid var(--border); }
+  .param-table tr:last-child { border-bottom: none; }
+  .param-table td { padding: 7px 8px 7px 0; vertical-align: top; font-size: 12px; }
+  .param-table td:first-child { font-family: var(--font-mono); color: var(--text); min-width: 150px; white-space: nowrap; }
+  .param-table td:nth-child(2) { font-family: var(--font-mono); color: var(--text-tertiary); min-width: 70px; white-space: nowrap; }
+  .param-table td:last-child { color: var(--text-secondary); }
+  .req { color: var(--red-text); font-size: 10px; margin-left: 4px; font-weight: 500; }
+
+  /* Code block */
+  .code-block {
+    background: var(--bg-secondary);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.875rem 1rem;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-x: auto;
+    position: relative;
+    white-space: pre;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 0.5px solid var(--border);
+    background: var(--bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: background 0.15s;
+  }
+  .copy-btn:hover { background: var(--bg-tertiary); }
+
+  /* Syntax colors */
+  .jk { color: #185fa5; }
+  .js { color: #3b6d11; }
+  .jn { color: #ba7517; }
+
+  @media (prefers-color-scheme: dark) {
+    .jk { color: #85b7eb; }
+    .js { color: #97c459; }
+    .jn { color: #ef9f27; }
+  }
+
+  /* Response tabs */
+  .tab-row { display: flex; gap: 6px; margin-bottom: 0.75rem; flex-wrap: wrap; }
+  .rtab {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    border: 0.5px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .rtab.active { background: var(--green-bg); color: var(--green-text); border-color: var(--green-border); }
+
+  /* Notes */
+  .note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 9px 13px;
+    border-radius: var(--radius-md);
+    border-left: 2px solid var(--green-border);
+    margin-bottom: 8px;
+    line-height: 1.6;
+  }
+  .warn {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 9px 13px;
+    border-radius: var(--radius-md);
+    border-left: 2px solid var(--amber-border);
+    margin-bottom: 8px;
+    line-height: 1.6;
+  }
+
+  /* Field table */
+  .field-table { width: 100%; border-collapse: collapse; }
+  .field-table tr { border-bottom: 0.5px solid var(--border); }
+  .field-table tr:last-child { border-bottom: none; }
+  .field-table td { padding: 6px 8px 6px 0; vertical-align: baseline; font-size: 12px; }
+  .field-table td:first-child { font-family: var(--font-mono); color: var(--text); min-width: 140px; }
+  .field-table td:nth-child(2) { font-family: var(--font-mono); color: var(--text-tertiary); min-width: 65px; white-space: nowrap; }
+  .field-table td:last-child { color: var(--text-secondary); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--bg-secondary);
+    border: 0.5px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: var(--text);
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 0.5px solid var(--border);
+    font-size: 12px;
+    color: var(--text-tertiary);
+    text-align: center;
+  }
+
+  @media (max-width: 600px) {
+    .param-table td:first-child { min-width: 110px; }
+    .base-url-value { font-size: 11px; word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Page header -->
+  <div class="page-header">
+    <div class="page-header-top">
+      <div>
+        <h1 class="page-title">Chathead API Documentation</h1>
+        <p class="page-subtitle">REST API reference for broadcast and account management</p>
+      </div>
+      <span class="version-pill">v1</span>
+    </div>
+    <div class="base-url-bar">
+      <span class="base-url-label">Base URL</span>
+      <span class="base-url-value">https://ser1.chathead.io</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <p class="toc-title">Endpoints</p>
+    <ul class="toc-list">
+      <li><a href="#ep1"><span class="toc-num">01</span><span class="badge badge-get">GET</span> Get channel list</a></li>
+      <li><a href="#ep2"><span class="toc-num">02</span><span class="badge badge-get">GET</span> Get template list</a></li>
+      <li><a href="#ep3"><span class="toc-num">03</span><span class="badge badge-get">GET</span> Get template content</a></li>
+      <li><a href="#ep4"><span class="toc-num">04</span><span class="badge badge-post">POST</span> Upload data file</a></li>
+      <li><a href="#ep5"><span class="toc-num">05</span><span class="badge badge-get">GET</span> Add broadcast</a></li>
+    </ul>
+  </div>
+
+  <!-- ─── ACCOUNT ─── -->
+  <div class="divider-label">Account</div>
+
+  <!-- EP 1 -->
+  <div class="endpoint-card" id="ep1">
+    <div class="endpoint-header" onclick="toggle('ep1')">
+      <span class="badge badge-get">GET</span>
+      <div class="endpoint-meta">
+        <div class="endpoint-header-row">
+          <span class="endpoint-title">Get channel list</span>
+          <span class="tag">channels</span>
+        </div>
+        <p class="endpoint-url">/apis/v1/services/account/channels/list/?c={account}</p>
+        <p class="endpoint-desc">Returns all channels linked to an account.</p>
+      </div>
+      <span class="chevron" id="ep1-chev">&#8964;</span>
+    </div>
+    <div class="endpoint-body" id="ep1-body">
+      <div class="ep-section">
+        <p class="ep-section-title">Query parameters</p>
+        <table class="param-table">
+          <tr><td>c<span class="req">required</span></td><td>string</td><td>Account identifier (e.g. <code>rayna</code>)</td></tr>
+        </table>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Example request</p>
+        <div class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>GET https://ser1.chathead.io/apis/v1/services/account/channels/list/?c=rayna</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Responses</p>
+        <div class="tab-row" id="ep1-tabs">
+          <div class="rtab active" onclick="showTab('ep1',0)">200 — with data</div>
+          <div class="rtab" onclick="showTab('ep1',1)">200 — empty</div>
+        </div>
+        <div id="ep1-r0" class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>{
+  <span class="jk">"status"</span>: <span class="js">"success"</span>,
+  <span class="jk">"msg"</span>: <span class="js">"Channel List!"</span>,
+  <span class="jk">"data"</span>: [
+    {
+      <span class="jk">"id"</span>: <span class="js">"181"</span>,
+      <span class="jk">"type"</span>: <span class="js">"whatsapp"</span>,
+      <span class="jk">"name"</span>: <span class="js">"Rayna WhatsApp"</span>
+    }
+  ]
+}</div>
+        <div id="ep1-r1" class="code-block" style="display:none"><button class="copy-btn" onclick="cp(this)">copy</button>{
+  <span class="jk">"status"</span>: <span class="js">"success"</span>,
+  <span class="jk">"msg"</span>: <span class="js">"Channel List!"</span>,
+  <span class="jk">"data"</span>: []
+}</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Response fields — data[]</p>
+        <table class="field-table">
+          <tr><td>id</td><td>string</td><td>Unique channel identifier</td></tr>
+          <tr><td>type</td><td>string</td><td>Channel type — e.g. <code>whatsapp</code></td></tr>
+          <tr><td>name</td><td>string</td><td>Human-readable channel label</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- EP 2 -->
+  <div class="endpoint-card" id="ep2">
+    <div class="endpoint-header" onclick="toggle('ep2')">
+      <span class="badge badge-get">GET</span>
+      <div class="endpoint-meta">
+        <div class="endpoint-header-row">
+          <span class="endpoint-title">Get template list</span>
+          <span class="tag">templates</span>
+        </div>
+        <p class="endpoint-url">/apis/v1/services/account/templates/list/?c={account}&amp;channel={channel_id}</p>
+        <p class="endpoint-desc">Returns all message templates for a given channel.</p>
+      </div>
+      <span class="chevron" id="ep2-chev">&#8964;</span>
+    </div>
+    <div class="endpoint-body" id="ep2-body">
+      <div class="ep-section">
+        <p class="ep-section-title">Query parameters</p>
+        <table class="param-table">
+          <tr><td>c<span class="req">required</span></td><td>string</td><td>Account identifier (e.g. <code>rayna</code>)</td></tr>
+          <tr><td>channel<span class="req">required</span></td><td>integer</td><td>Channel ID to fetch templates for (e.g. <code>181</code>)</td></tr>
+        </table>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Example request</p>
+        <div class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>GET https://ser1.chathead.io/apis/v1/services/account/templates/list/?c=rayna&channel=181</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Responses</p>
+        <div class="tab-row" id="ep2-tabs">
+          <div class="rtab active" onclick="showTab('ep2',0)">200 — with data</div>
+          <div class="rtab" onclick="showTab('ep2',1)">200 — empty</div>
+        </div>
+        <div id="ep2-r0" class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>{
+  <span class="jk">"status"</span>: <span class="js">"success"</span>,
+  <span class="jk">"msg"</span>: <span class="js">"Template List!"</span>,
+  <span class="jk">"data"</span>: [
+    {
+      <span class="jk">"id"</span>: <span class="js">"1089"</span>,
+      <span class="jk">"type"</span>: <span class="js">"whatsapp"</span>,
+      <span class="jk">"name"</span>: <span class="js">"chathead introduction"</span>,
+      <span class="jk">"template_code"</span>: <span class="js">"chathead_introduction"</span>
+    },
+    {
+      <span class="jk">"id"</span>: <span class="js">"1093"</span>,
+      <span class="jk">"type"</span>: <span class="js">"whatsapp"</span>,
+      <span class="jk">"name"</span>: <span class="js">"Desert Safari Notification"</span>,
+      <span class="jk">"template_code"</span>: <span class="js">"desert_safari_notification"</span>
+    }
+  ]
+}</div>
+        <div id="ep2-r1" class="code-block" style="display:none"><button class="copy-btn" onclick="cp(this)">copy</button>{
+  <span class="jk">"status"</span>: <span class="js">"success"</span>,
+  <span class="jk">"msg"</span>: <span class="js">"Template List!"</span>,
+  <span class="jk">"data"</span>: []
+}</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Response fields — data[]</p>
+        <table class="field-table">
+          <tr><td>id</td><td>string</td><td>Unique template identifier</td></tr>
+          <tr><td>type</td><td>string</td><td>Channel type — e.g. <code>whatsapp</code></td></tr>
+          <tr><td>name</td><td>string</td><td>Human-readable template name</td></tr>
+          <tr><td>template_code</td><td>string</td><td>Snake_case identifier used to reference the template</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- EP 3 -->
+  <div class="endpoint-card" id="ep3">
+    <div class="endpoint-header" onclick="toggle('ep3')">
+      <span class="badge badge-get">GET</span>
+      <div class="endpoint-meta">
+        <div class="endpoint-header-row">
+          <span class="endpoint-title">Get template content</span>
+          <span class="tag">templates</span>
+        </div>
+        <p class="endpoint-url">/apis/v1/services/account/templates/content/?c={account}&amp;template_id={id}</p>
+        <p class="endpoint-desc">Returns the rendered HTML content of a specific template.</p>
+      </div>
+      <span class="chevron" id="ep3-chev">&#8964;</span>
+    </div>
+    <div class="endpoint-body" id="ep3-body">
+      <div class="ep-section">
+        <p class="ep-section-title">Query parameters</p>
+        <table class="param-table">
+          <tr><td>c<span class="req">required</span></td><td>string</td><td>Account identifier (e.g. <code>rayna</code>)</td></tr>
+          <tr><td>template_id<span class="req">required</span></td><td>integer</td><td>ID of the template to retrieve (e.g. <code>1236</code>)</td></tr>
+        </table>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Example request</p>
+        <div class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>GET https://ser1.chathead.io/apis/v1/services/account/templates/content/?c=rayna&template_id=1236</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Response</p>
+        <div class="note">&#9432; Returns <strong>plain HTML</strong>, not a JSON envelope. The response body is raw template markup ready to render directly in a browser or email client.</div>
+        <div class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>Content-Type: text/html
+
+&lt;div class="template-body"&gt;
+  &lt;p&gt;Hello {{customer_name}},&lt;/p&gt;
+  &lt;p&gt;Your booking is confirmed.&lt;/p&gt;
+&lt;/div&gt;</div>
+        <p style="font-size:13px;color:var(--text-secondary);margin-top:.75rem;line-height:1.6">The returned HTML may contain placeholder variables (e.g. <code>{{customer_name}}</code>) that should be substituted server-side before rendering to end users.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── BROADCAST ─── -->
+  <div class="divider-label">Broadcast</div>
+
+  <!-- EP 4 -->
+  <div class="endpoint-card" id="ep4">
+    <div class="endpoint-header" onclick="toggle('ep4')">
+      <span class="badge badge-post">POST</span>
+      <div class="endpoint-meta">
+        <div class="endpoint-header-row">
+          <span class="endpoint-title">Upload data file</span>
+          <span class="tag">broadcast</span>
+        </div>
+        <p class="endpoint-url">/apis/v1/services/broadcast/data/add/</p>
+        <p class="endpoint-desc">Uploads a recipient data file for use in a broadcast. Only <code>.data</code> files are accepted.</p>
+      </div>
+      <span class="chevron" id="ep4-chev">&#8964;</span>
+    </div>
+    <div class="endpoint-body" id="ep4-body">
+      <div class="ep-section">
+        <p class="ep-section-title">Request</p>
+        <table class="param-table">
+          <tr><td>Method</td><td></td><td><code>POST</code></td></tr>
+          <tr><td>Content-Type</td><td></td><td><code>multipart/form-data</code></td></tr>
+        </table>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Form fields</p>
+        <table class="param-table">
+          <tr>
+            <td>Filedata<span class="req">required</span></td>
+            <td>file</td>
+            <td>The data file to upload. Must have a <code>.data</code> extension. Content-Type must be <code>application/octet-stream</code>.</td>
+          </tr>
+          <tr>
+            <td>client<span class="req">required</span></td>
+            <td>string</td>
+            <td>Account identifier (e.g. <code>rayna</code>)</td>
+          </tr>
+        </table>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">File constraint</p>
+        <div class="warn">&#9651; Only files with the <strong>.data</strong> extension are accepted. Uploads with any other extension will be rejected by the server.</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Example request</p>
+        <div class="tab-row" id="ep4-tabs">
+          <div class="rtab active" onclick="showTab('ep4',0)">cURL</div>
+          <div class="rtab" onclick="showTab('ep4',1)">JavaScript</div>
+          <div class="rtab" onclick="showTab('ep4',2)">PHP</div>
+        </div>
+        <div id="ep4-r0" class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>curl -X POST https://ser1.chathead.io/apis/v1/services/broadcast/data/add/ \
+  -F "Filedata=@sample.data;type=application/octet-stream" \
+  -F "client=rayna"</div>
+        <div id="ep4-r1" class="code-block" style="display:none"><button class="copy-btn" onclick="cp(this)">copy</button>const formData = new FormData();
+formData.append('Filedata', file); // .data extension required
+formData.append('client', 'rayna');
+
+const res = await fetch(
+  'https://ser1.chathead.io/apis/v1/services/broadcast/data/add/',
+  { method: 'POST', body: formData }
+);
+const result = await res.json();</div>
+        <div id="ep4-r2" class="code-block" style="display:none"><button class="copy-btn" onclick="cp(this)">copy</button>$curl = curl_init();
+curl_setopt_array($curl, [
+  CURLOPT_URL            => 'https://ser1.chathead.io/apis/v1/services/broadcast/data/add/',
+  CURLOPT_POST           => true,
+  CURLOPT_RETURNTRANSFER => true,
+  CURLOPT_POSTFIELDS     => [
+    'Filedata' => new CURLFile('/path/to/sample.data',
+                               'application/octet-stream',
+                               'sample.data'),
+    'client'   => 'rayna',
+  ],
+]);
+$response = curl_exec($curl);
+curl_close($curl);</div>
+      </div>
+      <div class="ep-section">
+        <div class="note">&#9432; Share the actual response payload to have it documented here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EP 5 -->
+  <div class="endpoint-card" id="ep5">
+    <div class="endpoint-header" onclick="toggle('ep5')">
+      <span class="badge badge-get">GET</span>
+      <div class="endpoint-meta">
+        <div class="endpoint-header-row">
+          <span class="endpoint-title">Add broadcast</span>
+          <span class="tag">broadcast</span>
+        </div>
+        <p class="endpoint-url">/apis/v1/services/broadcast/add/?c={account}&amp;name={name}&amp;channel={id}&amp;subject={subject}&amp;data_file={file}&amp;template_id={id}&amp;send_time={datetime}</p>
+        <p class="endpoint-desc">Creates and schedules a new broadcast using an uploaded data file and a message template.</p>
+      </div>
+      <span class="chevron" id="ep5-chev">&#8964;</span>
+    </div>
+    <div class="endpoint-body" id="ep5-body">
+      <div class="ep-section">
+        <p class="ep-section-title">Query parameters</p>
+        <table class="param-table">
+          <tr><td>c<span class="req">required</span></td><td>string</td><td>Account identifier (e.g. <code>rayna</code>)</td></tr>
+          <tr><td>name<span class="req">required</span></td><td>string</td><td>Display name for the broadcast — URL-encoded (e.g. <code>test%20from%20api</code>)</td></tr>
+          <tr><td>channel<span class="req">required</span></td><td>integer</td><td>Channel ID to send through (e.g. <code>140</code>)</td></tr>
+          <tr><td>subject<span class="req">required</span></td><td>string</td><td>Broadcast subject line — URL-encoded</td></tr>
+          <tr><td>data_file<span class="req">required</span></td><td>string</td><td>Filename of the previously uploaded <code>.data</code> file (e.g. <code>sample.data</code>)</td></tr>
+          <tr><td>template_id<span class="req">required</span></td><td>integer</td><td>ID of the message template to use (e.g. <code>1144</code>)</td></tr>
+          <tr><td>send_time<span class="req">required</span></td><td>string</td><td>Scheduled datetime in <code>YYYY-MM-DD HH:MM:SS</code> format, URL-encoded (e.g. <code>2026-05-28%2005:57:00</code>)</td></tr>
+        </table>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Typical flow</p>
+        <div class="note">
+          &#8594; <strong>Step 1</strong> — Upload the recipient data file via <code>POST /broadcast/data/add/</code> and note the filename.<br>
+          &#8594; <strong>Step 2</strong> — Pass that filename as <code>data_file</code> in this endpoint to create and schedule the broadcast.
+        </div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Example request</p>
+        <div class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>GET https://ser1.chathead.io/apis/v1/services/broadcast/add/?c=rayna&name=test%20from%20api&channel=140&subject=hey%20there&data_file=sample.data&template_id=1144&send_time=2026-05-28%2005:57:00</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Response — 200 success</p>
+        <div class="code-block"><button class="copy-btn" onclick="cp(this)">copy</button>{
+  <span class="jk">"status"</span>: <span class="js">"success"</span>,
+  <span class="jk">"msg"</span>: <span class="js">"Broadcast Added!"</span>,
+  <span class="jk">"data"</span>: {
+    <span class="jk">"broadcast_id"</span>: <span class="jn">212</span>
+  }
+}</div>
+      </div>
+      <div class="ep-section">
+        <p class="ep-section-title">Response fields — data</p>
+        <table class="field-table">
+          <tr><td>broadcast_id</td><td>integer</td><td>Unique identifier of the newly created broadcast. Use this to reference or track the broadcast in subsequent calls.</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Chathead API Docs &mdash; v1 &mdash; Generated June 2026
+  </div>
+
+</div>
+
+<script>
+  function toggle(id) {
+    const body = document.getElementById(id + '-body');
+    const chev = document.getElementById(id + '-chev');
+    const isOpen = body.classList.contains('open');
+    body.classList.toggle('open', !isOpen);
+    chev.classList.toggle('open', !isOpen);
+  }
+
+  function showTab(ep, idx) {
+    const tabs = document.querySelectorAll('#' + ep + '-tabs .rtab');
+    tabs.forEach((t, i) => {
+      t.classList.toggle('active', i === idx);
+      const el = document.getElementById(ep + '-r' + i);
+      if (el) el.style.display = i === idx ? 'block' : 'none';
+    });
+  }
+
+  function cp(btn) {
+    const block = btn.parentElement;
+    const clone = block.cloneNode(true);
+    clone.querySelectorAll('button').forEach(b => b.remove());
+    const text = clone.innerText.trim();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'copied!';
+      setTimeout(() => btn.textContent = 'copy', 1500);
+    });
+  }
+</script>
+</body>
+</html>

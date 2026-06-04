@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{country}} Visa — Rayna Tours</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kaushan+Script&family=Inter:wght@400;500;600;700&family=DM+Sans:wght@500;700&family=Oswald:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    width:1080px;height:1350px;overflow:hidden;
+    font-family:'DM Sans',system-ui,sans-serif;color:#fff;background:#000;
+  }
+  .canvas{position:relative;width:1080px;height:1350px;overflow:hidden}
+
+  .bg-img{
+    position:absolute;inset:0;width:100%;height:100%;
+    background-image:url('{{heroImage}}');
+    background-size:cover;background-position:center;
+    z-index:0;
+  }
+  .bottom-shade{
+    position:absolute;left:0;right:0;bottom:0;height:843px;z-index:1;
+    background:linear-gradient(180deg, rgba(2,2,2,0) 0%, #000000 100%);
+  }
+
+  .logo{
+    position:absolute;top:37px;right:60px;z-index:3;
+    width:190px;height:auto;
+  }
+
+  .headline-block{
+    position:absolute;top:106px;left:0;right:0;z-index:2;
+    display:flex;flex-direction:column;align-items:center;text-align:center;
+  }
+  .tagline{
+    font-family:'Kaushan Script',cursive;font-weight:400;
+    font-size:42px;line-height:1.2;color:{{taglineColor}};
+    margin:0 0 12px;
+  }
+  .country-title{
+    font-family:'Oswald',Impact,sans-serif;font-weight:700;
+    font-size:96px;line-height:1.2;color:#FFFFFF;
+    letter-spacing:1px;margin:0;
+  }
+
+  .promise{
+    position:absolute;left:0;right:0;top:854px;z-index:2;
+    font-family:'Inter',sans-serif;font-weight:500;
+    font-size:40px;line-height:1.2;color:#FFFFFF;
+    text-align:center;padding:0 80px;margin:0;
+  }
+
+  .trust-strip{
+    position:absolute;left:116px;right:116px;top:996px;z-index:2;
+    display:flex;align-items:center;justify-content:space-between;gap:32px;
+    height:110px;padding:24px 32px;
+    background:rgba(0,0,0,0.10);
+    backdrop-filter:blur(27px);-webkit-backdrop-filter:blur(27px);
+    border-radius:24px;
+  }
+  .trust-item{display:flex;align-items:center;gap:12px;color:#fff;flex:1}
+  .trust-item .icon{
+    width:62px;height:62px;border-radius:50%;flex-shrink:0;
+    background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);
+    color:#fff;display:flex;align-items:center;justify-content:center;
+    font-family:'Oswald',sans-serif;font-size:24px;
+  }
+  .trust-item .label{
+    font-family:'DM Sans',sans-serif;font-weight:700;font-size:20px;line-height:1.4;color:#fff;
+  }
+  .trust-divider{width:1px;height:48px;background:#A7A7A7;flex-shrink:0}
+
+  .sub-headline{
+    position:absolute;left:0;right:0;top:1159px;z-index:2;
+    font-family:'Inter',sans-serif;font-weight:600;
+    font-size:30px;line-height:1.2;color:#FFFFFF;
+    text-align:center;padding:0 240px;margin:0;
+  }
+
+  .apply-btn{
+    position:absolute;left:50%;top:1266px;transform:translateX(-50%);z-index:2;
+    display:flex;align-items:center;justify-content:center;
+    padding:6px 31px 9px 30px;height:53px;
+    background:{{buttonBg}};color:{{buttonColor}};
+    box-shadow:0 4px 4px rgba(0,0,0,0.25);border-radius:10px;
+    font-family:'Inter',sans-serif;font-weight:600;font-size:32px;line-height:1.2;
+    text-decoration:none;
+  }
+</style>
+</head>
+<body>
+  <div class="canvas">
+    <div class="bg-img"></div>
+    <div class="bottom-shade"></div>
+
+    <img class="logo" src="{{logoUrl}}" alt="Rayna Tours">
+
+    <div class="headline-block">
+      <p class="tagline">{{tagline}}</p>
+      <h1 class="country-title">{{country}} VISA</h1>
+    </div>
+
+    <p class="promise">{{promise}}</p>
+
+    <div class="trust-strip">
+      <div class="trust-item"><div class="icon">★</div><div class="label">4.9+ Rated<br>Experiences</div></div>
+      <div class="trust-divider"></div>
+      <div class="trust-item"><div class="icon">◎</div><div class="label">1000+ Experiences<br>to Choose from</div></div>
+      <div class="trust-divider"></div>
+      <div class="trust-item"><div class="icon">♥</div><div class="label">25M+ Customer<br>Served &amp; Counting</div></div>
+    </div>
+
+    <p class="sub-headline">{{subHeadline}}</p>
+
+    <span class="apply-btn">{{buttonText}}</span>
+  </div>
+</body>
+</html>

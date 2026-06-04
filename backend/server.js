@@ -36,6 +36,7 @@ import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 import testE2ERouter from './src/routes/testE2E.js';
 import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
+import chatheadV1Router from './src/routes/chatheadV1.js';
 import authRouter from './src/routes/auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +125,7 @@ app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 app.use('/api/v3/test', testE2ERouter);
 app.use('/api/v3/gupshup', gupshupRouter);
 app.use('/api/v3/test-sends', testSendsRouter);
+app.use('/api/v3/chathead', chatheadV1Router);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
