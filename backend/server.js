@@ -329,7 +329,8 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('081_journey_node_rankings.sql');
     await runMigrationFile('082_journey_node_statuses.sql');
     await runMigrationFile('083_journey_node_emails.sql');
-    res.json({ success: true, message: 'Journey migrations (071-083) completed' });
+    await runMigrationFile('084_daily_ai_templates.sql');
+    res.json({ success: true, message: 'Journey migrations (071-084) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -678,6 +679,19 @@ async function runSnapshotRefresh() {
 
 cron.schedule('0 2 * * *', runSnapshotRefresh, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Segmentation tree snapshot scheduled at 2:00 AM Dubai time');
+
+// ── Daily AI templates — render all 7 Day templates via Claude once/day at 3 AM Dubai ──
+// Runs before the journey engine fires (every 5 min) so journeys snapshot from a fresh master.
+cron.schedule('0 3 * * *', async () => {
+  try {
+    const { generateDailyAITemplates } = await import('./src/services/JourneyService.js');
+    const results = await generateDailyAITemplates();
+    console.log('[Cron:DailyAI] Generated daily templates:', JSON.stringify(results));
+  } catch (err) {
+    console.error('[Cron:DailyAI] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily AI templates scheduled at 3:00 AM Dubai time (7 Claude calls)');
 
 // ── Unsubscribe Sync — MySQL → RDS daily at 2 AM Dubai ──────────────
 cron.schedule('0 2 * * *', async () => {

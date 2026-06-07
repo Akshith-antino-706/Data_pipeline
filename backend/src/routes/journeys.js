@@ -280,6 +280,18 @@ router.get('/:id/nodes/:nodeId/send-log', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Manually (re)generate today's daily AI master templates — all 7 via Claude.
+// Useful to run on-demand instead of waiting for the 3 AM cron.
+router.post('/generate-daily-templates', async (_req, res) => {
+  try {
+    const { generateDailyAITemplates } = await import('../services/JourneyService.js');
+    const results = await generateDailyAITemplates();
+    res.json({ success: true, data: results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Dynamic email preview — renders the EXACT email sent to contacts, with live
 // Claude ranking (same renderDayHtml the workers use). Slow (~15-26s on cache miss).
 router.get('/:id/nodes/:nodeId/preview-dynamic', async (req, res) => {

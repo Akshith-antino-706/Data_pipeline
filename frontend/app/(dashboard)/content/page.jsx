@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, createTemplate, updateTemplate, deleteTemplate } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2 } from 'lucide-react';
+import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate } from '@/lib/api';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -60,6 +60,17 @@ export default function Content() {
       setPreview({ template: tpl, html: res?.data?.html || '', loading: false });
     } catch (err) {
       setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${err.message || 'Preview failed'}</pre>`, loading: false });
+    }
+  }
+
+  // AI preview — renders the real Claude-ranked version (slow, ~15-25s first call)
+  async function openPreviewAI(tpl) {
+    setPreview({ template: tpl, html: null, loading: true, ai: true });
+    try {
+      const res = await previewTemplateAI(tpl.id);
+      setPreview({ template: tpl, html: res?.data?.html || '', loading: false, ai: true });
+    } catch (err) {
+      setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${err.message || 'AI preview failed'}</pre>`, loading: false, ai: true });
     }
   }
 
@@ -217,24 +228,42 @@ export default function Content() {
               {t.cta_text && (
                 <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CTA: {t.cta_text}</div>
               )}
-              <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
-                <button className="btn btn-secondary btn-sm" onClick={() => openPreview(t)} style={{ gap: 6 }}>
-                  <Eye size={14} /> Preview
-                </button>
-                <button className="btn btn-secondary btn-sm" onClick={() => openEdit(t)} style={{ gap: 6 }}>
-                  <Edit2 size={14} /> Edit
-                </button>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setConfirmDelete(t)}
-                  disabled={deleting === t.id}
-                  style={{ gap: 6, color: 'var(--red, #ef4444)', marginLeft: 'auto' }}
-                  title="Delete template"
-                >
-                  <Trash2 size={14} />
-                  {deleting === t.id ? '…' : 'Delete'}
-                </button>
-              </div>
+              {(() => {
+                const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+                const previewBtn = (
+                  <button className="btn btn-secondary btn-sm" onClick={() => openPreview(t)} style={{ gap: 6, flex: 1 }}>
+                    <Eye size={14} /> Preview
+                  </button>
+                );
+                const editBtn = (
+                  <button className="btn btn-secondary btn-sm" onClick={() => openEdit(t)} style={{ gap: 6, flex: 1 }}>
+                    <Edit2 size={14} /> Edit
+                  </button>
+                );
+                const deleteBtn = (
+                  <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(t)} disabled={deleting === t.id}
+                    style={{ gap: 6, flex: 1, color: 'var(--red, #ef4444)' }} title="Delete template">
+                    <Trash2 size={14} />{deleting === t.id ? '…' : 'Delete'}
+                  </button>
+                );
+                const aiBtn = (
+                  <button className="btn btn-sm" onClick={() => openPreviewAI(t)}
+                    style={{ gap: 6, flex: 1, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
+                    <Sparkles size={14} /> Preview AI Template
+                  </button>
+                );
+                // 3 buttons (no AI) → single row · 4 buttons (with AI) → two rows
+                return hasAI ? (
+                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
+                    <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
+                    {previewBtn}{editBtn}{deleteBtn}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -291,7 +320,10 @@ export default function Content() {
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 'var(--radius-xl)', maxWidth: 720, width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>{preview.template.name}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {preview.template.name}
+                  {preview.ai && <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>✨ AI</span>}
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
                   {preview.template.channel} · {preview.template.segment_label || 'ALL'} · {preview.template.status}
                 </div>
@@ -300,7 +332,9 @@ export default function Content() {
             </div>
             <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
               {preview.loading ? (
-                <div style={{ padding: 60, textAlign: 'center', color: '#888' }}>Rendering preview…</div>
+                <div style={{ padding: 60, textAlign: 'center', color: '#888' }}>
+                  {preview.ai ? '✨ Generating AI preview with Claude… (~15-25s)' : 'Rendering preview…'}
+                </div>
               ) : (
                 <iframe
                   srcDoc={preview.html}

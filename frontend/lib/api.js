@@ -56,6 +56,7 @@ export const previewTemplate = (id, variables = {}) =>
     method: 'POST',
     body: JSON.stringify({ variables }),
   });
+export const previewTemplateAI = (id) => request(`/api/v2/content/templates/${id}/preview-ai`);
 export const createTemplate = (data) => request('/api/v2/content/templates', { method: 'POST', body: JSON.stringify(data) });
 export const updateTemplate = (id, data) => request(`/api/v2/content/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteTemplate = (id) => request(`/api/v2/content/templates/${id}`, { method: 'DELETE' });
