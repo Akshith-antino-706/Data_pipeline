@@ -3,12 +3,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact } from '@/lib/api';
+import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys } from '@/lib/api';
 import {
   ArrowLeft, Globe, MessageSquare, Mail, Phone, Building2,
   Calendar, Clock, Ticket, DollarSign, Plane, Hotel, MessageCircle,
   Layers, FileText, Palmtree, Hash, MapPin, ChevronDown, ChevronUp,
-  Zap, Activity, User, Pencil, X, Check, Loader2,
+  Zap, Activity, User, Pencil, X, Check, Loader2, GitBranch,
 } from 'lucide-react';
 
 const fadeIn = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35 } } };
@@ -38,6 +38,8 @@ export default function ContactProfile() {
   const [contactLoading, setContactLoading] = useState(true);
   const [gtmData, setGtmData] = useState(null);
   const [gtmLoading, setGtmLoading] = useState(true);
+  const [journeys, setJourneys] = useState([]);
+  const [journeysLoading, setJourneysLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [saveLoading, setSaveLoading] = useState(false);
@@ -56,6 +58,12 @@ export default function ContactProfile() {
       .then(res => setGtmData(res))
       .catch(() => setGtmData(null))
       .finally(() => setGtmLoading(false));
+
+    setJourneysLoading(true);
+    getContactJourneys(id)
+      .then(res => setJourneys(res.data || []))
+      .catch(() => setJourneys([]))
+      .finally(() => setJourneysLoading(false));
   }, [id]);
 
   if (contactLoading) return <ProfileSkeleton />;
@@ -308,6 +316,71 @@ export default function ContactProfile() {
           ))}
         </motion.div>
       )}
+
+      {/* Journeys this contact is enrolled in */}
+      <motion.div variants={fadeIn}>
+        <div className="card" style={{ padding: 20, marginBottom: 12 }}>
+          <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <GitBranch size={13} color="#8b5cf6" /> Journeys
+            {!journeysLoading && journeys.length > 0 && (
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: 0 }}>{journeys.length} enrolled</span>
+            )}
+          </div>
+
+          {journeysLoading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[...Array(2)].map((_, i) => <div key={i} className="skeleton" style={{ width: '100%', height: 52, borderRadius: 8 }} />)}
+            </div>
+          ) : journeys.length === 0 ? (
+            <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+              Not enrolled in any journey
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {journeys.map(j => {
+                const JSTATUS = {
+                  active:    { bg: 'rgba(34,197,94,0.12)',  color: '#22c55e', label: 'ACTIVE' },
+                  draft:     { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', label: 'DRAFT' },
+                  paused:    { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c', label: 'PAUSED' },
+                  completed: { bg: 'rgba(59,130,246,0.12)',  color: '#3b82f6', label: 'COMPLETED' },
+                }[j.journey_status] || { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', label: (j.journey_status || '').toUpperCase() };
+                const ESTATUS = {
+                  active:    { color: '#22c55e', label: 'In progress' },
+                  completed: { color: '#3b82f6', label: 'Completed' },
+                  exited:    { color: '#ef4444', label: `Exited${j.exit_reason ? ` · ${j.exit_reason}` : ''}` },
+                  converted: { color: '#22c55e', label: 'Converted' },
+                  snapshot:  { color: '#9ca3af', label: 'Queued' },
+                }[j.entry_status] || { color: 'var(--text-tertiary)', label: j.entry_status || '—' };
+                return (
+                  <div
+                    key={j.journey_id}
+                    onClick={() => router.push(`/journeys?id=${j.journey_id}`)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+                      borderRadius: 10, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {j.name || `Journey ${j.journey_id}`}
+                      </div>
+                      <div style={{ fontSize: 11, color: ESTATUS.color, marginTop: 2 }}>
+                        {ESTATUS.label}
+                        {j.current_node_id && j.entry_status === 'active' && <span style={{ color: 'var(--text-tertiary)' }}> · at {j.current_node_id}</span>}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 9, fontWeight: 800, padding: '3px 9px', borderRadius: 20, background: JSTATUS.bg, color: JSTATUS.color, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
+                      {JSTATUS.label}
+                    </span>
+                    <ChevronDown size={14} color="var(--text-tertiary)" style={{ transform: 'rotate(-90deg)', flexShrink: 0 }} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </motion.div>
 
       {/* GTM Events */}
       <motion.div variants={fadeIn}>

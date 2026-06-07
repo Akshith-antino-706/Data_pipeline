@@ -74,6 +74,17 @@ export default class CustomSegmentService {
             }
             break;
           }
+          case 'mobile_country': {
+            // Free-text country name (e.g. India, UAE, United States) — case-insensitive
+            if (Array.isArray(cond.value)) {
+              const placeholders = cond.value.map(v => { params.push(String(v).toUpperCase()); return `$${idx++}`; });
+              sub.push(`UPPER(TRIM(uc.mobile_country)) IN (${placeholders.join(',')})`);
+            } else {
+              params.push(String(cond.value).toUpperCase());
+              sub.push(`UPPER(TRIM(uc.mobile_country)) = $${idx++}`);
+            }
+            break;
+          }
           case 'is_indian': {
             params.push(cond.value === true || cond.value === 'yes');
             sub.push(`uc.is_indian = $${idx++}`);

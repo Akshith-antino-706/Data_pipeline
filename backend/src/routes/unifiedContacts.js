@@ -166,6 +166,29 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /:id/journeys — journeys this contact is enrolled in (via journey_entries)
+router.get('/:id/journeys', async (req, res, next) => {
+  try {
+    const db = (await import('../config/database.js')).default;
+    const { rows } = await db.query(`
+      SELECT
+        jf.journey_id,
+        jf.name,
+        jf.status                                    AS journey_status,
+        je.status                                    AS entry_status,
+        je.exit_reason,
+        je.current_node_id,
+        je.entered_at,
+        je.completed_at
+      FROM journey_entries je
+      JOIN journey_flows jf ON jf.journey_id = je.journey_id
+      WHERE je.customer_id = $1
+      ORDER BY je.entered_at DESC NULLS LAST
+    `, [req.params.id]);
+    res.json({ success: true, data: rows });
+  } catch (err) { next(err); }
+});
+
 // PATCH /api/v3/unified-contacts/:id — update editable contact fields
 router.patch('/:id', async (req, res, next) => {
   try {

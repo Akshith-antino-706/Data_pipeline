@@ -38,6 +38,11 @@ const FIELD_CONFIG = {
     placeholder: 'e.g. INDIA, UAE',
     defaultOperator: 'eq',
   },
+  mobile_country: {
+    label: 'Mobile Country', type: 'text',
+    placeholder: 'e.g. India, UAE, United States',
+    defaultOperator: 'eq',
+  },
   is_indian: {
     label: 'Is Indian', type: 'boolean',
     options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
