@@ -31,6 +31,7 @@ import DailyBillingSync from './src/services/DailyBillingSync.js';
 import JourneyService from './src/services/JourneyService.js';
 import UnsubscribeSyncService from './src/services/UnsubscribeSyncService.js';
 import ContactEnrichmentService from './src/services/ContactEnrichmentService.js';
+import ChatsSyncService from './src/services/ChatsSyncService.js';
 import UnifiedContactService from './src/services/UnifiedContactService.js';
 // import BigQuerySyncService from './src/services/BigQuerySyncService.js'; // disabled
 // import MySQLSyncService from './src/services/MySQLSyncService.js'; // disabled
@@ -696,6 +697,17 @@ cron.schedule('30 1 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Contact enrichment scheduled at 1:30 AM Dubai time (new contacts only)');
+
+// ── Chats Sync — MySQL → RDS insert-only at 3:30 AM Dubai, plus unified_id backfill ──
+cron.schedule('30 3 * * *', async () => {
+  try {
+    const result = await ChatsSyncService.sync();
+    console.log(`[Cron:ChatsSync] Done — inserted: ${result.inserted}, unified_id matched: ${result.unifiedMatched}, elapsed: ${(result.elapsedMs / 1000).toFixed(1)}s`);
+  } catch (err) {
+    console.error('[Cron:ChatsSync] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Chats sync scheduled at 3:30 AM Dubai time');
 
 // ── Journey Engine — process due entries every 5 min ──────────────
 cron.schedule('*/5 * * * *', async () => {
