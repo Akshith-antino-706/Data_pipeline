@@ -23,7 +23,7 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
-import JourneyService, { renderDayHtml } from '../JourneyService.js';
+import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 
@@ -180,10 +180,11 @@ async function processEmail(job) {
     return;
   }
 
-  // Re-check unsubscribe status at send time — user may have unsubscribed after job was enqueued
+  // Re-check unsubscribe + purchased status at send time
   const { rows: [contact] } = await db.query(
-    'SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
+    'SELECT email_unsubscribe, booking_status FROM unified_contacts WHERE id = $1', [d.customerId]
   );
+
   if (contact?.email_unsubscribe === 'Yes') {
     console.log(`[Worker:email] UNSUBSCRIBED — skipping send for entry=${d.entryId} customer=${d.customerId}`);
     await db.query(
@@ -194,22 +195,40 @@ async function processEmail(job) {
     ).catch(() => {});
     return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
   }
+
+  // Purchased exit: ON_TRIP or FUTURE_TRAVEL + gtm purchase event — skip for first action node
+  if (
+    d.nodeId !== d.firstActionNodeId &&
+    (contact?.booking_status === 'ON_TRIP' || contact?.booking_status === 'FUTURE_TRAVEL')
+  ) {
+    const { rows: [gtmRow] } = await db.query(
+      `SELECT 1 FROM gtm_events WHERE unified_id = $1 AND journey_id = $2 AND event_name = 'purchase' LIMIT 1`,
+      [d.customerId, d.journeyId]
+    );
+    if (gtmRow) {
+      console.log(`[Worker:email] PURCHASED — skipping send for entry=${d.entryId} customer=${d.customerId} status=${contact.booking_status}`);
+      return _logAndAdvance(d, 'action_blocked', { reason: 'purchased', booking_status: contact.booking_status }, false);
+    }
+  }
   console.log(`[Worker:email] ── Processing job ${job.id} ──`);
   console.log(`[Worker:email]   entry=${d.entryId} customer=${d.customerId} node=${d.nodeId} journey=${d.journeyId}`);
   console.log(`[Worker:email]   to=${recipientEmail}${EMAIL_OVERRIDE ? ` (override, real=${d.email})` : ''} template=${d.templateId}`);
 
-  // Try renderDayHtml first (Day1-Day7 templates from mail_templates/ folder)
-  // Falls back to EmailRenderer if renderDayHtml doesn't match the templateId
+  // Stored node email first — the SAME rendered HTML for every contact at this node,
+  // so the preview is byte-identical to what's sent. First touch renders (Claude/
+  // fallback) + stores; all subsequent sends read the stored HTML.
   let html, subject;
-  const dayRendered = await renderDayHtml(d.templateId, d.customerId, { journeyId: d.journeyId, nodeId: d.nodeId, extraVars: d.templateVariables || {} }).catch(err => {
-    console.log(`[Worker] renderDayHtml failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
+  const dayRendered = await getOrGenerateNodeEmail({
+    journeyId: d.journeyId, nodeId: d.nodeId, templateId: d.templateId, contactId: d.customerId,
+  }).catch(err => {
+    console.log(`[Worker] getOrGenerateNodeEmail failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
     return null;
   });
 
   if (dayRendered?.html) {
     html    = dayRendered.html;
     subject = dayRendered.subject || 'Rayna Tours';
-    console.log(`[Worker:email]   rendered via renderDayHtml → subject="${subject}" html=${html.length} bytes`);
+    console.log(`[Worker:email]   ${dayRendered.stored ? 'using STORED' : 'rendered+stored'} node email → subject="${subject}" html=${html.length} bytes source=${dayRendered.source}`);
   } else {
     // Fallback 1: EmailRenderer.renderForJourneyNode — needs html_template_id (linked HTML template)
     const htmlTemplateId = d.htmlTemplateId || await _resolveHtmlTemplateId(d.templateId);

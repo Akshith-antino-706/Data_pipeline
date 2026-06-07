@@ -123,6 +123,7 @@ export const getJourneyAnalytics = (id) => request(`/api/v3/journeys/${id}/analy
 export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${id}/campaign-analytics`);
 export const getJourneyGtmNodeStats    = (id) => request(`/api/v3/journeys/${id}/gtm-node-stats`);
 export const getJourneyNodeConversions = (id) => request(`/api/v3/journeys/${id}/node-conversions`);
+export const previewJourneyNodeEmail   = (id, nodeId) => request(`/api/v3/journeys/${id}/nodes/${nodeId}/preview-dynamic`);
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
 // Node-level CRUD inside a journey
@@ -268,6 +269,7 @@ export const getUnifiedContacts = (params = {}) => {
   return request(`/api/v3/unified-contacts?${qs}`);
 };
 export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
+export const getContactJourneys = (id) => request(`/api/v3/unified-contacts/${id}/journeys`);
 export const updateUnifiedContact = (id, data) => request(`/api/v3/unified-contacts/${id}`, {
   method: 'PATCH',
   headers: { 'Content-Type': 'application/json' },
