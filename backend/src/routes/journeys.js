@@ -280,6 +280,44 @@ router.get('/:id/nodes/:nodeId/send-log', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Dynamic email preview — renders the EXACT email sent to contacts, with live
+// Claude ranking (same renderDayHtml the workers use). Slow (~15-26s on cache miss).
+router.get('/:id/nodes/:nodeId/preview-dynamic', async (req, res) => {
+  try {
+    const journeyId = parseInt(req.params.id);
+    const nodeId    = req.params.nodeId;
+    const db = (await import('../config/database.js')).default;
+
+    const { rows: [jf] } = await db.query('SELECT nodes FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    if (!jf) return res.status(404).json({ success: false, error: 'Journey not found' });
+    const node = (jf.nodes || []).find(n => n.id === nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const templateId = node.data?.templateId || node.data?.emailTemplateId;
+    if (!templateId) return res.status(400).json({ success: false, error: 'Node has no email template' });
+
+    // Use a real enrolled contact so personalization/tracking renders realistically
+    const { rows: [entry] } = await db.query(
+      `SELECT je.customer_id FROM journey_entries je
+       JOIN unified_contacts uc ON uc.id = je.customer_id
+       WHERE je.journey_id = $1 AND uc.email IS NOT NULL LIMIT 1`,
+      [journeyId]
+    );
+    const contactId = entry?.customer_id || 'preview';
+
+    // Same stored email the worker sends — guarantees preview == sent (byte-identical)
+    const { getOrGenerateNodeEmail } = await import('../services/JourneyService.js');
+    const rendered = await getOrGenerateNodeEmail({ journeyId, nodeId, templateId: parseInt(templateId), contactId });
+    if (!rendered?.html) {
+      return res.status(500).json({ success: false, error: `Template ${templateId} is not a dynamic Day template (1-7)` });
+    }
+    res.json({ success: true, data: { html: rendered.html, subject: rendered.subject, templateId: parseInt(templateId), rankingSource: rendered.source } });
+  } catch (err) {
+    console.error('[preview-dynamic] failed:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Auto-generate journey from strategy
 router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
   try {

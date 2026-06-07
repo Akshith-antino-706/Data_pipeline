@@ -20,6 +20,85 @@ async function _getCachedRanking(key, fetchFn) {
   return ranking;
 }
 
+// Global serialization lock for Claude ranking calls. Anthropic rate-limits
+// concurrent web_search requests — firing several rankings at once (multiple
+// journeys, the Day6 6-destination loop, preview while a journey runs) makes some
+// 429 and fall back. We chain all Claude ranking calls so only ONE runs at a time.
+let _claudeLock = Promise.resolve();
+function _serializeClaude(fn) {
+  const run = _claudeLock.then(fn, fn);
+  // Keep the chain alive regardless of this call's outcome
+  _claudeLock = run.then(() => {}, () => {});
+  return run;
+}
+
+// Calls the ranking fn, retrying once on a non-key failure (transient rate-limit/
+// timeout) before accepting a fallback. Serialized so calls never burst.
+async function _rankWithRetry(fetchFn) {
+  return _serializeClaude(async () => {
+    let result = await fetchFn();
+    // 'fallback' = Claude was attempted but errored (429/timeout). Retry once.
+    // 'fallback_no_api_key' = key missing — retry is pointless, accept it.
+    if (result?.source === 'fallback') {
+      await new Promise(r => setTimeout(r, 3000));
+      const retry = await fetchFn();
+      if (retry?.source === 'claude') result = retry;
+    }
+    return result;
+  });
+}
+
+/**
+ * Frozen per-node ranking. The ranking for a (journey, node) is computed ONCE
+ * (Claude called once) and persisted in journey_node_rankings. Every subsequent
+ * read — preview OR actual send — returns the SAME frozen ranking, so the preview
+ * is byte-identical to the email contacts receive.
+ *
+ * Falls back to the in-memory global cache when journeyId/nodeId aren't provided
+ * (e.g. generic content previews).
+ */
+async function _getFrozenRanking(journeyId, nodeId, rankingType, fetchFn) {
+  if (!journeyId || !nodeId) {
+    return _getCachedRanking(rankingType, fetchFn);
+  }
+  // 1. Return frozen ranking if it exists
+  const { rows: [existing] } = await db.query(
+    'SELECT ranking FROM journey_node_rankings WHERE journey_id = $1 AND node_id = $2 AND ranking_type = $3',
+    [journeyId, nodeId, rankingType]
+  );
+  if (existing?.ranking) return existing.ranking;
+
+  // 2. First time — call Claude (serialized + retry-once), then freeze it
+  const result = await _rankWithRetry(fetchFn);
+  const ranking = result.ranking || result;
+  await db.query(
+    `INSERT INTO journey_node_rankings (journey_id, node_id, ranking_type, ranking, source)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (journey_id, node_id, ranking_type) DO NOTHING`,
+    [journeyId, nodeId, rankingType, JSON.stringify(ranking), result.source || 'claude']
+  );
+  // Re-read in case a concurrent worker won the INSERT race — guarantees all
+  // workers for this node use the exact same frozen ranking.
+  const { rows: [frozen] } = await db.query(
+    'SELECT ranking FROM journey_node_rankings WHERE journey_id = $1 AND node_id = $2 AND ranking_type = $3',
+    [journeyId, nodeId, rankingType]
+  );
+  return frozen?.ranking || ranking;
+}
+
+// Day6 destination list — module-level so render + prewarm agree.
+const DAY6_DESTINATIONS = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
+
+// Pick ONE destination per (journey, node) — deterministic, same for every contact
+// AND the preview. This makes Day6 behave like Day4/5: one shared, frozen, AI-ranked
+// destination that all users receive, so preview == sent.
+function _day6DestKey(journeyId, nodeId) {
+  const seed = `${journeyId}_${nodeId}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return DAY6_DESTINATIONS[hash % DAY6_DESTINATIONS.length];
+}
+
 // Render the real Day HTML for a contact using the same Day renderers.
 // Uses fallback ranking (no Claude API call) to keep sends fast.
 export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, extraVars = {} } = {}) {
@@ -39,17 +118,10 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
   };
 
   if (id === 1) {
-    const { _internals }                      = await import('./Day1WelcomeRankingService.js');
-    const { buildDay1WelcomeData, _internals: dataInternals } = await import('./Day1WelcomeDataService.js');
+    const { default: rankTrendingWelcome }    = await import('./Day1WelcomeRankingService.js');
+    const { buildDay1WelcomeData }            = await import('./Day1WelcomeDataService.js');
     const { renderDay1Welcome }               = await import('./Day1WelcomeRenderer.js');
-    const { rows: visaRows } = await db.query("SELECT key, name FROM visa_products LIMIT 20").catch(() => ({ rows: [] }));
-    const visaMap  = Object.fromEntries((visaRows || []).map(r => [r.key, r]));
-    const ranking  = _internals.buildFallbackRanking({
-      holidayMap:  dataInternals.HOLIDAY_DESTINATIONS,
-      cruiseMap:   dataInternals.CRUISE_DESTINATIONS,
-      activityMap: dataInternals.ACTIVITY_DESTINATIONS,
-      visaMap,
-    });
+    const ranking = await _getFrozenRanking(journeyId, nodeId, 'welcome', rankTrendingWelcome);
     const data = await buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' });
   }
@@ -57,7 +129,7 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
     const { default: rankTrendingCruises }    = await import('./Day2CruiseRankingService.js');
     const { buildDay2CruiseData }             = await import('./Day2CruiseDataService.js');
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
-    const ranking = await _getCachedRanking('cruise', rankTrendingCruises);
+    const ranking = await _getFrozenRanking(journeyId, nodeId, 'cruise', rankTrendingCruises);
     const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' });
   }
@@ -65,36 +137,35 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
     const { rankTrendingVisas }             = await import('./VisaRankingService.js');
     const { buildDay3VisaData }             = await import('./Day3VisaDataService.js');
     const { renderDay3Visa }                = await import('./Day3VisaRenderer.js');
-    const ranking = await _getCachedRanking('visa', rankTrendingVisas);
+    const ranking = await _getFrozenRanking(journeyId, nodeId, 'visa', rankTrendingVisas);
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
     const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' });
   }
   if (id === 4) {
-    const { _internals } = await import('./Day4HolidaysRankingService.js');
+    const { default: rankTrendingHolidays } = await import('./Day4HolidaysRankingService.js');
     const { buildDay4HolidaysData } = await import('./Day4HolidaysDataService.js');
     const { renderDay4Holidays }    = await import('./Day4HolidaysRenderer.js');
-    const ranking = _internals.buildFallbackRanking();
+    const ranking = await _getFrozenRanking(journeyId, nodeId, 'holidays', rankTrendingHolidays);
     const data    = await buildDay4HolidaysData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' });
   }
   if (id === 5) {
-    const { _internals } = await import('./Day5ActivitiesRankingService.js');
+    const { default: rankTrendingActivities } = await import('./Day5ActivitiesRankingService.js');
     const { buildDay5ActivitiesData } = await import('./Day5ActivitiesDataService.js');
     const { renderDay5Activities }    = await import('./Day5ActivitiesRenderer.js');
-    const ranking = _internals.buildFallbackRanking();
+    const ranking = await _getFrozenRanking(journeyId, nodeId, 'activities', rankTrendingActivities);
     const data    = await buildDay5ActivitiesData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' });
   }
   if (id === 6) {
-    const { _internals } = await import('./Day6DestinationRankingService.js');
+    const { default: rankDestinationSpotlight } = await import('./Day6DestinationRankingService.js');
     const { buildDay6DestinationData } = await import('./Day6DestinationDataService.js');
     const { renderDay6Destination }    = await import('./Day6DestinationRenderer.js');
-    const destinations = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
-    const destKey = destinations[contactId % destinations.length];
-    const ranking = _internals.buildFallbackRanking
-      ? _internals.buildFallbackRanking({ holidayCandidates: [], activityCandidates: [], cruiseCandidates: [] })
-      : {};
+    // ONE destination per node (deterministic) — same for every contact + preview,
+    // so Claude is called once and all users at this node get the identical email.
+    const destKey = _day6DestKey(journeyId, nodeId);
+    const ranking = await _getFrozenRanking(journeyId, nodeId, `destination_${destKey}`, () => rankDestinationSpotlight({ destinationKey: destKey }));
     const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' });
   }
@@ -105,6 +176,57 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
     return applyExtraVars({ html: renderDay7AbandonedCart(tplFile('day7-abandoned-cart-dynamic.html'), data), subject: 'You Left Something Behind | Rayna Tours' });
   }
   return null; // unknown template — fall back to EmailRenderer
+}
+
+/**
+ * Get the stored rendered email for a node, generating + storing it on first call.
+ *
+ * Flow:
+ *   1. If journey_node_emails has a row for (journey, node) → return that exact HTML.
+ *   2. Else render via renderDayHtml (Claude or fallback), store the FULL HTML +
+ *      subject + source, and return it.
+ *
+ * Both the worker (send) and the preview endpoint call this, so the preview is
+ * byte-identical to what every contact at the node receives. Returns null if the
+ * template isn't a dynamic Day template (caller falls back to EmailRenderer).
+ */
+export async function getOrGenerateNodeEmail({ journeyId, nodeId, templateId, contactId }) {
+  if (!journeyId || !nodeId) return null;
+
+  // 1. Return stored email if it exists
+  const { rows: [stored] } = await db.query(
+    'SELECT subject, html, source FROM journey_node_emails WHERE journey_id = $1 AND node_id = $2',
+    [journeyId, nodeId]
+  );
+  if (stored?.html) {
+    return { html: stored.html, subject: stored.subject, source: stored.source, stored: true };
+  }
+
+  // 2. First time — render (Claude/fallback) and store the whole email
+  const rendered = await renderDayHtml(parseInt(templateId), contactId || 'preview', { journeyId, nodeId });
+  if (!rendered?.html) return null; // not a Day template — caller handles fallback
+
+  // Source comes from the ranking row that renderDayHtml just populated
+  const { rows: [rk] } = await db.query(
+    `SELECT ARRAY_AGG(DISTINCT source) AS sources FROM journey_node_rankings WHERE journey_id=$1 AND node_id=$2`,
+    [journeyId, nodeId]
+  );
+  const source = (rk?.sources || []).includes('claude') ? 'claude' : ((rk?.sources || [])[0] || 'unknown');
+
+  await db.query(
+    `INSERT INTO journey_node_emails (journey_id, node_id, template_id, subject, html, source)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (journey_id, node_id) DO NOTHING`,
+    [journeyId, nodeId, parseInt(templateId), rendered.subject, rendered.html, source]
+  );
+  // Re-read so concurrent first-callers all return the exact same stored HTML
+  const { rows: [frozen] } = await db.query(
+    'SELECT subject, html, source FROM journey_node_emails WHERE journey_id = $1 AND node_id = $2',
+    [journeyId, nodeId]
+  );
+  return frozen?.html
+    ? { html: frozen.html, subject: frozen.subject, source: frozen.source, stored: true }
+    : { html: rendered.html, subject: rendered.subject, source, stored: false };
 }
 
 
@@ -329,6 +451,12 @@ class JourneyService {
           return;
         }
 
+        // Trigger node: always completed once journey is active and entries moved past it
+        if (n.type === 'trigger' && !activeSet.has(n.id)) {
+          node_statuses[n.id] = 'completed';
+          return;
+        }
+
         if (sendingIdx !== -1) {
           // Active send wave in progress — use leading-edge view
           if (i === sendingIdx)               node_statuses[n.id] = 'sending';
@@ -338,10 +466,8 @@ class JourneyService {
           else                                node_statuses[n.id] = 'pending';
         } else {
           // No action node currently due (sendHour-blocked, between waves, or all done).
-          // Derive status per-node from active entries and processed event history.
           if (activeSet.has(n.id)) {
             const inWait = inWaitMap[n.id] || 0;
-            // Any next_fire_at in future (wait node OR sendHour-blocked action) → waiting
             node_statuses[n.id] = (n.type === 'wait' || inWait > 0) ? 'waiting' : 'sending';
           } else if (n.type === 'goal') {
             node_statuses[n.id] = 'monitoring';
@@ -352,6 +478,12 @@ class JourneyService {
           }
         }
       });
+
+      // Persist node_statuses to DB so it's available without recomputing
+      await db.query(
+        `UPDATE journey_flows SET node_statuses = $1 WHERE journey_id = $2`,
+        [JSON.stringify(node_statuses), journeyId]
+      );
     }
 
     // Per-node triggered (unique entries) and exited (converted at that node) counts
@@ -388,7 +520,20 @@ class JourneyService {
       }
     }
 
-    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats };
+    // Per-node ranking source ('claude' | 'fallback' | 'fallback_no_api_key')
+    // so the UI can flag nodes that fell back instead of AI-ranking.
+    const { rows: rankingRows } = await db.query(
+      `SELECT node_id, ARRAY_AGG(DISTINCT source) AS sources
+       FROM journey_node_rankings WHERE journey_id = $1 GROUP BY node_id`,
+      [journeyId]
+    );
+    const node_ranking_sources = {};
+    for (const r of rankingRows) {
+      // If any ranking_type for this node used claude, mark claude; else fallback
+      node_ranking_sources[r.node_id] = (r.sources || []).includes('claude') ? 'claude' : 'fallback';
+    }
+
+    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats, node_ranking_sources };
   }
 
   /**
@@ -884,6 +1029,8 @@ class JourneyService {
     const nodes = journey.nodes || [];
     const edges = journey.edges || [];
     const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
+    // First action node — unsub-only check applies here; purchased exit skipped
+    const firstActionNodeId = nodes.find(n => n.type === 'action')?.id || null;
 
     // Pre-fetch Claude ranking ONCE before any emails are enqueued.
     // Workers share the same module-level _rankingCache, so every renderDayHtml
@@ -954,6 +1101,35 @@ class JourneyService {
           AND uc.email_unsubscribe = 'Yes'
         RETURNING je.entry_id, je.current_node_id
       `, [journeyId]);
+
+      // Bulk exit: purchased users (ON_TRIP or FUTURE_TRAVEL + gtm purchase event)
+      // Only applies to entries past the first action node — first email always sends
+      const { rows: purchasedExits } = await db.query(`
+        UPDATE journey_entries je
+        SET status = 'exited', exit_reason = 'purchased', completed_at = NOW(), next_fire_at = NULL
+        FROM unified_contacts uc
+        WHERE je.journey_id = $1 AND je.status = 'active'
+          AND uc.id = je.customer_id
+          AND je.current_node_id != $2
+          AND uc.booking_status IN ('ON_TRIP', 'FUTURE_TRAVEL')
+          AND EXISTS (
+            SELECT 1 FROM gtm_events ge
+            WHERE ge.unified_id = je.customer_id
+              AND ge.journey_id = $1
+              AND ge.event_name = 'purchase'
+          )
+        RETURNING je.entry_id, je.current_node_id
+      `, [journeyId, firstActionNodeId]);
+      for (const ex of purchasedExits) {
+        await db.query(
+          `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+           VALUES ($1, $2, 'exited', NULL, $3)`,
+          [ex.entry_id, ex.current_node_id, JSON.stringify({ reason: 'purchased' })]
+        );
+      }
+      if (purchasedExits.length > 0) {
+        console.log(`[Journey ${journeyId}] Bulk exited: ${purchasedExits.length} purchased (ON_TRIP/FUTURE_TRAVEL + gtm purchase)`);
+      }
       for (const ex of unsubExits) {
         await db.query(
           `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1, $2, 'converted', NULL, $3)`,
@@ -1123,8 +1299,9 @@ class JourneyService {
           originalChannel:   rawChannel,
           edges,
           nodes:             nodeMap,
-          templateVariables: currentNode.data?.templateVariables || {},
+          templateVariables:  currentNode.data?.templateVariables || {},
           enqueuedDubaiDate,
+          firstActionNodeId,
         };
 
         if (!channel || !templateId) {
@@ -1142,7 +1319,14 @@ class JourneyService {
         }
 
         if (!enqueueByChannel[channel]) enqueueByChannel[channel] = [];
-        enqueueByChannel[channel].push({ data: jobData, opts: { jobId: `${journeyId}:${entry.entry_id}:${runId}` } });
+        // jobId must include nodeId — runId is constant per (journey, day), so without
+        // nodeId every node an entry passes through reuses the same id and BullMQ
+        // silently dedupes the send against the previous node's cached job.
+        // BullMQ forbids ':' in custom job ids (Redis key separator) — use '_'.
+        // nodeId is included so each node an entry passes gets a unique job id
+        // (runId is constant per journey/day, so without nodeId BullMQ would dedupe
+        // a node's send against the previous node's cached job).
+        enqueueByChannel[channel].push({ data: jobData, opts: { jobId: `${journeyId}_${entry.entry_id}_${currentNode.id}_${runId}` } });
 
         // Collect for bulk stamp below (avoids 800K individual UPDATEs)
         toStampIds.push(entry.entry_id);
@@ -1364,27 +1548,47 @@ class JourneyService {
       LIMIT 100
     `, [journeyId]);
 
-    const templateIds = new Set();
+    // Collect (nodeId, templateId) pairs — ranking is frozen per node, not per template
+    const nodeTemplatePairs = [];
     for (const { current_node_id } of activeNodes) {
       const node = nodeMap[current_node_id];
       if (!node || node.type !== 'action') continue;
       const ch  = (node.data?.channel || '').toLowerCase();
       const tid = node.data?.templateId
         || (ch === 'email' ? node.data?.emailTemplateId : null);
-      if (tid) templateIds.add(parseInt(tid));
+      if (tid) nodeTemplatePairs.push({ nodeId: current_node_id, templateId: parseInt(tid) });
     }
 
-    for (const templateId of templateIds) {
-      if (templateId === 2) {
-        const { default: rankTrendingCruises } = await import('./Day2CruiseRankingService.js');
-        await _getCachedRanking('cruise', rankTrendingCruises);
-        console.log(`[Journey ${journeyId}] Ranking pre-warmed for cruise (template 2) — Claude called once.`);
-      } else if (templateId === 3) {
-        const { rankTrendingVisas } = await import('./VisaRankingService.js');
-        await _getCachedRanking('visa', rankTrendingVisas);
-        console.log(`[Journey ${journeyId}] Ranking pre-warmed for visa (template 3) — Claude called once.`);
+    for (const { nodeId, templateId } of nodeTemplatePairs) {
+      try {
+        if (templateId === 1) {
+          const { default: rankTrendingWelcome } = await import('./Day1WelcomeRankingService.js');
+          await _getFrozenRanking(journeyId, nodeId, 'welcome', rankTrendingWelcome);
+        } else if (templateId === 2) {
+          const { default: rankTrendingCruises } = await import('./Day2CruiseRankingService.js');
+          await _getFrozenRanking(journeyId, nodeId, 'cruise', rankTrendingCruises);
+        } else if (templateId === 3) {
+          const { rankTrendingVisas } = await import('./VisaRankingService.js');
+          await _getFrozenRanking(journeyId, nodeId, 'visa', rankTrendingVisas);
+        } else if (templateId === 4) {
+          const { default: rankTrendingHolidays } = await import('./Day4HolidaysRankingService.js');
+          await _getFrozenRanking(journeyId, nodeId, 'holidays', rankTrendingHolidays);
+        } else if (templateId === 5) {
+          const { default: rankTrendingActivities } = await import('./Day5ActivitiesRankingService.js');
+          await _getFrozenRanking(journeyId, nodeId, 'activities', rankTrendingActivities);
+        } else if (templateId === 6) {
+          // Day6 — one destination per node (same for all contacts). Freeze only that one.
+          const { default: rankDestinationSpotlight } = await import('./Day6DestinationRankingService.js');
+          const destKey = _day6DestKey(journeyId, nodeId);
+          await _getFrozenRanking(journeyId, nodeId, `destination_${destKey}`, () => rankDestinationSpotlight({ destinationKey: destKey }));
+        }
+        if (templateId >= 1 && templateId <= 6) {
+          console.log(`[Journey ${journeyId}] Ranking frozen for node=${nodeId} template=${templateId} (Claude/fallback called once).`);
+        }
+        // Template 7 (abandoned cart) uses per-contact data, no shared ranking.
+      } catch (err) {
+        console.warn(`[Journey ${journeyId}] Prewarm failed for node=${nodeId} template=${templateId}: ${err.message} — will use fallback at send time.`);
       }
-      // Templates 1,4,5,6,7 use synchronous fallback — no Claude call needed.
     }
   }
 

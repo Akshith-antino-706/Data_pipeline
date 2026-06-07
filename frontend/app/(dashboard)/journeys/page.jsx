@@ -13,7 +13,7 @@ import {
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
-  getJourneyNodeConversions
+  getJourneyNodeConversions, previewJourneyNodeEmail
 } from '@/lib/api';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
@@ -30,6 +30,18 @@ import hotToast from 'react-hot-toast';
 const NODE_COLORS = {
   trigger: 'var(--red)', action: 'var(--green)', condition: 'var(--yellow)',
   wait: 'var(--yellow)', goal: 'var(--purple)'
+};
+
+// Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
+// Keyed by content_template id (the Day1-7 dynamic templates).
+const DYNAMIC_SECTIONS = {
+  1: ['Holiday picks', 'Cruise picks', 'Activity picks', 'Visa picks', 'Hero banner variant'],
+  2: ['Cruise lines', 'Departure cities', 'Hero banner variant', 'Regional copy'],
+  3: ['International visas', 'E-visas', 'Popular visas', 'Ratings order', 'Hero / CTA copy'],
+  4: ['Summer trips', 'Eid specials', 'Romantic getaways', 'Adventure trips', 'Hero destination'],
+  5: ['Top cities', 'Family activities', 'Thrill activities', 'Water activities', 'Iconic landmarks', 'Wildlife', 'Hero activity'],
+  6: ['Spotlight destination', 'Activities', 'Cruises', 'Holidays', 'Hero image', 'Tagline'],
+  7: ['Browsed/abandoned items (personalized per contact — not Claude)'],
 };
 const NODE_ICONS = {
   trigger: Zap, action: Send, condition: GitBranch, wait: Clock, goal: Target
@@ -131,6 +143,7 @@ export default function Journeys() {
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [trackFilter] = useState('all');
   const [previewTemplate, setPreviewTemplate] = useState(null); // { name, subject, body_html, channel }
+  const [previewLoading, setPreviewLoading] = useState(false);
   // Journey entries (real flow data)
   const [journeyEntries, setJourneyEntries] = useState([]);
   const [entriesTotal, setEntriesTotal] = useState(0);
@@ -1570,6 +1583,23 @@ export default function Journeys() {
                                     </div>
                                   ) : null;
                                 })()}
+                                {/* AI-ranked vs fallback badge — flags nodes where Claude didn't run */}
+                                {node.type === 'action' && (() => {
+                                  const src = detail?.node_ranking_sources?.[node.id];
+                                  if (!src) return null;
+                                  const isClaude = src === 'claude';
+                                  return (
+                                    <div style={{
+                                      marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4,
+                                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 8,
+                                      background: isClaude ? 'rgba(139,92,246,0.1)' : 'rgba(251,146,60,0.12)',
+                                      color: isClaude ? '#8b5cf6' : '#f97316',
+                                      border: `1px solid ${isClaude ? 'rgba(139,92,246,0.25)' : 'rgba(251,146,60,0.3)'}`,
+                                    }}>
+                                      {isClaude ? '✨ AI-ranked' : '⚠ Fallback ranking (Claude unavailable)'}
+                                    </div>
+                                  );
+                                })()}
                                 {/* Per-node predicted trigger time from timeline API */}
                                 {(() => {
                                   const tl = Array.isArray(timeline) ? timeline.find(t => t.nodeId === node.id) : null;
@@ -2032,13 +2062,31 @@ export default function Journeys() {
                                           return tpl ? (
                                             <button
                                               type="button"
+                                              disabled={previewLoading}
                                               onClick={async (e) => {
                                                 e.stopPropagation();
+                                                setPreviewLoading(true);
+                                                // Open modal immediately in loading state
+                                                setPreviewTemplate({ ...tpl, body_html: null, _loading: true });
                                                 try {
-                                                  const res = await fetchTemplatePreview(tpl.id, node.data?.templateVariables || {});
-                                                  setPreviewTemplate({ ...tpl, body_html: res.data?.html || null });
-                                                } catch {
-                                                  setPreviewTemplate(tpl);
+                                                  // Live dynamic render (Claude ranking) — exact email that gets sent
+                                                  const res = await previewJourneyNodeEmail(selected, node.id);
+                                                  setPreviewTemplate({
+                                                    ...tpl,
+                                                    subject: res.data?.subject || tpl.subject,
+                                                    body_html: res.data?.html || null,
+                                                    rankingSource: res.data?.rankingSource || null,
+                                                  });
+                                                } catch (err) {
+                                                  // Fallback to the fast static preview if dynamic render fails
+                                                  try {
+                                                    const res = await fetchTemplatePreview(tpl.id, node.data?.templateVariables || {});
+                                                    setPreviewTemplate({ ...tpl, body_html: res.data?.html || null });
+                                                  } catch {
+                                                    setPreviewTemplate({ ...tpl, body_html: `<p style="padding:40px;text-align:center;color:#999">Preview failed: ${err.message}</p>` });
+                                                  }
+                                                } finally {
+                                                  setPreviewLoading(false);
                                                 }
                                               }}
                                               style={{
@@ -2046,7 +2094,8 @@ export default function Journeys() {
                                                 fontSize: 11, fontWeight: 600, padding: '6px 12px',
                                                 borderRadius: 6, border: '1px solid var(--brand-primary)',
                                                 background: 'rgba(59,130,246,0.06)', color: 'var(--brand-primary)',
-                                                cursor: 'pointer',
+                                                cursor: previewLoading ? 'not-allowed' : 'pointer',
+                                                opacity: previewLoading ? 0.6 : 1,
                                               }}
                                             >
                                               <Eye size={12} /> Preview Template
@@ -2639,6 +2688,51 @@ export default function Journeys() {
                           ))}
                         </select>
                         {allTemplates.email.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No email templates found</div>}
+
+                        {/* Dynamic sections this template will AI-rank via Claude */}
+                        {(() => {
+                          const tid = nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId;
+                          if (!DYNAMIC_SECTIONS[tid]) return null;
+                          return (
+                            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: '#8b5cf6', letterSpacing: '0.04em', marginBottom: 6 }}>
+                                ✨ AI-RANKED BY CLAUDE WHEN JOURNEY RUNS
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {DYNAMIC_SECTIONS[tid].map(sec => (
+                                  <span key={sec} style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 12, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.18)' }}>
+                                    {sec}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Preview the dynamic content this template will render */}
+                        {(() => {
+                          const tid = nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId;
+                          if (!tid) return null;
+                          const tpl = allTemplates.email.find(t => String(t.id) === String(tid));
+                          return (
+                            <button
+                              type="button"
+                              disabled={previewLoading}
+                              onClick={async () => {
+                                setPreviewLoading(true);
+                                setPreviewTemplate({ name: tpl?.name, subject: tpl?.subject, channel: 'email', body_html: null, _loading: true });
+                                try {
+                                  const res = await fetchTemplatePreview(tid, {});
+                                  setPreviewTemplate({ name: tpl?.name, subject: tpl?.subject, channel: 'email', body_html: res.data?.html || null });
+                                } catch (err) {
+                                  setPreviewTemplate({ name: tpl?.name, subject: tpl?.subject, channel: 'email', body_html: `<p style="padding:40px;text-align:center;color:#999">Preview failed: ${err.message}</p>` });
+                                } finally { setPreviewLoading(false); }
+                              }}
+                              style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, border: '1px solid var(--brand-primary)', background: 'rgba(59,130,246,0.06)', color: 'var(--brand-primary)', cursor: previewLoading ? 'not-allowed' : 'pointer', opacity: previewLoading ? 0.6 : 1 }}>
+                              <Eye size={12} /> Preview Dynamic Content
+                            </button>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -2900,13 +2994,35 @@ export default function Journeys() {
                 </div>
                 {/* Body */}
                 <div style={{ padding: '20px 24px', overflow: 'auto', flex: 1 }}>
-                  {previewTemplate.body_html ? (
-                    <div style={{ background: '#fff', borderRadius: 8, padding: 16, border: '1px solid var(--border-color)' }}>
-                      <iframe
-                        srcDoc={previewTemplate.body_html}
-                        style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }}
-                        title="Template Preview"
-                      />
+                  {previewTemplate._loading || (previewLoading && !previewTemplate.body_html) ? (
+                    <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-secondary)' }}>
+                      <RefreshCw size={32} style={{ animation: 'spin 1s linear infinite', color: 'var(--brand-primary)', marginBottom: 16 }} />
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Generating live email…</div>
+                      <div style={{ fontSize: 12, marginTop: 6 }}>Running Claude ranking — this is the exact email contacts receive (~15-25s)</div>
+                    </div>
+                  ) : previewTemplate.body_html ? (
+                    <div>
+                      {/* Ranking source banner — claude vs fallback */}
+                      {previewTemplate.rankingSource && (
+                        <div style={{
+                          marginBottom: 12, padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          background: previewTemplate.rankingSource === 'claude' ? 'rgba(139,92,246,0.08)' : 'rgba(251,146,60,0.1)',
+                          color: previewTemplate.rankingSource === 'claude' ? '#8b5cf6' : '#f97316',
+                          border: `1px solid ${previewTemplate.rankingSource === 'claude' ? 'rgba(139,92,246,0.25)' : 'rgba(251,146,60,0.3)'}`,
+                        }}>
+                          {previewTemplate.rankingSource === 'claude'
+                            ? '✨ AI-ranked by Claude — this exact email is what contacts receive'
+                            : '⚠ Fallback ranking (Claude was unavailable) — email still sends with default ordering'}
+                        </div>
+                      )}
+                      <div style={{ background: '#fff', borderRadius: 8, padding: 16, border: '1px solid var(--border-color)' }}>
+                        <iframe
+                          srcDoc={previewTemplate.body_html}
+                          style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }}
+                          title="Template Preview"
+                        />
+                      </div>
                     </div>
                   ) : previewTemplate.body || previewTemplate.message ? (
                     <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: '16px 20px', fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>
@@ -3342,6 +3458,21 @@ export default function Journeys() {
                                 <option value="">— Select email template —</option>
                                 {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
                               </select>
+                              {/* Dynamic sections this template will AI-rank via Claude */}
+                              {DYNAMIC_SECTIONS[createNodeForm.emailTemplateId] && (
+                                <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                                  <div style={{ fontSize: 10, fontWeight: 800, color: '#8b5cf6', letterSpacing: '0.04em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    ✨ AI-RANKED BY CLAUDE WHEN JOURNEY RUNS
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    {DYNAMIC_SECTIONS[createNodeForm.emailTemplateId].map(sec => (
+                                      <span key={sec} style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 12, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.18)' }}>
+                                        {sec}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                           {createNodeForm.channel === 'whatsapp' && (

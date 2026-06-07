@@ -325,7 +325,10 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('074_journey_entries_columns.sql');
     await runMigrationFile('075_unsubscribe_log.sql');
     await runMigrationFile('076_email_send_log_journey.sql');
-    res.json({ success: true, message: 'Journey migrations (071-076) completed' });
+    await runMigrationFile('081_journey_node_rankings.sql');
+    await runMigrationFile('082_journey_node_statuses.sql');
+    await runMigrationFile('083_journey_node_emails.sql');
+    res.json({ success: true, message: 'Journey migrations (071-083) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
