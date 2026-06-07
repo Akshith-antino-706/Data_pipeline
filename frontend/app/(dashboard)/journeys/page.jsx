@@ -31,6 +31,18 @@ const NODE_COLORS = {
   trigger: 'var(--red)', action: 'var(--green)', condition: 'var(--yellow)',
   wait: 'var(--yellow)', goal: 'var(--purple)'
 };
+
+// Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
+// Keyed by content_template id (the Day1-7 dynamic templates).
+const DYNAMIC_SECTIONS = {
+  1: ['Holiday picks', 'Cruise picks', 'Activity picks', 'Visa picks', 'Hero banner variant'],
+  2: ['Cruise lines', 'Departure cities', 'Hero banner variant', 'Regional copy'],
+  3: ['International visas', 'E-visas', 'Popular visas', 'Ratings order', 'Hero / CTA copy'],
+  4: ['Summer trips', 'Eid specials', 'Romantic getaways', 'Adventure trips', 'Hero destination'],
+  5: ['Top cities', 'Family activities', 'Thrill activities', 'Water activities', 'Iconic landmarks', 'Wildlife', 'Hero activity'],
+  6: ['Spotlight destination', 'Activities', 'Cruises', 'Holidays', 'Hero image', 'Tagline'],
+  7: ['Browsed/abandoned items (personalized per contact — not Claude)'],
+};
 const NODE_ICONS = {
   trigger: Zap, action: Send, condition: GitBranch, wait: Clock, goal: Target
 };
@@ -2676,6 +2688,51 @@ export default function Journeys() {
                           ))}
                         </select>
                         {allTemplates.email.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No email templates found</div>}
+
+                        {/* Dynamic sections this template will AI-rank via Claude */}
+                        {(() => {
+                          const tid = nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId;
+                          if (!DYNAMIC_SECTIONS[tid]) return null;
+                          return (
+                            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: '#8b5cf6', letterSpacing: '0.04em', marginBottom: 6 }}>
+                                ✨ AI-RANKED BY CLAUDE WHEN JOURNEY RUNS
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {DYNAMIC_SECTIONS[tid].map(sec => (
+                                  <span key={sec} style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 12, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.18)' }}>
+                                    {sec}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Preview the dynamic content this template will render */}
+                        {(() => {
+                          const tid = nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId;
+                          if (!tid) return null;
+                          const tpl = allTemplates.email.find(t => String(t.id) === String(tid));
+                          return (
+                            <button
+                              type="button"
+                              disabled={previewLoading}
+                              onClick={async () => {
+                                setPreviewLoading(true);
+                                setPreviewTemplate({ name: tpl?.name, subject: tpl?.subject, channel: 'email', body_html: null, _loading: true });
+                                try {
+                                  const res = await fetchTemplatePreview(tid, {});
+                                  setPreviewTemplate({ name: tpl?.name, subject: tpl?.subject, channel: 'email', body_html: res.data?.html || null });
+                                } catch (err) {
+                                  setPreviewTemplate({ name: tpl?.name, subject: tpl?.subject, channel: 'email', body_html: `<p style="padding:40px;text-align:center;color:#999">Preview failed: ${err.message}</p>` });
+                                } finally { setPreviewLoading(false); }
+                              }}
+                              style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, padding: '6px 12px', borderRadius: 6, border: '1px solid var(--brand-primary)', background: 'rgba(59,130,246,0.06)', color: 'var(--brand-primary)', cursor: previewLoading ? 'not-allowed' : 'pointer', opacity: previewLoading ? 0.6 : 1 }}>
+                              <Eye size={12} /> Preview Dynamic Content
+                            </button>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -3401,6 +3458,21 @@ export default function Journeys() {
                                 <option value="">— Select email template —</option>
                                 {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
                               </select>
+                              {/* Dynamic sections this template will AI-rank via Claude */}
+                              {DYNAMIC_SECTIONS[createNodeForm.emailTemplateId] && (
+                                <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                                  <div style={{ fontSize: 10, fontWeight: 800, color: '#8b5cf6', letterSpacing: '0.04em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    ✨ AI-RANKED BY CLAUDE WHEN JOURNEY RUNS
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    {DYNAMIC_SECTIONS[createNodeForm.emailTemplateId].map(sec => (
+                                      <span key={sec} style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 12, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.18)' }}>
+                                        {sec}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                           {createNodeForm.channel === 'whatsapp' && (
