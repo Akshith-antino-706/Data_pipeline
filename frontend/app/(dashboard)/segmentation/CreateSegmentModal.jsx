@@ -43,6 +43,10 @@ const FIELD_CONFIG = {
     placeholder: 'e.g. India, UAE, United States',
     defaultOperator: 'eq',
   },
+  wa_last_msg: {
+    label: 'WhatsApp Last Msg', type: 'date-range',
+    defaultOperator: 'between',
+  },
   is_indian: {
     label: 'Is Indian', type: 'boolean',
     options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],

@@ -85,6 +85,17 @@ export default class CustomSegmentService {
             }
             break;
           }
+          case 'wa_last_msg': {
+            // WhatsApp last message date range — joins the chats table by unified_id.
+            // cond.value = [startDate, endDate] (either may be empty).
+            const start = cond.value?.[0];
+            const end   = cond.value?.[1];
+            const parts = ['c.unified_id = uc.id'];
+            if (start) { params.push(start); parts.push(`c.last_msg_at >= $${idx++}::date`); }
+            if (end)   { params.push(end);   parts.push(`c.last_msg_at < ($${idx++}::date + 1)`); } // inclusive end day
+            sub.push(`EXISTS (SELECT 1 FROM chats c WHERE ${parts.join(' AND ')})`);
+            break;
+          }
           case 'is_indian': {
             params.push(cond.value === true || cond.value === 'yes');
             sub.push(`uc.is_indian = $${idx++}`);
