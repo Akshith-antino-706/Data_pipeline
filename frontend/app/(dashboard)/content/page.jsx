@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles } from 'lucide-react';
+import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay } from '@/lib/api';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -40,6 +40,73 @@ export default function Content() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // template object to confirm
+
+  // ── Global recipients (shared by all card Test Send buttons) ──
+  const [recipients, setRecipients] = useState([]);        // searched/listed contacts
+  const [recipQuery, setRecipQuery] = useState('');
+  const [recipTotal, setRecipTotal] = useState(0);
+  const [recipLoading, setRecipLoading] = useState(false);
+  const [selectedEmails, setSelectedEmails] = useState([]); // globally selected
+  const [sendingDay, setSendingDay] = useState(null);       // templateId currently sending
+  const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, utm: 0, failed: 0 });
+
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const tsGet = (path) => fetch(`${apiBase}${path}`, { credentials: 'include' })
+    .then(r => r.json())
+    .then(d => d.data || d); // unwrap { data: ... } envelope
+
+  // Load contacts (debounced on query)
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      setRecipLoading(true);
+      try {
+        const qs = new URLSearchParams({ limit: 50, offset: 0 });
+        if (recipQuery.trim().length >= 2) qs.set('q', recipQuery.trim());
+        const res = await tsGet(`/api/v3/test-sends/contacts?${qs}`);
+        setRecipients(res.contacts || []);
+        setRecipTotal(res.total || 0);
+      } catch { /* ignore */ }
+      setRecipLoading(false);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [recipQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load tracking flow stats
+  useEffect(() => {
+    (async () => {
+      try {
+        const [summary, utmLog] = await Promise.all([
+          tsGet('/api/v3/test-sends/send-log/summary'),
+          tsGet('/api/v3/test-sends/utm-log?limit=1'),
+        ]);
+        const byStatus = summary?.byStatus || [];
+        const g = (s) => parseInt(byStatus.find(r => r.status === s)?.count || 0);
+        setFlowStats({
+          sent: g('sent') + g('opened') + g('clicked'),
+          opened: g('opened') + g('clicked'),
+          clicked: g('clicked'),
+          failed: g('failed'),
+          utm: utmLog?.total || 0,
+        });
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  const toggleRecipient = (email) => {
+    setSelectedEmails(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
+  };
+
+  async function handleCardTestSend(tpl) {
+    if (selectedEmails.length === 0) return;
+    const day = tpl.id; // template id 1-7 == day number
+    setSendingDay(tpl.id);
+    try {
+      const data = await sendTestDay(day, selectedEmails);
+      hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? selectedEmails.length} recipient(s)`);
+    } catch (err) {
+      hotToast.error(err.message || 'Send failed');
+    } finally { setSendingDay(null); }
+  }
 
   function extractVars(html) {
     const matches = [...html.matchAll(/\{\{(\w+)\}\}/g)];
@@ -201,6 +268,157 @@ export default function Content() {
         </div>
       </motion.div>
 
+      {/* ── Recipients (for Test Send) ── */}
+      <motion.div variants={fadeInUp} style={{ marginBottom: 16, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <Send size={14} color="#16a34a" /> Recipients · {selectedEmails.length} selected of {recipTotal.toLocaleString()}
+          </div>
+          {selectedEmails.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedEmails([])} style={{ fontSize: 11 }}>Clear selection</button>
+          )}
+        </div>
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+          <input className="form-input" placeholder="Filter by email or name… (min 2 chars)" value={recipQuery}
+            onChange={e => setRecipQuery(e.target.value)} style={{ paddingLeft: 36, width: '100%' }} />
+        </div>
+        <div
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            maxHeight: 260,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+          }}
+        >
+          {recipients.map((c) => {
+            const email = c.email || c.actual_email;
+            const checked = selectedEmails.includes(email);
+
+            return (
+              <label
+                key={c.id || email}
+                onClick={() => toggleRecipient(email)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 12px',
+                  cursor: 'pointer',
+                  borderBottom: '1px solid var(--border)',
+                  background: checked
+                    ? 'rgba(34,197,94,0.06)'
+                    : 'transparent',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  readOnly
+                  style={{
+                    width: 16,
+                    height: 16,
+                    flexShrink: 0,
+                    cursor: 'pointer',
+                  }}
+                />
+
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 13,
+                        color: 'var(--text-primary)',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {email}
+                    </span>
+
+                    {c.contact_type && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: 'rgba(139,92,246,0.12)',
+                          color: '#8b5cf6',
+                        }}
+                      >
+                        {c.contact_type}
+                      </span>
+                    )}
+
+                    {c.booking_status && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: 'rgba(34,197,94,0.12)',
+                          color: '#16a34a',
+                        }}
+                      >
+                        {c.booking_status}
+                      </span>
+                    )}
+                  </div>
+
+                  {(c.name || c.country) && (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 11,
+                        color: 'var(--text-tertiary)',
+                      }}
+                    >
+                      {c.name}
+                      {c.country && ` • ${c.country}`}
+                    </div>
+                  )}
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </motion.div>
+
+      {/* ── Email Tracking Flow ── */}
+      <motion.div variants={fadeInUp} style={{ marginBottom: 20, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>📧 Email Tracking Flow</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+          {[
+            { label: 'Sent', value: flowStats.sent, color: '#3b82f6', bg: 'rgba(59,130,246,0.08)' },
+            { label: 'Opened', value: flowStats.opened, color: '#16a34a', bg: 'rgba(34,197,94,0.08)' },
+            { label: 'Clicked', value: flowStats.clicked, color: '#8b5cf6', bg: 'rgba(139,92,246,0.08)' },
+            { label: 'UTM Captured', value: flowStats.utm, color: '#f59e0b', bg: 'rgba(245,158,11,0.08)' },
+            { label: 'Failed', value: flowStats.failed, color: '#ef4444', bg: 'rgba(239,68,68,0.08)' },
+          ].map(s => (
+            <div key={s.label} style={{ background: s.bg, borderRadius: 10, padding: '14px 8px', textAlign: 'center' }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
+
       <motion.div variants={fadeInUp} className="grid-auto" style={{ gap: 16 }}>
         {filtered.map(t => {
           const Icon = CHANNEL_ICON[t.channel] || Mail;
@@ -252,11 +470,22 @@ export default function Content() {
                     <Sparkles size={14} /> Preview AI Template
                   </button>
                 );
-                // 3 buttons (no AI) → single row · 4 buttons (with AI) → two rows
+                const noRecipients = selectedEmails.length === 0;
+                const isSending = sendingDay === t.id;
+                const testSendBtn = (
+                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t)}
+                    disabled={noRecipients || isSending}
+                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length}`}
+                    style={{ gap: 6, width: '100%', background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients ? 0.5 : 1 }}>
+                    <Send size={14} /> {isSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length}`}
+                  </button>
+                );
+                // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · Test Send (full width)
                 return hasAI ? (
                   <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
                     <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
+                    {testSendBtn}
                   </div>
                 ) : (
                   <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
@@ -310,6 +539,7 @@ export default function Content() {
           </motion.div>
         )}
       </AnimatePresence>
+
 
       {/* ── Preview Modal ── */}
       {preview && (

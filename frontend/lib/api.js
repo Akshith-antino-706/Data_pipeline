@@ -369,6 +369,9 @@ export const updateCustomSegment = (id, data) => request(`/api/v3/custom-segment
 export const deleteCustomSegment = (id) => request(`/api/v3/custom-segments/${id}`, { method: 'DELETE' });
 export const previewSegmentCount = (conditions, operator) => request('/api/v3/custom-segments/preview-count', { method: 'POST', body: JSON.stringify({ conditions, operator }) });
 export const searchContactsByEmail = (q) => { const qs = new URLSearchParams({ q }).toString(); return request(`/api/v3/test-sends/search-contacts?${qs}`); };
+// Send a Day{N} template to a list of recipient emails (internal QA test send)
+export const sendTestDay = (day, emails, destinationKey) =>
+  request(`/api/v3/test-sends/day${day}`, { method: 'POST', body: JSON.stringify({ emails, ...(destinationKey ? { destinationKey } : {}) }) });
 export const getCustomSegmentCustomers = (id, params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/custom-segments/${id}/customers?${qs}`);
