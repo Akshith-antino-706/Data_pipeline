@@ -1,5 +1,5 @@
 /**
- * GupshupService — WhatsApp template approval + SMS (DLT) send via Gupshup.
+ * GupshupService — WhatsApp template approval + SMS (DLT) send + RCS template send.
  *
  * Every method checks for credentials first and falls back to simulation mode
  * when they're missing, so the whole pipeline is testable before keys land.
@@ -11,12 +11,16 @@
  *   SMS:
  *     GUPSHUP_SMS_USER_ID, GUPSHUP_SMS_PASSWORD, GUPSHUP_SMS_SENDER_ID,
  *     DLT_PRINCIPAL_ENTITY_ID, DLT_TELEMARKETER_ID, DLT_HEADER_ID
+ *   RCS (reuses SMS userid/password; legacy GatewayAPI endpoint covers both):
+ *     GUPSHUP_RCS_BOT_ID, GUPSHUP_RCS_BOT_CATEGORY, GUPSHUP_RCS_BOT_BRAND
  */
 import db from '../config/database.js';
 
 const WA_API_BASE = 'https://api.gupshup.io/wa/api/v1';
 const WA_TEMPLATE_BASE = 'https://api.gupshup.io/wa/app';
 const SMS_API_BASE = 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
+// RCS shares the SMS gateway. Override via GUPSHUP_API_URL for staging if needed.
+const RCS_API_BASE = process.env.GUPSHUP_API_URL || SMS_API_BASE;
 
 export class GupshupService {
 
@@ -52,6 +56,29 @@ export class GupshupService {
   static isSMSConfigured() {
     const c = this.smsConfig;
     return Boolean(c.userId && c.password && c.senderId);
+  }
+
+  static get rcsConfig() {
+    // Per Gupshup support (2026-06-09), RCS SendMessage requires the
+    // numeric Enterprise account credentials (e.g. 2000265179), NOT the
+    // email-based RBM dashboard login. We expose them as GUPSHUP_RCS_*
+    // env vars distinct from the SMS gateway credentials.
+    //
+    // Fallback to SMS vars is intentional: pre-support setups had SMS creds
+    // wired in and worked end-to-end up to the auth boundary, so leaving
+    // the fallback keeps older deployments working until they migrate.
+    return {
+      userId:      process.env.GUPSHUP_RCS_USER_ID   || process.env.GUPSHUP_SMS_USER_ID,
+      password:    process.env.GUPSHUP_RCS_PASSWORD  || process.env.GUPSHUP_SMS_PASSWORD,
+      botId:       process.env.GUPSHUP_RCS_BOT_ID,
+      botCategory: process.env.GUPSHUP_RCS_BOT_CATEGORY,
+      botBrand:    process.env.GUPSHUP_RCS_BOT_BRAND,
+    };
+  }
+
+  static isRCSConfigured() {
+    const c = this.rcsConfig;
+    return Boolean(c.userId && c.password && c.botId);
   }
 
   // ── Template submission ────────────────────────────────────────
@@ -331,6 +358,210 @@ export class GupshupService {
     } catch (err) {
       return { success: false, error: err.message, provider: 'gupshup-sms' };
     }
+  }
+
+  // ── RCS (Gupshup RBM via legacy GatewayAPI) ───────────────────
+
+  /**
+   * Send an approved RCS template to a phone.
+   *
+   * Template approval is managed in the Gupshup Converse dashboard, NOT via
+   * our content_templates table — so this method does NOT call assertApproved.
+   * The caller passes the templateCode that's already approved in the bot.
+   *
+   *   to            E.164-ish phone (e.g. '919876543210' or '+919876543210')
+   *   templateCode  the code Gupshup assigned (e.g. 'test_raynapromo')
+   *   customParams  { variableName: value } — substituted into {{variableName}} placeholders
+   *   meta          optional { entryId, nodeId, customerId } — logged to rcs_messages
+   *
+   * Returns { success, externalId, simulated, status, raw, error }.
+   */
+  static async sendRCS({ to, templateCode, customParams = null, meta = {} } = {}) {
+    if (!to || !templateCode) {
+      throw new Error('sendRCS: `to` and `templateCode` are required');
+    }
+    const destination = String(to).replace(/^\+/, '');
+
+    // Opt-out gate — if the user STOP'd or got error_423 before, do not send.
+    const { rows: optoutRows } = await db.query(
+      'SELECT phone FROM rcs_optouts WHERE phone = $1 LIMIT 1',
+      [destination]
+    );
+    if (optoutRows.length > 0) {
+      const msgRow = await this._insertRcsMessage({
+        destination, templateCode, customParams, meta,
+        status: 'failed', errorCode: 'opted_out', errorReason: 'recipient previously opted out',
+      });
+      return { success: false, blocked: true, reason: 'opted_out', messageId: msgRow.id };
+    }
+
+    // Build the inner msg JSON. customParams must be a STRINGIFIED JSON value
+    // per Gupshup's docs (https://docs.gupshup.io/reference/send-rcs-message).
+    const templateMessage = { templateCode };
+    if (customParams && Object.keys(customParams).length > 0) {
+      templateMessage.customParams = JSON.stringify(customParams);
+    }
+    const msgPayload = { contentMessage: { templateMessage } };
+
+    // Insert tracking row up front so callbacks can join on external_id later.
+    const tracked = await this._insertRcsMessage({
+      destination, templateCode, customParams, meta,
+      status: 'queued', requestPayload: msgPayload,
+    });
+
+    if (!this.isRCSConfigured()) {
+      const simulatedId = `sim_rcs_${tracked.id}_${Date.now()}`;
+      await db.query(
+        `UPDATE rcs_messages SET external_id = $1, status = 'submitted', updated_at = NOW() WHERE id = $2`,
+        [simulatedId, tracked.id]
+      );
+      console.log(`[Gupshup/RCS] Simulated send to ${destination} | template=${templateCode}`);
+      return { success: true, simulated: true, externalId: simulatedId, status: 'submitted', messageId: tracked.id };
+    }
+
+    const c = this.rcsConfig;
+    const form = new URLSearchParams();
+    form.append('method', 'SendMessage');
+    form.append('send_to', destination);
+    form.append('msg', JSON.stringify(msgPayload));
+    form.append('msg_type', 'TEXT');
+    form.append('userid', c.userId);
+    form.append('auth_scheme', 'plain');
+    form.append('password', c.password);
+    form.append('v', '1.1');
+    form.append('format', 'json');
+
+    try {
+      const res = await fetch(RCS_API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      const data = await res.json().catch(() => ({}));
+      const success = data?.response?.status === 'success';
+      const externalId = data?.response?.id || null;
+
+      await db.query(
+        `UPDATE rcs_messages SET
+           external_id = $1,
+           status = $2,
+           error_code = $3,
+           error_reason = $4,
+           response_payload = $5,
+           failed_at = CASE WHEN $2 = 'failed' THEN NOW() ELSE failed_at END,
+           updated_at = NOW()
+         WHERE id = $6`,
+        [
+          externalId,
+          success ? 'submitted' : 'failed',
+          success ? null : (data?.response?.code || `http_${res.status}`),
+          success ? null : (data?.response?.details || 'send failed'),
+          JSON.stringify(data),
+          tracked.id,
+        ]
+      );
+
+      return {
+        success,
+        externalId,
+        status: success ? 'submitted' : 'failed',
+        raw: data,
+        messageId: tracked.id,
+        ...(success ? {} : { error: data?.response?.details || 'send failed' }),
+      };
+    } catch (err) {
+      await db.query(
+        `UPDATE rcs_messages SET status = 'failed', error_reason = $1, failed_at = NOW(), updated_at = NOW() WHERE id = $2`,
+        [err.message, tracked.id]
+      );
+      return { success: false, error: err.message, messageId: tracked.id };
+    }
+  }
+
+  /**
+   * Update an rcs_messages row when Gupshup posts a DLR (sent/delivered/read/
+   * failed) to our webhook. external_id is the gsId in the callback's
+   * payload.gsId field.
+   */
+  static async recordRcsDlr({ externalId, type, destination, errorCode = null, errorReason = null, raw = null } = {}) {
+    if (!externalId || !type) return { ignored: true, reason: 'missing externalId or type' };
+
+    const t = String(type).toLowerCase();
+    const setClauses = [`status = $1`, `updated_at = NOW()`];
+    const params = [t];
+
+    if (t === 'delivered') setClauses.push(`delivered_at = COALESCE(delivered_at, NOW())`);
+    if (t === 'read')      setClauses.push(`read_at      = COALESCE(read_at, NOW())`);
+    if (t === 'failed') {
+      setClauses.push(`failed_at = COALESCE(failed_at, NOW())`);
+      setClauses.push(`error_code   = COALESCE($${params.length + 1}, error_code)`);   params.push(errorCode);
+      setClauses.push(`error_reason = COALESCE($${params.length + 1}, error_reason)`); params.push(errorReason);
+    }
+
+    params.push(externalId);
+    const externalIdParamIndex = params.length;
+
+    const { rowCount } = await db.query(
+      `UPDATE rcs_messages SET ${setClauses.join(', ')} WHERE external_id = $${externalIdParamIndex}`,
+      params
+    );
+
+    // 423 = user opted out (per the PDF error table). Mark them so future sends skip.
+    if (t === 'failed' && String(errorCode) === '423' && destination) {
+      await db.query(
+        `INSERT INTO rcs_optouts (phone, source, raw_payload) VALUES ($1, 'error_423', $2)
+         ON CONFLICT (phone) DO NOTHING`,
+        [String(destination).replace(/^\+/, ''), JSON.stringify(raw || {})]
+      );
+    }
+
+    return { matched: rowCount, type: t, externalId };
+  }
+
+  /**
+   * Insert an inbound rcs_events row (user reply, button tap, URL click).
+   * Returns the new row.
+   */
+  static async recordRcsInboundEvent({ externalMessageId, sourcePhone, eventType, payload, raw } = {}) {
+    if (!sourcePhone || !eventType) {
+      throw new Error('recordRcsInboundEvent: sourcePhone and eventType required');
+    }
+    const { rows: [row] } = await db.query(
+      `INSERT INTO rcs_events (external_message_id, source_phone, event_type, payload, raw)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, received_at`,
+      [externalMessageId || null, String(sourcePhone).replace(/^\+/, ''), eventType, JSON.stringify(payload || {}), JSON.stringify(raw || {})]
+    );
+
+    // Heuristic STOP-keyword opt-out: a text reply of just "stop" (any case).
+    if (eventType === 'text' && /^stop\s*$/i.test(String(payload?.text || ''))) {
+      await db.query(
+        `INSERT INTO rcs_optouts (phone, source, raw_payload) VALUES ($1, 'stop_keyword', $2)
+         ON CONFLICT (phone) DO NOTHING`,
+        [String(sourcePhone).replace(/^\+/, ''), JSON.stringify(raw || {})]
+      );
+    }
+    return row;
+  }
+
+  static async _insertRcsMessage({ destination, templateCode, customParams, meta = {}, status, errorCode = null, errorReason = null, requestPayload = null } = {}) {
+    const c = this.rcsConfig;
+    const { rows: [row] } = await db.query(
+      `INSERT INTO rcs_messages
+         (bot_id, destination, template_code, custom_params, status,
+          error_code, error_reason, entry_id, node_id, customer_id, request_payload)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id`,
+      [
+        c.botId || null, destination, templateCode || null,
+        customParams ? JSON.stringify(customParams) : null,
+        status,
+        errorCode, errorReason,
+        meta.entryId || null, meta.nodeId || null, meta.customerId || null,
+        requestPayload ? JSON.stringify(requestPayload) : null,
+      ]
+    );
+    return row;
   }
 
   // ── Internal ──────────────────────────────────────────────────

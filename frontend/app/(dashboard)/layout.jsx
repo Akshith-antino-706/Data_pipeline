@@ -3,7 +3,7 @@
 import { useState, Component } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, Mail, LogOut, MessageCircle } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, Mail, LogOut, MessageCircle, MessageSquare } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -24,6 +24,7 @@ const NAV = [
   { href: '/daily-report', icon: Download, label: 'Daily Report' },
   { href: '/test-sends', icon: Mail, label: 'Test Sends' },
   { href: '/chathead', icon: MessageCircle, label: 'WhatsApp (ChatHead)' },
+  { href: '/rcs', icon: MessageSquare, label: 'RCS Send' },
   { href: '/system', icon: FileText, label: 'System Docs' },
 ];
 
