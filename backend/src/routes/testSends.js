@@ -270,6 +270,28 @@ router.get('/contacts', async (req, res, next) => {
 
 // ── contact search ───────────────────────────────────────────────────────
 
+// POST /analyze-email — QA report for a Day template's rendered email.
+// Body: { templateId } (1-7). Returns grammar / missing content / URL checks /
+// spam-risk / other errors. Used by the Content screen after a Test Send.
+router.post('/analyze-email', async (req, res) => {
+  try {
+    const templateId = parseInt(req.body?.templateId);
+    if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+
+    // Use the same daily-master HTML that gets sent (so the report matches the email)
+    const { getDailyAITemplate } = await import('../services/JourneyService.js');
+    const rendered = await getDailyAITemplate(templateId);
+    if (!rendered?.html) return res.status(400).json({ success: false, error: `Template ${templateId} is not a dynamic Day template (1-7)` });
+
+    const { analyzeEmail } = await import('../services/EmailQAService.js');
+    const report = await analyzeEmail({ html: rendered.html, subject: rendered.subject });
+    res.json({ success: true, data: report });
+  } catch (err) {
+    console.error('[analyze-email] failed:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/search-contacts', async (req, res, next) => {
   try {
     const q = String(req.query.q || '').trim();

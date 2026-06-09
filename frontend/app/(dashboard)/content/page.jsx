@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay } from '@/lib/api';
+import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail } from '@/lib/api';
 import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
@@ -49,6 +49,10 @@ export default function Content() {
   const [selectedEmails, setSelectedEmails] = useState([]); // globally selected
   const [sendingDay, setSendingDay] = useState(null);       // templateId currently sending
   const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, utm: 0, failed: 0 });
+
+  // ── Post-send QA report ──
+  const [qaReport, setQaReport] = useState(null);   // { template } open + report
+  const [qaLoading, setQaLoading] = useState(false);
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
   const tsGet = (path) => fetch(`${apiBase}${path}`, { credentials: 'include' })
@@ -103,6 +107,15 @@ export default function Content() {
     try {
       const data = await sendTestDay(day, selectedEmails);
       hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? selectedEmails.length} recipient(s)`);
+      // After send → run the QA report on the same email
+      setQaReport({ template: tpl, report: null });
+      setQaLoading(true);
+      try {
+        const res = await analyzeTestEmail(tpl.id);
+        setQaReport({ template: tpl, report: res?.data || null });
+      } catch (e) {
+        setQaReport({ template: tpl, report: { error: e.message } });
+      } finally { setQaLoading(false); }
     } catch (err) {
       hotToast.error(err.message || 'Send failed');
     } finally { setSendingDay(null); }
@@ -292,6 +305,12 @@ export default function Content() {
             overflowX: 'hidden',
           }}
         >
+          {recipLoading && recipients.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Loading…</div>
+          )}
+          {!recipLoading && recipients.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>No contacts</div>
+          )}
           {recipients.map((c) => {
             const email = c.email || c.actual_email;
             const checked = selectedEmails.includes(email);
@@ -540,6 +559,81 @@ export default function Content() {
         )}
       </AnimatePresence>
 
+
+      {/* ── Email QA Report Modal (after Test Send) ── */}
+      {qaReport && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={() => setQaReport(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 14, maxWidth: 640, width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📋 Email QA Report</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>{qaReport.template.name} — sent & analyzed</div>
+              </div>
+              <button onClick={() => setQaReport(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
+            </div>
+            <div style={{ padding: '18px 22px', overflow: 'auto', flex: 1 }}>
+              {qaLoading ? (
+                <div style={{ textAlign: 'center', padding: 50, color: 'var(--text-secondary)' }}>
+                  <Sparkles size={28} style={{ color: '#8b5cf6', marginBottom: 12 }} />
+                  <div style={{ fontWeight: 600 }}>Analyzing email…</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Grammar · content · URLs · spam-risk (~10-20s)</div>
+                </div>
+              ) : qaReport.report?.error ? (
+                <div style={{ padding: 16, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: 13 }}>Analysis failed: {qaReport.report.error}</div>
+              ) : qaReport.report ? (() => {
+                const r = qaReport.report;
+                const Section = ({ icon, title, items, okText, danger }) => (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 8 }}>{icon} {title}</div>
+                    {items.length === 0 ? (
+                      <div style={{ fontSize: 13, color: '#16a34a' }}>✓ {okText}</div>
+                    ) : (
+                      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {items.map((it, i) => <li key={i} style={{ fontSize: 13, color: danger ? '#ef4444' : 'var(--text-primary)' }}>{it}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                );
+                const sr = r.spamRisk || {};
+                const srColor = sr.level === 'High' ? '#ef4444' : sr.level === 'Medium' ? '#f59e0b' : '#16a34a';
+                return (
+                  <div>
+                    {/* Spam risk banner */}
+                    <div style={{ marginBottom: 18, padding: '12px 14px', borderRadius: 10, background: srColor + '14', border: `1px solid ${srColor}40` }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: srColor }}>📬 Inbox / Spam Risk: {sr.level} — {sr.likelyPlacement}</div>
+                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {(sr.reasons || []).map((rs, i) => <li key={i} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{rs}</li>)}
+                      </ul>
+                      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6, fontStyle: 'italic' }}>Heuristic estimate — true placement needs seed-inbox testing.</div>
+                    </div>
+                    <Section icon="✍️" title="Grammar" items={r.grammar || []} okText="No grammar issues found" />
+                    <Section icon="📦" title="Missing Content" items={r.missingContent || []} okText="No missing content" danger />
+                    {/* URLs */}
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 8 }}>🔗 URLs ({r.urls?.total || 0} found, {r.urls?.broken || 0} broken)</div>
+                      {(r.urls?.results || []).length === 0 ? (
+                        <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No links</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflow: 'auto' }}>
+                          {r.urls.results.map((u, i) => (
+                            <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ color: u.ok ? '#16a34a' : '#ef4444', fontWeight: 700, flexShrink: 0 }}>{u.ok ? '✓' : '✗'} {u.status || u.error}</span>
+                              <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.url}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Section icon="⚠️" title="Other Errors" items={r.errors || []} okText="No other issues" danger />
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>Content analysis: {r.analysisSource === 'claude' ? 'Claude AI' : r.analysisSource}</div>
+                  </div>
+                );
+              })() : null}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Preview Modal ── */}
       {preview && (
