@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, createTemplate, updateTemplate, deleteTemplate } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2 } from 'lucide-react';
+import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail } from '@/lib/api';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -41,6 +41,86 @@ export default function Content() {
   const [deleting, setDeleting] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // template object to confirm
 
+  // ── Global recipients (shared by all card Test Send buttons) ──
+  const [recipients, setRecipients] = useState([]);        // searched/listed contacts
+  const [recipQuery, setRecipQuery] = useState('');
+  const [recipTotal, setRecipTotal] = useState(0);
+  const [recipLoading, setRecipLoading] = useState(false);
+  const [selectedEmails, setSelectedEmails] = useState([]); // globally selected
+  const [sendingDay, setSendingDay] = useState(null);       // templateId currently sending
+  const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, utm: 0, failed: 0 });
+
+  // ── Post-send QA report ──
+  const [qaReport, setQaReport] = useState(null);   // { template } open + report
+  const [qaLoading, setQaLoading] = useState(false);
+
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const tsGet = (path) => fetch(`${apiBase}${path}`, { credentials: 'include' })
+    .then(r => r.json())
+    .then(d => d.data || d); // unwrap { data: ... } envelope
+
+  // Load contacts (debounced on query)
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      setRecipLoading(true);
+      try {
+        const qs = new URLSearchParams({ limit: 50, offset: 0 });
+        if (recipQuery.trim().length >= 2) qs.set('q', recipQuery.trim());
+        const res = await tsGet(`/api/v3/test-sends/contacts?${qs}`);
+        setRecipients(res.contacts || []);
+        setRecipTotal(res.total || 0);
+      } catch { /* ignore */ }
+      setRecipLoading(false);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [recipQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load tracking flow stats
+  useEffect(() => {
+    (async () => {
+      try {
+        const [summary, utmLog] = await Promise.all([
+          tsGet('/api/v3/test-sends/send-log/summary'),
+          tsGet('/api/v3/test-sends/utm-log?limit=1'),
+        ]);
+        const byStatus = summary?.byStatus || [];
+        const g = (s) => parseInt(byStatus.find(r => r.status === s)?.count || 0);
+        setFlowStats({
+          sent: g('sent') + g('opened') + g('clicked'),
+          opened: g('opened') + g('clicked'),
+          clicked: g('clicked'),
+          failed: g('failed'),
+          utm: utmLog?.total || 0,
+        });
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  const toggleRecipient = (email) => {
+    setSelectedEmails(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
+  };
+
+  async function handleCardTestSend(tpl) {
+    if (selectedEmails.length === 0) return;
+    const day = tpl.id; // template id 1-7 == day number
+    setSendingDay(tpl.id);
+    try {
+      const data = await sendTestDay(day, selectedEmails);
+      hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? selectedEmails.length} recipient(s)`);
+      // After send → run the QA report on the same email
+      setQaReport({ template: tpl, report: null });
+      setQaLoading(true);
+      try {
+        const res = await analyzeTestEmail(tpl.id);
+        setQaReport({ template: tpl, report: res?.data || null });
+      } catch (e) {
+        setQaReport({ template: tpl, report: { error: e.message } });
+      } finally { setQaLoading(false); }
+    } catch (err) {
+      hotToast.error(err.message || 'Send failed');
+    } finally { setSendingDay(null); }
+  }
+
   function extractVars(html) {
     const matches = [...html.matchAll(/\{\{(\w+)\}\}/g)];
     const unique = [...new Set(matches.map(m => m[1]))];
@@ -60,6 +140,17 @@ export default function Content() {
       setPreview({ template: tpl, html: res?.data?.html || '', loading: false });
     } catch (err) {
       setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${err.message || 'Preview failed'}</pre>`, loading: false });
+    }
+  }
+
+  // AI preview — renders the real Claude-ranked version (slow, ~15-25s first call)
+  async function openPreviewAI(tpl) {
+    setPreview({ template: tpl, html: null, loading: true, ai: true });
+    try {
+      const res = await previewTemplateAI(tpl.id);
+      setPreview({ template: tpl, html: res?.data?.html || '', loading: false, ai: true });
+    } catch (err) {
+      setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${err.message || 'AI preview failed'}</pre>`, loading: false, ai: true });
     }
   }
 
@@ -190,6 +281,163 @@ export default function Content() {
         </div>
       </motion.div>
 
+      {/* ── Recipients (for Test Send) ── */}
+      <motion.div variants={fadeInUp} style={{ marginBottom: 16, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <Send size={14} color="#16a34a" /> Recipients · {selectedEmails.length} selected of {recipTotal.toLocaleString()}
+          </div>
+          {selectedEmails.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedEmails([])} style={{ fontSize: 11 }}>Clear selection</button>
+          )}
+        </div>
+        <div style={{ position: 'relative', marginBottom: 10 }}>
+          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+          <input className="form-input" placeholder="Filter by email or name… (min 2 chars)" value={recipQuery}
+            onChange={e => setRecipQuery(e.target.value)} style={{ paddingLeft: 36, width: '100%' }} />
+        </div>
+        <div
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            maxHeight: 260,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+          }}
+        >
+          {recipLoading && recipients.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Loading…</div>
+          )}
+          {!recipLoading && recipients.length === 0 && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>No contacts</div>
+          )}
+          {recipients.map((c) => {
+            const email = c.email || c.actual_email;
+            const checked = selectedEmails.includes(email);
+
+            return (
+              <label
+                key={c.id || email}
+                onClick={() => toggleRecipient(email)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 12px',
+                  cursor: 'pointer',
+                  borderBottom: '1px solid var(--border)',
+                  background: checked
+                    ? 'rgba(34,197,94,0.06)'
+                    : 'transparent',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  readOnly
+                  style={{
+                    width: 16,
+                    height: 16,
+                    flexShrink: 0,
+                    cursor: 'pointer',
+                  }}
+                />
+
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 13,
+                        color: 'var(--text-primary)',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {email}
+                    </span>
+
+                    {c.contact_type && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: 'rgba(139,92,246,0.12)',
+                          color: '#8b5cf6',
+                        }}
+                      >
+                        {c.contact_type}
+                      </span>
+                    )}
+
+                    {c.booking_status && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: 'rgba(34,197,94,0.12)',
+                          color: '#16a34a',
+                        }}
+                      >
+                        {c.booking_status}
+                      </span>
+                    )}
+                  </div>
+
+                  {(c.name || c.country) && (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 11,
+                        color: 'var(--text-tertiary)',
+                      }}
+                    >
+                      {c.name}
+                      {c.country && ` • ${c.country}`}
+                    </div>
+                  )}
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </motion.div>
+
+      {/* ── Email Tracking Flow ── */}
+      <motion.div variants={fadeInUp} style={{ marginBottom: 20, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>📧 Email Tracking Flow</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+          {[
+            { label: 'Sent', value: flowStats.sent, color: '#3b82f6', bg: 'rgba(59,130,246,0.08)' },
+            { label: 'Opened', value: flowStats.opened, color: '#16a34a', bg: 'rgba(34,197,94,0.08)' },
+            { label: 'Clicked', value: flowStats.clicked, color: '#8b5cf6', bg: 'rgba(139,92,246,0.08)' },
+            { label: 'UTM Captured', value: flowStats.utm, color: '#f59e0b', bg: 'rgba(245,158,11,0.08)' },
+            { label: 'Failed', value: flowStats.failed, color: '#ef4444', bg: 'rgba(239,68,68,0.08)' },
+          ].map(s => (
+            <div key={s.label} style={{ background: s.bg, borderRadius: 10, padding: '14px 8px', textAlign: 'center' }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </motion.div>
+
       <motion.div variants={fadeInUp} className="grid-auto" style={{ gap: 16 }}>
         {filtered.map(t => {
           const Icon = CHANNEL_ICON[t.channel] || Mail;
@@ -217,24 +465,53 @@ export default function Content() {
               {t.cta_text && (
                 <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CTA: {t.cta_text}</div>
               )}
-              <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
-                <button className="btn btn-secondary btn-sm" onClick={() => openPreview(t)} style={{ gap: 6 }}>
-                  <Eye size={14} /> Preview
-                </button>
-                <button className="btn btn-secondary btn-sm" onClick={() => openEdit(t)} style={{ gap: 6 }}>
-                  <Edit2 size={14} /> Edit
-                </button>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setConfirmDelete(t)}
-                  disabled={deleting === t.id}
-                  style={{ gap: 6, color: 'var(--red, #ef4444)', marginLeft: 'auto' }}
-                  title="Delete template"
-                >
-                  <Trash2 size={14} />
-                  {deleting === t.id ? '…' : 'Delete'}
-                </button>
-              </div>
+              {(() => {
+                const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+                const previewBtn = (
+                  <button className="btn btn-secondary btn-sm" onClick={() => openPreview(t)} style={{ gap: 6, flex: 1 }}>
+                    <Eye size={14} /> Preview
+                  </button>
+                );
+                const editBtn = (
+                  <button className="btn btn-secondary btn-sm" onClick={() => openEdit(t)} style={{ gap: 6, flex: 1 }}>
+                    <Edit2 size={14} /> Edit
+                  </button>
+                );
+                const deleteBtn = (
+                  <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(t)} disabled={deleting === t.id}
+                    style={{ gap: 6, flex: 1, color: 'var(--red, #ef4444)' }} title="Delete template">
+                    <Trash2 size={14} />{deleting === t.id ? '…' : 'Delete'}
+                  </button>
+                );
+                const aiBtn = (
+                  <button className="btn btn-sm" onClick={() => openPreviewAI(t)}
+                    style={{ gap: 6, flex: 1, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
+                    <Sparkles size={14} /> Preview AI Template
+                  </button>
+                );
+                const noRecipients = selectedEmails.length === 0;
+                const isSending = sendingDay === t.id;
+                const testSendBtn = (
+                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t)}
+                    disabled={noRecipients || isSending}
+                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length}`}
+                    style={{ gap: 6, width: '100%', background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients ? 0.5 : 1 }}>
+                    <Send size={14} /> {isSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length}`}
+                  </button>
+                );
+                // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · Test Send (full width)
+                return hasAI ? (
+                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
+                    <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
+                    {testSendBtn}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
+                    {previewBtn}{editBtn}{deleteBtn}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -282,6 +559,82 @@ export default function Content() {
         )}
       </AnimatePresence>
 
+
+      {/* ── Email QA Report Modal (after Test Send) ── */}
+      {qaReport && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={() => setQaReport(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 14, maxWidth: 640, width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📋 Email QA Report</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>{qaReport.template.name} — sent & analyzed</div>
+              </div>
+              <button onClick={() => setQaReport(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
+            </div>
+            <div style={{ padding: '18px 22px', overflow: 'auto', flex: 1 }}>
+              {qaLoading ? (
+                <div style={{ textAlign: 'center', padding: 50, color: 'var(--text-secondary)' }}>
+                  <Sparkles size={28} style={{ color: '#8b5cf6', marginBottom: 12 }} />
+                  <div style={{ fontWeight: 600 }}>Analyzing email…</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Grammar · content · URLs · spam-risk (~10-20s)</div>
+                </div>
+              ) : qaReport.report?.error ? (
+                <div style={{ padding: 16, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: 13 }}>Analysis failed: {qaReport.report.error}</div>
+              ) : qaReport.report ? (() => {
+                const r = qaReport.report;
+                const Section = ({ icon, title, items, okText, danger }) => (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 8 }}>{icon} {title}</div>
+                    {items.length === 0 ? (
+                      <div style={{ fontSize: 13, color: '#16a34a' }}>✓ {okText}</div>
+                    ) : (
+                      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {items.map((it, i) => <li key={i} style={{ fontSize: 13, color: danger ? '#ef4444' : 'var(--text-primary)' }}>{it}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                );
+                const sr = r.spamRisk || {};
+                const srColor = sr.level === 'High' ? '#ef4444' : sr.level === 'Medium' ? '#f59e0b' : '#16a34a';
+                return (
+                  <div>
+                    {/* Spam risk banner */}
+                    <div style={{ marginBottom: 18, padding: '12px 14px', borderRadius: 10, background: srColor + '14', border: `1px solid ${srColor}40` }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: srColor }}>📬 Inbox / Spam Risk: {sr.level} — {sr.likelyPlacement}</div>
+                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {(sr.reasons || []).map((rs, i) => <li key={i} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{rs}</li>)}
+                      </ul>
+                      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6, fontStyle: 'italic' }}>Heuristic estimate — true placement needs seed-inbox testing.</div>
+                    </div>
+                    <Section icon="✍️" title="Grammar" items={r.grammar || []} okText="No grammar issues found" />
+                    <Section icon="📦" title="Missing Content" items={r.missingContent || []} okText="No missing content" danger />
+                    {/* URLs */}
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 8 }}>🔗 URLs ({r.urls?.total || 0} found, {r.urls?.broken || 0} broken)</div>
+                      {(r.urls?.results || []).length === 0 ? (
+                        <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No links</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflow: 'auto' }}>
+                          {r.urls.results.map((u, i) => (
+                            <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ color: u.ok ? '#16a34a' : '#ef4444', fontWeight: 700, flexShrink: 0 }}>{u.ok ? '✓' : '✗'} {u.status || u.error}</span>
+                              <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.url}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Section icon="⚠️" title="Other Errors" items={r.errors || []} okText="No other issues" danger />
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>Content analysis: {r.analysisSource === 'claude' ? 'Claude AI' : r.analysisSource}</div>
+                  </div>
+                );
+              })() : null}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Preview Modal ── */}
       {preview && (
         <div
@@ -291,7 +644,10 @@ export default function Content() {
           <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 'var(--radius-xl)', maxWidth: 720, width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
               <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>{preview.template.name}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {preview.template.name}
+                  {preview.ai && <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>✨ AI</span>}
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
                   {preview.template.channel} · {preview.template.segment_label || 'ALL'} · {preview.template.status}
                 </div>
@@ -300,7 +656,9 @@ export default function Content() {
             </div>
             <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
               {preview.loading ? (
-                <div style={{ padding: 60, textAlign: 'center', color: '#888' }}>Rendering preview…</div>
+                <div style={{ padding: 60, textAlign: 'center', color: '#888' }}>
+                  {preview.ai ? '✨ Generating AI preview with Claude… (~15-25s)' : 'Rendering preview…'}
+                </div>
               ) : (
                 <iframe
                   srcDoc={preview.html}

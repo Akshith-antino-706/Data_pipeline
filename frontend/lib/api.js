@@ -56,6 +56,7 @@ export const previewTemplate = (id, variables = {}) =>
     method: 'POST',
     body: JSON.stringify({ variables }),
   });
+export const previewTemplateAI = (id) => request(`/api/v2/content/templates/${id}/preview-ai`);
 export const createTemplate = (data) => request('/api/v2/content/templates', { method: 'POST', body: JSON.stringify(data) });
 export const updateTemplate = (id, data) => request(`/api/v2/content/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteTemplate = (id) => request(`/api/v2/content/templates/${id}`, { method: 'DELETE' });
@@ -368,6 +369,12 @@ export const updateCustomSegment = (id, data) => request(`/api/v3/custom-segment
 export const deleteCustomSegment = (id) => request(`/api/v3/custom-segments/${id}`, { method: 'DELETE' });
 export const previewSegmentCount = (conditions, operator) => request('/api/v3/custom-segments/preview-count', { method: 'POST', body: JSON.stringify({ conditions, operator }) });
 export const searchContactsByEmail = (q) => { const qs = new URLSearchParams({ q }).toString(); return request(`/api/v3/test-sends/search-contacts?${qs}`); };
+// Send a Day{N} template to a list of recipient emails (internal QA test send)
+export const sendTestDay = (day, emails, destinationKey) =>
+  request(`/api/v3/test-sends/day${day}`, { method: 'POST', body: JSON.stringify({ emails, ...(destinationKey ? { destinationKey } : {}) }) });
+// Post-send QA report for a template's email (grammar, content, URLs, spam-risk, errors)
+export const analyzeTestEmail = (templateId) =>
+  request(`/api/v3/test-sends/analyze-email`, { method: 'POST', body: JSON.stringify({ templateId }) });
 export const getCustomSegmentCustomers = (id, params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/custom-segments/${id}/customers?${qs}`);

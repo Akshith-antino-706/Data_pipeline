@@ -12,11 +12,17 @@ const MAIL_TEMPLATES_DIR = path.resolve(__dirname, '..', '..', '..', 'mail_templ
 
 // Cache rankings for 1 hour so Claude is called once per batch, not once per email
 const _rankingCache = new Map();
+// Tracks the source ('claude' | 'fallback' | ...) of the most recent ranking fetch
+// in this render. Read by getDailyAITemplate immediately after renderDayHtml (the
+// daily generation loop is sequential, so no cross-render race).
+let _lastRankingSource = 'claude';
 async function _getCachedRanking(key, fetchFn) {
   const cached = _rankingCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.ranking;
-  const { ranking } = await fetchFn();
-  _rankingCache.set(key, { ranking, expiresAt: Date.now() + 60 * 60 * 1000 });
+  if (cached && cached.expiresAt > Date.now()) { _lastRankingSource = cached.source || 'claude'; return cached.ranking; }
+  const result = await fetchFn();
+  const ranking = result.ranking || result;
+  _lastRankingSource = result.source || 'claude';
+  _rankingCache.set(key, { ranking, source: _lastRankingSource, expiresAt: Date.now() + 60 * 60 * 1000 });
   return ranking;
 }
 
@@ -179,21 +185,75 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
 }
 
 /**
- * Get the stored rendered email for a node, generating + storing it on first call.
+ * Daily AI master template. Claude is called at most ONCE per (template, day):
+ *   - Returns today's stored row if it exists.
+ *   - Else renders via renderDayHtml (Claude/fallback), stores today's row, returns it.
  *
- * Flow:
- *   1. If journey_node_emails has a row for (journey, node) → return that exact HTML.
- *   2. Else render via renderDayHtml (Claude or fallback), store the FULL HTML +
- *      subject + source, and return it.
- *
- * Both the worker (send) and the preview endpoint call this, so the preview is
- * byte-identical to what every contact at the node receives. Returns null if the
- * template isn't a dynamic Day template (caller falls back to EmailRenderer).
+ * Used by /content "Preview AI" and as the SOURCE journey nodes snapshot from.
+ * `dateStr` defaults to today (UTC); pass a specific date to read a past day's master.
  */
-export async function getOrGenerateNodeEmail({ journeyId, nodeId, templateId, contactId }) {
+export async function getDailyAITemplate(templateId, dateStr = null) {
+  const tid = parseInt(templateId);
+  const day = dateStr || new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+
+  const { rows: [existing] } = await db.query(
+    'SELECT subject, html, source FROM daily_ai_templates WHERE template_id = $1 AND render_date = $2',
+    [tid, day]
+  );
+  if (existing?.html) {
+    return { html: existing.html, subject: existing.subject, source: existing.source, day, stored: true };
+  }
+
+  // Not generated yet today — render once (Claude) and store. No journeyId/nodeId →
+  // renderDayHtml uses the in-memory cached ranking (Claude), not per-node freezing.
+  const rendered = await renderDayHtml(tid, 'preview', {});
+  if (!rendered?.html) return null; // not a dynamic Day template (1-7)
+  const source = _lastRankingSource || 'claude'; // captured during the render above
+
+  await db.query(
+    `INSERT INTO daily_ai_templates (template_id, render_date, subject, html, source)
+     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (template_id, render_date) DO NOTHING`,
+    [tid, day, rendered.subject, rendered.html, source]
+  );
+  const { rows: [frozen] } = await db.query(
+    'SELECT subject, html, source FROM daily_ai_templates WHERE template_id = $1 AND render_date = $2',
+    [tid, day]
+  );
+  return frozen?.html
+    ? { html: frozen.html, subject: frozen.subject, source: frozen.source, day, stored: true }
+    : { html: rendered.html, subject: rendered.subject, source, day, stored: false };
+}
+
+/**
+ * Generate + store today's daily master for all 7 dynamic templates. Called by the
+ * daily cron (and can be triggered manually). One Claude call per template, serialized.
+ */
+export async function generateDailyAITemplates() {
+  const results = [];
+  for (const tid of [1, 2, 3, 4, 5, 6, 7]) {
+    try {
+      const r = await getDailyAITemplate(tid);
+      results.push({ templateId: tid, source: r?.source || 'none', bytes: r?.html?.length || 0 });
+    } catch (err) {
+      results.push({ templateId: tid, error: err.message });
+    }
+  }
+  return results;
+}
+
+/**
+ * Get the per-node frozen email for a journey node. Snapshots from the DAILY MASTER
+ * at first touch (send or preview), so:
+ *   - Claude is NOT called per node — it copies today's daily master.
+ *   - The snapshot is frozen forever, so preview of this node always == what was sent,
+ *     even after the daily master regenerates on later days.
+ *
+ * Returns null if the template isn't a dynamic Day template (caller falls back).
+ */
+export async function getOrGenerateNodeEmail({ journeyId, nodeId, templateId }) {
   if (!journeyId || !nodeId) return null;
 
-  // 1. Return stored email if it exists
+  // 1. Return the node's frozen snapshot if it exists
   const { rows: [stored] } = await db.query(
     'SELECT subject, html, source FROM journey_node_emails WHERE journey_id = $1 AND node_id = $2',
     [journeyId, nodeId]
@@ -202,31 +262,24 @@ export async function getOrGenerateNodeEmail({ journeyId, nodeId, templateId, co
     return { html: stored.html, subject: stored.subject, source: stored.source, stored: true };
   }
 
-  // 2. First time — render (Claude/fallback) and store the whole email
-  const rendered = await renderDayHtml(parseInt(templateId), contactId || 'preview', { journeyId, nodeId });
-  if (!rendered?.html) return null; // not a Day template — caller handles fallback
-
-  // Source comes from the ranking row that renderDayHtml just populated
-  const { rows: [rk] } = await db.query(
-    `SELECT ARRAY_AGG(DISTINCT source) AS sources FROM journey_node_rankings WHERE journey_id=$1 AND node_id=$2`,
-    [journeyId, nodeId]
-  );
-  const source = (rk?.sources || []).includes('claude') ? 'claude' : ((rk?.sources || [])[0] || 'unknown');
+  // 2. First touch — copy TODAY's daily master into this node's frozen snapshot
+  const master = await getDailyAITemplate(templateId);
+  if (!master?.html) return null; // not a Day template — caller handles fallback
 
   await db.query(
     `INSERT INTO journey_node_emails (journey_id, node_id, template_id, subject, html, source)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (journey_id, node_id) DO NOTHING`,
-    [journeyId, nodeId, parseInt(templateId), rendered.subject, rendered.html, source]
+    [journeyId, nodeId, parseInt(templateId), master.subject, master.html, master.source]
   );
-  // Re-read so concurrent first-callers all return the exact same stored HTML
+  // Re-read so concurrent first-callers all return the exact same frozen snapshot
   const { rows: [frozen] } = await db.query(
     'SELECT subject, html, source FROM journey_node_emails WHERE journey_id = $1 AND node_id = $2',
     [journeyId, nodeId]
   );
   return frozen?.html
     ? { html: frozen.html, subject: frozen.subject, source: frozen.source, stored: true }
-    : { html: rendered.html, subject: rendered.subject, source, stored: false };
+    : { html: master.html, subject: master.subject, source: master.source, stored: false };
 }
 
 
