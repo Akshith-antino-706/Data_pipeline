@@ -142,4 +142,68 @@ export async function analyzeEmail({ html, subject }) {
   };
 }
 
-export default { analyzeEmail };
+/**
+ * Real inbox-placement check via IMAP on the test seed inbox.
+ * Searches INBOX and [Gmail]/Spam for a recent email matching the subject (and/or
+ * the journey sender). Returns where it actually landed.
+ *
+ * Returns: { available, placement: 'inbox'|'spam'|'not_found', subject, foundAt, error? }
+ */
+export async function checkInboxPlacement({ subject, sinceMinutes = 60 } = {}) {
+  const { IMAP_USER, IMAP_PASSWORD, IMAP_HOST, IMAP_PORT } = process.env;
+  if (!IMAP_USER || !IMAP_PASSWORD) {
+    return { available: false, error: 'IMAP not configured (set IMAP_USER / IMAP_PASSWORD)' };
+  }
+  const fromAddr = process.env.CHATHEAD_FROM_EMAIL || 'promotions.raynatours.com';
+  const since = new Date(Date.now() - sinceMinutes * 60_000);
+
+  const { ImapFlow } = await import('imapflow');
+  const client = new ImapFlow({
+    host: IMAP_HOST || 'imap.gmail.com',
+    port: parseInt(IMAP_PORT || '993'),
+    secure: true,
+    auth: { user: IMAP_USER, pass: IMAP_PASSWORD },
+    logger: false,
+  });
+
+  // Match the Rayna sending domain so we don't pick up unrelated emails
+  const fromDomain = fromAddr.includes('@') ? fromAddr.split('@')[1] : fromAddr;
+
+  const searchFolder = async (folder) => {
+    try {
+      const lock = await client.getMailboxLock(folder);
+      try {
+        // Always filter by the Rayna sender domain; narrow by subject when provided
+        const criteria = { since, from: fromDomain };
+        if (subject) criteria.subject = subject.slice(0, 60);
+        const uids = await client.search(criteria);
+        if (!uids || uids.length === 0) return null;
+        let latest = null;
+        for await (const msg of client.fetch(uids.slice(-5), { envelope: true })) {
+          latest = {
+            subject: msg.envelope?.subject,
+            from: (msg.envelope?.from || []).map(f => f.address).join(','),
+            date: msg.envelope?.date,
+          };
+        }
+        return latest;
+      } finally { lock.release(); }
+    } catch { return null; }
+  };
+
+  try {
+    await client.connect();
+    const inbox = await searchFolder('INBOX');
+    const spam  = inbox ? null : await searchFolder('[Gmail]/Spam');
+    await client.logout();
+
+    if (inbox) return { available: true, placement: 'inbox', subject: inbox.subject, foundAt: inbox.date };
+    if (spam)  return { available: true, placement: 'spam',  subject: spam.subject,  foundAt: spam.date };
+    return { available: true, placement: 'not_found', note: 'Not found yet — may still be in transit (wait ~30s and retry)' };
+  } catch (err) {
+    try { await client.logout(); } catch { /* ignore */ }
+    return { available: false, error: err.message };
+  }
+}
+
+export default { analyzeEmail, checkInboxPlacement };

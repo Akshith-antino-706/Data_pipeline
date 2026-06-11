@@ -185,6 +185,46 @@ router.get('/:id/journeys', async (req, res, next) => {
       WHERE je.customer_id = $1
       ORDER BY je.entered_at DESC NULLS LAST
     `, [req.params.id]);
+
+    // Per-node email engagement (delivered / opened / clicked) for THIS contact,
+    // pulled from email_send_log keyed by unified_id + journey_id + node_id.
+    const { rows: nodeRows } = await db.query(`
+      SELECT
+        journey_id,
+        node_id,
+        MAX(COALESCE(template_label, subject))                                  AS label,
+        MAX(subject)                                                            AS subject,
+        MAX(day_number)                                                         AS day_number,
+        COUNT(*) FILTER (WHERE sent_at IS NOT NULL
+                            OR status IN ('sent','opened','clicked'))           AS delivered,
+        COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)                          AS opened,
+        COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)                          AS clicked,
+        MIN(sent_at)                                                            AS sent_at,
+        MIN(opened_at)                                                          AS opened_at,
+        MIN(clicked_at)                                                         AS clicked_at
+      FROM email_send_log
+      WHERE unified_id = $1 AND journey_id IS NOT NULL
+      GROUP BY journey_id, node_id
+      ORDER BY journey_id, MIN(sent_at) NULLS LAST
+    `, [req.params.id]);
+
+    const nodesByJourney = {};
+    for (const n of nodeRows) {
+      (nodesByJourney[n.journey_id] ||= []).push({
+        node_id:    n.node_id,
+        label:      n.label,
+        subject:    n.subject,
+        day_number: n.day_number,
+        delivered:  Number(n.delivered) > 0,
+        opened:     Number(n.opened)    > 0,
+        clicked:    Number(n.clicked)   > 0,
+        sent_at:    n.sent_at,
+        opened_at:  n.opened_at,
+        clicked_at: n.clicked_at,
+      });
+    }
+    for (const j of rows) j.nodes = nodesByJourney[j.journey_id] || [];
+
     res.json({ success: true, data: rows });
   } catch (err) { next(err); }
 });

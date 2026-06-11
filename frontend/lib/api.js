@@ -369,12 +369,19 @@ export const updateCustomSegment = (id, data) => request(`/api/v3/custom-segment
 export const deleteCustomSegment = (id) => request(`/api/v3/custom-segments/${id}`, { method: 'DELETE' });
 export const previewSegmentCount = (conditions, operator) => request('/api/v3/custom-segments/preview-count', { method: 'POST', body: JSON.stringify({ conditions, operator }) });
 export const searchContactsByEmail = (q) => { const qs = new URLSearchParams({ q }).toString(); return request(`/api/v3/test-sends/search-contacts?${qs}`); };
-// Send a Day{N} template to a list of recipient emails (internal QA test send)
-export const sendTestDay = (day, emails, destinationKey) =>
-  request(`/api/v3/test-sends/day${day}`, { method: 'POST', body: JSON.stringify({ emails, ...(destinationKey ? { destinationKey } : {}) }) });
+// Send the AI daily-master template (same as "Preview AI") to recipient emails.
+// Uses the unified /send-daily-ai endpoint so Test Send == Preview AI == journey send.
+export const sendTestDay = (day, emails) =>
+  request(`/api/v3/test-sends/send-daily-ai`, { method: 'POST', body: JSON.stringify({ templateId: day, emails }) });
 // Post-send QA report for a template's email (grammar, content, URLs, spam-risk, errors)
 export const analyzeTestEmail = (templateId) =>
   request(`/api/v3/test-sends/analyze-email`, { method: 'POST', body: JSON.stringify({ templateId }) });
+// Real inbox placement (Inbox/Spam) of a sent email, via IMAP on the seed inbox
+export const checkInboxPlacement = (subject, templateId) =>
+  request(`/api/v3/test-sends/check-placement`, { method: 'POST', body: JSON.stringify({ subject, templateId }) });
+// Fetch the stored QA report for a template (for the (i) button)
+export const getStoredQaReport = (templateId) =>
+  request(`/api/v3/test-sends/qa-report/${templateId}`);
 export const getCustomSegmentCustomers = (id, params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/custom-segments/${id}/customers?${qs}`);
