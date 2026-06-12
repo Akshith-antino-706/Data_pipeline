@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import PopularityService from './PopularityService.js';
-import { enqueueBatch } from './queue/index.js';
+import { enqueueBatch, queueCounts } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -2582,6 +2582,481 @@ class JourneyService {
     });
 
     return { journeyId, journeyStatus: journey.status, scheduledStartAt: toIST(journey.scheduled_start_at), timeline };
+  }
+
+  /**
+   * Journey Operations Dashboard — one aggregate for the /journeys/dashboard page.
+   * Everything is computed from existing tables (no schema changes):
+   *   - journey_entries.next_fire_at + current_node_id → upcoming-send forecast
+   *   - journey_flows.nodes/edges                       → resolve node → template/day
+   *   - email_send_log                                  → engagement timeseries, failures, queued
+   *   - daily_ai_templates                              → AI-fallback warning for today
+   *   - unsubscribe_log                                 → unsubscribe-by-node
+   * Returns: { kpis, forecast, forecastChart, runningNow, engagement, journeys, health }
+   */
+  static async getOpsDashboard() {
+    // ── Load all non-draft journeys with their graphs (for node→template resolution) ──
+    const { rows: journeyRows } = await db.query(`
+      SELECT journey_id, name, status, nodes, edges, node_statuses, total_conversions
+      FROM journey_flows
+      WHERE status IN ('active','paused','completed')
+      ORDER BY journey_id
+    `);
+    const jById = new Map();
+    for (const j of journeyRows) {
+      jById.set(Number(j.journey_id), {
+        ...j,
+        nodes: Array.isArray(j.nodes) ? j.nodes : [],
+        edges: Array.isArray(j.edges) ? j.edges : [],
+      });
+    }
+
+    // Resolve "which action node (and template) will actually send" starting from a node.
+    // Walks outgoing edges until it hits an action node. Condition nodes branch →
+    // we follow the first edge and flag the result `approximate`.
+    const resolveTargetAction = (journey, startNodeId) => {
+      const nodesById = new Map(journey.nodes.map(n => [n.id, n]));
+      let cur = nodesById.get(startNodeId);
+      let approximate = false;
+      const seen = new Set();
+      while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        if (cur.type === 'action') break;
+        if (cur.type === 'condition') approximate = true;
+        const out = journey.edges.filter(e => e.source === cur.id);
+        if (!out.length) { cur = null; break; }
+        cur = nodesById.get(out[0].target);
+      }
+      if (!cur || cur.type !== 'action') return null;
+      const tid = cur.data?.emailTemplateId ?? cur.data?.templateId ?? null;
+      const dayNumber = (tid >= 1 && tid <= 7) ? tid : null;
+      return {
+        nodeId: cur.id,
+        templateId: tid,
+        dayNumber,
+        channel: cur.data?.channel || 'email',
+        label: cur.data?.label || (dayNumber ? `Day ${dayNumber}` : cur.id),
+        sendHour: cur.data?.sendHour ?? null,
+        approximate,
+      };
+    };
+
+    const [
+      forecastAgg, runningAgg, engagementRows, kpiRow, openRow,
+      queuedRow, stuckAgg, fallbackRows, failureRows, unsubAgg, journeyStatRows,
+    ] = await Promise.all([
+      // Forecast: active entries grouped by journey, current node, Dubai-date (next 7 days)
+      db.query(`
+        SELECT journey_id, current_node_id,
+               (next_fire_at AT TIME ZONE 'Asia/Dubai')::date AS fire_date,
+               COUNT(*)::int AS cnt
+        FROM journey_entries
+        WHERE status = 'active' AND next_fire_at IS NOT NULL
+          AND next_fire_at >= NOW() AND next_fire_at < NOW() + INTERVAL '7 days'
+        GROUP BY journey_id, current_node_id, fire_date
+      `),
+      // Running now: where every active cohort currently sits
+      db.query(`
+        SELECT journey_id, current_node_id, COUNT(*)::int AS cnt,
+               MIN(next_fire_at) AS next_fire
+        FROM journey_entries
+        WHERE status = 'active'
+        GROUP BY journey_id, current_node_id
+      `),
+      // Engagement timeseries (journey sends, trailing 30 days, Dubai date)
+      db.query(`
+        SELECT (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date AS d,
+               COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
+               COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)::int AS opened,
+               COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)::int AS clicked
+        FROM email_send_log
+        WHERE source = 'journey' AND created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY d ORDER BY d
+      `),
+      // KPIs: active journeys + active entries + conversions(7d)
+      db.query(`
+        SELECT
+          (SELECT COUNT(*) FROM journey_flows WHERE status = 'active')::int AS active_journeys,
+          (SELECT COUNT(*) FROM journey_entries WHERE status = 'active')::int AS active_entries,
+          (SELECT COUNT(*) FROM journey_entries
+             WHERE status = 'converted' AND converted_at >= NOW() - INTERVAL '7 days')::int AS conversions_7d
+      `),
+      // Open rate (7d) from journey sends
+      db.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
+          COUNT(*) FILTER (WHERE opened_at IS NOT NULL)::int AS opened
+        FROM email_send_log
+        WHERE source = 'journey' AND created_at >= NOW() - INTERVAL '7 days'
+      `),
+      db.query(`SELECT COUNT(*)::int AS n FROM email_send_log WHERE source = 'journey' AND status = 'queued'`),
+      // Health: stuck entries (overdue >1h) grouped by journey
+      db.query(`
+        SELECT journey_id, COUNT(*)::int AS cnt, MIN(next_fire_at) AS oldest
+        FROM journey_entries
+        WHERE status = 'active' AND next_fire_at IS NOT NULL
+          AND next_fire_at < NOW() - INTERVAL '1 hour'
+        GROUP BY journey_id ORDER BY cnt DESC
+      `),
+      // Health: today's daily AI templates that fell back to non-Claude content
+      db.query(`
+        SELECT template_id, source FROM daily_ai_templates
+        WHERE render_date = (NOW() AT TIME ZONE 'Asia/Dubai')::date
+          AND source LIKE 'fallback%'
+        ORDER BY template_id
+      `),
+      // Health: recent failed journey sends (last 24h)
+      db.query(`
+        SELECT esl.journey_id, esl.node_id, esl.email, esl.subject, esl.error_message, esl.created_at
+        FROM email_send_log esl
+        WHERE esl.source = 'journey' AND esl.status = 'failed'
+          AND esl.created_at >= NOW() - INTERVAL '24 hours'
+        ORDER BY esl.created_at DESC LIMIT 25
+      `),
+      // Unsubscribes by journey + node
+      db.query(`
+        SELECT journey_id, node_id, COUNT(*)::int AS cnt
+        FROM unsubscribe_log
+        WHERE journey_id IS NOT NULL
+        GROUP BY journey_id, node_id ORDER BY cnt DESC
+      `),
+      // Per-journey today's sends + open rate (last 7d)
+      db.query(`
+        SELECT journey_id,
+               COUNT(*) FILTER (WHERE (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date
+                                        = (NOW() AT TIME ZONE 'Asia/Dubai')::date)::int AS sends_today,
+               COUNT(*) FILTER (WHERE opened_at IS NOT NULL AND created_at >= NOW() - INTERVAL '7 days')::int AS opened_7d,
+               COUNT(*) FILTER (WHERE (sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))
+                                        AND created_at >= NOW() - INTERVAL '7 days')::int AS delivered_7d
+        FROM email_send_log
+        WHERE source = 'journey' AND journey_id IS NOT NULL
+        GROUP BY journey_id
+      `),
+    ]);
+
+    const nameOf = (jid) => jById.get(Number(jid))?.name || `Journey ${jid}`;
+
+    // ── Build the 7-day forecast (resolve each cohort to its target action/template) ──
+    const dayMap = new Map(); // 'YYYY-MM-DD' → Map(key → item)
+    for (const r of forecastAgg.rows) {
+      const journey = jById.get(Number(r.journey_id));
+      if (!journey) continue;
+      const target = resolveTargetAction(journey, r.current_node_id);
+      if (!target) continue;
+      const date = r.fire_date instanceof Date ? r.fire_date.toISOString().slice(0, 10) : String(r.fire_date).slice(0, 10);
+      if (!dayMap.has(date)) dayMap.set(date, new Map());
+      const items = dayMap.get(date);
+      const key = `${r.journey_id}|${target.nodeId}`;
+      if (!items.has(key)) {
+        items.set(key, {
+          journeyId: Number(r.journey_id), journeyName: nameOf(r.journey_id),
+          nodeId: target.nodeId, templateId: target.templateId, dayNumber: target.dayNumber,
+          label: target.label, channel: target.channel, sendHour: target.sendHour,
+          approximate: target.approximate, count: 0,
+        });
+      }
+      items.get(key).count += r.cnt;
+    }
+    const forecast = [...dayMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, items]) => ({
+        date,
+        total: [...items.values()].reduce((s, i) => s + i.count, 0),
+        items: [...items.values()].sort((a, b) => b.count - a.count),
+      }));
+
+    // Chart-friendly: one row per day, counts keyed by journey name (stacked bars)
+    const journeyNamesInForecast = new Set();
+    const forecastChart = forecast.map(d => {
+      const row = { date: d.date };
+      for (const it of d.items) { row[it.journeyName] = (row[it.journeyName] || 0) + it.count; journeyNamesInForecast.add(it.journeyName); }
+      return row;
+    });
+
+    const todayStr = new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10); // Dubai date
+    const tomorrowStr = new Date(Date.now() + 4 * 3600 * 1000 + 86400000).toISOString().slice(0, 10);
+    const sendsToday = forecast.find(d => d.date === todayStr)?.total || 0;
+    const sendsTomorrow = forecast.find(d => d.date === tomorrowStr)?.total || 0;
+
+    // ── Running now: group by journey, attach node labels + lifecycle status ──
+    const runByJourney = new Map();
+    for (const r of runningAgg.rows) {
+      const journey = jById.get(Number(r.journey_id));
+      if (!journey) continue;
+      const node = journey.nodes.find(n => n.id === r.current_node_id);
+      const statuses = journey.node_statuses && typeof journey.node_statuses === 'object' ? journey.node_statuses : {};
+      if (!runByJourney.has(r.journey_id)) {
+        runByJourney.set(r.journey_id, { journeyId: Number(r.journey_id), journeyName: nameOf(r.journey_id), status: journey.status, nodes: [] });
+      }
+      runByJourney.get(r.journey_id).nodes.push({
+        nodeId: r.current_node_id,
+        label: node?.data?.label || r.current_node_id,
+        type: node?.type || 'unknown',
+        count: r.cnt,
+        nextFire: r.next_fire,
+        status: statuses[r.current_node_id] || null,
+      });
+    }
+    const runningNow = [...runByJourney.values()].sort((a, b) =>
+      b.nodes.reduce((s, n) => s + n.count, 0) - a.nodes.reduce((s, n) => s + n.count, 0));
+
+    const engagement = engagementRows.rows.map(r => ({
+      date: r.d instanceof Date ? r.d.toISOString().slice(0, 10) : String(r.d).slice(0, 10),
+      delivered: r.delivered, opened: r.opened, clicked: r.clicked,
+    }));
+
+    // ── Per-journey table ──
+    const statById = new Map(journeyStatRows.rows.map(r => [Number(r.journey_id), r]));
+    const activeCountByJourney = new Map();
+    for (const r of runningAgg.rows) activeCountByJourney.set(Number(r.journey_id), (activeCountByJourney.get(Number(r.journey_id)) || 0) + r.cnt);
+    const nextFireByJourney = new Map();
+    for (const r of runningAgg.rows) {
+      if (!r.next_fire) continue;
+      const cur = nextFireByJourney.get(Number(r.journey_id));
+      if (!cur || new Date(r.next_fire) < new Date(cur)) nextFireByJourney.set(Number(r.journey_id), r.next_fire);
+    }
+    const journeys = journeyRows.map(j => {
+      const jid = Number(j.journey_id);
+      const st = statById.get(jid);
+      const delivered = st?.delivered_7d || 0;
+      return {
+        journeyId: jid, name: j.name, status: j.status,
+        activeEntries: activeCountByJourney.get(jid) || 0,
+        nextFire: nextFireByJourney.get(jid) || null,
+        sendsToday: st?.sends_today || 0,
+        openRate: delivered > 0 ? Math.round((st.opened_7d / delivered) * 1000) / 10 : 0,
+        conversions: Number(j.total_conversions) || 0,
+      };
+    }).sort((a, b) => b.activeEntries - a.activeEntries);
+
+    // ── Health add-ons ──
+    let queue = null;
+    try {
+      const [email, whatsapp, sms] = await Promise.all([
+        queueCounts('email').catch(() => null),
+        queueCounts('whatsapp').catch(() => null),
+        queueCounts('sms').catch(() => null),
+      ]);
+      queue = { email, whatsapp, sms };
+    } catch { queue = null; }
+
+    const kpi = kpiRow.rows[0] || {};
+    const open = openRow.rows[0] || {};
+    const openRate7d = open.delivered > 0 ? Math.round((open.opened / open.delivered) * 1000) / 10 : 0;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      kpis: {
+        activeJourneys: kpi.active_journeys || 0,
+        activeEntries: kpi.active_entries || 0,
+        sendsToday, sendsTomorrow,
+        queuedNow: queuedRow.rows[0]?.n || 0,
+        openRate7d,
+        conversions7d: kpi.conversions_7d || 0,
+      },
+      forecast,
+      forecastChart,
+      forecastJourneyNames: [...journeyNamesInForecast],
+      runningNow,
+      engagement,
+      journeys,
+      health: {
+        stuckEntries: stuckAgg.rows.map(r => ({ journeyId: Number(r.journey_id), name: nameOf(r.journey_id), count: r.cnt, oldestFireAt: r.oldest })),
+        aiFallback: fallbackRows.rows.map(r => ({ templateId: r.template_id, dayNumber: (r.template_id >= 1 && r.template_id <= 7) ? r.template_id : null, source: r.source })),
+        failures: failureRows.rows.map(r => ({ journeyId: Number(r.journey_id), journeyName: nameOf(r.journey_id), nodeId: r.node_id, email: r.email, subject: r.subject, error: r.error_message, at: r.created_at })),
+        unsubscribesByNode: unsubAgg.rows.map(r => ({ journeyId: Number(r.journey_id), journeyName: nameOf(r.journey_id), nodeId: r.node_id, count: r.cnt })),
+        queue,
+      },
+    };
+  }
+
+  /**
+   * Per-node breakdown for one journey (powers the dashboard accordion).
+   * @param {number} journeyId
+   * @param {string} [dateStr] - optional 'YYYY-MM-DD' (Dubai date) to scope send
+   *        metrics + scheduled counts to a single day. Omit for all-time.
+   * Returns { journeyId, name, status, date, nodes: [...] }.
+   */
+  static async getJourneyNodeBreakdown(journeyId, dateStr) {
+    const { rows: [jf] } = await db.query(
+      `SELECT journey_id, name, status, nodes, node_statuses FROM journey_flows WHERE journey_id = $1`,
+      [journeyId]
+    );
+    if (!jf) return null;
+    const nodes = Array.isArray(jf.nodes) ? jf.nodes : [];
+    const statuses = jf.node_statuses && typeof jf.node_statuses === 'object' ? jf.node_statuses : {};
+    const useDate = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : null;
+
+    // Send engagement per node (optionally scoped to a single Dubai date)
+    const sendParams = [journeyId];
+    let dateClause = '';
+    if (useDate) { sendParams.push(useDate); dateClause = `AND (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date = $2::date`; }
+    const [sendAgg, activeAgg, schedAgg] = await Promise.all([
+      db.query(`
+        SELECT node_id,
+          COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
+          COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)::int AS opened,
+          COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)::int AS clicked,
+          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+          COUNT(*)::int AS total
+        FROM email_send_log
+        WHERE journey_id = $1 AND node_id IS NOT NULL ${dateClause}
+        GROUP BY node_id
+      `, sendParams),
+      db.query(`
+        SELECT current_node_id AS node_id, COUNT(*)::int AS active
+        FROM journey_entries WHERE journey_id = $1 AND status = 'active'
+        GROUP BY current_node_id
+      `, [journeyId]),
+      // Entries scheduled to fire on the chosen date, grouped by the node they sit on
+      useDate ? db.query(`
+        SELECT current_node_id AS node_id, COUNT(*)::int AS scheduled
+        FROM journey_entries
+        WHERE journey_id = $1 AND status = 'active' AND next_fire_at IS NOT NULL
+          AND (next_fire_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
+        GROUP BY current_node_id
+      `, [journeyId, useDate]) : Promise.resolve({ rows: [] }),
+    ]);
+
+    const sendBy = new Map(sendAgg.rows.map(r => [r.node_id, r]));
+    const activeBy = new Map(activeAgg.rows.map(r => [r.node_id, r.active]));
+    const schedBy = new Map(schedAgg.rows.map(r => [r.node_id, r.scheduled]));
+
+    const nodeList = nodes.map(n => {
+      const s = sendBy.get(n.id) || {};
+      const templateId = n.data?.emailTemplateId ?? n.data?.templateId ?? null;
+      const dayNumber = (templateId >= 1 && templateId <= 7) ? templateId : null;
+      const delivered = s.delivered || 0;
+      return {
+        nodeId: n.id,
+        type: n.type,
+        label: n.data?.label || (dayNumber ? `Day ${dayNumber}` : n.id),
+        channel: n.data?.channel || null,
+        templateId,
+        dayNumber,
+        hasTemplate: n.type === 'action' && !!templateId,
+        waitDays: n.type === 'wait' ? (n.data?.waitDays ?? 1) : null,
+        sendHour: n.data?.sendHour ?? null,
+        status: statuses[n.id] || null,
+        active: activeBy.get(n.id) || 0,
+        scheduledOnDate: useDate ? (schedBy.get(n.id) || 0) : null,
+        delivered,
+        opened: s.opened || 0,
+        clicked: s.clicked || 0,
+        failed: s.failed || 0,
+        total: s.total || 0,
+        openRate: delivered > 0 ? Math.round((s.opened / delivered) * 1000) / 10 : 0,
+        clickRate: delivered > 0 ? Math.round((s.clicked / delivered) * 1000) / 10 : 0,
+      };
+    });
+
+    return { journeyId: Number(jf.journey_id), name: jf.name, status: jf.status, date: useDate, nodes: nodeList };
+  }
+
+  /**
+   * Journeys that have activity on a single date (powers the date-filtered
+   * dashboard accordion). Returns ONLY journeys with ≥1 relevant node, and for
+   * each, ONLY the nodes that on that date are:
+   *   - completed/fired  → sent ≥1 email that day      (email_send_log)
+   *   - going to fire     → entries scheduled that day  (next_fire_at on date)
+   *   - running (today only) → entries currently sitting on the node (live)
+   * A journey that finished before the date drops out entirely (no relevant nodes).
+   * @param {string} dateStr 'YYYY-MM-DD' (Dubai date). Defaults to today.
+   */
+  static async getJourneysActiveOnDate(dateStr) {
+    const dubaiToday = new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
+    const date = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : dubaiToday;
+    const isToday = date === dubaiToday;
+
+    const { rows: journeyRows } = await db.query(`
+      SELECT journey_id, name, status, nodes, node_statuses
+      FROM journey_flows
+      WHERE status IN ('active','paused','completed')
+      ORDER BY journey_id
+    `);
+
+    const [sendAgg, schedAgg, activeAgg] = await Promise.all([
+      db.query(`
+        SELECT journey_id, node_id,
+          COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
+          COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)::int AS opened,
+          COUNT(*) FILTER (WHERE clicked_at IS NOT NULL)::int AS clicked,
+          COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+          COUNT(*)::int AS total
+        FROM email_send_log
+        WHERE journey_id IS NOT NULL AND node_id IS NOT NULL
+          AND (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date = $1::date
+        GROUP BY journey_id, node_id
+      `, [date]),
+      db.query(`
+        SELECT journey_id, current_node_id AS node_id, COUNT(*)::int AS scheduled
+        FROM journey_entries
+        WHERE status = 'active' AND next_fire_at IS NOT NULL
+          AND (next_fire_at AT TIME ZONE 'Asia/Dubai')::date = $1::date
+        GROUP BY journey_id, current_node_id
+      `, [date]),
+      // Live "running" positions — only relevant when the date is today
+      isToday ? db.query(`
+        SELECT journey_id, current_node_id AS node_id, COUNT(*)::int AS active
+        FROM journey_entries WHERE status = 'active'
+        GROUP BY journey_id, current_node_id
+      `) : Promise.resolve({ rows: [] }),
+    ]);
+
+    const key = (j, n) => `${j}|${n}`;
+    const sendBy = new Map(sendAgg.rows.map(r => [key(r.journey_id, r.node_id), r]));
+    const schedBy = new Map(schedAgg.rows.map(r => [key(r.journey_id, r.node_id), r.scheduled]));
+    const activeBy = new Map(activeAgg.rows.map(r => [key(r.journey_id, r.node_id), r.active]));
+
+    const out = [];
+    for (const jf of journeyRows) {
+      const jid = Number(jf.journey_id);
+      const nodes = Array.isArray(jf.nodes) ? jf.nodes : [];
+      const statuses = jf.node_statuses && typeof jf.node_statuses === 'object' ? jf.node_statuses : {};
+      let sentOnDate = 0, scheduledOnDate = 0;
+      const relevant = [];
+      for (const n of nodes) {
+        const s = sendBy.get(key(jid, n.id)) || {};
+        const scheduled = schedBy.get(key(jid, n.id)) || 0;
+        const active = activeBy.get(key(jid, n.id)) || 0;
+        const fired = (s.total || 0) > 0;
+        const isRelevant = fired || scheduled > 0 || (isToday && active > 0);
+        if (!isRelevant) continue;
+
+        const templateId = n.data?.emailTemplateId ?? n.data?.templateId ?? null;
+        const dayNumber = (templateId >= 1 && templateId <= 7) ? templateId : null;
+        const delivered = s.delivered || 0;
+        sentOnDate += delivered;
+        scheduledOnDate += scheduled;
+        relevant.push({
+          nodeId: n.id,
+          type: n.type,
+          label: n.data?.label || (dayNumber ? `Day ${dayNumber}` : n.id),
+          channel: n.data?.channel || null,
+          templateId,
+          dayNumber,
+          hasTemplate: n.type === 'action' && !!templateId,
+          waitDays: n.type === 'wait' ? (n.data?.waitDays ?? 1) : null,
+          sendHour: n.data?.sendHour ?? null,
+          status: statuses[n.id] || null,
+          // state flags for this date
+          fired,
+          scheduled,
+          running: isToday ? active : 0,
+          active,
+          delivered,
+          opened: s.opened || 0,
+          clicked: s.clicked || 0,
+          failed: s.failed || 0,
+          total: s.total || 0,
+          openRate: delivered > 0 ? Math.round((s.opened / delivered) * 1000) / 10 : 0,
+          clickRate: delivered > 0 ? Math.round((s.clicked / delivered) * 1000) / 10 : 0,
+        });
+      }
+      if (relevant.length === 0) continue; // journey has nothing on this date → drop it
+      out.push({ journeyId: jid, name: jf.name, status: jf.status, sentOnDate, scheduledOnDate, nodes: relevant });
+    }
+
+    return { date, isToday, journeys: out };
   }
 }
 

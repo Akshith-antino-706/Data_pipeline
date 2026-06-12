@@ -110,6 +110,7 @@ export const getJourneys = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/journeys?${qs}`);
 };
+export const getJourneyOpsDashboard = () => request('/api/v3/journeys/dashboard');
 export const getJourney = (id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
 export const updateJourney = (id, data) => request(`/api/v3/journeys/${id}`, { method: 'PUT', body: JSON.stringify(data) });
@@ -125,6 +126,8 @@ export const getJourneyCampaignAnalytics = (id) => request(`/api/v3/journeys/${i
 export const getJourneyGtmNodeStats    = (id) => request(`/api/v3/journeys/${id}/gtm-node-stats`);
 export const getJourneyNodeConversions = (id) => request(`/api/v3/journeys/${id}/node-conversions`);
 export const previewJourneyNodeEmail   = (id, nodeId) => request(`/api/v3/journeys/${id}/nodes/${nodeId}/preview-dynamic`);
+export const getJourneyNodeBreakdown   = (id, date) => request(`/api/v3/journeys/${id}/node-breakdown${date ? `?date=${date}` : ''}`);
+export const getJourneysActiveOnDate   = (date) => request(`/api/v3/journeys/active-on-date${date ? `?date=${date}` : ''}`);
 export const checkJourneyConversions = (id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id) => request(`/api/v3/journeys/${id}/enrollments`);
 // Node-level CRUD inside a journey

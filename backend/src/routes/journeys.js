@@ -107,6 +107,33 @@ router.get('/queue-counts', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Journey Operations Dashboard — aggregate for /journeys/dashboard
+// (MUST be declared before '/:id' so 'dashboard' isn't parsed as a journey id)
+router.get('/dashboard', async (_req, res, next) => {
+  try {
+    const data = await JourneyService.getOpsDashboard();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// Journeys active on a single date — filtered list + relevant nodes inline
+// (?date=YYYY-MM-DD, defaults to today). Powers the date-filtered dashboard accordion.
+router.get('/active-on-date', async (req, res, next) => {
+  try {
+    const data = await JourneyService.getJourneysActiveOnDate(req.query.date);
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// Per-node breakdown for the dashboard accordion (optional ?date=YYYY-MM-DD)
+router.get('/:id/node-breakdown', async (req, res, next) => {
+  try {
+    const data = await JourneyService.getJourneyNodeBreakdown(parseInt(req.params.id), req.query.date);
+    if (!data) return res.status(404).json({ success: false, error: 'Journey not found' });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
 // Test-send: run the full email pipeline for ONE entry and return step-by-step diagnostics
 router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
   try {
