@@ -197,10 +197,10 @@ window.addEventListener('scroll', function() {
    * Stores both structured fields and the full raw payload.
    */
   static async recordEvent(body) {
-    const { eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId, journeyId, nodeId } = body;
+    const { eventName, customerId, email, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, ecommerceData, utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, rid, unifiedId, journeyId, nodeId } = body;
 
     // Resolve id: explicit `rid` / `unifiedId` in payload wins, else try pulling from pageUrl,
-    // else fall back to matching customerId (email) against unified_contacts.
+    // else match an email in the payload against unified_contacts.email, else borrow from session.
     let resolvedUnifiedId = parseInt(rid || unifiedId) || null;
     if (!resolvedUnifiedId && pageUrl) {
       const m = /[?&]rid=(\d+)/.exec(pageUrl);
@@ -208,10 +208,33 @@ window.addEventListener('scroll', function() {
     }
     if (!resolvedUnifiedId && customerId && customerId.includes('@')) {
       const { rows: [uc] } = await db.query(
-        'SELECT id FROM unified_contacts WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) LIMIT 1',
         [customerId]
       );
       if (uc) resolvedUnifiedId = uc.id;
+    }
+    // Match by the explicit `email` field (e.g. logged-in visitors with no rid):
+    // raw_payload.email === unified_contacts.email. If no contact exists for that
+    // email, AUTO-CREATE one from the event payload and use the new id.
+    // Uses LOWER(TRIM(email)) to hit idx_uc_email_lower_trim (index scan, not seq scan).
+    if (!resolvedUnifiedId && email && String(email).includes('@')) {
+      const { rows: [uc] } = await db.query(
+        'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) LIMIT 1',
+        [email]
+      );
+      if (uc) {
+        resolvedUnifiedId = uc.id;
+      } else {
+        const { rows: [created] } = await db.query(
+          `INSERT INTO unified_contacts
+             (email, name, mobile, city, country, contact_type, sources, booking_status, created_at)
+           VALUES ($1, $2, $3, $4, $5, 'B2C', 'gtm_event', 'PROSPECT', NOW())
+           RETURNING id`,
+          [email, body.name || null, body.contactNumber || null, body.city || null, body.country || null]
+        );
+        resolvedUnifiedId = created?.id || null;
+        if (resolvedUnifiedId) console.log(`[GTM] auto-created unified_contact #${resolvedUnifiedId} from event email ${email}`);
+      }
     }
     // Final fallback: borrow unified_id from a recent event in the same session (last 2 hrs)
     if (!resolvedUnifiedId && sessionId) {

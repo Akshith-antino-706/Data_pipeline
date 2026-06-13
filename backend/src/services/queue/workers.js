@@ -83,10 +83,12 @@ export function startWorkers() {
     limiter: { max: 10, duration: 1000 },
   });
 
-  // GTM event → welcome email (delayed job; durable replacement for setTimeout)
+  // GTM event → welcome email (delayed job; durable replacement for setTimeout).
+  // Rate-limited so a traffic spike can't blast the email provider.
   const welcome = new Worker('welcome-email', processWelcome, {
     connection,
-    concurrency: 5,
+    concurrency: 3,
+    limiter: { max: 5, duration: 1000 },   // ≤5 welcome emails/sec
   });
 
   // After all retries exhausted: advance the entry so it doesn't block forever.
