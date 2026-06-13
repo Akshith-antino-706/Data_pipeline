@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search } from 'lucide-react';
+import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -16,6 +16,10 @@ const CHANNELS = [
 ];
 
 const BLANK_FORM = { name: '', channel: 'email', subject: '', body: '', fileName: '' };
+
+// Fixed QA test inbox — the "Test Send to Rocky" button always targets this address
+// (this is the IMAP inbox the real spam-placement check reads from).
+const ROCKY_EMAIL = 'rocky.86agency@gmail.com';
 
 const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link']);
 
@@ -31,6 +35,32 @@ export default function Content() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState(null);
+  const [previewDevice, setPreviewDevice] = useState('desktop'); // desktop | tablet | mobile
+  const previewIframeRef = useRef(null);
+  const [previewFit, setPreviewFit] = useState({ scale: 1, height: null });
+
+  // Re-measure when the device toggle changes (iframe already loaded)
+  useEffect(() => { fitPreview(); }, [previewDevice]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Measure the email's rendered width and scale the iframe to fit the device frame
+  // (Gmail-style "fit to width") so fixed-width emails don't horizontal-scroll on mobile.
+  function fitPreview() {
+    const ifr = previewIframeRef.current;
+    if (!ifr) return;
+    if (previewDevice === 'desktop') { setPreviewFit({ scale: 1, height: null, contentW: null }); return; }
+    const frameW = previewDevice === 'mobile' ? 390 : 768;
+    try {
+      const doc = ifr.contentWindow.document;
+      const contentW = Math.max(doc.body?.scrollWidth || 0, doc.documentElement?.scrollWidth || 0, frameW);
+      const contentH = Math.max(doc.body?.scrollHeight || 0, doc.documentElement?.scrollHeight || 0);
+      const scale = contentW > frameW ? frameW / contentW : 1;
+      setPreviewFit(prev => {
+        // Avoid an infinite re-measure loop once it has converged
+        if (prev.contentW === contentW && Math.abs((prev.contentH || 0) - contentH) < 4) return prev;
+        return { scale, contentW, contentH, height: contentH ? contentH * scale : null };
+      });
+    } catch { setPreviewFit({ scale: 1, height: null, contentW: null }); }
+  }
   const [channelFilter, setChannelFilter] = useState('all');
 
   // modal state: null = closed, 'create' = new, object = editing existing
@@ -48,11 +78,44 @@ export default function Content() {
   const [recipLoading, setRecipLoading] = useState(false);
   const [selectedEmails, setSelectedEmails] = useState([]); // globally selected
   const [sendingDay, setSendingDay] = useState(null);       // templateId currently sending
+  const [sendingMode, setSendingMode] = useState(null);     // 'rocky' | 'selected' — which button is sending
   const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, utm: 0, failed: 0 });
 
   // ── Post-send QA report ──
   const [qaReport, setQaReport] = useState(null);   // { template } open + report
   const [qaLoading, setQaLoading] = useState(false);
+  const [placement, setPlacement] = useState(null); // real inbox placement result
+  const [placementLoading, setPlacementLoading] = useState(false);
+
+  async function checkPlacement() {
+    const subject = qaReport?.report?.subject || '';
+    const tid = qaReport?.template?.id;
+    setPlacementLoading(true); setPlacement(null);
+    try {
+      const res = await checkInboxPlacement(subject, tid);
+      setPlacement(res?.data || { available: false, error: 'No response' });
+    } catch (e) {
+      setPlacement({ available: false, error: e.message });
+    } finally { setPlacementLoading(false); }
+  }
+
+  // View the STORED report for a template (the (i) button — no re-send)
+  async function viewStoredReport(tpl) {
+    setQaReport({ template: tpl, report: null });
+    setPlacement(null);
+    setQaLoading(true);
+    try {
+      const res = await getStoredQaReport(tpl.id);
+      if (!res?.data) {
+        setQaReport({ template: tpl, report: { error: 'No report yet — run a Test Send first to generate one.' } });
+      } else {
+        setQaReport({ template: tpl, report: res.data });
+        if (res.data.placement) setPlacement(res.data.placement);
+      }
+    } catch (e) {
+      setQaReport({ template: tpl, report: { error: e.message } });
+    } finally { setQaLoading(false); }
+  }
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
   const tsGet = (path) => fetch(`${apiBase}${path}`, { credentials: 'include' })
@@ -100,25 +163,53 @@ export default function Content() {
     setSelectedEmails(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
   };
 
-  async function handleCardTestSend(tpl) {
-    if (selectedEmails.length === 0) return;
+  async function handleCardTestSend(tpl, { emails, mode } = {}) {
+    const recipients = emails && emails.length ? emails : selectedEmails;
+    if (recipients.length === 0) return;
     const day = tpl.id; // template id 1-7 == day number
     setSendingDay(tpl.id);
+    setSendingMode(mode || 'selected');
     try {
-      const data = await sendTestDay(day, selectedEmails);
-      hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? selectedEmails.length} recipient(s)`);
-      // After send → run the QA report on the same email
+      const data = await sendTestDay(day, recipients);
+      hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? recipients.length} recipient(s)`);
+
+      // Open modal in a single loading state — show the FULL report (content + real
+      // spam placement) all at once when everything is ready.
       setQaReport({ template: tpl, report: null });
+      setPlacement(null);
       setQaLoading(true);
+
+      // 1. Content report (grammar / missing / urls / heuristic) — fast
+      let report = null;
       try {
         const res = await analyzeTestEmail(tpl.id);
-        setQaReport({ template: tpl, report: res?.data || null });
+        report = res?.data || null;
       } catch (e) {
-        setQaReport({ template: tpl, report: { error: e.message } });
-      } finally { setQaLoading(false); }
+        report = { error: e.message };
+      }
+      const subject = report?.subject || '';
+
+      // 2. Real spam placement via IMAP — retry while Gmail delivers (~15-40s)
+      let placementResult = null;
+      for (let attempt = 1; attempt <= 4 && !report?.error; attempt++) {
+        await new Promise(r => setTimeout(r, attempt === 1 ? 15000 : 12000));
+        try {
+          const res = await checkInboxPlacement(subject, tpl.id);
+          const p = res?.data;
+          if (p?.available && p.placement !== 'not_found') { placementResult = p; break; }
+          placementResult = p || { available: false, error: 'Not found after retries' };
+        } catch (e) {
+          placementResult = { available: false, error: e.message };
+        }
+      }
+
+      // 3. Reveal the complete report at once
+      setPlacement(placementResult);
+      setQaReport({ template: tpl, report });
+      setQaLoading(false);
     } catch (err) {
       hotToast.error(err.message || 'Send failed');
-    } finally { setSendingDay(null); }
+    } finally { setSendingDay(null); setSendingMode(null); }
   }
 
   function extractVars(html) {
@@ -134,6 +225,7 @@ export default function Content() {
   }, []);
 
   async function openPreview(tpl) {
+    setPreviewDevice('desktop');
     setPreview({ template: tpl, html: null, loading: true });
     try {
       const res = await previewTemplate(tpl.id);
@@ -145,6 +237,7 @@ export default function Content() {
 
   // AI preview — renders the real Claude-ranked version (slow, ~15-25s first call)
   async function openPreviewAI(tpl) {
+    setPreviewDevice('desktop');
     setPreview({ template: tpl, html: null, loading: true, ai: true });
     try {
       const res = await previewTemplateAI(tpl.id);
@@ -452,6 +545,13 @@ export default function Content() {
                   <Icon size={12} /> {t.channel}
                 </span>
                 {t.segment_label && <span className="badge badge-gray">{t.segment_label}</span>}
+                {/* (i) View stored QA report — Day 1-7 email templates */}
+                {t.id >= 1 && t.id <= 7 && t.channel === 'email' && (
+                  <button onClick={() => viewStoredReport(t)} title="View email QA report"
+                    style={{ marginLeft: 'auto', width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Info size={15} />
+                  </button>
+                )}
               </div>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{t.name}</div>
@@ -491,20 +591,32 @@ export default function Content() {
                 );
                 const noRecipients = selectedEmails.length === 0;
                 const isSending = sendingDay === t.id;
-                const testSendBtn = (
-                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t)}
-                    disabled={noRecipients || isSending}
-                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length}`}
-                    style={{ gap: 6, width: '100%', background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients ? 0.5 : 1 }}>
-                    <Send size={14} /> {isSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length}`}
+                const rockySending = isSending && sendingMode === 'rocky';
+                const selSending = isSending && sendingMode === 'selected';
+                // Button 1 — always enabled: sends the AI template to the fixed QA inbox (Rocky)
+                const rockyBtn = (
+                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t, { emails: [ROCKY_EMAIL], mode: 'rocky' })}
+                    disabled={isSending}
+                    title={`Send a QA test to ${ROCKY_EMAIL}`}
+                    style={{ gap: 6, flex: 1, background: 'rgba(59,130,246,0.1)', color: '#2563eb', border: '1px solid rgba(59,130,246,0.25)', cursor: isSending ? 'not-allowed' : 'pointer', opacity: isSending && !rockySending ? 0.5 : 1 }}>
+                    <Send size={14} /> {rockySending ? 'Sending…' : 'Test Send'}
                   </button>
                 );
-                // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · Test Send (full width)
+                // Button 2 — disabled until ≥1 recipient selected: sends to selected users
+                const selectedBtn = (
+                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t, { emails: selectedEmails, mode: 'selected' })}
+                    disabled={noRecipients || isSending}
+                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length} selected`}
+                    style={{ gap: 6, flex: 1, background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients || (isSending && !selSending) ? 0.5 : 1 }}>
+                    <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
+                  </button>
+                );
+                // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · two Test Send buttons
                 return hasAI ? (
                   <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
                     <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
-                    {testSendBtn}
+                    <div style={{ display: 'flex', gap: 8 }}>{rockyBtn}{selectedBtn}</div>
                   </div>
                 ) : (
                   <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
@@ -568,7 +680,10 @@ export default function Content() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📋 Email QA Report</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>{qaReport.template.name} — sent & analyzed</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                  {qaReport.template.name}
+                  {qaReport.report?.generatedAt ? ` — stored ${new Date(qaReport.report.generatedAt).toLocaleString()}` : ' — analyzed'}
+                </div>
               </div>
               <button onClick={() => setQaReport(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
             </div>
@@ -576,8 +691,8 @@ export default function Content() {
               {qaLoading ? (
                 <div style={{ textAlign: 'center', padding: 50, color: 'var(--text-secondary)' }}>
                   <Sparkles size={28} style={{ color: '#8b5cf6', marginBottom: 12 }} />
-                  <div style={{ fontWeight: 600 }}>Analyzing email…</div>
-                  <div style={{ fontSize: 12, marginTop: 4 }}>Grammar · content · URLs · spam-risk (~10-20s)</div>
+                  <div style={{ fontWeight: 600 }}>Generating report…</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Grammar · content · URLs · delivering & checking real inbox placement (~30-50s)</div>
                 </div>
               ) : qaReport.report?.error ? (
                 <div style={{ padding: 16, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: 13 }}>Analysis failed: {qaReport.report.error}</div>
@@ -599,14 +714,39 @@ export default function Content() {
                 const srColor = sr.level === 'High' ? '#ef4444' : sr.level === 'Medium' ? '#f59e0b' : '#16a34a';
                 return (
                   <div>
-                    {/* Spam risk banner */}
-                    <div style={{ marginBottom: 18, padding: '12px 14px', borderRadius: 10, background: srColor + '14', border: `1px solid ${srColor}40` }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: srColor }}>📬 Inbox / Spam Risk: {sr.level} — {sr.likelyPlacement}</div>
-                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        {(sr.reasons || []).map((rs, i) => <li key={i} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{rs}</li>)}
-                      </ul>
-                      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 6, fontStyle: 'italic' }}>Heuristic estimate — true placement needs seed-inbox testing.</div>
-                    </div>
+                    {/* SPAM CHECK = real IMAP placement in rocky's inbox (auto after send) */}
+                    {(() => {
+                      const known = placement?.available && placement.placement !== 'not_found';
+                      const isInbox = placement?.placement === 'inbox';
+                      const c = known ? (isInbox ? '#16a34a' : '#ef4444') : '#3b82f6';
+                      return (
+                        <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: c + '14', border: `1px solid ${c}40` }}>
+                          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>📬 Spam Check (real — rocky's inbox)</div>
+                          {placementLoading && !known ? (
+                            <div style={{ fontSize: 13, color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Delivering & checking rocky's Gmail… (~15-40s)
+                            </div>
+                          ) : known ? (
+                            <div>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: c }}>{isInbox ? 'INBOX ✅ — not spam' : 'SPAM ❌'}</div>
+                              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>Verified in rocky.86agency@gmail.com via IMAP{placement.foundAt ? ` · ${new Date(placement.foundAt).toLocaleString()}` : ''}</div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>{placement?.error ? `⚠ ${placement.error}` : (placement?.note || 'Not found yet in the inbox.')}</div>
+                              <button className="btn btn-sm" onClick={checkPlacement} disabled={placementLoading}
+                                style={{ marginTop: 8, gap: 6, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.25)' }}>
+                                {placementLoading ? 'Checking…' : '🔍 Re-check now'}
+                              </button>
+                            </div>
+                          )}
+                          {/* heuristic as a small secondary hint */}
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
+                            Quick heuristic: <span style={{ color: srColor, fontWeight: 700 }}>{sr.level}</span> risk{sr.reasons?.length ? ` — ${sr.reasons.slice(0,2).join('; ')}` : ''}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <Section icon="✍️" title="Grammar" items={r.grammar || []} okText="No grammar issues found" />
                     <Section icon="📦" title="Missing Content" items={r.missingContent || []} okText="No missing content" danger />
                     {/* URLs */}
@@ -641,7 +781,7 @@ export default function Content() {
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
           onClick={() => setPreview(null)}
         >
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 'var(--radius-xl)', maxWidth: 720, width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 'var(--radius-xl)', maxWidth: previewDevice === 'tablet' ? 840 : 720, width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
               <div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -652,20 +792,65 @@ export default function Content() {
                   {preview.template.channel} · {preview.template.segment_label || 'ALL'} · {preview.template.status}
                 </div>
               </div>
-              <button onClick={() => setPreview(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* Device-view toggle */}
+                <div style={{ display: 'flex', gap: 2, background: 'var(--bg-secondary)', borderRadius: 8, padding: 2 }}>
+                  {[
+                    { key: 'desktop', icon: Monitor,    label: 'Desktop' },
+                    { key: 'tablet',  icon: Tablet,     label: 'Tablet'  },
+                    { key: 'mobile',  icon: Smartphone, label: 'Mobile'  },
+                  ].map(d => {
+                    const DIcon = d.icon;
+                    const active = previewDevice === d.key;
+                    return (
+                      <button key={d.key} onClick={() => setPreviewDevice(d.key)} title={d.label}
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 30, borderRadius: 6, border: 'none', cursor: 'pointer',
+                          background: active ? 'var(--card)' : 'transparent', color: active ? 'var(--brand-primary, #3b82f6)' : 'var(--text-tertiary)', boxShadow: active ? 'var(--shadow)' : 'none' }}>
+                        <DIcon size={15} />
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={() => setPreview(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
+              </div>
             </div>
-            <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+            <div style={{ flex: 1, overflow: 'auto', background: previewDevice === 'desktop' ? '#fff' : 'var(--bg-secondary)', display: 'flex', justifyContent: 'center', padding: previewDevice === 'desktop' ? 0 : '16px 0' }}>
               {preview.loading ? (
                 <div style={{ padding: 60, textAlign: 'center', color: '#888' }}>
                   {preview.ai ? '✨ Generating AI preview with Claude… (~15-25s)' : 'Rendering preview…'}
                 </div>
-              ) : (
-                <iframe
-                  srcDoc={preview.html}
-                  style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }}
-                  title={preview.template.name}
-                />
-              )}
+              ) : (() => {
+                const frameW = { desktop: null, tablet: 768, mobile: 390 }[previewDevice];
+                // Inject a viewport meta so responsive emails reflow at the iframe width.
+                const VP = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+                let html = preview.html || '';
+                if (!/name=["']viewport["']/i.test(html)) {
+                  html = /<head[^>]*>/i.test(html)
+                    ? html.replace(/<head[^>]*>/i, m => `${m}${VP}`)
+                    : `${VP}${html}`;
+                }
+                if (previewDevice === 'desktop') {
+                  return (
+                    <iframe ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
+                      style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }}
+                      title={preview.template.name} />
+                  );
+                }
+                // Device frame: render the iframe at the email's NATURAL content width
+                // (so it has no internal horizontal scrollbar), then scale that whole
+                // iframe down to fit the device frame — Gmail-style "fit to width".
+                const contentW = previewFit.contentW || frameW;
+                const scale = contentW > frameW ? frameW / contentW : 1;
+                const innerH = previewFit.contentH || Math.round((window.innerHeight * 0.7) / scale);
+                return (
+                  <div style={{ width: frameW, maxWidth: '100%', height: previewFit.height || '70vh', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                    <iframe ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
+                      style={{ width: contentW, height: innerH, border: 0, background: '#fff',
+                        transform: `scale(${scale})`, transformOrigin: 'top left' }}
+                      title={preview.template.name} />
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

@@ -48,6 +48,7 @@ function _initQueues() {
     email:    new Queue('journey-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     wa:       new Queue('journey-wa',        { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     sms:      new Queue('journey-sms',       { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    welcome:  new Queue('welcome-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
   };
   return _queues;
 }
@@ -57,7 +58,16 @@ export function getQueue(channel) {
   if (channel === 'email')    return q.email;
   if (channel === 'whatsapp') return q.wa;
   if (channel === 'sms')      return q.sms;
+  if (channel === 'welcome')  return q.welcome;
   throw new Error(`Unknown channel for queue: ${channel}`);
+}
+
+/**
+ * Enqueue a DELAYED welcome-email job. Durable (survives restarts) — this replaces
+ * the old in-memory setTimeout. The welcome worker processes it after `delayMs`.
+ */
+export async function enqueueWelcome(data, delayMs = 0) {
+  return getQueue('welcome').add('welcome-send', data, { delay: Math.max(0, delayMs) });
 }
 
 /**
@@ -88,6 +98,7 @@ export async function closeQueues() {
     _queues.email.close(),
     _queues.wa.close(),
     _queues.sms.close(),
+    _queues.welcome.close(),
   ]);
   _queues = null;
   if (_connection) {

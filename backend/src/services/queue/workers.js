@@ -26,6 +26,7 @@ import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
 import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
+import WelcomeEmailService from '../WelcomeEmailService.js';
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -82,6 +83,12 @@ export function startWorkers() {
     limiter: { max: 10, duration: 1000 },
   });
 
+  // GTM event → welcome email (delayed job; durable replacement for setTimeout)
+  const welcome = new Worker('welcome-email', processWelcome, {
+    connection,
+    concurrency: 5,
+  });
+
   // After all retries exhausted: advance the entry so it doesn't block forever.
   // Shared handler used by email, wa, and sms queues.
   const _onExhausted = (channel) => async (job, err) => {
@@ -131,21 +138,31 @@ export function startWorkers() {
   wa.on('failed',    _onExhausted('whatsapp'));
   sms.on('failed',   _onExhausted('sms'));
 
+  welcome.on('error', (err) => console.error(`[Worker:welcome] worker error: ${err.message}`));
+  welcome.on('failed', (job, err) => console.error(`[Worker:welcome] job ${job?.id} failed: ${err.message}`));
+
   for (const w of [email, wa, sms]) {
     w.on('error', (err) => {
       console.error(`[Worker:${w.name}] worker error: ${err.message}`);
     });
   }
 
-  _workers = { email, wa, sms };
+  _workers = { email, wa, sms, welcome };
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
 
 export async function stopWorkers() {
   if (!_workers) return;
-  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close()]);
+  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close()]);
   _workers = null;
+}
+
+/** Welcome-email worker: runs the (delayed) send for a GTM-triggered welcome. */
+async function processWelcome(job) {
+  const { unifiedId, eventName } = job.data || {};
+  await WelcomeEmailService.processJob({ unifiedId, eventName });
+  return { ok: true };
 }
 
 // ── Job processors ─────────────────────────────────────────────

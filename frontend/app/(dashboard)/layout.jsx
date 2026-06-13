@@ -3,7 +3,7 @@
 import { useState, Component } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList, Gauge } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -16,6 +16,7 @@ const NAV = [
   { href: '/segment-activity', icon: Activity, label: 'Segment Activity' },
   { href: '/contacts', icon: UserCheck, label: 'Contacts' },
   { href: '/journeys', icon: GitBranch, label: 'Journeys' },
+  { href: '/journeys/dashboard', icon: Gauge, label: 'Journey Dashboard' },
   { href: '/campaigns', icon: Megaphone, label: 'Campaigns' },
   { href: '/content', icon: FileText, label: 'Content' },
   { href: '/log', icon: ClipboardList, label: 'Send Log' },
@@ -129,8 +130,13 @@ export default function DashboardLayout({ children }) {
           </div>
           <BusinessTypeSwitcher collapsed={collapsed} />
           <nav>
-            {NAV.map(({ href, icon: Icon, label }) => {
-              const isActive = href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(href);
+            {(() => {
+              // Most-specific match wins, so /journeys/dashboard doesn't also light up /journeys
+              const bestHref = NAV
+                .filter(n => pathname === n.href || pathname.startsWith(n.href + '/'))
+                .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+              return NAV.map(({ href, icon: Icon, label }) => {
+              const isActive = href === bestHref;
               return (
                 <Link
                   key={href}
@@ -144,7 +150,8 @@ export default function DashboardLayout({ children }) {
                   {!collapsed && <span>{label}</span>}
                 </Link>
               );
-            })}
+            });
+            })()}
           </nav>
           <SidebarFooter collapsed={collapsed} />
         </motion.aside>

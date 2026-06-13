@@ -330,7 +330,8 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('082_journey_node_statuses.sql');
     await runMigrationFile('083_journey_node_emails.sql');
     await runMigrationFile('084_daily_ai_templates.sql');
-    res.json({ success: true, message: 'Journey migrations (071-084) completed' });
+    await runMigrationFile('085_email_qa_reports.sql');
+    res.json({ success: true, message: 'Journey migrations (071-085) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -270,6 +270,39 @@ router.get('/contacts', async (req, res, next) => {
 
 // ── contact search ───────────────────────────────────────────────────────
 
+// POST /send-daily-ai — send the EXACT AI daily-master template (the one shown in
+// "Preview AI") to recipients. Guarantees Test Send == Preview AI == journey send.
+// Body: { templateId, emails }
+router.post('/send-daily-ai', async (req, res) => {
+  try {
+    const templateId = parseInt(req.body?.templateId);
+    if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
+
+    // The AI daily master — same HTML as Preview AI and journey sends
+    const { getDailyAITemplate } = await import('../services/JourneyService.js');
+    const master = await getDailyAITemplate(templateId);
+    if (!master?.html) return res.status(400).json({ success: false, error: `Template ${templateId} is not a dynamic Day template (1-7)` });
+
+    const EmailChannel = await loadEmailChannel();
+    const subject = master.subject || `Day ${templateId} | Rayna Tours`;
+    const label = `Day ${templateId} (AI)`;
+
+    const sendOne = (r) => sendAndLog({
+      EmailChannel, recipient: r, subject, html: master.html,
+      templateLabel: label, dayNumber: templateId, source: req.body?.source || 'test-send',
+    });
+
+    const results = await parallelMap(recipients, sendOne);
+    const sent = results.filter(r => r.success).length;
+    res.json({ success: true, data: { day: templateId, recipients: recipients.length, sent, source: master.source, results } });
+  } catch (err) {
+    console.error('[send-daily-ai] failed:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /analyze-email — QA report for a Day template's rendered email.
 // Body: { templateId } (1-7). Returns grammar / missing content / URL checks /
 // spam-risk / other errors. Used by the Content screen after a Test Send.
@@ -285,9 +318,53 @@ router.post('/analyze-email', async (req, res) => {
 
     const { analyzeEmail } = await import('../services/EmailQAService.js');
     const report = await analyzeEmail({ html: rendered.html, subject: rendered.subject });
+
+    // Store the report (one per template — latest wins)
+    await db.query(
+      `INSERT INTO email_qa_reports (template_id, report, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (template_id) DO UPDATE SET report = $2, placement = NULL, updated_at = NOW()`,
+      [templateId, JSON.stringify(report)]
+    );
+
     res.json({ success: true, data: report });
   } catch (err) {
     console.error('[analyze-email] failed:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /qa-report/:templateId — fetch the stored QA report (for the (i) button)
+router.get('/qa-report/:templateId', async (req, res) => {
+  try {
+    const { rows: [row] } = await db.query(
+      'SELECT report, placement, updated_at FROM email_qa_reports WHERE template_id = $1',
+      [parseInt(req.params.templateId)]
+    );
+    if (!row) return res.json({ success: true, data: null });
+    res.json({ success: true, data: { ...row.report, placement: row.placement, generatedAt: row.updated_at } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /check-placement — real inbox placement (Inbox/Spam) of a sent email,
+// read via IMAP on the seed inbox. Body: { subject }.
+router.post('/check-placement', async (req, res) => {
+  try {
+    const subject = req.body?.subject || '';
+    const templateId = req.body?.templateId ? parseInt(req.body.templateId) : null;
+    const { checkInboxPlacement } = await import('../services/EmailQAService.js');
+    const result = await checkInboxPlacement({ subject, sinceMinutes: 120 });
+    // Persist placement onto the stored report so the (i) button shows it too
+    if (templateId) {
+      await db.query(
+        `UPDATE email_qa_reports SET placement = $2, updated_at = NOW() WHERE template_id = $1`,
+        [templateId, JSON.stringify(result)]
+      ).catch(() => {});
+    }
+    res.json({ success: true, data: result });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

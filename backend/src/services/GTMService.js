@@ -243,6 +243,16 @@ window.addEventListener('scroll', function() {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *
     `, [eventName, customerId, sessionId, pageUrl, pageTitle, eventCategory, eventAction, eventLabel, eventValue, JSON.stringify(ecommerceData || {}), utmSource, utmMedium, utmCampaign, utmContent, deviceType, browser, country, city, resolvedUnifiedId, JSON.stringify(body), resolvedJourneyId, resolvedNodeId]);
+
+    // Async fire-and-forget: schedule a welcome email to this contact (gated/allowlisted).
+    // NOT awaited — never blocks the GTM event response.
+    if (resolvedUnifiedId) {
+      import('./WelcomeEmailService.js')
+        .then(({ default: WelcomeEmailService }) =>
+          WelcomeEmailService.schedule({ unifiedId: resolvedUnifiedId, eventName, eventId: event.event_id }))
+        .catch(e => console.error('[Welcome] hook failed:', e.message));
+    }
+
     return event;
   }
 

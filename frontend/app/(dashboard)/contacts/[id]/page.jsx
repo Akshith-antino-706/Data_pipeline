@@ -9,6 +9,7 @@ import {
   Calendar, Clock, Ticket, DollarSign, Plane, Hotel, MessageCircle,
   Layers, FileText, Palmtree, Hash, MapPin, ChevronDown, ChevronUp,
   Zap, Activity, User, Pencil, X, Check, Loader2, GitBranch,
+  Eye, MousePointerClick, Send, ExternalLink,
 } from 'lucide-react';
 
 const fadeIn = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35 } } };
@@ -40,6 +41,7 @@ export default function ContactProfile() {
   const [gtmLoading, setGtmLoading] = useState(true);
   const [journeys, setJourneys] = useState([]);
   const [journeysLoading, setJourneysLoading] = useState(true);
+  const [expandedJourneys, setExpandedJourneys] = useState(() => new Set());
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [saveLoading, setSaveLoading] = useState(false);
@@ -351,29 +353,88 @@ export default function ContactProfile() {
                   converted: { color: '#22c55e', label: 'Converted' },
                   snapshot:  { color: '#9ca3af', label: 'Queued' },
                 }[j.entry_status] || { color: 'var(--text-tertiary)', label: j.entry_status || '—' };
+                const nodes = j.nodes || [];
+                const isOpen = expandedJourneys.has(j.journey_id);
+                const toggle = () => setExpandedJourneys(prev => {
+                  const next = new Set(prev);
+                  next.has(j.journey_id) ? next.delete(j.journey_id) : next.add(j.journey_id);
+                  return next;
+                });
                 return (
                   <div
                     key={j.journey_id}
-                    onClick={() => router.push(`/journeys?id=${j.journey_id}`)}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
                       borderRadius: 10, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
-                      cursor: 'pointer',
+                      overflow: 'hidden',
                     }}
                   >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {j.name || `Journey ${j.journey_id}`}
+                    {/* Header row — click toggles per-node breakdown */}
+                    <div
+                      onClick={toggle}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', cursor: 'pointer' }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {j.name || `Journey ${j.journey_id}`}
+                        </div>
+                        <div style={{ fontSize: 11, color: ESTATUS.color, marginTop: 2 }}>
+                          {ESTATUS.label}
+                          {j.current_node_id && j.entry_status === 'active' && <span style={{ color: 'var(--text-tertiary)' }}> · at {j.current_node_id}</span>}
+                          {nodes.length > 0 && <span style={{ color: 'var(--text-tertiary)' }}> · {nodes.length} email{nodes.length > 1 ? 's' : ''}</span>}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: ESTATUS.color, marginTop: 2 }}>
-                        {ESTATUS.label}
-                        {j.current_node_id && j.entry_status === 'active' && <span style={{ color: 'var(--text-tertiary)' }}> · at {j.current_node_id}</span>}
-                      </div>
+                      <span style={{ fontSize: 9, fontWeight: 800, padding: '3px 9px', borderRadius: 20, background: JSTATUS.bg, color: JSTATUS.color, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
+                        {JSTATUS.label}
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); router.push(`/journeys?id=${j.journey_id}`); }}
+                        title="Open journey"
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        <ExternalLink size={13} />
+                      </button>
+                      <ChevronDown size={15} color="var(--text-tertiary)" style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .18s', flexShrink: 0 }} />
                     </div>
-                    <span style={{ fontSize: 9, fontWeight: 800, padding: '3px 9px', borderRadius: 20, background: JSTATUS.bg, color: JSTATUS.color, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
-                      {JSTATUS.label}
-                    </span>
-                    <ChevronDown size={14} color="var(--text-tertiary)" style={{ transform: 'rotate(-90deg)', flexShrink: 0 }} />
+
+                    {/* Per-node delivered / opened / clicked breakdown */}
+                    {isOpen && (
+                      <div style={{ borderTop: '1px solid var(--border-color)', padding: '8px 14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {nodes.length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0', textAlign: 'center' }}>
+                            No emails sent to this contact in this journey yet
+                          </div>
+                        ) : nodes.map((n, i) => {
+                          const stages = [
+                            { on: n.delivered, at: n.sent_at,    Icon: Send,              label: 'Delivered', color: '#3b82f6' },
+                            { on: n.opened,    at: n.opened_at,   Icon: Eye,               label: 'Opened',    color: '#8b5cf6' },
+                            { on: n.clicked,   at: n.clicked_at,  Icon: MousePointerClick, label: 'Clicked',   color: '#22c55e' },
+                          ];
+                          return (
+                            <div key={`${n.node_id}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                                {n.day_number ? <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 5, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6', flexShrink: 0 }}>DAY {n.day_number}</span> : null}
+                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.label || n.subject || n.node_id}</span>
+                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>· {n.node_id}</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {stages.map(({ on, at, Icon, label, color }) => (
+                                  <span key={label} title={at ? formatDateTime(at) : 'Not yet'}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 600, padding: '4px 9px', borderRadius: 20,
+                                      background: on ? `${color}1f` : 'var(--bg-secondary)',
+                                      color: on ? color : 'var(--text-tertiary)',
+                                      border: `1px solid ${on ? color + '40' : 'var(--border-color)'}`,
+                                      opacity: on ? 1 : 0.6 }}>
+                                    <Icon size={11} />
+                                    {label}
+                                    {on ? <Check size={11} /> : null}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
