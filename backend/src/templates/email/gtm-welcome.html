@@ -1,28 +1,184 @@
 <!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to Rayna Tours</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;">
-  <div style="max-width:480px;margin:24px auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #ececec;">
-    <div style="background:#8b5cf6;padding:22px 24px;color:#ffffff;font-size:20px;font-weight:800;letter-spacing:.3px;">
-      Rayna Tours
-    </div>
-    <div style="padding:26px 24px;color:#222222;line-height:1.6;">
-      <p style="font-size:17px;font-weight:700;margin:0 0 10px;">Welcome, {{customer_name}} 🌴</p>
-      <p style="font-size:14px;margin:0 0 18px;color:#444444;">
-        Thanks for stopping by! We've got handpicked tours, tickets and experiences
-        waiting for you. Whenever you're ready, we're here to help you plan something unforgettable.
-      </p>
-      <a href="{{cta_url}}" style="display:inline-block;background:#8b5cf6;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:700;font-size:14px;">
-        Explore experiences →
-      </a>
-      <p style="font-size:12px;color:#999999;margin:24px 0 0;">
-        You're receiving this because you visited raynatours.com.
-      </p>
-    </div>
-  </div>
-</body>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>Welcome to Rayna Tours</title>
+    <style type="text/css">
+      body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; text-size-adjust: 100%; }
+      table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+      img { -ms-interpolation-mode: bicubic; display: block; outline: none; text-decoration: none; border: 0; }
+      body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+      table { border-collapse: collapse !important; }
+      @media only screen and (max-width: 600px) {
+        .container { width: 100% !important; max-width: 100% !important; }
+        .topbar-text-cell { padding: 9px 4px !important; font-size: 10px !important; letter-spacing: 1.4px !important; white-space: normal !important; }
+        .hd-nav { display: none !important; }
+      }
+    </style>
+  </head>
+  <body style="margin: 0; padding: 0; background-color: #f0ede8">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; background-color: #f0ede8;">
+      <tr>
+        <td align="center" style="padding: 0">
+          <table class="container" role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 600px; border-collapse: collapse; background-color: #ffffff;">
+
+            <!-- Top bar -->
+            <tr>
+              <td style="background-color: #1a1a1a">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; table-layout: fixed;">
+                  <tr>
+                    <td class="topbar-text-cell" align="center" valign="middle" style="padding: 10px 0; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff; white-space: nowrap;">
+                      <span>&#9992;</span> Your Dream Holiday Starts Here <span>&#9992;</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Header: logo + nav -->
+            <tr>
+              <td style="padding: 16px 24px; border-bottom: 1px solid #f0ece4">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                  <tr>
+                    <td align="left" valign="middle" style="padding: 0 8px 0 0">
+                      <img src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours" width="120" style="display: block; width: 120px; max-width: 120px; height: auto; border: 0;">
+                    </td>
+                    <td class="hd-nav" align="right" valign="middle" style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: #4a4a4a; white-space: nowrap;">
+                      <a href="https://www.raynatours.com/activities" style="color: #4a4a4a; text-decoration: none">Activities</a> &nbsp;&nbsp;
+                      <a href="https://www.raynatours.com/cruises" style="color: #4a4a4a; text-decoration: none">Cruises</a> &nbsp;&nbsp;
+                      <a href="https://www.raynatours.com/visas" style="color: #4a4a4a; text-decoration: none">Visas</a> &nbsp;&nbsp;
+                      <a href="https://www.raynatours.com/holidays" style="color: #4a4a4a; text-decoration: none">Holidays</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Hero / welcome -->
+            <tr>
+              <td align="center" style="padding: 44px 32px 8px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: #9a8e7a;">
+                Welcome aboard
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 0 40px 14px; font-family: Georgia, 'Times New Roman', serif; font-size: 30px; line-height: 38px; font-weight: 700; font-style: italic; color: #1a1a1a;">
+                Hello {{customer_name}}
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 0 44px 26px; font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 26px; color: #4a4a4a;">
+                Thanks for stopping by &mdash; we noticed you exploring <strong style="color:#1a1a1a;">{{item_name}}</strong>.
+                Whenever you're ready, we're here to help you plan something unforgettable.
+              </td>
+            </tr>
+
+            <!-- CTA -->
+            <tr>
+              <td align="center" style="padding: 0 24px 40px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse">
+                  <tr>
+                    <td align="center" bgcolor="#1a1a1a" style="border-radius: 2px;">
+                      <a href="{{cta_url}}" style="display: inline-block; padding: 14px 36px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #ffffff; text-decoration: none; background-color: #1a1a1a; border-radius: 2px;">Explore Experiences</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Triggered-by-GTM-event section -->
+            <tr>
+              <td style="padding: 0 24px 6px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; border: 1px solid #eeebe5; border-left: 4px solid #1a1a1a;">
+                  <tr>
+                    <td style="padding: 16px 18px 6px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1a1a1a;">
+                      Triggered by GTM event
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 0 18px 12px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse; font-family: Arial, Helvetica, sans-serif; font-size: 12.5px; line-height: 18px; color: #1a1a1a;">
+                        <tr><td style="padding: 4px 0; color: #8b8b8b; width: 90px;">Event</td><td style="padding: 4px 0; font-weight: 700;">{{event_name}}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #8b8b8b;">Event ID</td><td style="padding: 4px 0;">{{event_id}}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #8b8b8b;">Item</td><td style="padding: 4px 0;">{{item_name}}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #8b8b8b;">Page</td><td style="padding: 4px 0; word-break: break-all;">{{page_url}}</td></tr>
+                        <tr><td style="padding: 4px 0; color: #8b8b8b;">Time</td><td style="padding: 4px 0;">{{event_time}}</td></tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 0 18px 6px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #8b8b8b;">
+                      Full raw_payload
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 0 18px 18px;">
+                      <pre style="background-color: #1a1a1a; color: #e8e2d6; border-radius: 4px; padding: 14px; font-family: 'Courier New', Courier, monospace; font-size: 11px; line-height: 1.55; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0;">{{raw_payload}}</pre>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Divider -->
+            <tr>
+              <td style="padding: 28px 20px 0; background-color: #ffffff">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                  <tr><td style="height: 1px; line-height: 1px; font-size: 1px; background-color: #1a1a1a;">&nbsp;</td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding: 32px 20px 28px; background-color: #f0ede8">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">
+                  <tr>
+                    <td align="center" style="padding: 0 0 20px"><img src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" alt="Rayna Tours" width="130" style="display: block; width: 130px; max-width: 130px; height: auto; border: 0; margin: 0 auto;" /></td>
+                  </tr>
+                  <tr><td align="center" style="padding: 0 0 12px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 20px; font-weight: 700; color: #8b8b8b;">Follow Us on</td></tr>
+                  <tr>
+                    <td align="center" style="padding: 0 0 22px">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto">
+                        <tr>
+                          <td style="padding: 0 7px"><a href="https://www.facebook.com/raynagroup" style="display: block; text-decoration: none; line-height: 0;"><img src="https://img.icons8.com/ios-filled/20/ffffff/facebook-new.png" alt="Facebook" width="20" style="display: block; width: 20px; height: 20px; padding: 10px; background-color: #333333; border-radius: 20px; box-sizing: content-box;" /></a></td>
+                          <td style="padding: 0 7px"><a href="https://instagram.com/raynatours_" style="display: block; text-decoration: none; line-height: 0;"><img src="https://img.icons8.com/ios-filled/20/ffffff/instagram-new.png" alt="Instagram" width="20" style="display: block; width: 20px; height: 20px; padding: 10px; background-color: #333333; border-radius: 20px; box-sizing: content-box;" /></a></td>
+                          <td style="padding: 0 7px"><a href="https://www.linkedin.com/company/raynatours" style="display: block; text-decoration: none; line-height: 0;"><img src="https://img.icons8.com/ios-filled/14/ffffff/linkedin.png" alt="LinkedIn" width="20" style="display: block; width: 20px; height: 20px; padding: 10px; background-color: #333333; border-radius: 20px; box-sizing: content-box;" /></a></td>
+                          <td style="padding: 0 7px"><a href="https://www.youtube.com/raynatours" style="display: block; text-decoration: none; line-height: 0;"><img src="https://img.icons8.com/ios-filled/14/ffffff/youtube-play.png" alt="YouTube" width="20" style="display: block; width: 20px; height: 20px; padding: 10px; background-color: #333333; border-radius: 20px; box-sizing: content-box;" /></a></td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td align="center" style="padding: 0 0 18px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 18px; color: #888888; text-transform: uppercase;">
+                      <a href="https://www.raynatours.com/holidays" style="color: #888888; text-decoration: none">Holidays</a>
+                      <span style="color: #c8c8c8">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+                      <a href="https://www.raynatours.com/cruises" style="color: #888888; text-decoration: none">Cruises</a>
+                      <span style="color: #c8c8c8">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+                      <a href="https://www.raynatours.com/visas" style="color: #888888; text-decoration: none">Visas</a>
+                      <span style="color: #c8c8c8">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+                      <a href="https://www.raynatours.com/activities" style="color: #888888; text-decoration: none">Activities</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td align="center" style="font-family: Arial, Helvetica, sans-serif; font-size: 10px; line-height: 18px; color: #9d9d9d;">
+                      You're receiving this because you visited raynatours.com<br />
+                      <a href="https://www.raynatours.com/unsubscribe" style="color: #888888; text-decoration: underline">Unsubscribe</a>
+                      <span style="color: #c8c8c8">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+                      <a href="#" style="color: #888888; text-decoration: underline">Privacy Policy</a>
+                      <span style="color: #c8c8c8">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+                      <a href="#" style="color: #888888; text-decoration: underline">Terms</a><br /><br />
+                      &copy; 2026 Rayna Tours &amp; Travels LLC. All rights reserved.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
 </html>
