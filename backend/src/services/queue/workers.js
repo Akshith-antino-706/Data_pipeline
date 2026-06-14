@@ -162,8 +162,8 @@ export async function stopWorkers() {
 
 /** Welcome-email worker: runs the (delayed) send for a GTM-triggered welcome. */
 async function processWelcome(job) {
-  const { unifiedId, eventName } = job.data || {};
-  await WelcomeEmailService.processJob({ unifiedId, eventName });
+  const { unifiedId, eventName, eventId } = job.data || {};
+  await WelcomeEmailService.processJob({ unifiedId, eventName, eventId });
   return { ok: true };
 }
 

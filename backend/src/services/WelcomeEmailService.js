@@ -58,12 +58,12 @@ class WelcomeEmailService {
   }
 
   /** Called by the welcome BullMQ worker when the delayed job becomes due. */
-  static async processJob({ unifiedId, eventName }) {
+  static async processJob({ unifiedId, eventName, eventId }) {
     if (!unifiedId) return;
-    await this._send(unifiedId, eventName);
+    await this._send(unifiedId, eventName, eventId);
   }
 
-  static async _send(unifiedId, triggerEvent) {
+  static async _send(unifiedId, triggerEvent, eventId) {
     const { rows: [c] } = await db.query(
       'SELECT id, email, name, email_unsubscribe FROM unified_contacts WHERE id = $1', [unifiedId]
     );
@@ -79,7 +79,16 @@ class WelcomeEmailService {
       return;
     }
 
-    const { subject, html } = this._template(c);
+    // Fetch the GTM event that triggered this so the email can show which event/data it came from
+    let eventInfo = { eventName: triggerEvent, eventId, payload: {}, pageUrl: null, createdAt: null };
+    if (eventId) {
+      const { rows: [ev] } = await db.query(
+        'SELECT event_id, event_name, page_url, raw_payload, created_at FROM gtm_events WHERE event_id = $1', [eventId]
+      );
+      if (ev) eventInfo = { eventName: ev.event_name, eventId: ev.event_id, payload: ev.raw_payload || {}, pageUrl: ev.page_url, createdAt: ev.created_at };
+    }
+
+    const { subject, html } = this._template(c, eventInfo);
 
     // Log the attempt to email_send_log (source='gtm_welcome') for visibility
     const logId = await SendTrackService.logSend({
@@ -107,13 +116,23 @@ class WelcomeEmailService {
     return EmailChannel;
   }
 
-  static _template(contact) {
+  static _template(contact, eventInfo = {}) {
     const name = (contact.name || '').split(' ')[0] || 'there';
-    const subject = 'Welcome to Rayna Tours 🌴';
+    const ev = eventInfo || {};
+    const p = ev.payload || {};
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const subject = `Welcome to Rayna Tours 🌴${ev.eventName ? ` — ${ev.eventName}` : ''}`;
+    const rawJson = esc(JSON.stringify(p, null, 2));
     const raw = fs.readFileSync(TEMPLATE_PATH, 'utf8');
     const html = raw
-      .replaceAll('{{customer_name}}', name)
-      .replaceAll('{{cta_url}}', 'https://www.raynatours.com');
+      .replaceAll('{{customer_name}}', esc(name))
+      .replaceAll('{{cta_url}}', 'https://www.raynatours.com')
+      .replaceAll('{{event_name}}',  esc(ev.eventName || '—'))
+      .replaceAll('{{event_id}}',    esc(ev.eventId ?? '—'))
+      .replaceAll('{{item_name}}',   esc(p.itemName || '—'))
+      .replaceAll('{{page_url}}',    esc(ev.pageUrl || p.pageUrl || '—'))
+      .replaceAll('{{event_time}}',  esc(ev.createdAt ? new Date(ev.createdAt).toLocaleString() : (p.timestamp || '—')))
+      .replaceAll('{{raw_payload}}', rawJson);
     return { subject, html };
   }
 }
