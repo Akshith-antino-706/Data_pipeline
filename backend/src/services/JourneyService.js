@@ -650,6 +650,123 @@ class JourneyService {
     return snapshotCount;
   }
 
+  /**
+   * Build a subquery that yields (id, is_indian) for every contact currently
+   * matching THIS journey's segment + audience. Returns { sql, params } or null
+   * (journey has no segment, e.g. a manual broadcast — can't re-qualify).
+   */
+  static async _journeySegmentRows(journey) {
+    const audience = journey.audience || 'all';
+    if (journey.custom_segment_id) {
+      const seg = await CustomSegmentService.getById(journey.custom_segment_id);
+      if (!seg) return null;
+      const { sql, params } = CustomSegmentService.buildSegmentSQL(seg.conditions || [], { select: 'uc.id, uc.is_indian' });
+      let audWhere = '';
+      if (audience === 'indian') audWhere = 'AND s0.is_indian = true';
+      else if (audience === 'rest') audWhere = 'AND s0.is_indian = false';
+      return { sql: `SELECT s0.id, s0.is_indian FROM (${sql}) s0 WHERE true ${audWhere}`, params };
+    }
+    if (journey.segment_id) {
+      let audFilter = '';
+      if (audience === 'indian') audFilter = 'AND uc.is_indian = true';
+      else if (audience === 'rest') audFilter = 'AND uc.is_indian = false';
+      return {
+        sql: `SELECT sc.customer_id AS id, uc.is_indian
+              FROM segment_customers sc JOIN unified_contacts uc ON uc.id = sc.customer_id
+              WHERE sc.segment_id = $1 AND sc.is_active = true ${audFilter}`,
+        params: [journey.segment_id],
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Dynamic-audience refresh — re-qualifies the journey against its segment.
+   * Per the agreed model:
+   *   - EXIT (once per run): active entries whose contact NO LONGER matches the
+   *     segment → status='exited', reason='left_segment'. Skips already-exited
+   *     (booked/unsubscribed/purchased run first → converted > left_segment).
+   *   - ADD (per action node, throttled): contacts now matching the segment with
+   *     NO existing entry → inserted AT that action node (status='active',
+   *     next_fire_at=NOW), so they receive that node's email and continue forward.
+   * Throttled via journey_flows.node_synced_at so the heavy segment query runs at
+   * most once per node per run. No-op for journeys without a segment.
+   */
+  // Shared: read throttle map + persist stamps merge
+  static _refreshThrottle(journey) {
+    const throttleMs = (parseInt(process.env.JOURNEY_SYNC_THROTTLE_SEC) || 240) * 1000;
+    const synced = (journey.node_synced_at && typeof journey.node_synced_at === 'object') ? journey.node_synced_at : {};
+    const now = Date.now();
+    return (key) => synced[key] && (now - new Date(synced[key]).getTime()) < throttleMs;
+  }
+  static async _refreshStamp(journeyId, stamps) {
+    if (!Object.keys(stamps).length) return;
+    await db.query(
+      `UPDATE journey_flows SET node_synced_at = COALESCE(node_synced_at, '{}'::jsonb) || $2::jsonb WHERE journey_id = $1`,
+      [journeyId, JSON.stringify(stamps)]
+    ).catch(e => console.error(`[Journey ${journeyId}] refresh stamp failed: ${e.message}`));
+  }
+
+  /**
+   * ADD newly-qualified contacts AT each action node (throttled per node).
+   * Runs BEFORE the existing exit checks (booked / unsubscribed / purchased) so
+   * those same conditions apply to brand-new entries this same run — i.e. the
+   * usual conditions behave identically on every node, including after a refresh.
+   */
+  static async _refreshAddNew(journey, nodeMap) {
+    if (journey.status !== 'active') return;
+    const segq = await this._journeySegmentRows(journey).catch(() => null);
+    if (!segq) return;
+    const isFresh = this._refreshThrottle(journey);
+    const jid = journey.journey_id;
+    const b = segq.params.length;
+    const stamps = {};
+    for (const node of Object.values(nodeMap).filter(n => n.type === 'action')) {
+      if (isFresh(node.id)) continue;
+      try {
+        const { rowCount } = await db.query(`
+          INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status, next_fire_at)
+          SELECT $${b + 1}, seg.id, $${b + 2},
+                 CASE WHEN seg.is_indian THEN 'indian' ELSE 'rest' END,
+                 'active', NOW()
+          FROM (${segq.sql}) seg
+          WHERE NOT EXISTS (
+            SELECT 1 FROM journey_entries je WHERE je.journey_id = $${b + 1} AND je.customer_id = seg.id
+          )
+          ON CONFLICT (journey_id, customer_id) DO NOTHING
+        `, [...segq.params, jid, node.id]);
+        if (rowCount > 0) console.log(`[Journey ${jid}] refresh: added ${rowCount} new at ${node.id}`);
+      } catch (e) { console.error(`[Journey ${jid}] refresh ADD (${node.id}) failed: ${e.message}`); }
+      stamps[node.id] = new Date().toISOString();
+    }
+    await this._refreshStamp(jid, stamps);
+  }
+
+  /**
+   * EXIT stale contacts (journey-wide, once per run) — those who NO LONGER match
+   * the segment → status='exited', reason='left_segment'. Runs AFTER the existing
+   * booked/unsub/purchased exits (guard: exit_reason IS NULL) so converted > left_segment.
+   */
+  static async _refreshExitStale(journey) {
+    if (journey.status !== 'active') return;
+    const segq = await this._journeySegmentRows(journey).catch(() => null);
+    if (!segq) return;
+    const isFresh = this._refreshThrottle(journey);
+    if (isFresh('_exit')) return;
+    const jid = journey.journey_id;
+    const b = segq.params.length;
+    try {
+      const { rowCount } = await db.query(`
+        UPDATE journey_entries je
+        SET status = 'exited', exit_reason = 'left_segment', completed_at = NOW(), next_fire_at = NULL
+        WHERE je.journey_id = $${b + 1} AND je.status = 'active' AND je.exit_reason IS NULL
+          AND NOT EXISTS (SELECT 1 FROM (${segq.sql}) seg WHERE seg.id = je.customer_id)
+      `, [...segq.params, jid]);
+      if (rowCount > 0) console.log(`[Journey ${jid}] refresh: exited ${rowCount} stale (left_segment)`);
+    } catch (e) { console.error(`[Journey ${jid}] refresh EXIT failed: ${e.message}`); }
+    await this._refreshStamp(jid, { _exit: new Date().toISOString() });
+  }
+
   static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
@@ -1123,6 +1240,12 @@ class JourneyService {
     // Bulk-updated after each page so the cron SQL skips them until the window opens
     let waitedEntries = new Map();
 
+    // ── Dynamic-audience refresh: ADD new matches FIRST ──
+    // Add newly-qualified contacts at each action node BEFORE the exit checks below,
+    // so the usual conditions (booked / unsubscribed / purchased) apply to them this
+    // same run — identical behaviour on every node, including for freshly-added users.
+    await JourneyService._refreshAddNew(journey, nodeMap);
+
     // ── BULK EXIT CHECK (scalable for 15 lakh+ users) ──
     // Exit booked + unsubscribed users in a single batch UPDATE before the per-entry loop.
     // This avoids N individual queries for exit conditions.
@@ -1195,6 +1318,12 @@ class JourneyService {
         console.log(`[Journey ${journeyId}] Bulk exited: ${bookedExits.length} booked, ${unsubExits.length} unsubscribed`);
       }
     }
+
+    // ── Dynamic-audience refresh: EXIT stale LAST ──
+    // Exit contacts who no longer match the segment (left_segment). Runs AFTER the
+    // booked/unsub/purchased exits above (guard: exit_reason IS NULL) so the usual
+    // conversion exits take precedence (converted > left_segment).
+    await JourneyService._refreshExitStale(journey);
 
     // Re-fetch active entries after bulk exit — paginated to handle 800K+ without OOM
     const FETCH_BATCH = 5000;
