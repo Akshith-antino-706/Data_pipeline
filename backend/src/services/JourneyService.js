@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import PopularityService from './PopularityService.js';
 import { enqueueBatch, queueCounts } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
+import GtmJourneyService from './GtmJourneyService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -586,7 +587,105 @@ class JourneyService {
       node_ranking_sources[r.node_id] = (r.sources || []).includes('claude') ? 'claude' : 'fallback';
     }
 
-    return { ...journey, entryStats, nodeAnalytics, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats, node_ranking_sources };
+    // ── GTM journeys have no journey_entries/journey_events (they're not engine-
+    //    processed), so the per-node analytics + statuses above are empty. Source them
+    //    from email_send_log instead (where gtm_journey sends are recorded with node_id)
+    //    so the SAME frontend node UI shows real sent/opened/clicked. Normal journeys
+    //    keep the engine-derived values untouched. ──
+    let nodeAnalyticsOut = nodeAnalytics;
+    let entryStatsOut = entryStats;
+    if (journey.journey_type === 'gtm') {
+      // ── CONTINUOUS journey: live state from gtm_journey_entries (the conveyor belt) ──
+      // There is NO "completed" node status — the journey is always-on; new users keep
+      // entering, so nodes stay running / sending / waiting forever. (Individual ENTRIES
+      // complete or exit, but a NODE never finishes.) Counts reflect the REAL live position.
+
+      // Where every active entry currently sits (current_node_id distribution)
+      const { rows: dist } = await db.query(
+        `SELECT current_node_id AS node, COUNT(*)::int active
+         FROM gtm_journey_entries WHERE journey_id = $1 AND status = 'active'
+         GROUP BY current_node_id`, [journeyId]
+      );
+      const activeAt = {}; dist.forEach(r => { activeAt[r.node] = r.active; });
+
+      // Where every EXITED entry left the belt (current_node_id) + why (purchased / unsubscribed)
+      const { rows: exDist } = await db.query(
+        `SELECT current_node_id AS node,
+                COUNT(*)::int exited,
+                COUNT(*) FILTER (WHERE exit_reason='purchased')::int purchased,
+                COUNT(*) FILTER (WHERE exit_reason='unsubscribed')::int unsubscribed
+         FROM gtm_journey_entries WHERE journey_id = $1 AND status = 'exited'
+         GROUP BY current_node_id`, [journeyId]
+      );
+      const exitedAt = {}; exDist.forEach(r => { exitedAt[r.node] = r; });
+
+      // Journey-wide entry totals
+      const { rows: [tot] } = await db.query(
+        `SELECT COUNT(*)::int total,
+                COUNT(*) FILTER (WHERE status='active')::int active,
+                COUNT(*) FILTER (WHERE status='completed')::int completed,
+                COUNT(*) FILTER (WHERE status='exited')::int exited
+         FROM gtm_journey_entries WHERE journey_id = $1`, [journeyId]
+      );
+
+      // Cumulative sends per node (for sent/opened/clicked analytics + the passed-through count)
+      const { rows: sends } = await db.query(
+        `SELECT node_id,
+                COUNT(*) FILTER (WHERE status NOT IN ('failed','queued'))::int sent,
+                COUNT(*) FILTER (WHERE status IN ('opened','clicked'))::int opened,
+                COUNT(*) FILTER (WHERE status='clicked')::int clicked
+         FROM email_send_log WHERE journey_id = $1 AND source='gtm_journey' AND node_id IS NOT NULL
+         GROUP BY node_id`, [journeyId]
+      );
+      const sentByNode = {}; sends.forEach(r => { sentByNode[r.node_id] = r.sent; });
+
+      nodeAnalyticsOut = [];
+      sends.forEach(r => {
+        for (const [et, v] of [['action_sent', r.sent], ['action_read', r.opened], ['action_clicked', r.clicked]])
+          if (v > 0) nodeAnalyticsOut.push({ node_id: r.node_id, event_type: et, channel: 'email', event_count: v });
+      });
+
+      // Node status — continuous: running (always-on) / sending (entries here now) /
+      // waiting (entries in this wait) / pending (journey not started). NEVER completed.
+      const live = ['active', 'paused'].includes(journey.status);
+      node_statuses = {};
+      for (const n of (journey.nodes || [])) {
+        const here = activeAt[n.id] || 0;
+        if (!live)                      node_statuses[n.id] = 'pending';
+        else if (n.type === 'trigger')  node_statuses[n.id] = 'running';                 // always listening
+        else if (n.type === 'wait')     node_statuses[n.id] = here > 0 ? 'waiting' : 'running';
+        else if (n.type === 'action')   node_statuses[n.id] = here > 0 ? 'sending' : 'running';
+        else                            node_statuses[n.id] = 'running';
+      }
+
+      // Per-node live counts: active = entries currently AT this node; completed = cumulative
+      // passed through; exited = entries that dropped out AT this node (purchase / unsubscribe).
+      for (const n of (journey.nodes || [])) {
+        const ex = exitedAt[n.id] || {};
+        node_stats[n.id] = {
+          ...(node_stats[n.id] || { snapshot: 0, total: 0 }),
+          active:    activeAt[n.id] || 0,            // → live count AT this node
+          completed: sentByNode[n.id] || 0,          // → cumulative sent through this node
+          exited:    ex.exited || 0,                 // → exited AT this node (chip)
+          exited_booked:       ex.purchased || 0,    // purchase exits
+          exited_unsubscribed: ex.unsubscribed || 0, // unsubscribe exits
+          total:     (activeAt[n.id] || 0) + (sentByNode[n.id] || 0),
+        };
+      }
+
+      // KPI cards (entry-level): total entered, currently active on the belt, exited.
+      // The JOURNEY never completes; 'completed' here = entries that finished the sequence.
+      entryStatsOut = {
+        ...entryStats,
+        total_entries: String(tot.total),
+        snapshot:      String(tot.total),
+        active:        String(tot.active),
+        completed:     String(tot.completed),
+        exited_booked: String(tot.exited),
+      };
+    }
+
+    return { ...journey, entryStats: entryStatsOut, nodeAnalytics: nodeAnalyticsOut, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats, node_ranking_sources };
   }
 
   /**
@@ -681,6 +780,157 @@ class JourneyService {
   }
 
   /**
+   * Which GTM event(s) drive a GTM journey's snapshot/fan-out.
+   * SOURCE OF TRUTH = the event chosen in the create-journey dropdown, stored on the
+   * journey as `trigger_event` (e.g. 'add_to_cart'). We only fall back to deriving it
+   * from the segment's gtm condition(s) for legacy journeys created before the picker
+   * existed. Supported segment shapes: { type:'gtm', gtmEvent:'add_to_cart' } and
+   * { gtmEvents:['add_to_cart', …] }. Returns a de-duped array of event names.
+   * Never hardcodes an event name.
+   */
+  static async _gtmTriggerEvents(journey) {
+    if (journey.trigger_event) return [journey.trigger_event];
+    if (journey.custom_segment_id) {
+      const seg = await CustomSegmentService.getById(journey.custom_segment_id).catch(() => null);
+      const evts = [];
+      for (const c of (seg?.conditions || [])) {
+        if (c.gtmEvent) evts.push(c.gtmEvent);                       // { gtmEvent: 'add_to_cart' }
+        if (Array.isArray(c.gtmEvents)) evts.push(...c.gtmEvents);   // { gtmEvents: ['add_to_cart'] }
+      }
+      const cleaned = [...new Set(evts.filter(Boolean))];
+      if (cleaned.length) return cleaned;
+    }
+    // No GTM event configured (dropdown left blank, segment has no gtm condition):
+    // PER-USER mode → one entry per segment user (not per item).
+    return [];
+  }
+
+  /**
+   * GTM-ONLY exit conditions, applied when selecting (user, item) emails. Used by both
+   * the fan-out and the SNAPSHOTTED count so they always agree. NOT used by normal
+   * journeys. Requires `gtm_events g` aliased as `g` and `unified_contacts uc` joined.
+   *   1. unsubscribed user        → uc.email_unsubscribe = 'yes'  → excluded
+   *   2. already purchased item   → a 'purchase' event for the SAME itemId → excluded
+   */
+  static get _GTM_EXIT_SQL() {
+    return `
+      AND LOWER(COALESCE(uc.email_unsubscribe, '')) <> 'yes'
+      AND NOT EXISTS (
+        SELECT 1 FROM gtm_events pe
+        WHERE pe.unified_id = g.unified_id
+          AND pe.event_name = 'purchase'
+          AND COALESCE(pe.raw_payload->>'itemId', '') = COALESCE(g.raw_payload->>'itemId', '')
+      )`;
+  }
+
+  /**
+   * SNAPSHOT size for a GTM journey = number of prefilled emails the fan-out will create
+   * = DISTINCT (segment user × item) pairs that triggered the journey's GTM event, after
+   * the GTM exit conditions. Driven by the journey's trigger_event (the create-modal key)
+   * via _gtmTriggerEvents. Same basis as _gtmFanout, so the snapshot count shown at
+   * creation and the actual number of sends always agree. Returns 0 if no segment.
+   */
+  static async _gtmSnapshotCount(journey) {
+    const segRows = await this._journeySegmentRows(journey);
+    if (!segRows) return 0;
+    const events = await this._gtmTriggerEvents(journey);
+    const { sql, params } = segRows;
+    if (!events.length) {
+      // PER-USER mode (no GTM event) → one entry per segment user, minus unsubscribed.
+      const { rows: [pc] } = await db.query(`
+        SELECT COUNT(*)::int AS n
+        FROM   (${sql}) seg
+        JOIN   unified_contacts uc ON uc.id = seg.id
+        WHERE  LOWER(COALESCE(uc.email_unsubscribe, '')) <> 'yes'
+      `, params);
+      return pc?.n ?? 0;
+    }
+    // PER-ITEM mode (GTM event) → DISTINCT (segment user × item), after exit conditions.
+    const { rows: [pc] } = await db.query(`
+      SELECT COUNT(*)::int AS n FROM (
+        SELECT DISTINCT g.unified_id, COALESCE(g.raw_payload->>'itemId', '')
+        FROM   gtm_events g
+        JOIN   (${sql}) seg ON seg.id = g.unified_id
+        JOIN   unified_contacts uc ON uc.id = g.unified_id
+        WHERE  g.event_name = ANY($${params.length + 1})
+        ${this._GTM_EXIT_SQL}
+      ) x
+    `, [...params, events]);
+    return pc?.n ?? 0;
+  }
+
+  /**
+   * GTM journey fan-out at start. For every user in the journey's segment, find each
+   * DISTINCT item they triggered the segment's GTM event(s) on (most recent event per
+   * item), and queue one prefilled email per (user, item) via GtmJourneyService. The
+   * JOIN to gtm_events means users with no matching event are skipped automatically.
+   * Applies the GTM exit conditions (unsubscribe + per-item purchase). Returns the
+   * number of emails queued.
+   */
+  static async _gtmFanout(journey) {
+    const segRows = await this._journeySegmentRows(journey);
+    if (!segRows) {
+      console.warn(`[Journey ${journey.journey_id}] gtm fan-out: no segment — nothing to send`);
+      return 0;
+    }
+    const events = await this._gtmTriggerEvents(journey);
+    const { sql, params } = segRows;
+    let rows;
+    if (!events.length) {
+      // PER-USER mode (no GTM event selected) → ONE entry per segment user (item=_noitem),
+      // excluding unsubscribed. Snapshot = segment size (e.g. 2), not per item.
+      ({ rows } = await db.query(`
+        SELECT seg.id AS "unifiedId", NULL::text AS "eventId", '_noitem' AS "itemId"
+        FROM   (${sql}) seg
+        JOIN   unified_contacts uc ON uc.id = seg.id
+        WHERE  LOWER(COALESCE(uc.email_unsubscribe, '')) <> 'yes'
+      `, params));
+    } else {
+      // PER-ITEM mode (GTM event) → one row per (segment user × DISTINCT itemId), most
+      // recent event per item, after exit conditions (unsubscribe + already-purchased).
+      ({ rows } = await db.query(`
+        WITH seg AS (${sql})
+        SELECT DISTINCT ON (g.unified_id, COALESCE(g.raw_payload->>'itemId', ''))
+               g.unified_id        AS "unifiedId",
+               g.event_id          AS "eventId",
+               g.raw_payload->>'itemId' AS "itemId"
+        FROM   gtm_events g
+        JOIN   seg ON seg.id = g.unified_id
+        JOIN   unified_contacts uc ON uc.id = g.unified_id
+        WHERE  g.event_name = ANY($${params.length + 1})
+        ${this._GTM_EXIT_SQL}
+        ORDER  BY g.unified_id, COALESCE(g.raw_payload->>'itemId', ''), g.created_at DESC
+      `, [...params, events]));
+    }
+
+    if (!rows.length) {
+      console.log(`[Journey ${journey.journey_id}] gtm fan-out: 0 rows (events=[${events.join(', ') || 'per-user'}])`);
+      return 0;
+    }
+    // First action node + ENTRY DELAY. Per the PDF, N1 fires after its own offset
+    // (+1h / +2h / +24h / +30min). That offset = a leading WAIT node between the trigger
+    // and the first action — honor it (don't ignore it, don't use a global default).
+    // _nextStep(trigger) walks trigger → [waits…] → first action, summing the wait time.
+    const triggerNode = (journey.nodes || []).find(n => n.type === 'trigger');
+    const firstStep = triggerNode ? GtmJourneyService._nextStep(journey.nodes || [], journey.edges || [], triggerNode.id) : null;
+    const firstNodeId = firstStep?.nodeId || (journey.nodes || []).find(n => n.type === 'action')?.id || null;
+    if (!firstNodeId) { console.warn(`[Journey ${journey.journey_id}] gtm fan-out: no action node`); return 0; }
+    // CONTINUOUS engine: seed one per-user state row per (user × distinct item).
+    const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+    const entryDelayMs = firstStep ? firstStep.delayMs : 0;  // leading wait → entry delay (0 = immediate / D0)
+    let entered = 0;
+    for (const r of rows) {
+      const id = await ContinuousJourneyService.enter({
+        journeyId: journey.journey_id, unifiedId: r.unifiedId, itemId: r.itemId,
+        eventId: r.eventId, firstNodeId, entryDelayMs,
+      });
+      if (id) entered++;
+    }
+    console.log(`[Journey ${journey.journey_id}] gtm fan-out (continuous): events=[${events.join(', ')}] → entered ${entered}/${rows.length} (user×item) @ ${firstNodeId}`);
+    return entered;
+  }
+
+  /**
    * Dynamic-audience refresh — re-qualifies the journey against its segment.
    * Per the agreed model:
    *   - EXIT (once per run): active entries whose contact NO LONGER matches the
@@ -767,7 +1017,7 @@ class JourneyService {
     await this._refreshStamp(jid, { _exit: new Date().toISOString() });
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
     let customSegmentId = null;
@@ -777,21 +1027,37 @@ class JourneyService {
       stdSegmentId = segmentId;
     }
 
-    const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-      RETURNING *
-    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30]);
+    // UI sends 'continuous' (always-on per-user engine) or 'fixed' (seasonal snapshot).
+    // Internally these map to 'gtm' / 'normal' — the values the engines key off — and
+    // legacy 'gtm'/'normal' are still accepted.
+    const jType = (journeyType === 'continuous' || journeyType === 'gtm') ? 'gtm' : 'normal';
+    // Continuous (gtm) journeys default to 'view_item' as the trigger signal.
+    // Blank dropdown (no triggerEvent) → null = PER-USER snapshot (one entry per segment
+    // user). A selected event → PER-ITEM fan-out (one entry per distinct user×item).
+    const trigEvent = jType === 'gtm' ? (triggerEvent || null) : null;
 
-    // ── Snapshot segment users at creation time ──────────────────────────
+    const { rows: [journey] } = await db.query(`
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      RETURNING *
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent]);
+
+    // ── Snapshot segment users at creation time (NORMAL journeys only) ──────
+    // GTM journeys are event-triggered (no snapshot) — users enter when they fire
+    // the trigger event, handled by GtmJourneyService.
     const journeyId = journey.journey_id;
     const firstNodeId = (nodes || [])[0]?.id || 'node_0';
     const snapshotArgs = { customSegmentId, stdSegmentId, audience, firstNodeId };
 
-    if (customSegmentId || stdSegmentId) {
+    if (jType === 'normal' && (customSegmentId || stdSegmentId)) {
       // Both paths are now pure SQL — safe to await even for 1 M rows.
       const count = await this._snapshotEntries(journeyId, snapshotArgs);
       journey.snapshot_count = count;
+    } else if (jType === 'gtm' && (customSegmentId || stdSegmentId)) {
+      // GTM journeys don't pre-create entries (users enter on event), but we still
+      // surface the planned snapshot size = DISTINCT (user × item) pairs for the
+      // selected trigger_event, so the create toast / KPI shows a real number.
+      journey.snapshot_count = await this._gtmSnapshotCount(journey).catch(() => 0);
     }
 
     return journey;
@@ -800,7 +1066,7 @@ class JourneyService {
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {
@@ -835,8 +1101,11 @@ class JourneyService {
         [journeyId]
       );
 
+      // GTM journeys are event-triggered — they must NEVER get snapshot entries,
+      // otherwise the normal engine picks them up and sends the template RAW.
+      // (create()/startJourney already skip gtm; update() was the missing third path.)
       const snapshotArgs = { customSegmentId, stdSegmentId, audience, firstNodeId };
-      if (customSegmentId || stdSegmentId) {
+      if ((customSegmentId || stdSegmentId) && journey.journey_type !== 'gtm') {
         await this._snapshotEntries(journeyId, snapshotArgs);
       }
     }
@@ -1195,6 +1464,16 @@ class JourneyService {
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
     if (!journey) throw new Error('Journey not found');
+
+    // ── GTM journeys are EVENT-TRIGGERED only — never engine-processed. ──
+    // They have no snapshot/refresh entries and must never run through the normal
+    // engine (which would add segment users via _refreshAddNew and send template
+    // RAW). All GTM sends go through GtmJourneyService on the trigger event.
+    // processDueEntries already excludes gtm, but DIRECT processJourney calls
+    // (e.g. the background-start) bypass that — this guard is the single chokepoint.
+    if (journey.journey_type === 'gtm') {
+      return { processed: 0, actioned: 0, waited: 0, enqueued: 0, converted: 0, skipped: 'gtm' };
+    }
 
     const nodes = journey.nodes || [];
     const edges = journey.edges || [];
@@ -2368,6 +2647,23 @@ class JourneyService {
       throw new Error('Journey start date and time has already passed. Please update the start date before starting.');
     }
 
+    // ── GTM journey: segment-based, like a normal journey, but each user gets the
+    //    PREFILLED welcome-style email (filled with their details + GTM event data)
+    //    instead of the AI email. On start we fan out over the segment: one email per
+    //    (user × DISTINCT triggered item). Users with no matching event are skipped.
+    //    GTM journeys are NOT engine-processed (processJourney/processDueEntries skip
+    //    them) — the fan-out + GtmJourneyService.processJob handle all sends. ──
+    if (journey.journey_type === 'gtm') {
+      // No trigger_event is allowed → PER-USER mode (one entry per segment user).
+      await db.query(
+        `UPDATE journey_flows SET status='active', updated_at=NOW() ${manual ? ', scheduled_start_at=NULL' : ''} WHERE journey_id=$1`,
+        [journeyId]
+      );
+      const queued = await this._gtmFanout(journey);
+      console.log(`[Journey ${journeyId}] started as GTM (trigger: ${journey.trigger_event || 'per-user / no event'}) — queued ${queued} entries`);
+      return { status: 'active', journeyType: 'gtm', triggerEvent: journey.trigger_event, queued };
+    }
+
     // ── Check snapshot entries exist (snapshotted at creation time) ──
     const { rows: [{ cnt: snapshotCount }] } = await db.query(
       `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'snapshot'`,
@@ -2492,6 +2788,7 @@ class JourneyService {
       WHERE je.status = 'active'
         AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
         AND jf.status = 'active'
+        AND COALESCE(jf.journey_type, 'normal') <> 'gtm'   -- gtm journeys are event-triggered, not engine-processed
       ORDER BY je.next_fire_at
       LIMIT 500
     `);

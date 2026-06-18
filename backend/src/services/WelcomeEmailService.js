@@ -116,14 +116,18 @@ class WelcomeEmailService {
     return EmailChannel;
   }
 
-  static _template(contact, eventInfo = {}) {
+  // rawHtmlOverride: when provided (e.g. a GTM journey's selected template body), the
+  // placeholders are substituted into THAT html instead of the bundled gtm-welcome.html.
+  static _template(contact, eventInfo = {}, rawHtmlOverride = null) {
     const name = (contact.name || '').split(' ')[0] || 'there';
     const ev = eventInfo || {};
     const p = ev.payload || {};
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
     const subject = `Welcome to Rayna Tours 🌴${ev.eventName ? ` — ${ev.eventName}` : ''}`;
     const rawJson = esc(JSON.stringify(p, null, 2));
-    const raw = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+    const raw = (typeof rawHtmlOverride === 'string' && rawHtmlOverride.trim())
+      ? rawHtmlOverride
+      : fs.readFileSync(TEMPLATE_PATH, 'utf8');
     const html = raw
       .replaceAll('{{customer_name}}', esc(name))
       .replaceAll('{{cta_url}}', 'https://www.raynatours.com')

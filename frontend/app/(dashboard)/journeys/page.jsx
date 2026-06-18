@@ -32,6 +32,26 @@ const NODE_COLORS = {
   wait: 'var(--yellow)', goal: 'var(--purple)'
 };
 
+// GTM trigger events a journey can fan out over. `value` MUST match gtm_events.event_name.
+// (Note: availability is stored as 'check_availability_click', not 'check_availability'.)
+const GTM_EVENT_OPTIONS = [
+  { value: 'view_item',                label: 'View Item' },
+  { value: 'add_to_cart',              label: 'Add to Cart' },
+  { value: 'add_to_wishlist',          label: 'Add to Wishlist' },
+  { value: 'share',                    label: 'Share' },
+  { value: 'event_date',               label: 'Event Date' },
+  { value: 'check_availability_click', label: 'Check Availability' },
+  { value: 'begin_checkout',           label: 'Begin Checkout' },
+  { value: 'add_payment_info',         label: 'Add Payment Info' },
+  { value: 'purchase',                 label: 'Purchase' },
+  { value: 'payment_failed',           label: 'Payment Failed' },
+  { value: 'generate_lead',            label: 'Generate Lead' },
+  { value: 'lead',                     label: 'Lead' },
+  { value: 'click_whatsapp',           label: 'Click WhatsApp' },
+  { value: 'click_email',              label: 'Click Email' },
+  { value: 'click_call',               label: 'Click Call' },
+];
+
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
 // Keyed by content_template id (the Day1-7 dynamic templates).
 const DYNAMIC_SECTIONS = {
@@ -50,6 +70,48 @@ const NODE_LABELS = {
   trigger: 'Entry Trigger', action: 'Send Message', condition: 'Branch',
   wait: 'Wait / Delay', goal: 'Conversion Goal'
 };
+
+// Wait-node delay input. CONTINUOUS journeys use a RELATIVE offset (+N min/hours/days,
+// per the PDF "+2h / +24h" format) since each user runs on their own clock; the value is
+// stored as fractional waitDays (the engine's _waitMs handles fractions). FIXED journeys
+// keep a plain days input (they run on an absolute schedule).
+const _toDays = (v, u) => (u === 'minutes' ? v / 1440 : u === 'hours' ? v / 24 : v);
+// Human-readable wait label from fractional days: 0.00347 → "5 min", 0.0833 → "2 hours", 1 → "1 day".
+const formatWaitLabel = (waitDays) => {
+  const mins = Math.round((parseFloat(waitDays) || 0) * 1440);
+  if (mins <= 0) return '0 min';
+  if (mins < 60) return `${mins} min`;
+  if (mins < 1440) { const h = mins / 60; return `${Number.isInteger(h) ? h : h.toFixed(1)} hour${h === 1 ? '' : 's'}`; }
+  const d = mins / 1440;
+  return `${Number.isInteger(d) ? d : +d.toFixed(2)} day${d === 1 ? '' : 's'}`;
+};
+function WaitDelayInput({ nodeForm, setNodeForm, continuous }) {
+  const wd = parseFloat(nodeForm.waitDays) || 0;
+  if (!continuous) {
+    return (
+      <input type="number" min="1" value={nodeForm.waitDays}
+        onChange={e => setNodeForm(f => ({ ...f, waitDays: parseFloat(e.target.value) || 1, waitUnit: 'days' }))}
+        placeholder="Days" style={{ width: 120, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+    );
+  }
+  const unit = nodeForm.waitUnit || (wd < 1 / 24 ? 'minutes' : wd < 1 ? 'hours' : 'days');
+  const disp = unit === 'minutes' ? Math.round(wd * 1440) : unit === 'hours' ? +(wd * 24).toFixed(2) : +wd.toFixed(2);
+  const box = { padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12 };
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)' }}>+</span>
+      <input type="number" min="1" value={disp}
+        onChange={e => { const v = parseFloat(e.target.value) || 0; setNodeForm(f => ({ ...f, waitDays: _toDays(v, unit), waitUnit: unit })); }}
+        style={{ ...box, width: 80 }} />
+      <select value={unit} onChange={e => setNodeForm(f => ({ ...f, waitUnit: e.target.value }))} style={{ ...box }}>
+        <option value="minutes">minutes</option>
+        <option value="hours">hours</option>
+        <option value="days">days</option>
+      </select>
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>after previous node</span>
+    </div>
+  );
+}
 
 const CHANNEL_CONFIG = {
   whatsapp: { color: '#25d366', icon: MessageCircle, label: 'WhatsApp' },
@@ -191,7 +253,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
@@ -412,13 +474,18 @@ export default function Journeys() {
 
   // Returns the custom (non-system) variable names for a given template.
   // Always parses from body HTML (the ground truth) — the variables DB column can be stale.
+  // Placeholders auto-filled from the triggering GTM event — never shown as inputs.
+  const GTM_AUTO_VARS = new Set(['event_id', 'raw_payload', 'event_name', 'event_time', 'page_url', 'item_name', 'customer_name', 'cta_url']);
   const getTemplateCustomVars = (templateId, channel) => {
     if (!templateId) return [];
     const list = allTemplates[channel] || [];
     const tpl = list.find(t => String(t.id) === String(templateId));
     if (!tpl) return [];
     const vars = [...new Set([...(tpl.body || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
-    return vars.filter(v => !SYSTEM_VARS.has(v));
+    // GTM event template (e.g. welcome_gtm_event) → all fields come from the event,
+    // so show NO manual input boxes.
+    if (vars.some(v => ['event_id', 'raw_payload', 'event_name', 'event_time'].includes(v))) return [];
+    return vars.filter(v => !SYSTEM_VARS.has(v) && !GTM_AUTO_VARS.has(v));
   };
 
   const loadTemplates = async () => {
@@ -603,6 +670,8 @@ export default function Journeys() {
         name: createForm.name,
         description: createForm.description,
         segmentId: createForm.segmentId || null,
+        journeyType: createForm.journeyType,
+        triggerEvent: createForm.journeyType === 'continuous' ? createForm.triggerEvent : null,
         exitOnConversion: createForm.exitOnConversion,
         // Treat the input value as Dubai time (UTC+4) → convert to UTC ISO for the backend
         scheduledStartAt: createForm.scheduledStartAt
@@ -619,8 +688,9 @@ export default function Journeys() {
         }))
       });
       const snapCount = res.data?.snapshot_count || 0;
-      showToast(`Journey "${res.data?.name}" created — ${snapCount} users snapshotted`, 'success');
-      setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+      const snapNoun = createForm.journeyType === 'continuous' ? 'emails' : 'users';
+      showToast(`Journey "${res.data?.name}" created — ${snapCount} ${snapNoun} snapshotted`, 'success');
+      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       await loadData();
@@ -1457,8 +1527,7 @@ export default function Journeys() {
                                       placeholder={nodeForm.type === 'wait' ? 'e.g. Wait 3 days' : 'Step description...'}
                                       style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                                     {nodeForm.type === 'wait' && (
-                                      <input type="number" value={nodeForm.waitDays} onChange={e => setNodeForm(f => ({...f, waitDays: parseInt(e.target.value) || 1}))}
-                                        placeholder="Days to wait" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                                      <WaitDelayInput nodeForm={nodeForm} setNodeForm={setNodeForm} continuous={detail?.journey_type === 'gtm'} />
                                     )}
                                     <div className="flex gap-1.5">
                                       <button onClick={() => handleAddNode(i - 1)} className="btn btn-sm btn-primary" style={{ fontSize: 11 }}>Add</button>
@@ -1660,6 +1729,11 @@ export default function Journeys() {
                                           {fmt(nStats.completed)} done
                                         </span>
                                       )}
+                                      {nStats.exited > 0 && (
+                                        <span title="Exited here (purchased / unsubscribed)" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontWeight: 700 }}>
+                                          {fmt(nStats.exited)} exited
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                   {hasSent && (
@@ -1770,7 +1844,7 @@ export default function Journeys() {
                                       <div className="flex items-center gap-2" style={{ padding: '4px 0 10px' }}>
                                         <Clock size={14} color={color} />
                                         <span className="text-secondary text-sm">
-                                          Wait <strong>{waitDays} day{waitDays !== 1 ? 's' : ''}</strong> before proceeding
+                                          Wait <strong>{formatWaitLabel(waitDays)}</strong> before proceeding
                                         </span>
                                       </div>
 
@@ -2185,8 +2259,7 @@ export default function Journeys() {
                             <input value={nodeForm.label} onChange={e => setNodeForm(f => ({...f, label: e.target.value}))}
                               placeholder="Step description..." style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                             {nodeForm.type === 'wait' && (
-                              <input type="number" value={nodeForm.waitDays} onChange={e => setNodeForm(f => ({...f, waitDays: parseInt(e.target.value) || 1}))}
-                                placeholder="Days" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                              <WaitDelayInput nodeForm={nodeForm} setNodeForm={setNodeForm} continuous={detail?.journey_type === 'gtm'} />
                             )}
                             <div className="flex gap-1.5">
                               <button onClick={() => handleAddNode(nodes.length - 1)} className="btn btn-sm btn-primary" style={{ fontSize: 11 }}>Add</button>
@@ -2839,27 +2912,40 @@ export default function Journeys() {
                 {/* ── WAIT fields ── */}
                 {nodeForm.type === 'wait' && (
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <input type="number" min={1} max={365} className="form-input"
-                        style={{ width: 100 }}
-                        value={nodeForm.waitDays}
-                        onChange={e => {
-                          const days = Math.max(1, parseInt(e.target.value) || 1);
-                          setNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
-                        }} />
-                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                        {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                      {[1, 2, 3, 5, 7, 14].map(d => (
-                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
-                          style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
-                          {d}d
-                        </button>
-                      ))}
-                    </div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                      {detail?.journey_type === 'gtm' ? 'Delay Before Next Node' : 'Days to Wait'}
+                    </label>
+                    {detail?.journey_type === 'gtm' ? (
+                      <>
+                        {/* CONTINUOUS: relative per-user offset (+2h / +24h …) → stored as fractional waitDays */}
+                        <WaitDelayInput nodeForm={nodeForm} setNodeForm={setNodeForm} continuous={true} />
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Relative per-user delay after the previous node — e.g. +2 hours, +24 hours.</div>
+                      </>
+                    ) : (
+                      <>
+                        {/* FIXED: absolute schedule — plain days + quick-picks */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <input type="number" min={1} max={365} className="form-input"
+                            style={{ width: 100 }}
+                            value={nodeForm.waitDays}
+                            onChange={e => {
+                              const days = Math.max(1, parseInt(e.target.value) || 1);
+                              setNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
+                            }} />
+                          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                            {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                          {[1, 2, 3, 5, 7, 14].map(d => (
+                            <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
+                              style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                              {d}d
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -3054,7 +3140,7 @@ export default function Journeys() {
         <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               <ArrowLeft size={15} /> Back
             </button>
@@ -3073,7 +3159,7 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
+            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
@@ -3133,6 +3219,52 @@ export default function Journeys() {
                       </optgroup>
                     )}
                   </select>
+                </div>
+
+                {/* Journey Type — Fixed (occasion / seasonal snapshot) vs Continuous (always-on per-user) */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>Journey Type</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[
+                      { key: 'fixed', title: 'Fixed (Occasion / Seasonal)', desc: 'Runs in a date window against the segment — e.g. Diwali, Eid, holiday campaigns. Snapshots the audience once, sends on schedule, then ends.' },
+                      { key: 'continuous', title: 'Continuous (Always-on)', desc: 'Per-user automation that runs forever. Users enter anytime (GTM event / lifecycle) and progress independently node-by-node — e.g. product-view, cart, payment-failed, on-trip, future-trip.' },
+                    ].map(opt => {
+                      const active = createForm.journeyType === opt.key;
+                      return (
+                        <button key={opt.key} type="button"
+                          onClick={() => setCreateForm(f => ({ ...f, journeyType: opt.key }))}
+                          style={{ flex: 1, textAlign: 'left', cursor: 'pointer', padding: '10px 12px', borderRadius: 10,
+                            background: active ? 'rgba(139,92,246,0.10)' : 'var(--bg-secondary)',
+                            border: `1px solid ${active ? 'rgba(139,92,246,0.45)' : 'var(--border)'}` }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: active ? '#8b5cf6' : 'var(--text-primary)' }}>
+                            {active ? '● ' : '○ '}{opt.title}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.4 }}>{opt.desc}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {createForm.journeyType === 'continuous' && (
+                    <div style={{ marginTop: 10 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                        Trigger GTM Event <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>
+                      </label>
+                      <select className="form-input"
+                        value={createForm.triggerEvent}
+                        onChange={e => setCreateForm(f => ({ ...f, triggerEvent: e.target.value }))}
+                        style={{ fontSize: 13 }}>
+                        <option value="">— None (one entry per segment user) —</option>
+                        {GTM_EVENT_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                        {createForm.triggerEvent
+                          ? <>Sends one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent}</strong> on (e.g. 17 entries).</>
+                          : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick an event to fan out per distinct item instead.</>}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {/* Exit on Conversion */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
@@ -3221,7 +3353,7 @@ export default function Journeys() {
                   const color = NODE_COLORS[n.type];
                   const Icon = NODE_ICONS[n.type];
                   const detail = n.type === 'action' ? (n.channel ? n.channel.charAt(0).toUpperCase() + n.channel.slice(1) : 'Action')
-                    : n.type === 'wait' ? `Wait ${n.waitDays || 1} day${(n.waitDays || 1) !== 1 ? 's' : ''}`
+                    : n.type === 'wait' ? `Wait ${formatWaitLabel(n.waitDays || 1)}`
                     : n.type === 'condition' ? (n.condition === 'booked' ? 'Has Booked?' : n.condition === 'opened_email' ? 'Opened Email?' : n.condition === 'clicked_link' ? 'Clicked Link?' : n.condition || 'Condition')
                     : n.type === 'goal' ? `Goal: ${n.goalType ? n.goalType.charAt(0).toUpperCase() + n.goalType.slice(1) : 'Booking'}` : '';
                   const templateId = n.emailTemplateId || n.whatsappTemplateId || n.smsTemplateId;
@@ -3351,17 +3483,23 @@ export default function Journeys() {
                             {/* WAIT */}
                             {editCreateNodeForm.type === 'wait' && (
                               <div style={{ marginBottom: 10 }}>
-                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <input type="number" min={1} className="form-input" style={{ width: 80 }} value={editCreateNodeForm.waitDays}
-                                    onChange={e => { const d = Math.max(1, parseInt(e.target.value) || 1); setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` })); }} />
-                                  <div style={{ display: 'flex', gap: 5 }}>
-                                    {[1, 2, 3, 7].map(d => (
-                                      <button key={d} onClick={() => setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
-                                        style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: editCreateNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: editCreateNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
-                                    ))}
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                                  {createForm.journeyType === 'continuous' ? 'Delay Before Next Node' : 'Days to Wait'}
+                                </label>
+                                {createForm.journeyType === 'continuous' ? (
+                                  <WaitDelayInput nodeForm={editCreateNodeForm} setNodeForm={setEditCreateNodeForm} continuous={true} />
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <input type="number" min={1} className="form-input" style={{ width: 80 }} value={editCreateNodeForm.waitDays}
+                                      onChange={e => { const d = Math.max(1, parseInt(e.target.value) || 1); setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` })); }} />
+                                    <div style={{ display: 'flex', gap: 5 }}>
+                                      {[1, 2, 3, 7].map(d => (
+                                        <button key={d} onClick={() => setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
+                                          style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: editCreateNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: editCreateNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
+                                      ))}
+                                    </div>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             )}
                             {/* CONDITION */}
@@ -3542,13 +3680,22 @@ export default function Journeys() {
                       {/* WAIT */}
                       {createNodeForm.type === 'wait' && (
                         <div style={{ marginBottom: 14 }}>
-                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="number" min={1} className="form-input" style={{ width: 80 }} value={createNodeForm.waitDays} onChange={e => { const days = Math.max(1, parseInt(e.target.value) || 1); setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` })); }} />
-                            <div style={{ display: 'flex', gap: 5 }}>
-                              {[1, 2, 3, 7].map(d => <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))} style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>)}
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                            {createForm.journeyType === 'continuous' ? 'Delay Before Next Node' : 'Days to Wait'}
+                          </label>
+                          {createForm.journeyType === 'continuous' ? (
+                            <>
+                              <WaitDelayInput nodeForm={createNodeForm} setNodeForm={setCreateNodeForm} continuous={true} />
+                              <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Relative per-user delay — e.g. +30 minutes, +2 hours, +24 hours.</div>
+                            </>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <input type="number" min={1} className="form-input" style={{ width: 80 }} value={createNodeForm.waitDays} onChange={e => { const days = Math.max(1, parseInt(e.target.value) || 1); setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` })); }} />
+                              <div style={{ display: 'flex', gap: 5 }}>
+                                {[1, 2, 3, 7].map(d => <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))} style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>)}
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       )}
                       {/* CONDITION */}
