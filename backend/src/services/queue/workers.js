@@ -28,6 +28,7 @@ import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 import WelcomeEmailService from '../WelcomeEmailService.js';
 import GtmJourneyService from '../GtmJourneyService.js';
+import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -202,6 +203,13 @@ async function processEmail(job) {
   const d = job.data;
   const recipientEmail = EMAIL_OVERRIDE || d.email;
   if (!recipientEmail) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
+
+  // WELCOME_EMAILS allow-list gate (validate the real user). Off-list → skip terminally
+  // and advance the entry so the journey progresses (no send, no retry storm).
+  if (!isEmailAllowed(d.email)) {
+    console.log(`[Worker:email] NOT IN WELCOME_EMAILS — skipping send for entry=${d.entryId} → ${d.email}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'not_in_allowlist' }, /*sent=*/false);
+  }
 
   if (_isDayCrossed(d)) {
     console.log(`[Worker:email] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);

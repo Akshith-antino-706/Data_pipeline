@@ -7,6 +7,7 @@ import WelcomeEmailService from './WelcomeEmailService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 import { renderTemplate } from '../utils/placeholderResolver.js';
+import { isEmailAllowed } from '../utils/emailAllowlist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
@@ -71,7 +72,8 @@ class GtmJourneyService {
   static async onEvent({ eventName, unifiedId, eventId, itemId }) {
     if (!eventName || !unifiedId) return;
     const { rows: journeys } = await db.query(
-      `SELECT journey_id, nodes, edges FROM journey_flows
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
+         FROM journey_flows
        WHERE status = 'active' AND journey_type = 'gtm' AND trigger_event = $1`,
       [eventName]
     );
@@ -83,6 +85,11 @@ class GtmJourneyService {
     const itemKey = String(itemId ?? '_noitem');
     for (const j of journeys) {
       try {
+        // SEGMENT GUARD: the trigger event alone must NOT grant entry. A user only enters
+        // if they ALSO belong to the journey's selected segment (+ audience). Without this,
+        // any contact firing the trigger blasts into the journey regardless of who was
+        // targeted (e.g. a 2-person test segment leaking emails to real customers).
+        if (!(await this._isSegmentMember(j, unifiedId))) continue;
         // Entry node + delay = leading wait from the trigger (PDF N1 +1h/+2h/+24h…).
         const triggerNode = (j.nodes || []).find(n => n.type === 'trigger');
         const firstStep = triggerNode ? this._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
@@ -95,6 +102,32 @@ class GtmJourneyService {
         if (id) console.log(`[Continuous ${j.journey_id}] entered uid=${unifiedId} item=${itemKey} @ ${firstNodeId} delay=${Math.round((firstStep?.delayMs||0)/1000)}s (${eventName})`);
       } catch (e) { console.error(`[GtmJourney ${j.journey_id}] onEvent failed: ${e.message}`); }
     }
+  }
+
+  /**
+   * Is `unifiedId` a member of THIS journey's segment (respecting audience)? Used by the
+   * real-time onEvent entry path so the trigger event can never bypass the segment the
+   * user selected. Reuses JourneyService._journeySegmentRows (the same SQL the start
+   * fan-out uses) so membership is defined identically everywhere. Imported dynamically
+   * to avoid the JourneyService↔GtmJourneyService circular import.
+   *
+   * Returns false when the journey has no segment — a trigger journey with no segment has
+   * no audience to honour, so we don't enter anyone (prevents the J193-style blast).
+   */
+  static async _isSegmentMember(journey, unifiedId) {
+    if (!unifiedId) return false;
+    const { default: JourneyService } = await import('./JourneyService.js');
+    const segRows = await JourneyService._journeySegmentRows(journey).catch(() => null);
+    if (!segRows) {
+      console.warn(`[Continuous ${journey.journey_id}] no segment — onEvent entry skipped for uid=${unifiedId}`);
+      return false;
+    }
+    const { sql, params } = segRows;
+    const { rows } = await db.query(
+      `SELECT 1 FROM (${sql}) m WHERE m.id = $${params.length + 1} LIMIT 1`,
+      [...params, unifiedId]
+    );
+    return rows.length > 0;
   }
 
   /**
@@ -175,6 +208,18 @@ class GtmJourneyService {
     const actionNode = (jobNodeId ? nodes.find(n => n.id === jobNodeId && n.type === 'action') : null)
       || nodes.find(n => n.type === 'action');
     const nodeId = actionNode?.id || null;
+
+    // WELCOME_EMAILS allow-list gate (validate the real user). Off-list → skip the send
+    // and advance the entry so the continuous journey progresses (no send, no retry storm).
+    if (!isEmailAllowed(c.email)) {
+      console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} ${c.email} not in WELCOME_EMAILS — send skipped`);
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+      }
+      return;
+    }
+
     const templateId = actionNode?.data?.emailTemplateId ?? actionNode?.data?.templateId ?? null;
 
     let tplBody = null, tplSubject = null;

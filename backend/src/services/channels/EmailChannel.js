@@ -15,6 +15,7 @@
 
 import nodemailer from 'nodemailer';
 import { query } from '../../config/database.js';
+import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 
 let _transporter = null;
 
@@ -84,6 +85,14 @@ export class EmailChannel {
 
   /** Send a single email */
   static async send({ to, subject, html, text, replyTo }) {
+    // WELCOME_EMAILS allow-list gate — only configured addresses may receive mail.
+    // Disabled when WELCOME_EMAILS is unset/empty (allows all). Universal backstop:
+    // every send path that reaches this transport is validated here.
+    if (!isEmailAllowed(to)) {
+      console.log(`[EMAIL] Skipped — ${to} not in WELCOME_EMAILS allow-list`);
+      return { success: false, skipped: true, reason: 'not_in_allowlist', provider: 'allowlist' };
+    }
+
     // Block unsubscribed / hard bounced emails
     if (await this.isBlocked(to)) {
       console.log(`[EMAIL] Blocked (unsubscribed/bounced) → ${to}`);
