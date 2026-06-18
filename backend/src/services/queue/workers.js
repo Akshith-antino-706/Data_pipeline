@@ -27,6 +27,7 @@ import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 import WelcomeEmailService from '../WelcomeEmailService.js';
+import GtmJourneyService from '../GtmJourneyService.js';
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -91,6 +92,13 @@ export function startWorkers() {
     limiter: { max: 5, duration: 1000 },   // ≤5 welcome emails/sec
   });
 
+  // GTM (event-triggered) journey → per-user welcome-style email (delayed, rate-limited)
+  const gtmJourney = new Worker('gtm-journey', processGtmJourney, {
+    connection,
+    concurrency: EMAIL_CONCURRENCY,
+    limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
+  });
+
   // After all retries exhausted: advance the entry so it doesn't block forever.
   // Shared handler used by email, wa, and sms queues.
   const _onExhausted = (channel) => async (job, err) => {
@@ -142,6 +150,8 @@ export function startWorkers() {
 
   welcome.on('error', (err) => console.error(`[Worker:welcome] worker error: ${err.message}`));
   welcome.on('failed', (job, err) => console.error(`[Worker:welcome] job ${job?.id} failed: ${err.message}`));
+  gtmJourney.on('error', (err) => console.error(`[Worker:gtmJourney] worker error: ${err.message}`));
+  gtmJourney.on('failed', (job, err) => console.error(`[Worker:gtmJourney] job ${job?.id} failed: ${err.message}`));
 
   for (const w of [email, wa, sms]) {
     w.on('error', (err) => {
@@ -149,14 +159,14 @@ export function startWorkers() {
     });
   }
 
-  _workers = { email, wa, sms, welcome };
+  _workers = { email, wa, sms, welcome, gtmJourney };
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
 
 export async function stopWorkers() {
   if (!_workers) return;
-  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close()]);
+  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
   _workers = null;
 }
 
@@ -164,6 +174,14 @@ export async function stopWorkers() {
 async function processWelcome(job) {
   const { unifiedId, eventName, eventId } = job.data || {};
   await WelcomeEmailService.processJob({ unifiedId, eventName, eventId });
+  return { ok: true };
+}
+
+/** GTM-journey worker: per-user welcome-style email for an event-triggered journey. */
+async function processGtmJourney(job) {
+  // Pass the FULL payload (entryId, nodeId, itemId, …) so the continuous engine can
+  // send the right node and advance the right state row.
+  await GtmJourneyService.processJob(job.data || {});
   return { ok: true };
 }
 

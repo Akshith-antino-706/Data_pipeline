@@ -331,7 +331,10 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('083_journey_node_emails.sql');
     await runMigrationFile('084_daily_ai_templates.sql');
     await runMigrationFile('085_email_qa_reports.sql');
-    res.json({ success: true, message: 'Journey migrations (071-085) completed' });
+    await runMigrationFile('086_journey_node_synced.sql');
+    await runMigrationFile('087_journey_type.sql');
+    await runMigrationFile('088_journey_trigger_event.sql');
+    res.json({ success: true, message: 'Journey migrations (071-088) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -739,6 +742,18 @@ cron.schedule('*/5 * * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey engine scheduled: every 5 min (Asia/Dubai)');
+
+// ── CONTINUOUS (gtm) journey engine — every 1 min: fire due per-user state rows ──
+cron.schedule('* * * * *', async () => {
+  try {
+    const { default: ContinuousJourneyService } = await import('./src/services/ContinuousJourneyService.js');
+    const r = await ContinuousJourneyService.processDue();
+    if (r.enqueued > 0 || r.exited > 0) console.log(`[Cron:Continuous] due=${r.due} enqueued=${r.enqueued} exited=${r.exited}`);
+  } catch (err) {
+    console.error('[Cron:Continuous] Error:', err.message);
+  }
+});
+console.log('[Cron] Continuous GTM engine scheduled: every 1 min');
 
 // ── Journey auto-start — check every minute for scheduled journeys ──
 cron.schedule('* * * * *', async () => {

@@ -23,6 +23,50 @@ const ROCKY_EMAIL = 'rocky.86agency@gmail.com';
 
 const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link']);
 
+// Sample values for the live preview — mirrors the 60 master placeholder keys
+// (placeholder_keys_final.pdf) so the editor preview shows realistic filled content.
+const PREVIEW_SAMPLE = {
+  USER_NAME: 'Avinash Kumar', USER_FIRST_NAME: 'Avinash', USER_EMAIL: 'avinash@example.com',
+  USER_PHONE: '+971 50 123 4567', USER_CITY: 'Dubai', USER_COUNTRY: 'United Arab Emirates',
+  IS_INDIAN_USER: 'No', IS_LOCAL_USER: 'Yes', BOOKING_STATUS: 'PROSPECT', PRODUCT_TIER: 'LUXURY',
+  CUSTOMER_SEGMENT: 'High Intent', RID: '641500',
+  PAGE_URL: 'https://www.raynatours.com/singapore/night-safari-singapore-e-4683',
+  ITEM_URL: 'https://www.raynatours.com/singapore/night-safari-singapore-e-4683',
+  PAGE_TITLE: 'Night Safari Singapore', EVENT_TIMESTAMP: '6/14/2026, 3:49 PM',
+  EVENT_NAME: 'view_item', EVENT_ID: '151774', JOURNEY_ID: '184', NODE_ID: 'node_1',
+  ITEM_NAME: 'Night Safari Singapore', ITEM_ID: '4683',
+  ITEM_IMAGE_URL: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/4683.jpg',
+  ITEM_CATEGORY: 'tours', ITEM_REFERRER: 'https://www.raynatours.com/singapore',
+  CURRENCY: 'INR', DESTINATION_CITY: 'Singapore', COUPON_CODE: 'RAYNA10',
+  PAYMENT_METHOD: 'Card', ORDER_ID: 'TXN-90817', TAX_AMOUNT: '120', CONTENT_TYPE: 'product',
+  CLICK_LOCATION: 'header', SHARE_METHOD: 'whatsapp', EMAIL_CLICKED: 'avinash@example.com',
+  PHONE_CLICKED: '+971501234567', WHATSAPP_NUMBER_CLICKED: '+971501234567', FORM_NAME: 'Enquiry',
+  LEAD_SOURCE: 'website', LEAD_TYPE: 'visa', LEAD_VALUE: '5000', PRODUCT_CONTEXT: 'Singapore Tours',
+  PRODUCT_INTEREST: 'Wildlife', ERROR_CODE: 'E102', ERROR_MESSAGE: 'Payment declined',
+  UTM_CAMPAIGN: 'summer_sale', UTM_SOURCE: 'google',
+  ADULT_COUNT: '2', CHILD_COUNT: '1', BOOKING_DATE: '20 Jun 2026', SELECTED_DATE: '25 Jun 2026',
+  ITEM_PRICE: '1,299', CART_VALUE: '1,299', ORDER_TOTAL: '1,419', ORDER_VALUE: '1,299',
+  ATTEMPTED_AMOUNT: '1,419',
+  CART_URL: 'https://www.raynatours.com/cart', WISHLIST_URL: 'https://www.raynatours.com/wishlist',
+  RESUME_CHECKOUT_URL: 'https://www.raynatours.com/checkout',
+  RESUME_PAYMENT_URL: 'https://www.raynatours.com/checkout',
+  RETRY_PAYMENT_URL: 'https://www.raynatours.com/payment/retry?order=TXN-90817',
+  VIEW_BOOKING_URL: 'https://www.raynatours.com/booking/TXN-90817',
+  RAW_PAYLOAD: '{ "itemName": "Night Safari Singapore", "itemId": 4683 }',
+};
+// Legacy lowercase keys → canonical (matches backend placeholderResolver aliases)
+const PREVIEW_ALIASES = {
+  customer_name: 'USER_FIRST_NAME', user_name: 'USER_NAME', item_name: 'ITEM_NAME',
+  item_image: 'ITEM_IMAGE_URL', cta_url: 'ITEM_URL', event_name: 'EVENT_NAME',
+  event_id: 'EVENT_ID', event_time: 'EVENT_TIMESTAMP', page_url: 'PAGE_URL', raw_payload: 'RAW_PAYLOAD',
+};
+// Fill {{KEY}} with sample values for the live preview (unknown keys → highlighted chip).
+const fillPreviewHtml = (html) => String(html || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_m, raw) => {
+  const key = PREVIEW_ALIASES[raw] || PREVIEW_ALIASES[raw.toLowerCase()] || raw.toUpperCase();
+  if (key in PREVIEW_SAMPLE) return PREVIEW_SAMPLE[key];
+  return `<span style="background:#fde68a;color:#92400e;padding:0 3px;border-radius:3px;font-size:11px">{{${raw}}}</span>`;
+});
+
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
@@ -253,8 +297,9 @@ export default function Content() {
     setModal('create');
   }
 
-  function openEdit(tpl) {
-    const body = tpl.body || '';
+  async function openEdit(tpl) {
+    let body = tpl.body || '';
+    // Open immediately with whatever we have…
     setForm({
       name: tpl.name || '',
       channel: tpl.channel || 'email',
@@ -264,6 +309,18 @@ export default function Content() {
     });
     setDynVars(extractVars(body));
     setModal(tpl);
+    // …then, if no stored HTML (file-based / AI Day templates have empty body),
+    // load the rendered HTML so the editor shows the existing code instead of blank.
+    if (!body) {
+      try {
+        const res = await previewTemplate(tpl.id);
+        const html = res?.data?.html || '';
+        if (html) {
+          setForm(f => ({ ...f, body: html, fileName: 'existing-template.html' }));
+          setDynVars(extractVars(html));
+        }
+      } catch { /* leave editor empty if render fails */ }
+    }
   }
 
   function handleFileChange(e) {
@@ -870,7 +927,7 @@ export default function Content() {
               exit={{ opacity: 0, scale: 0.96, y: 16 }}
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
               onClick={e => e.stopPropagation()}
-              style={{ background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}
+              style={{ background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: 1040, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}
             >
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border-color)' }}>
@@ -927,30 +984,40 @@ export default function Content() {
                   </div>
                 )}
 
-                {/* HTML file upload */}
+                {/* HTML body — edit directly with live preview, or upload a file */}
                 <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>HTML Template File *</label>
-                  <div style={{ position: 'relative', border: `2px dashed ${form.body ? 'var(--green)' : 'var(--border-color)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', cursor: 'pointer', background: form.body ? 'color-mix(in srgb, var(--green) 5%, transparent)' : 'var(--bg-secondary)', transition: 'all 0.2s', overflow: 'hidden' }}>
-                    {/* invisible overlay input — most reliable cross-browser approach */}
-                    <input
-                      type="file"
-                      accept=".html,.htm,text/html"
-                      onChange={handleFileChange}
-                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%', zIndex: 2 }}
-                    />
-                    {form.body ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
-                        <FileText size={24} color="var(--green)" />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>{form.fileName}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Click to replace</div>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
-                        <Upload size={24} color="var(--text-tertiary)" />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Click to upload HTML file</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Accepts .html / .htm files</div>
-                      </div>
-                    )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>HTML Template *</label>
+                    <label style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: 'var(--brand-primary)', cursor: 'pointer', padding: '4px 10px', border: '1px solid var(--border-color)', borderRadius: 6 }}>
+                      <Upload size={12} /> Upload .html
+                      <input type="file" accept=".html,.htm,text/html" onChange={handleFileChange} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+                    </label>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, height: 380 }}>
+                    {/* Editor */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>HTML</div>
+                      <textarea
+                        value={form.body}
+                        onChange={e => {
+                          const html = e.target.value;
+                          setForm(f => ({ ...f, body: html, fileName: html.trim() ? (f.fileName || 'inline-template.html') : '' }));
+                          setDynVars(extractVars(html));
+                        }}
+                        spellCheck={false}
+                        placeholder="<html>…</html> — edit directly. Use {{KEY}} placeholders (e.g. {{USER_NAME}}, {{ITEM_NAME}})."
+                        style={{ flex: 1, width: '100%', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: 1.5, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', whiteSpace: 'pre', overflow: 'auto' }}
+                      />
+                    </div>
+                    {/* Live preview (sample data) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Live Preview · sample data</div>
+                      <iframe
+                        title="template-preview"
+                        srcDoc={form.body ? fillPreviewHtml(form.body) : '<div style="font-family:sans-serif;color:#9ca3af;padding:16px;font-size:13px">Preview appears here as you type…</div>'}
+                        style={{ flex: 1, width: '100%', borderRadius: 8, border: '1px solid var(--border-color)', background: '#fff' }}
+                      />
+                    </div>
                   </div>
                 </div>
 
