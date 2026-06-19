@@ -52,6 +52,62 @@ const GTM_EVENT_OPTIONS = [
   { value: 'click_call',               label: 'Click Call' },
 ];
 
+// Collapsed multi-select dropdown for the Trigger GTM Event(s) picker.
+// value/onChange use a comma-separated string (e.g. 'view_item,add_payment_info').
+function TriggerEventMultiSelect({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  const selected = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const labelFor = (v) => GTM_EVENT_OPTIONS.find(o => o.value === v)?.label || v;
+  const toggle = (val) => {
+    const set = new Set(selected);
+    if (set.has(val)) set.delete(val); else set.add(val);
+    onChange([...set].join(','));
+  };
+  const summary = selected.length === 0 ? 'Select event(s)…'
+    : selected.length <= 2 ? selected.map(labelFor).join(', ')
+    : `${selected.length} events selected`;
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '8px 12px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 8,
+          background: 'var(--surface)', color: selected.length ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          maxHeight: 248, overflowY: 'auto', padding: 6, border: '1px solid var(--border)', borderRadius: 8,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 8px 28px rgba(0,0,0,0.20)' }}>
+          {GTM_EVENT_OPTIONS.map(o => {
+            const on = selected.includes(o.value);
+            return (
+              <label key={o.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: on ? 'rgba(99,102,241,0.10)' : 'transparent' }}>
+                <input type="checkbox" checked={on} onChange={() => toggle(o.value)} style={{ accentColor: '#6366f1', width: 14, height: 14, cursor: 'pointer' }} />
+                <span style={{ color: on ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: on ? 600 : 400 }}>{o.label}</span>
+              </label>
+            );
+          })}
+          {selected.length > 0 && (
+            <button type="button" onClick={() => onChange('')}
+              style={{ width: '100%', marginTop: 4, paddingTop: 6, fontSize: 11, border: 'none', borderTop: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
 // Keyed by content_template id (the Day1-7 dynamic templates).
 const DYNAMIC_SECTIONS = {
@@ -3247,21 +3303,16 @@ export default function Journeys() {
                   {createForm.journeyType === 'continuous' && (
                     <div style={{ marginTop: 10 }}>
                       <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
-                        Trigger GTM Event <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>
+                        Trigger GTM Event(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional · select one or more)</span>
                       </label>
-                      <select className="form-input"
+                      <TriggerEventMultiSelect
                         value={createForm.triggerEvent}
-                        onChange={e => setCreateForm(f => ({ ...f, triggerEvent: e.target.value }))}
-                        style={{ fontSize: 13 }}>
-                        <option value="">— None (one entry per segment user) —</option>
-                        {GTM_EVENT_OPTIONS.map(o => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
+                        onChange={v => setCreateForm(f => ({ ...f, triggerEvent: v }))}
+                      />
                       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
                         {createForm.triggerEvent
-                          ? <>Sends one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent}</strong> on (e.g. 17 entries).</>
-                          : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick an event to fan out per distinct item instead.</>}
+                          ? <>Fans out one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on. Selecting multiple events combines their items.</>
+                          : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick one or more events to fan out per distinct item instead.</>}
                       </div>
                     </div>
                   )}
