@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
+import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
 import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
@@ -75,9 +75,14 @@ const stripHtml = (html) => {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 };
 
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+
 export default function Content() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [preview, setPreview] = useState(null);
   const [previewDevice, setPreviewDevice] = useState('desktop'); // desktop | tablet | mobile
   const previewIframeRef = useRef(null);
@@ -114,6 +119,28 @@ export default function Content() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // template object to confirm
+
+  // Edit-modal live preview — debounced server render so what you see in the
+  // preview pane matches what EmailRenderer will actually send. Falls back to
+  // the raw HTML (with client-side fill) while the server is still rendering
+  // or if the request fails.
+  const [livePreviewHtml, setLivePreviewHtml] = useState('');
+  const [livePreviewLoading, setLivePreviewLoading] = useState(false);
+  useEffect(() => {
+    if (!form.body) { setLivePreviewHtml(''); return; }
+    const t = setTimeout(async () => {
+      setLivePreviewLoading(true);
+      try {
+        const res = await renderPreviewHtml(form.body, { engine: 'liquid' });
+        setLivePreviewHtml(res?.data?.html || '');
+      } catch {
+        setLivePreviewHtml(''); // fall back to client-side fillPreviewHtml below
+      } finally {
+        setLivePreviewLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [form.body]);
 
   // ── Global recipients (shared by all card Test Send buttons) ──
   const [recipients, setRecipients] = useState([]);        // searched/listed contacts
@@ -262,11 +289,25 @@ export default function Content() {
     return unique.map(key => ({ key, value: '' }));
   }
 
+  // Server-side pagination + channel filter. Backend supports page/limit/channel
+  // params and returns { data, total, page, limit }.
   useEffect(() => {
-    getTemplates({ limit: 50 })
-      .then(res => { setTemplates(res.data || []); setLoading(false); })
+    setLoading(true);
+    const params = { page, limit: pageSize };
+    if (channelFilter !== 'all') params.channel = channelFilter;
+    getTemplates(params)
+      .then(res => {
+        setTemplates(res.data || []);
+        setTotal(res.total ?? (res.data?.length || 0));
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
-  }, []);
+  }, [page, pageSize, channelFilter]);
+
+  // Reset to page 1 whenever the page-size or channel filter changes.
+  useEffect(() => { setPage(1); }, [pageSize, channelFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   async function openPreview(tpl) {
     setPreviewDevice('desktop');
@@ -298,20 +339,34 @@ export default function Content() {
   }
 
   async function openEdit(tpl) {
-    let body = tpl.body || '';
-    // Open immediately with whatever we have…
+    // Open immediately with whatever the list row has (may be empty body for
+    // templates linked via html_template_id) so the modal feels instant…
     setForm({
       name: tpl.name || '',
       channel: tpl.channel || 'email',
       subject: tpl.subject || '',
-      body,
-      fileName: body ? 'existing-template.html' : '',
+      body: tpl.body || '',
+      fileName: tpl.body ? 'existing-template.html' : '',
     });
-    setDynVars(extractVars(body));
+    setDynVars(extractVars(tpl.body || ''));
     setModal(tpl);
-    // …then, if no stored HTML (file-based / AI Day templates have empty body),
-    // load the rendered HTML so the editor shows the existing code instead of blank.
-    if (!body) {
+
+    // …then fetch the full record. getById now LEFT JOINs email_html_templates
+    // and returns the SOURCE html_body so the editor shows the actual template
+    // (with Liquid tags intact), not a rendered output. Falls back to the
+    // server-rendered preview if no source HTML exists.
+    try {
+      const res = await getTemplate(tpl.id);
+      const full = res?.data || res;
+      const sourceHtml = full?.body || full?.html_body || '';
+      if (sourceHtml) {
+        setForm(f => ({ ...f, body: sourceHtml, fileName: 'existing-template.html' }));
+        setDynVars(extractVars(sourceHtml));
+        return;
+      }
+    } catch { /* fall through to preview-rendered HTML */ }
+
+    if (!tpl.body) {
       try {
         const res = await previewTemplate(tpl.id);
         const html = res?.data?.html || '';
@@ -343,6 +398,7 @@ export default function Content() {
     try {
       await deleteTemplate(id);
       setTemplates(prev => prev.filter(t => t.id !== id));
+      setTotal(t => Math.max(0, t - 1));
       hotToast.success('Template deleted');
     } catch (err) {
       hotToast.error(err.message || 'Failed to delete template');
@@ -369,6 +425,7 @@ export default function Content() {
       if (modal === 'create') {
         const res = await createTemplate(payload);
         setTemplates(prev => [res.data, ...prev]);
+        setTotal(t => t + 1);
         hotToast.success('Template created');
       } else {
         const res = await updateTemplate(modal.id, payload);
@@ -385,9 +442,8 @@ export default function Content() {
 
   if (loading) return <div className="spinner">Loading templates...</div>;
 
-  const filtered = channelFilter === 'all'
-    ? templates
-    : templates.filter(t => t.channel === channelFilter);
+  // Channel filter is now server-side, so the list we render is already filtered.
+  const filtered = templates;
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
@@ -396,7 +452,8 @@ export default function Content() {
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Content Templates</h1>
             <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-              {filtered.length} of {templates.length} templates
+              Showing {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
+              –{(page - 1) * pageSize + filtered.length} of {total} templates
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -685,6 +742,95 @@ export default function Content() {
           );
         })}
       </motion.div>
+
+      {/* ── Pagination ── */}
+      {total > 0 && (
+        <motion.div
+          variants={fadeInUp}
+          style={{
+            marginTop: 20,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
+            padding: '12px 16px',
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
+            <span>Rows per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
+              className="form-input"
+              style={{ padding: '4px 8px', fontSize: 13, width: 'auto', minWidth: 64 }}
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span style={{ marginLeft: 8 }}>
+              Page <strong style={{ color: 'var(--text-primary)' }}>{page}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong>
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              style={{ opacity: page === 1 ? 0.4 : 1, cursor: page === 1 ? 'not-allowed' : 'pointer' }}
+              title="First page"
+            >«</button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              style={{ opacity: page === 1 ? 0.4 : 1, cursor: page === 1 ? 'not-allowed' : 'pointer' }}
+            >Prev</button>
+
+            {/* Compact page numbers: show first, last, current ±1, with ellipses */}
+            {(() => {
+              const pages = new Set([1, totalPages, page, page - 1, page + 1]);
+              const visible = [...pages]
+                .filter((p) => p >= 1 && p <= totalPages)
+                .sort((a, b) => a - b);
+              const out = [];
+              visible.forEach((p, i) => {
+                if (i > 0 && p - visible[i - 1] > 1) {
+                  out.push(<span key={`gap-${p}`} style={{ padding: '0 4px', color: 'var(--text-tertiary)' }}>…</span>);
+                }
+                out.push(
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={`btn btn-sm ${p === page ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ minWidth: 32 }}
+                  >
+                    {p}
+                  </button>
+                );
+              });
+              return out;
+            })()}
+
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              style={{ opacity: page >= totalPages ? 0.4 : 1, cursor: page >= totalPages ? 'not-allowed' : 'pointer' }}
+            >Next</button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage(totalPages)}
+              disabled={page >= totalPages}
+              style={{ opacity: page >= totalPages ? 0.4 : 1, cursor: page >= totalPages ? 'not-allowed' : 'pointer' }}
+              title="Last page"
+            >»</button>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Delete Confirm Modal ── */}
       <AnimatePresence>
@@ -1009,12 +1155,26 @@ export default function Content() {
                         style={{ flex: 1, width: '100%', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: 1.5, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', whiteSpace: 'pre', overflow: 'auto' }}
                       />
                     </div>
-                    {/* Live preview (sample data) */}
+                    {/* Live preview (sample data) — server-rendered via Liquid
+                        so {% case %} / {% if %} blocks expand correctly. */}
                     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Live Preview · sample data</div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Live Preview · sample data
+                        </div>
+                        {livePreviewLoading && (
+                          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> rendering…
+                          </div>
+                        )}
+                      </div>
                       <iframe
                         title="template-preview"
-                        srcDoc={form.body ? fillPreviewHtml(form.body) : '<div style="font-family:sans-serif;color:#9ca3af;padding:16px;font-size:13px">Preview appears here as you type…</div>'}
+                        srcDoc={
+                          form.body
+                            ? (livePreviewHtml || fillPreviewHtml(form.body))
+                            : '<div style="font-family:sans-serif;color:#9ca3af;padding:16px;font-size:13px">Preview appears here as you type…</div>'
+                        }
                         style={{ flex: 1, width: '100%', borderRadius: 8, border: '1px solid var(--border-color)', background: '#fff' }}
                       />
                     </div>

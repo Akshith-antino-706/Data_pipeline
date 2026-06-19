@@ -57,6 +57,13 @@ export const previewTemplate = (id, variables = {}) =>
     body: JSON.stringify({ variables }),
   });
 export const previewTemplateAI = (id) => request(`/api/v2/content/templates/${id}/preview-ai`);
+// Render arbitrary HTML through the server's Liquid + sample-vars pipeline.
+// Used by the Edit modal so the live preview matches what users will see.
+export const renderPreviewHtml = (html, { engine = 'liquid', variables = {} } = {}) =>
+  request('/api/v2/content/preview/render', {
+    method: 'POST',
+    body: JSON.stringify({ html, engine, variables }),
+  });
 export const createTemplate = (data) => request('/api/v2/content/templates', { method: 'POST', body: JSON.stringify(data) });
 export const updateTemplate = (id, data) => request(`/api/v2/content/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteTemplate = (id) => request(`/api/v2/content/templates/${id}`, { method: 'DELETE' });

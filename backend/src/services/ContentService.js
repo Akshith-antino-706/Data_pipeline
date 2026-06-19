@@ -30,9 +30,21 @@ export class ContentService {
     };
   }
 
-  /** Get template by ID */
+  /** Get template by ID.
+   *  For templates linked to email_html_templates (via html_template_id),
+   *  the source HTML lives in email_html_templates.html_body — return that as
+   *  `body` so the editor loads the SOURCE template, not whatever stub is
+   *  stored in content_templates.body. */
   static async getById(id) {
-    const { rows } = await query('SELECT * FROM content_templates WHERE id = $1', [id]);
+    const { rows } = await query(`
+      SELECT ct.*,
+             COALESCE(NULLIF(eht.html_body, ''), ct.body) AS body,
+             eht.html_body AS html_body,
+             eht.engine    AS html_engine
+      FROM content_templates ct
+      LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
+      WHERE ct.id = $1
+    `, [id]);
     return rows[0] || null;
   }
 
@@ -47,7 +59,10 @@ export class ContentService {
     return rows[0];
   }
 
-  /** Update a template */
+  /** Update a template.
+   *  If the row is linked to an email_html_templates entry (html_template_id),
+   *  HTML body edits go to email_html_templates.html_body (the renderer's
+   *  source of truth). Subject + name + status still update content_templates. */
   static async update(id, fields) {
     const allowedFields = ['name', 'subject', 'body', 'body_plain', 'media_url', 'cta_url', 'cta_text', 'variables', 'status'];
     const sets = [];
@@ -68,7 +83,35 @@ export class ContentService {
       `UPDATE content_templates SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       params
     );
-    return rows[0];
+    const row = rows[0];
+    if (!row) return null;
+
+    // If this content_template is linked to an email_html_templates row, the
+    // renderer reads HTML from there — keep both in sync so the editor's HTML
+    // changes actually take effect on send + preview.
+    if (row.html_template_id && fields.body !== undefined) {
+      await query(
+        `UPDATE email_html_templates
+            SET html_body  = $1,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [fields.body, row.html_template_id]
+      );
+    }
+
+    // Same for subject — store on email_html_templates.subject_line so future
+    // sends pick up the change (subject also lives on content_templates).
+    if (row.html_template_id && fields.subject !== undefined) {
+      await query(
+        `UPDATE email_html_templates
+            SET subject_line = $1,
+                updated_at   = NOW()
+          WHERE id = $2`,
+        [fields.subject, row.html_template_id]
+      );
+    }
+
+    return row;
   }
 
   /** Approve a template */
