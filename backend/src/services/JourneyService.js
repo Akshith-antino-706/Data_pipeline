@@ -782,14 +782,18 @@ class JourneyService {
   /**
    * Which GTM event(s) drive a GTM journey's snapshot/fan-out.
    * SOURCE OF TRUTH = the event chosen in the create-journey dropdown, stored on the
-   * journey as `trigger_event` (e.g. 'add_to_cart'). We only fall back to deriving it
+   * journey as `trigger_event` — a comma-separated list (e.g. 'view_item,add_payment_info')
+   * for multi-event journeys, or a single name. We only fall back to deriving it
    * from the segment's gtm condition(s) for legacy journeys created before the picker
    * existed. Supported segment shapes: { type:'gtm', gtmEvent:'add_to_cart' } and
    * { gtmEvents:['add_to_cart', …] }. Returns a de-duped array of event names.
    * Never hardcodes an event name.
    */
   static async _gtmTriggerEvents(journey) {
-    if (journey.trigger_event) return [journey.trigger_event];
+    if (journey.trigger_event) {
+      const evts = [...new Set(journey.trigger_event.split(',').map(s => s.trim()).filter(Boolean))];
+      if (evts.length) return evts;
+    }
     if (journey.custom_segment_id) {
       const seg = await CustomSegmentService.getById(journey.custom_segment_id).catch(() => null);
       const evts = [];
@@ -1031,10 +1035,15 @@ class JourneyService {
     // Internally these map to 'gtm' / 'normal' — the values the engines key off — and
     // legacy 'gtm'/'normal' are still accepted.
     const jType = (journeyType === 'continuous' || journeyType === 'gtm') ? 'gtm' : 'normal';
-    // Continuous (gtm) journeys default to 'view_item' as the trigger signal.
-    // Blank dropdown (no triggerEvent) → null = PER-USER snapshot (one entry per segment
-    // user). A selected event → PER-ITEM fan-out (one entry per distinct user×item).
-    const trigEvent = jType === 'gtm' ? (triggerEvent || null) : null;
+    // Continuous (gtm) journeys fan out over one OR MORE GTM events, stored as a
+    // comma-separated list in trigger_event (e.g. 'view_item,add_payment_info').
+    // Blank dropdown (no event) → null = PER-USER snapshot (one entry per segment user).
+    // One or more events → PER-ITEM fan-out (one entry per distinct user×item, across
+    // every selected event). Accepts an array or a comma string from the UI.
+    const rawTrig = Array.isArray(triggerEvent)
+      ? triggerEvent.filter(Boolean).join(',')
+      : (triggerEvent || '');
+    const trigEvent = jType === 'gtm' ? (rawTrig || null) : null;
 
     const { rows: [journey] } = await db.query(`
       INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event)

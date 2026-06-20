@@ -5,7 +5,6 @@ const PUBLIC_PATHS = ['/', '/login', '/landing', '/rayna-logo.webp', '/favicon.i
 export function middleware(request) {
   const { pathname } = request.nextUrl;
 
-  // Allow public routes and Next.js internals
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||

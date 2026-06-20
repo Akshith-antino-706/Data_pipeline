@@ -74,7 +74,9 @@ class GtmJourneyService {
     const { rows: journeys } = await db.query(
       `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
          FROM journey_flows
-       WHERE status = 'active' AND journey_type = 'gtm' AND trigger_event = $1`,
+       WHERE status = 'active' AND journey_type = 'gtm'
+         AND trigger_event IS NOT NULL
+         AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))`,
       [eventName]
     );
     if (!journeys.length) return;

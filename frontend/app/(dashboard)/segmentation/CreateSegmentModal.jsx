@@ -78,6 +78,17 @@ const FIELD_CONFIG = {
     label: 'Booking Date', type: 'date-range',
     defaultOperator: 'between',
   },
+  last_booking_age: {
+    label: 'Last Booking (recency)', type: 'single-select',
+    options: ['recent_90', '90_180', '90_plus', '180_plus'],
+    labels: {
+      recent_90: 'Within last 90 days',
+      '90_180':  'Last booking 90–180 days ago',
+      '90_plus': 'Last booking > 90 days ago',
+      '180_plus':'Last booking 180+ days ago',
+    },
+    defaultOperator: 'eq',
+  },
   revenue: {
     label: 'Revenue (AED)', type: 'number-range',
     defaultOperator: 'between',
@@ -348,7 +359,11 @@ function isFieldValid(cond) {
 }
 
 function isConditionValid(cond) {
-  if (cond.type === 'gtm') return !!cond.gtmEvent;
+  if (cond.type === 'gtm') {
+    const cv = cond.countValue;
+    const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
+    return !!cond.gtmEvent || hasCount;   // valid with a specific event OR a count (any event)
+  }
   if (cond.type === 'contact') return isFieldValid(cond);
   return false;
 }
@@ -375,6 +390,9 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
         operator: c.operator || '',
         value: c.value ?? null,
         gtmEvent: c.gtmEvent || '',
+        countOp: c.countOp || 'gte',
+        countValue: c.countValue ?? '',
+        windowDays: c.windowDays ?? '',
         exclude: c.exclude || false,
         joinOp: c.joinOp || 'AND',
       }));
@@ -477,9 +495,8 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     setSaving(false);
   };
 
-  // Fields and GTM events already chosen in other rows (for disabling duplicates)
+  // Fields already chosen in other rows (for disabling duplicates)
   const usedFields = new Set(conditions.map(c => c.type === 'contact' ? c.field : '').filter(Boolean));
-  const usedGtmEvents = new Set(conditions.map(c => c.type === 'gtm' ? c.gtmEvent : '').filter(Boolean));
 
   return (
     <motion.div
@@ -660,28 +677,86 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                           value={cond.gtmEvent || ''}
                           onChange={e => updateCondition(idx, { ...cond, gtmEvent: e.target.value })}
                           style={selectStyle}>
-                          <option value="">Select an event...</option>
-                          {gtmEventNames.map(evtName => {
-                            const taken = usedGtmEvents.has(evtName) && cond.gtmEvent !== evtName;
-                            return (
-                              <option key={evtName} value={evtName} disabled={taken}>
-                                {evtName}{taken ? ' (already used)' : ''}
-                              </option>
-                            );
-                          })}
+                          <option value="">— Any event (total activity) —</option>
+                          {gtmEventNames.map(evtName => (
+                            <option key={evtName} value={evtName}>{evtName}</option>
+                          ))}
                         </select>
-                        {cond.gtmEvent && (
-                          <div style={{ marginTop: 8 }}>
-                            <span style={{
-                              display: 'inline-flex', alignItems: 'center', gap: 4,
-                              padding: '3px 9px', fontSize: 11, borderRadius: 20,
-                              background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
-                              border: '1px solid rgba(59,130,246,0.3)',
-                            }}>
-                              {cond.gtmEvent}
-                            </span>
-                          </div>
-                        )}
+
+                        {/* Count + time-window — e.g. "≥ 5 events in the last 90 days" */}
+                        {(() => {
+                          const countOp = cond.countOp || 'gte';
+                          const setCond = (patch) => updateCondition(idx, { ...cond, ...patch });
+                          return (
+                            <>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Count</span>
+                                <select value={countOp}
+                                  onChange={e => { const op = e.target.value; setCond({ countOp: op, countValue: op === 'between' ? ['', ''] : '' }); }}
+                                  style={{ ...selectStyle, maxWidth: 130 }}>
+                                  <option value="gte">at least (≥)</option>
+                                  <option value="lte">at most (≤)</option>
+                                  <option value="between">between</option>
+                                </select>
+                                {countOp === 'between' ? (
+                                  <>
+                                    <input type="number" min="0" placeholder="min" value={cond.countValue?.[0] ?? ''}
+                                      onChange={e => setCond({ countValue: [e.target.value, cond.countValue?.[1] ?? ''] })}
+                                      style={{ ...inputStyle, maxWidth: 78 }} />
+                                    <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>–</span>
+                                    <input type="number" min="0" placeholder="max" value={cond.countValue?.[1] ?? ''}
+                                      onChange={e => setCond({ countValue: [cond.countValue?.[0] ?? '', e.target.value] })}
+                                      style={{ ...inputStyle, maxWidth: 78 }} />
+                                  </>
+                                ) : (
+                                  <input type="number" min="0" placeholder="e.g. 5"
+                                    value={typeof cond.countValue === 'object' ? '' : (cond.countValue ?? '')}
+                                    onChange={e => setCond({ countValue: e.target.value })}
+                                    style={{ ...inputStyle, maxWidth: 100 }} />
+                                )}
+                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>events</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Within</span>
+                                <select value={cond.windowDays ?? ''}
+                                  onChange={e => setCond({ windowDays: e.target.value })}
+                                  style={{ ...selectStyle, maxWidth: 150 }}>
+                                  <option value="">All time</option>
+                                  <option value="7">Last 7 days</option>
+                                  <option value="30">Last 30 days</option>
+                                  <option value="90">Last 90 days</option>
+                                  <option value="180">Last 180 days</option>
+                                </select>
+                              </div>
+                            </>
+                          );
+                        })()}
+
+                        {/* Summary chip */}
+                        {(() => {
+                          const op = cond.countOp || 'gte';
+                          let cnt = '';
+                          if (Array.isArray(cond.countValue)) {
+                            if (cond.countValue.some(v => v !== '' && v != null)) cnt = `${cond.countValue[0] || '0'}–${cond.countValue[1] || '∞'}`;
+                          } else if (cond.countValue !== '' && cond.countValue != null) {
+                            cnt = `${op === 'lte' ? '≤' : '≥'} ${cond.countValue}`;
+                          }
+                          if (!cnt && !cond.gtmEvent) return null;
+                          const evt = cond.gtmEvent || 'any';
+                          const win = cond.windowDays ? ` · last ${cond.windowDays}d` : '';
+                          return (
+                            <div style={{ marginTop: 8 }}>
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '3px 9px', fontSize: 11, borderRadius: 20,
+                                background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
+                                border: '1px solid rgba(59,130,246,0.3)',
+                              }}>
+                                {`${cnt || 'fired'} ${evt} event${win}`}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
