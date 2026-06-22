@@ -25,7 +25,7 @@ const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welco
  * Flow:  recordEvent() → onEvent() → (dedup by itemId) → delayed BullMQ job
  *        → processJob() → render welcome template with payload → send → log.
  *
- * Safety: honours JOURNEY_EMAIL_OVERRIDE (redirect all to one inbox for testing).
+ * Safety: only WELCOME_EMAILS-allow-listed recipients receive mail (see emailAllowlist).
  */
 class GtmJourneyService {
   static get _delayMs() {
@@ -244,7 +244,7 @@ class GtmJourneyService {
     let html = renderTemplate(tplBody, ctx);
     let subject = renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
 
-    const recipientEmail = process.env.JOURNEY_EMAIL_OVERRIDE || c.email;
+    const recipientEmail = c.email;
     const logId = await SendTrackService.logSend({
       unifiedId: c.id, email: recipientEmail, contactName: c.name, subject,
       templateLabel: `GTM Journey ${journeyId}`, source: 'gtm_journey', journeyId, nodeId,
@@ -262,7 +262,7 @@ class GtmJourneyService {
 
     if (res?.success) {
       await SendTrackService.markSent(logId, { externalId: res.externalId || null, provider: res.provider || null, durationMs: ms }).catch(() => {});
-      console.log(`[GtmJourney ${journeyId}] ✓ sent to=${recipientEmail} node=${nodeId}${process.env.JOURNEY_EMAIL_OVERRIDE ? ` (override, real=${c.email})` : ''}`);
+      console.log(`[GtmJourney ${journeyId}] ✓ sent to=${recipientEmail} node=${nodeId}`);
 
       // ── Advance the per-user state row: next action node (after any wait) or complete ──
       // CONTINUOUS engine: the wait lives in gtm_journey_entries.next_fire_at; the 1-min

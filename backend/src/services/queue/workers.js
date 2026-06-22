@@ -41,9 +41,6 @@ const WA_RATE_WINDOW    = parseInt(process.env.JOURNEY_WA_RATE_WINDOW    || '100
 
 const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
 
-// Override: redirect ALL journey emails to this address (for testing before going live)
-const EMAIL_OVERRIDE    = process.env.JOURNEY_EMAIL_OVERRIDE || null;
-
 // Throttle auto-processJourney calls: one trigger per journey per 20 seconds max
 const _processThrottle = new Map(); // journeyId → lastTriggerMs
 function _scheduleProcess(journeyId, nextNodeType) {
@@ -201,7 +198,7 @@ function _isDayCrossed(d) {
 
 async function processEmail(job) {
   const d = job.data;
-  const recipientEmail = EMAIL_OVERRIDE || d.email;
+  const recipientEmail = d.email;
   if (!recipientEmail) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
 
   // WELCOME_EMAILS allow-list gate (validate the real user). Off-list → skip terminally
@@ -257,7 +254,7 @@ async function processEmail(job) {
   }
   console.log(`[Worker:email] ── Processing job ${job.id} ──`);
   console.log(`[Worker:email]   entry=${d.entryId} customer=${d.customerId} node=${d.nodeId} journey=${d.journeyId}`);
-  console.log(`[Worker:email]   to=${recipientEmail}${EMAIL_OVERRIDE ? ` (override, real=${d.email})` : ''} template=${d.templateId}`);
+  console.log(`[Worker:email]   to=${recipientEmail} template=${d.templateId}`);
 
   // Stored node email first — the SAME rendered HTML for every contact at this node,
   // so the preview is byte-identical to what's sent. First touch renders (Claude/
