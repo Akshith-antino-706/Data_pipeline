@@ -294,8 +294,43 @@ export default function Content() {
       const res = await sendTemplate(tpl.id, recipients);
       const sent = res?.data?.sent ?? recipients.length;
       hotToast.success(`Sent "${tpl.name}" to ${sent} recipient(s)`);
+
+      // QA scan (Claude) + inbox placement — same as Day 1-7 Test Send
+      setQaReport({ template: tpl, report: null });
+      setPlacement(null);
+      setQaLoading(true);
+
+      // 1. Content report (grammar / missing / urls / spam-risk) via Claude
+      let report = null;
+      try {
+        const r = await analyzeTestEmail(tpl.id);
+        report = r?.data || null;
+      } catch (e) {
+        report = { error: e.message };
+      }
+      const subject = report?.subject || '';
+
+      // 2. Real inbox placement via IMAP — retry while Gmail delivers (~15-40s)
+      let placementResult = null;
+      for (let attempt = 1; attempt <= 4 && !report?.error; attempt++) {
+        await new Promise(r => setTimeout(r, attempt === 1 ? 15000 : 12000));
+        try {
+          const r = await checkInboxPlacement(subject, tpl.id);
+          const p = r?.data;
+          if (p?.available && p.placement !== 'not_found') { placementResult = p; break; }
+          placementResult = p || { available: false, error: 'Not found after retries' };
+        } catch (e) {
+          placementResult = { available: false, error: e.message };
+        }
+      }
+
+      // 3. Reveal the complete report at once
+      setPlacement(placementResult);
+      setQaReport({ template: tpl, report });
+      setQaLoading(false);
     } catch (err) {
       hotToast.error(err.message || 'Send failed');
+      setQaLoading(false);
     } finally { setSendingDay(null); setSendingMode(null); }
   }
 
@@ -675,8 +710,8 @@ export default function Content() {
                   <Icon size={12} /> {t.channel}
                 </span>
                 {t.segment_label && <span className="badge badge-gray">{t.segment_label}</span>}
-                {/* (i) View stored QA report — Day 1-7 email templates */}
-                {t.id >= 1 && t.id <= 7 && t.channel === 'email' && (
+                {/* (i) View stored QA report — ALL email templates */}
+                {t.channel === 'email' && (
                   <button onClick={() => viewStoredReport(t)} title="View email QA report"
                     style={{ marginLeft: 'auto', width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Info size={15} />
