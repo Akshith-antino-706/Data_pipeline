@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
+import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
 import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
@@ -278,6 +278,22 @@ export default function Content() {
       setPlacement(placementResult);
       setQaReport({ template: tpl, report });
       setQaLoading(false);
+    } catch (err) {
+      hotToast.error(err.message || 'Send failed');
+    } finally { setSendingDay(null); setSendingMode(null); }
+  }
+
+  // Send for non-Day approved email templates (e.g. weekly broadcasts ids 83-89).
+  // No QA / IMAP placement flow — those are Day1-7 only. Just send + toast.
+  async function handleGenericSend(tpl, { emails, mode } = {}) {
+    const recipients = emails && emails.length ? emails : selectedEmails;
+    if (recipients.length === 0) return;
+    setSendingDay(tpl.id);
+    setSendingMode(mode || 'selected');
+    try {
+      const res = await sendTemplate(tpl.id, recipients);
+      const sent = res?.data?.sent ?? recipients.length;
+      hotToast.success(`Sent "${tpl.name}" to ${sent} recipient(s)`);
     } catch (err) {
       hotToast.error(err.message || 'Send failed');
     } finally { setSendingDay(null); setSendingMode(null); }
@@ -725,14 +741,42 @@ export default function Content() {
                     <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
                   </button>
                 );
+                // Approved email templates outside the Day 1-7 sequence (e.g. weekly
+                // broadcasts ids 83-89) also get Test Send + Test Send to selected,
+                // routed through the generic /send-template endpoint.
+                const hasGenericSend = !hasAI && t.channel === 'email' && t.status === 'approved';
+                const genericRockyBtn = (
+                  <button className="btn btn-sm" onClick={() => handleGenericSend(t, { emails: [ROCKY_EMAIL], mode: 'rocky' })}
+                    disabled={isSending}
+                    title={`Send a QA test to ${ROCKY_EMAIL}`}
+                    style={{ gap: 6, flex: 1, background: 'rgba(59,130,246,0.1)', color: '#2563eb', border: '1px solid rgba(59,130,246,0.25)', cursor: isSending ? 'not-allowed' : 'pointer', opacity: isSending && !rockySending ? 0.5 : 1 }}>
+                    <Send size={14} /> {rockySending ? 'Sending…' : 'Test Send'}
+                  </button>
+                );
+                const genericSelectedBtn = (
+                  <button className="btn btn-sm" onClick={() => handleGenericSend(t, { emails: selectedEmails, mode: 'selected' })}
+                    disabled={noRecipients || isSending}
+                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length} selected`}
+                    style={{ gap: 6, flex: 1, background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients || (isSending && !selSending) ? 0.5 : 1 }}>
+                    <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
+                  </button>
+                );
+
                 // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · two Test Send buttons
-                return hasAI ? (
+                if (hasAI) return (
                   <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
                     <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
                     <div style={{ display: 'flex', gap: 8 }}>{rockyBtn}{selectedBtn}</div>
                   </div>
-                ) : (
+                );
+                if (hasGenericSend) return (
+                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{editBtn}{deleteBtn}</div>
+                    <div style={{ display: 'flex', gap: 8 }}>{genericRockyBtn}{genericSelectedBtn}</div>
+                  </div>
+                );
+                return (
                   <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
                     {previewBtn}{editBtn}{deleteBtn}
                   </div>

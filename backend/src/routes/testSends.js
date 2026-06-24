@@ -208,8 +208,14 @@ router.get('/contacts', async (req, res, next) => {
     const params = [];
 
     if (hasQ) {
-      params.push(`%${q.toLowerCase()}%`);
-      conditions.push(`(lower(uc.email) LIKE $${params.length} OR lower(uc.name) LIKE $${params.length})`);
+      // Email-prefix search only. Reasons:
+      //   - Leading-wildcard LIKE can't use b-tree → full-scans 1.65M rows.
+      //   - Combining with `OR lower(name) LIKE …` forces a Seq Scan even when
+      //     email is indexed, because name has no index.
+      // The dedicated index `idx_uc_email_lpat` (lower(TRIM(email))
+      // text_pattern_ops) makes this an index range scan in <50ms.
+      params.push(`${q.toLowerCase()}%`);
+      conditions.push(`lower(TRIM(uc.email)) LIKE $${params.length}`);
     }
     if (req.query.booking_status) {
       params.push(req.query.booking_status);
@@ -251,7 +257,23 @@ router.get('/contacts', async (req, res, next) => {
     const limitIdx = params.length + 1;
     const offsetIdx = params.length + 2;
 
-    const [{ rows }, { rows: [cnt] }] = await Promise.all([
+    // `COUNT(DISTINCT email)` over 1.65M rows is a full scan + sort + dedup
+    // and tips over under concurrent load. Cheap alternatives:
+    //   - unfiltered  → use pg_class.reltuples (instant planner estimate)
+    //   - filtered    → use COUNT(*) (data query already dedupes via DISTINCT ON)
+    // Either way: count failure must NOT block the data — the picker still works
+    // with total=null.
+    const isUnfiltered = !hasQ && !segmentJoin
+      && !req.query.booking_status && !req.query.contact_type
+      && !req.query.country && !req.query.geography
+      && !req.query.product_tier
+      && (req.query.is_indian === undefined || req.query.is_indian === '');
+
+    const countQuery = isUnfiltered
+      ? db.query(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'unified_contacts'`)
+      : db.query(`SELECT COUNT(*)::int AS total FROM unified_contacts uc ${segmentJoin} WHERE ${where}`, params);
+
+    const [{ rows }, countRes] = await Promise.all([
       db.query(
         `SELECT DISTINCT ON (uc.email) uc.id, uc.email, uc.name, uc.contact_type, uc.booking_status, uc.country, uc.is_indian
          FROM unified_contacts uc ${segmentJoin}
@@ -259,12 +281,13 @@ router.get('/contacts', async (req, res, next) => {
          ORDER BY uc.email LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
         [...params, limit, offset]
       ),
-      db.query(
-        `SELECT COUNT(DISTINCT uc.email)::int AS total FROM unified_contacts uc ${segmentJoin} WHERE ${where}`,
-        params
-      ),
+      countQuery.catch(err => {
+        console.warn('[test-sends/contacts] count failed, returning total=null:', err.message);
+        return { rows: [{ total: null }] };
+      }),
     ]);
-    res.json({ data: { contacts: rows, total: cnt.total, limit, offset } });
+    const total = countRes.rows[0]?.total ?? null;
+    res.json({ data: { contacts: rows, total, limit, offset } });
   } catch (err) { next(err); }
 });
 
@@ -299,6 +322,44 @@ router.post('/send-daily-ai', async (req, res) => {
     res.json({ success: true, data: { day: templateId, recipients: recipients.length, sent, source: master.source, results } });
   } catch (err) {
     console.error('[send-daily-ai] failed:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /send-template — generic: send any approved email template from
+// content_templates by id (e.g. weekly broadcasts ids 83-89). Unlike
+// /send-daily-ai (which requires the dynamic Day 1-7 renderer), this just
+// pulls the stored `body` HTML and runs it through the same sendAndLog
+// machinery (click rewrite + open pixel + email_send_log row).
+// Body: { templateId, emails }
+router.post('/send-template', async (req, res) => {
+  try {
+    const templateId = parseInt(req.body?.templateId);
+    if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+    const recipients = await resolveRecipients(req.body?.emails);
+    if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
+
+    const { rows: [tpl] } = await db.query(
+      `SELECT id, name, channel, subject, body, status FROM content_templates WHERE id = $1`,
+      [templateId]
+    );
+    if (!tpl)               return res.status(404).json({ success: false, error: `Template ${templateId} not found` });
+    if (tpl.channel !== 'email') return res.status(400).json({ success: false, error: `Template ${templateId} is not an email template (channel=${tpl.channel})` });
+    if (!tpl.body)          return res.status(400).json({ success: false, error: `Template ${templateId} has no body` });
+
+    const EmailChannel = await loadEmailChannel();
+    const subject = tpl.subject || tpl.name;
+
+    const sendOne = (r) => sendAndLog({
+      EmailChannel, recipient: r, subject, html: tpl.body,
+      templateLabel: tpl.name, dayNumber: templateId, source: req.body?.source || 'test-send',
+    });
+
+    const results = await parallelMap(recipients, sendOne);
+    const sent = results.filter(r => r.success).length;
+    res.json({ success: true, data: { templateId, name: tpl.name, recipients: recipients.length, sent, results } });
+  } catch (err) {
+    console.error('[send-template] failed:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
