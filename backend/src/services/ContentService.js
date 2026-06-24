@@ -14,10 +14,26 @@ export class ContentService {
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const offset = (page - 1) * limit;
 
+    // Truncate `body` to 2 KB in the list response. The list view only renders
+    // a stripHtml() snippet — full body (25 KB+ each) is fetched via getById()
+    // when the editor opens. Large responses (~500 KB for 20 rows) were
+    // triggering `ERR_CONTENT_LENGTH_MISMATCH` through the production CDN.
     const [countRes, dataRes] = await Promise.all([
       query(`SELECT COUNT(*) AS total FROM content_templates ${where}`, params),
       query(
-        `SELECT * FROM content_templates ${where} ORDER BY updated_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        `SELECT id, name, channel, status, subject, LEFT(body, 2000) AS body, body_plain,
+                media_url, cta_url, cta_text, wa_template_name, wa_namespace, variables,
+                ai_generated, ai_prompt, ai_model, version, parent_id,
+                approved_by, approved_at, created_at, updated_at, created_by,
+                html_template_id, segment_label,
+                external_provider, external_template_id, external_status,
+                external_category, external_language,
+                external_submitted_at, external_approved_at,
+                external_rejected_at, external_rejection_reason,
+                external_last_checked_at, external_payload
+           FROM content_templates ${where}
+          ORDER BY updated_at DESC
+          LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset]
       ),
     ]);
