@@ -34,16 +34,23 @@ function verifyUnsubToken(token) {
 
 // Resolve the contact from ?log= (send-log id) or ?t= (signed token). → { uid, email } | null
 async function resolveContact({ log, t }) {
-  let uid = null, email = null;
+  let uid = null, email = null, journeyId = null, nodeId = null, logId = null;
   if (t) { uid = verifyUnsubToken(t); }
   if (!uid && log && /^\d+$/.test(String(log))) {
-    const { rows: [r] } = await db.query('SELECT unified_id, email FROM email_send_log WHERE id = $1', [parseInt(log)]);
-    if (r) { uid = r.unified_id; email = r.email; }
+    logId = parseInt(log);
+    const { rows: [r] } = await db.query(
+      'SELECT unified_id, email, journey_id, node_id FROM email_send_log WHERE id = $1', [logId]
+    );
+    if (r) { uid = r.unified_id; email = r.email; journeyId = r.journey_id; nodeId = r.node_id; }
   }
   if (!uid) return null;
   const { rows: [c] } = await db.query('SELECT id, email, email_unsubscribe FROM unified_contacts WHERE id = $1', [uid]);
   if (!c) return null;
-  return { uid: c.id, email: c.email || email, unsubscribed: String(c.email_unsubscribe || '').toLowerCase() === 'yes' };
+  return {
+    uid: c.id, email: c.email || email,
+    unsubscribed: String(c.email_unsubscribe || '').toLowerCase() === 'yes',
+    journeyId, nodeId, logId,
+  };
 }
 
 // ── Branded page shell (Rayna styling) ──────────────────────────────────────
@@ -104,13 +111,15 @@ router.post('/confirm', async (req, res) => {
          WHERE id = $1 AND COALESCE(email_unsubscribe, 'No') <> 'Yes'`, [c.uid]
       );
       if (rowCount > 0) {
+        // Record WHICH journey + node the email came from (resolved from the send-log id),
+        // so unsubscribes are attributable per journey/node.
         await db.query(
           `INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign, source_log_id)
-           VALUES ($1, $2, NULL, NULL, 'unsubscribe_page', $3) ON CONFLICT DO NOTHING`,
-          [c.uid, c.email, /^\d+$/.test(String(req.query.log)) ? parseInt(req.query.log) : null]
+           VALUES ($1, $2, $3, $4, 'unsubscribe_page', $5) ON CONFLICT DO NOTHING`,
+          [c.uid, c.email, c.journeyId, c.nodeId, c.logId]
         ).catch(() => {});
       }
-      console.log(`[Unsubscribe] uid=${c.uid} email=${c.email} opted out via confirmation page`);
+      console.log(`[Unsubscribe] uid=${c.uid} email=${c.email} opted out via confirmation page (journey=${c.journeyId} node=${c.nodeId})`);
     }
     return res.send(shell(`
       <div class="ok">✓</div>
