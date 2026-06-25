@@ -97,6 +97,37 @@ async function loadEmailChannel() {
   return EmailChannel;
 }
 
+/**
+ * Resolve an email template's { html, subject, dynamic } for ANY template id — so
+ * Test Send + QA scan work on every template, not just Day 1-7:
+ *   • Day 1-7 dynamic   → the AI-rendered master (same HTML a journey send uses)
+ *   • any other template → content_templates.body, or its linked
+ *     email_html_templates.html_body, rendered through placeholderResolver with `ctx`
+ *     so {{placeholders}} fill (matches the real email a journey would send).
+ * Returns null when no HTML can be resolved.
+ */
+async function resolveTemplateHtml(templateId, ctx) {
+  const tid = parseInt(templateId);
+  const { getDailyAITemplate } = await import('../services/JourneyService.js');
+  const dyn = await getDailyAITemplate(tid).catch(() => null);
+  if (dyn?.html) return { html: dyn.html, subject: dyn.subject, dynamic: true };
+
+  const { rows: [t] } = await db.query(
+    'SELECT subject, body, html_template_id FROM content_templates WHERE id = $1', [tid]
+  );
+  if (!t) return null;
+  let body = t.body, subject = t.subject;
+  if (!body && t.html_template_id) {
+    const { rows: [h] } = await db.query(
+      'SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [t.html_template_id]
+    ).catch(() => ({ rows: [] }));
+    body = h?.html_body; subject = subject || h?.subject_line;
+  }
+  if (!body) return null;
+  const { renderTemplate } = await import('../utils/placeholderResolver.js');
+  return { html: renderTemplate(body, ctx), subject: renderTemplate(subject || '', ctx), dynamic: false };
+}
+
 // Cache ranking results per day — 1800s (30 min) covers full 7-day sequence (7×2min=14min + buffer)
 async function cachedRanking(key, computeFn) {
   const { cached } = await import('../config/cache.js');
@@ -293,8 +324,9 @@ router.get('/contacts', async (req, res, next) => {
 
 // ── contact search ───────────────────────────────────────────────────────
 
-// POST /send-daily-ai — send the EXACT AI daily-master template (the one shown in
-// "Preview AI") to recipients. Guarantees Test Send == Preview AI == journey send.
+// POST /send-daily-ai — Test Send for ANY email template (the same HTML "Preview AI"
+// shows, or the journey would send). Day 1-7 use the AI master; other templates render
+// content_templates.body / linked email_html_templates.html_body per recipient.
 // Body: { templateId, emails }
 router.post('/send-daily-ai', async (req, res) => {
   try {
@@ -303,23 +335,25 @@ router.post('/send-daily-ai', async (req, res) => {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
 
-    // The AI daily master — same HTML as Preview AI and journey sends
-    const { getDailyAITemplate } = await import('../services/JourneyService.js');
-    const master = await getDailyAITemplate(templateId);
-    if (!master?.html) return res.status(400).json({ success: false, error: `Template ${templateId} is not a dynamic Day template (1-7)` });
-
     const EmailChannel = await loadEmailChannel();
-    const subject = master.subject || `Day ${templateId} | Rayna Tours`;
-    const label = `Day ${templateId} (AI)`;
+    const source = req.body?.source || 'test-send';
 
-    const sendOne = (r) => sendAndLog({
-      EmailChannel, recipient: r, subject, html: master.html,
-      templateLabel: label, dayNumber: templateId, source: req.body?.source || 'test-send',
-    });
+    // Resolve + send per recipient (Day 1-7 ignore ctx → AI master; others fill from contact).
+    const sendOne = async (r) => {
+      const ctx = { contact: { id: r.unified_id, email: r.email, name: (r.email || '').split('@')[0] }, event: {}, payload: {} };
+      const resolved = await resolveTemplateHtml(templateId, ctx);
+      if (!resolved?.html) throw new Error(`Template ${templateId} has no HTML to send`);
+      const label = resolved.dynamic ? `Day ${templateId} (AI)` : `Template ${templateId}`;
+      return sendAndLog({
+        EmailChannel, recipient: r,
+        subject: resolved.subject || 'Rayna Tours',
+        html: resolved.html, templateLabel: label, dayNumber: templateId, source,
+      });
+    };
 
     const results = await parallelMap(recipients, sendOne);
     const sent = results.filter(r => r.success).length;
-    res.json({ success: true, data: { day: templateId, recipients: recipients.length, sent, source: master.source, results } });
+    res.json({ success: true, data: { templateId, recipients: recipients.length, sent, results } });
   } catch (err) {
     console.error('[send-daily-ai] failed:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -367,18 +401,28 @@ router.post('/send-template', async (req, res) => {
 // POST /analyze-email — QA report for a Day template's rendered email.
 // Body: { templateId } (1-7). Returns grammar / missing content / URL checks /
 // spam-risk / other errors. Used by the Content screen after a Test Send.
+//
+// HTML sourcing is universal:
+//   • Day 1-7 dynamic templates  → getDailyAITemplate (the AI-rendered master)
+//   • any other content template → content_templates.body, or its linked
+//     email_html_templates.html_body, rendered with sample data so placeholders
+//     resolve (same resolution journey/GTM sends use) — so the scan matches the email.
 router.post('/analyze-email', async (req, res) => {
   try {
     const templateId = parseInt(req.body?.templateId);
     if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
 
-    // Use the same daily-master HTML that gets sent (so the report matches the email)
-    const { getDailyAITemplate } = await import('../services/JourneyService.js');
-    const rendered = await getDailyAITemplate(templateId);
-    if (!rendered?.html) return res.status(400).json({ success: false, error: `Template ${templateId} is not a dynamic Day template (1-7)` });
+    // Render with a sample contact so {{placeholders}} resolve (realistic scan,
+    // no literal {{PRODUCT_NAME}} flagged as missing). Day 1-7 ignore ctx (AI master).
+    const sampleCtx = {
+      contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE', is_indian: false, booking_status: 'PROSPECT' },
+      event: {}, payload: {},
+    };
+    const resolved = await resolveTemplateHtml(templateId, sampleCtx);
+    if (!resolved?.html) return res.status(400).json({ success: false, error: `Template ${templateId} has no HTML body to analyze` });
 
     const { analyzeEmail } = await import('../services/EmailQAService.js');
-    const report = await analyzeEmail({ html: rendered.html, subject: rendered.subject });
+    const report = await analyzeEmail({ html: resolved.html, subject: resolved.subject });
 
     // Store the report (one per template — latest wins)
     await db.query(
