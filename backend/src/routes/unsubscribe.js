@@ -17,6 +17,9 @@ import db from '../config/database.js';
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET || 'rayna-unsub-secret';
+// Project logo — the frontend serves it publicly at this URL (reachable from any browser,
+// local or prod). Pinned to the public domain (not TRACKING_BASE_URL, which may be localhost).
+const LOGO_URL = process.env.UNSUB_LOGO_URL || 'https://promotions.raynatours.com/rayna-logo.webp';
 
 // Signed token (uid) — optional alternative to ?log=
 export function signUnsubToken(uid) {
@@ -62,8 +65,7 @@ function shell(inner) {
 <style>
   *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f4f5f7;color:#1a1a1a;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
   .card{background:#fff;border:1px solid #e7e8ec;border-radius:16px;max-width:480px;width:100%;padding:40px 36px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.06)}
-  .brand{font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:26px;letter-spacing:.5px;color:#1a1a1a;margin-bottom:4px}
-  .brand small{display:block;font-family:inherit;font-size:10px;letter-spacing:2px;color:#9aa0a6;font-weight:400;margin-top:2px}
+  .logo{height:56px;width:auto;display:block;margin:0 auto 10px}
   h1{font-size:20px;margin:24px 0 8px}
   p{font-size:14px;color:#5f6368;line-height:1.6;margin:8px 0}
   .email{font-weight:600;color:#1a1a1a}
@@ -74,7 +76,7 @@ function shell(inner) {
   .sails{display:inline-block;height:30px;margin-bottom:6px}
   a{color:#0ea5e9;text-decoration:none}
 </style></head><body><div class="card">
-  <div class="brand">RAYNA<small>TOURS</small></div>
+  <img class="logo" src="${LOGO_URL}" alt="Rayna Tours" />
   ${inner}
 </div></body></html>`;
 }
