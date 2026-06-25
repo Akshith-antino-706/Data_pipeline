@@ -23,8 +23,7 @@ const ROCKY_EMAIL = 'rocky.86agency@gmail.com';
 
 const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link']);
 
-// Sample values for the live preview — mirrors the 60 master placeholder keys
-// (placeholder_keys_final.pdf) so the editor preview shows realistic filled content.
+
 const PREVIEW_SAMPLE = {
   USER_NAME: 'Avinash Kumar', USER_FIRST_NAME: 'Avinash', USER_EMAIL: 'avinash@example.com',
   USER_PHONE: '+971 50 123 4567', USER_CITY: 'Dubai', USER_COUNTRY: 'United Arab Emirates',

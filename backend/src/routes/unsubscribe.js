@@ -82,7 +82,7 @@ router.get('/', async (req, res) => {
     return res.send(shell(`
       <h1>Unsubscribe from emails?</h1>
       <p>You're about to unsubscribe <span class="email">${escapeHtml(c.email)}</span> from Rayna Tours marketing emails. You won't receive offers, holiday picks, or visa updates from us.</p>
-      <form method="POST" action="/unsubscribe/confirm?${ref}" style="margin-top:18px">
+      <form method="POST" action="/api/unsubscribe/confirm?${ref}" style="margin-top:18px">
         <button type="submit" class="btn btn-danger">Confirm unsubscribe</button>
         <a href="https://www.raynatours.com" class="btn btn-ghost" style="text-decoration:none">Keep me subscribed</a>
       </form>`));
