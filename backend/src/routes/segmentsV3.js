@@ -44,6 +44,7 @@ router.post('/run', async (req, res, next) => {
 router.get('/general', async (req, res, next) => {
   try {
     const { query } = await import('../config/database.js');
+    const { getRedisClient } = await import('../config/redis.js');
 
     const businessType = req.query.businessType === 'B2B' || req.query.businessType === 'B2C'
       ? req.query.businessType : null;
@@ -51,6 +52,27 @@ router.get('/general', async (req, res, next) => {
     const btAnd = businessType ? `AND uc.contact_type = $1` : '';
     const btWhere = businessType ? `WHERE contact_type = $1` : '';
 
+    const cacheKey = `general_counts:${businessType || 'all'}`;
+    const redis = getRedisClient();
+
+    // Try cache first
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      const counts = JSON.parse(cached);
+      const journeysRow = await query(`
+        SELECT journey_id, name, description, status, audience,
+               total_entries, total_conversions, total_exits,
+               jsonb_array_length(nodes) AS node_count,
+               created_at, updated_at
+          FROM journey_flows
+         WHERE segment_id IS NULL
+         ORDER BY updated_at DESC`);
+      return res.json({
+        data: { ...counts, journeys: journeysRow.rows },
+      });
+    }
+
+    // Cache miss — run all queries
     const [emailRow, waRow, totalRow, journeysRow] = await Promise.all([
       query(`
         SELECT COUNT(*)::int AS n FROM unified_contacts uc
@@ -65,8 +87,6 @@ router.get('/general', async (req, res, next) => {
            AND COALESCE(uc.is_indian,false) = true
            ${btAnd}`, btParams),
       query(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),
-      // Treat any audience-driven journey with no saved segment as a "general broadcast"
-      // journey. This catches the seed-script-created journey 120 plus any future ones.
       query(`
         SELECT journey_id, name, description, status, audience,
                total_entries, total_conversions, total_exits,
@@ -77,13 +97,17 @@ router.get('/general', async (req, res, next) => {
          ORDER BY updated_at DESC`),
     ]);
 
+    const counts = {
+      emailEligible: emailRow.rows[0].n,
+      waEligible:    waRow.rows[0].n,
+      totalContacts: totalRow.rows[0].n,
+    };
+
+    // Cache for 5 minutes
+    await redis.set(cacheKey, JSON.stringify(counts), 'EX', 300);
+
     res.json({
-      data: {
-        emailEligible: emailRow.rows[0].n,
-        waEligible:    waRow.rows[0].n,
-        totalContacts: totalRow.rows[0].n,
-        journeys:      journeysRow.rows,
-      },
+      data: { ...counts, journeys: journeysRow.rows },
     });
   } catch (err) { next(err); }
 });
