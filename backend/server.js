@@ -86,8 +86,9 @@ app.use((req, res, next) => {
 // ── SES Webhook (before rate limiter — SNS sends many events) ──
 app.use('/api/webhooks', express.text({ type: 'text/plain' }), sesWebhookRouter);
 
-// ── Public unsubscribe page (no auth, no /api rate limiter) ──
-app.use('/unsubscribe', express.urlencoded({ extended: true }), unsubscribeRouter);
+// ── Public unsubscribe page — under /api so the prod reverse-proxy routes it to the
+// backend (the frontend owns all non-/api paths). No auth, no rate limiter. ──
+app.use('/api/unsubscribe', express.urlencoded({ extended: true }), unsubscribeRouter);
 
 // Rate limiting — general: 200 req/min, mutations: 30 req/min
 const generalLimiter = rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many requests, slow down' } });
@@ -492,7 +493,7 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
     const d = new URL(destination);
     if (d.pathname.includes('unsubscribe') || d.searchParams.has('unsubscribe')) {
       const base = process.env.TRACKING_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
-      redirectTo = `${base}/unsubscribe?log=${req.params.id}`;
+      redirectTo = `${base}/api/unsubscribe?log=${req.params.id}`;
     }
   } catch { /* keep destination if URL invalid */ }
 
