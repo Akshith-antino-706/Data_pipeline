@@ -947,40 +947,50 @@ class JourneyService {
    * usual conditions behave identically on every node, including after a refresh.
    */
   static async _refreshAddNew(journey, nodeMap) {
-    // DISABLED by default. This per-node "refresh" re-inserted late-joining segment
-    // members into whichever action node was not throttled at that moment, dropping them
-    // mid-sequence with next_fire_at=NOW() → out-of-sequence sends (e.g. Email 5 before
-    // Email 1) and heavy DB churn (it re-ran the full segment query against every action
-    // node each tick — the root cause of the 1.33M-journey outage). The audience is
-    // snapshotted at creation, so this is not needed. Set JOURNEY_PERNODE_REFRESH=true
-    // to re-enable (not recommended for large segments).
-    if (process.env.JOURNEY_PERNODE_REFRESH !== 'true') return;
     if (journey.status !== 'active') return;
+    // FIXED-journey enrollment of late-joining segment members.
+    //   processJourney (the only caller) runs ONLY for FIXED ('normal') journeys —
+    //   CONTINUOUS ('gtm') journeys enroll via ContinuousJourneyService at node_0
+    //   (conveyor belt: new entries always board at the start and ride in order).
+    // A Fixed journey's audience moves as ONE synchronized batch. New qualifying members
+    // must join the batch AT ITS CURRENT NODE — never at a node *ahead* of it (that was
+    // the out-of-sequence "Email 5 before Email 1" leak: the old code looped every action
+    // node and, because of per-node throttling, dropped new members onto whatever node was
+    // not "fresh" — often downstream of the cohort), and never restart them at node_0.
+    // Fix: add new members ONLY at the earliest node that currently holds active entries
+    // (the cohort's live position), so they fall in line with the batch in correct order.
     const segq = await this._journeySegmentRows(journey).catch(() => null);
     if (!segq) return;
     const isFresh = this._refreshThrottle(journey);
+    if (isFresh('_addnew')) return;
     const jid = journey.journey_id;
+
+    // Cohort's current node = first node (in flow order) that still has active entries.
+    const ordered = (journey.nodes || []).map(n => n.id);
+    const { rows: act } = await db.query(
+      `SELECT DISTINCT current_node_id FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+      [jid]
+    );
+    const activeSet = new Set(act.map(r => r.current_node_id));
+    const cohortNodeId = ordered.find(id => activeSet.has(id));
+    if (!cohortNodeId) { await this._refreshStamp(jid, { _addnew: new Date().toISOString() }); return; }
+
     const b = segq.params.length;
-    const stamps = {};
-    for (const node of Object.values(nodeMap).filter(n => n.type === 'action')) {
-      if (isFresh(node.id)) continue;
-      try {
-        const { rowCount } = await db.query(`
-          INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status, next_fire_at)
-          SELECT $${b + 1}, seg.id, $${b + 2},
-                 CASE WHEN seg.is_indian THEN 'indian' ELSE 'rest' END,
-                 'active', NOW()
-          FROM (${segq.sql}) seg
-          WHERE NOT EXISTS (
-            SELECT 1 FROM journey_entries je WHERE je.journey_id = $${b + 1} AND je.customer_id = seg.id
-          )
-          ON CONFLICT (journey_id, customer_id) DO NOTHING
-        `, [...segq.params, jid, node.id]);
-        if (rowCount > 0) console.log(`[Journey ${jid}] refresh: added ${rowCount} new at ${node.id}`);
-      } catch (e) { console.error(`[Journey ${jid}] refresh ADD (${node.id}) failed: ${e.message}`); }
-      stamps[node.id] = new Date().toISOString();
-    }
-    await this._refreshStamp(jid, stamps);
+    try {
+      const { rowCount } = await db.query(`
+        INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track, status, next_fire_at)
+        SELECT $${b + 1}, seg.id, $${b + 2},
+               CASE WHEN seg.is_indian THEN 'indian' ELSE 'rest' END,
+               'active', NOW()
+        FROM (${segq.sql}) seg
+        WHERE NOT EXISTS (
+          SELECT 1 FROM journey_entries je WHERE je.journey_id = $${b + 1} AND je.customer_id = seg.id
+        )
+        ON CONFLICT (journey_id, customer_id) DO NOTHING
+      `, [...segq.params, jid, cohortNodeId]);
+      if (rowCount > 0) console.log(`[Journey ${jid}] refresh: added ${rowCount} new at cohort node ${cohortNodeId} (never ahead)`);
+    } catch (e) { console.error(`[Journey ${jid}] refresh ADD failed: ${e.message}`); }
+    await this._refreshStamp(jid, { _addnew: new Date().toISOString() });
   }
 
   /**
@@ -1667,10 +1677,16 @@ class JourneyService {
           const targetM = typeof sendHour === 'number' ? 0 : parseInt(String(sendHour).split(':')[1] || '0');
           const curH = dubaiNow.getHours();
           const curM = dubaiNow.getMinutes();
-          // Allow a 5-minute window so the cron interval doesn't miss the exact minute
           const targetTotal = targetH * 60 + targetM;
           const curTotal = curH * 60 + curM;
-          if (curTotal < targetTotal || curTotal > targetTotal + 5) {
+          // FIXED journeys (the only type processJourney runs — gtm/Continuous is handled by
+          // ContinuousJourneyService) send the WHOLE cohort as ONE batch on the scheduled day:
+          // defer an entry ONLY if it's still BEFORE the sendHour; once the hour arrives, keep
+          // sending all day until the batch drains. The old upper bound (curTotal > target+5)
+          // bumped any entry that became ready after a 5-minute window to the NEXT day — that
+          // strict window is what made each email "smear" across two days whenever a send took
+          // longer than 5 minutes. Removing it keeps the cohort together on its scheduled day.
+          if (curTotal < targetTotal) {
             // Compute exact UTC time when the window next opens so the cron
             // SQL (next_fire_at <= NOW) skips this entry until then instead of
             // loading and blocking it on every 5-minute tick.
