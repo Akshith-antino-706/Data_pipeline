@@ -474,61 +474,40 @@ class JourneyService {
       const runningIndexes = nodes.reduce((acc, n, i) => { if (activeSet.has(n.id)) acc.push(i); return acc; }, []);
       const minRunning = runningIndexes.length > 0 ? Math.min(...runningIndexes) : nodes.length;
 
-      // Linear "leading edge" view: only the EARLIEST action node actively sending
-      // shows SENDING; the FIRST wait node after it shows WAITING. Everything else
-      // shows PENDING — even if stragglers from previous runs are sitting downstream.
-      // This keeps the dashboard reflecting the main-wave's current step, not noise.
-
-      // 1. Earliest action node with entries currently due to fire
-      // Using due_now (next_fire_at <= NOW) rather than the unreliable
-      // last_enqueued_at timestamp, which becomes stale during long bursts.
-      let sendingIdx = -1;
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        if (n.type === 'action' && activeSet.has(n.id) && (dueNowMap[n.id] || 0) > 0) {
-          sendingIdx = i;
-          break;
-        }
-      }
-
-      // 2. First wait node positioned after the sending node
-      let waitingIdx = -1;
-      if (sendingIdx !== -1) {
-        for (let i = sendingIdx + 1; i < nodes.length; i++) {
-          if (nodes[i].type === 'wait') { waitingIdx = i; break; }
-        }
-      }
-
+      // Per-node lifecycle status — derived from STABLE signals: whether a node currently
+      // holds active entries + whether it has ever processed events. The previous
+      // "leading-edge" heuristic recomputed a single sending node from the instantaneous
+      // due_now count each request, so a node flickered sending↔waiting↔pending between
+      // 30s polls as entries were enqueued/sent/advanced. Active-entry presence barely
+      // changes poll-to-poll, so this keeps each node's badge stable.
+      //   pending → no entry has reached it yet
+      //   sending → action node currently holding entries (it's the live send step)
+      //   waiting → wait node holding entries, OR an action node whose entries are all
+      //             parked in a future send-hour window (none due)
+      //   completed → entries have passed through and none remain
       nodes.forEach((n, i) => {
         if (isPaused) {
           node_statuses[n.id] = i < minRunning ? 'completed' : 'paused';
           return;
         }
+        const hasActive    = activeSet.has(n.id);
+        const wasProcessed = processedSet.has(n.id);
+        const inWait       = inWaitMap[n.id] || 0;
+        const dueNow       = dueNowMap[n.id] || 0;
 
-        // Trigger node: always completed once journey is active and entries moved past it
-        if (n.type === 'trigger' && !activeSet.has(n.id)) {
-          node_statuses[n.id] = 'completed';
-          return;
-        }
-
-        if (sendingIdx !== -1) {
-          // Active send wave in progress — use leading-edge view
-          if (i === sendingIdx)               node_statuses[n.id] = 'sending';
-          else if (i === waitingIdx)          node_statuses[n.id] = 'waiting';
-          else if (n.type === 'goal')         node_statuses[n.id] = 'monitoring';
-          else if (i < sendingIdx && processedSet.has(n.id)) node_statuses[n.id] = 'completed';
-          else                                node_statuses[n.id] = 'pending';
+        if (n.type === 'trigger') {
+          node_statuses[n.id] = hasActive ? 'running' : 'completed';
+        } else if (n.type === 'goal') {
+          node_statuses[n.id] = hasActive ? 'monitoring' : (wasProcessed ? 'completed' : 'pending');
+        } else if (n.type === 'wait') {
+          node_statuses[n.id] = hasActive ? 'waiting' : (wasProcessed ? 'completed' : 'pending');
         } else {
-          // No action node currently due (sendHour-blocked, between waves, or all done).
-          if (activeSet.has(n.id)) {
-            const inWait = inWaitMap[n.id] || 0;
-            node_statuses[n.id] = (n.type === 'wait' || inWait > 0) ? 'waiting' : 'sending';
-          } else if (n.type === 'goal') {
-            node_statuses[n.id] = 'monitoring';
-          } else if (processedSet.has(n.id)) {
-            node_statuses[n.id] = 'completed';
+          // action node: a node holding active entries is the live step → never 'pending'.
+          // Only show 'waiting' when EVERY active entry is parked in a future window.
+          if (hasActive) {
+            node_statuses[n.id] = (dueNow === 0 && inWait > 0) ? 'waiting' : 'sending';
           } else {
-            node_statuses[n.id] = 'pending';
+            node_statuses[n.id] = wasProcessed ? 'completed' : 'pending';
           }
         }
       });
@@ -968,6 +947,14 @@ class JourneyService {
    * usual conditions behave identically on every node, including after a refresh.
    */
   static async _refreshAddNew(journey, nodeMap) {
+    // DISABLED by default. This per-node "refresh" re-inserted late-joining segment
+    // members into whichever action node was not throttled at that moment, dropping them
+    // mid-sequence with next_fire_at=NOW() → out-of-sequence sends (e.g. Email 5 before
+    // Email 1) and heavy DB churn (it re-ran the full segment query against every action
+    // node each tick — the root cause of the 1.33M-journey outage). The audience is
+    // snapshotted at creation, so this is not needed. Set JOURNEY_PERNODE_REFRESH=true
+    // to re-enable (not recommended for large segments).
+    if (process.env.JOURNEY_PERNODE_REFRESH !== 'true') return;
     if (journey.status !== 'active') return;
     const segq = await this._journeySegmentRows(journey).catch(() => null);
     if (!segq) return;
