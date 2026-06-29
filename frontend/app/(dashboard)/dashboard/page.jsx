@@ -35,7 +35,7 @@ export default function Dashboard() {
   const { businessType } = useBusinessType();
 
   // ── email schedule summary ─────────────────────────────────────────
-  const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null });
+  const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null, conversations: null });
 
   useEffect(() => {
     const btParam = businessType === 'All' ? {} : { businessType };
@@ -45,9 +45,10 @@ export default function Dashboard() {
       getJourneys({ limit: 1 }),
     ]).then(([contacts, campaigns, journeys]) => {
       setQuickStats({
-        contacts:  contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts  ?? null : null,
-        campaigns: campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
-        journeys:  journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
+        contacts:      contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts   ?? null : null,
+        conversations: contacts.status  === 'fulfilled' ? contacts.value?.data?.conversations_7d ?? null : null,
+        campaigns:     campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
+        journeys:      journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
       });
     });
   }, [businessType]);
@@ -150,11 +151,11 @@ export default function Dashboard() {
         </Link>
         <Link href="/segment-activity" className="card kpi no-underline color-inherit">
           <div className="icon-box"><TrendingUp size={18} color="var(--purple)" /></div>
-          {activityLoading
+          {quickStats.conversations === null
             ? <div className="skeleton" style={{ width: 60, height: 28, borderRadius: 6, margin: '4px 0 8px' }} />
-            : <div className="kpi-value kpi-purple">{fmt(totalConverted)}</div>
+            : <div className="kpi-value kpi-purple">{fmt(quickStats.conversations)}</div>
           }
-          <div className="kpi-label">Conversions (7d)</div>
+          <div className="kpi-label">Conversations (7d)</div>
         </Link>
         <Link href="/campaigns" className="card kpi no-underline color-inherit">
           <div className="icon-box"><DollarSign size={18} color="var(--orange)" /></div>
