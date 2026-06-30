@@ -4,7 +4,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 3gb --maxmemory-policy noeviction
+    # 7.6 GB host shared with backend + frontend. Post payload-slim-down the queue
+    # needs only a few hundred MB; cap at 1.5 GB for burst headroom.
+    # Keep noeviction: this Redis holds BullMQ jobs — eviction would drop emails.
+    command: redis-server --maxmemory 1536mb --maxmemory-policy noeviction
+    mem_limit: 1800m
 
   backend:
     build: ./backend
@@ -14,6 +18,11 @@ services:
     env_file: ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379
+      # Backend is the workhorse (API + journey engine + BullMQ workers), so it gets
+      # the bulk of the 7.6 GB host. Cap V8 old-space so it GCs/throws instead of
+      # growing unbounded while enqueuing large broadcasts (prevents host OOM-kill).
+      - NODE_OPTIONS=--max-old-space-size=2560
+    mem_limit: 3072m
     depends_on:
       - redis
     volumes:
@@ -28,5 +37,6 @@ services:
     restart: unless-stopped
     ports:
       - "5176:3000"
+    mem_limit: 1024m
     depends_on:
       - backend

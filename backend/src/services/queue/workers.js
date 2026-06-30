@@ -13,9 +13,9 @@
  *     htmlTemplateId: email_html_templates.id (email channel only — fallback)
  *     name, email, phone,
  *     track:          'indian' | 'rest' | 'all',
- *     edges:          journey edges array (for advancing the entry post-send)
- *     nodes:          minimal node map { id → { id, type, data } } for track-aware edge selection
  *   }
+ * The journey graph (nodes/edges) is NOT in the payload — workers load it once
+ * per journey via getJourneyGraph() and cache it in-process (see below).
  */
 import { Worker } from 'bullmq';
 import { getConnection } from './index.js';
@@ -29,6 +29,33 @@ import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.
 import WelcomeEmailService from '../WelcomeEmailService.js';
 import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+
+// ── Per-journey graph cache ──
+// Workers need the journey's nodes+edges only to advance an entry after a send.
+// We no longer ship the full graph inside every job payload — that bloated Redis
+// (~8 KB × ~1.3M jobs ≈ 6–10 GB, well over the 3 GB cap, causing OOM during big
+// broadcasts). Instead load the graph once per journey and cache it in-process
+// with a short TTL so structural edits still propagate within a minute.
+const _graphCache = new Map(); // journeyId → { at, edges, nodeMap }
+const GRAPH_TTL_MS = 60_000;
+async function getJourneyGraph(journeyId) {
+  const hit = _graphCache.get(journeyId);
+  if (hit && (Date.now() - hit.at) < GRAPH_TTL_MS) return hit;
+  const { rows: [jf] } = await db.query(
+    'SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]
+  );
+  const nodeMap = {};
+  for (const n of (jf?.nodes || [])) nodeMap[n.id] = n;
+  const entry = { at: Date.now(), edges: jf?.edges || [], nodeMap };
+  _graphCache.set(journeyId, entry);
+  return entry;
+}
+// Prefer the graph embedded in legacy in-flight jobs (during a rolling deploy);
+// otherwise load+cache from the DB. New jobs no longer carry edges/nodes.
+async function _resolveGraph(d) {
+  if (d.edges && d.nodes) return { edges: d.edges, nodeMap: d.nodes };
+  return getJourneyGraph(d.journeyId);
+}
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -110,8 +137,7 @@ export function startWorkers() {
            VALUES ($1, $2, 'action_failed', $3, $4)`,
           [d.entryId, d.nodeId, channel, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
         );
-        const edges = d.edges || [];
-        const nodeMap = d.nodes || {};
+        const { edges, nodeMap } = await _resolveGraph(d);
         const outEdge = edges.find(e => e.source === d.nodeId);
         if (outEdge) {
           const nextNode = nodeMap[outEdge.target];
@@ -165,6 +191,8 @@ export function startWorkers() {
 export async function stopWorkers() {
   if (!_workers) return;
   await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
+  // Flush any buffered send-log rows so a graceful restart doesn't lose them.
+  await SendTrackService.flushLogs().catch(() => {});
   _workers = null;
 }
 
@@ -309,16 +337,21 @@ async function processEmail(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'localhost_base_url', baseUrl }, false);
   }
 
-  const logId = await SendTrackService.logSend({
-    unifiedId: d.customerId,
-    email: recipientEmail || d.email || 'unknown',
-    subject,
-    templateLabel: d.nodeId || 'journey',
-    dayNumber: 0,
-    source: 'journey',
-    journeyId: d.journeyId || null,
-    nodeId: d.nodeId || null,
-  });
+  // Batched logging (opt-in): reserve an id without inserting; the row is buffered
+  // after send and flushed in bulk. Default path keeps the one-insert-per-send behavior.
+  const _batchLog = process.env.JOURNEY_LOG_BATCH === 'true';
+  const logId = _batchLog
+    ? await SendTrackService.reserveLogId()
+    : await SendTrackService.logSend({
+        unifiedId: d.customerId,
+        email: recipientEmail || d.email || 'unknown',
+        subject,
+        templateLabel: d.nodeId || 'journey',
+        dayNumber: 0,
+        source: 'journey',
+        journeyId: d.journeyId || null,
+        nodeId: d.nodeId || null,
+      });
 
   const campaignSlug = `j${d.journeyId}_${(d.nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
   let trackedHtml = injectClickTracking(html, {
@@ -344,9 +377,32 @@ async function processEmail(job) {
   // Update send log status
   if (sendResult.success) {
     console.log(`[Worker:email]   ✓ SENT to=${recipientEmail} provider=${sendResult.provider} externalId=${sendResult.externalId} duration=${sendResult.durationMs}ms`);
-    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
   } else {
     console.log(`[Worker:email]   ✗ FAILED to=${recipientEmail} error=${sendResult.error} duration=${sendResult.durationMs}ms`);
+  }
+  if (_batchLog) {
+    // Buffer the FINAL row (one bulk insert for many sends) — skips the separate
+    // 'queued' INSERT + status UPDATE entirely.
+    SendTrackService.bufferLog({
+      id: logId,
+      unifiedId: d.customerId,
+      email: recipientEmail || d.email || 'unknown',
+      subject,
+      templateLabel: d.nodeId || 'journey',
+      dayNumber: 0,
+      source: 'journey',
+      journeyId: d.journeyId || null,
+      nodeId: d.nodeId || null,
+      status: sendResult.success ? 'sent' : 'failed',
+      externalId: sendResult.success ? (sendResult.externalId || null) : null,
+      provider: sendResult.provider || null,
+      durationMs: sendResult.durationMs || null,
+      error: sendResult.success ? null : (sendResult.error || 'send_failed'),
+      sentAt: new Date(),
+    });
+  } else if (sendResult.success) {
+    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
+  } else {
     SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' }).catch(() => {});
   }
 
@@ -492,8 +548,7 @@ async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
     [d.entryId, d.nodeId, eventType, d.channel, JSON.stringify(details || {})]
   );
 
-  const edges = d.edges || [];
-  const nodeMap = d.nodes || {};
+  const { edges, nodeMap } = await _resolveGraph(d);
   const entryTrack = d.track || 'all';
   const matchesTrack = (nodeId) => {
     const n = nodeMap[nodeId];

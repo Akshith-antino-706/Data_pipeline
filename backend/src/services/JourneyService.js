@@ -363,7 +363,22 @@ class JourneyService {
     // pre_existing_unsub = exited as unsubscribed but never received any send from this journey
     //   (bulk-exited on first cron tick because already unsubscribed at enrollment time).
     const [entryStatsRes, unsubLogRes, nodeUnsubLogRes] = await Promise.all([
+      // pre_existing_unsub needs to know which entries ever received a send
+      // (had an 'action_sent' event). The old version ran a correlated EXISTS
+      // per entry (~1.3M sub-lookups on big journeys). Instead, gather the set of
+      // sent entry_ids once (CTE, uses idx_jev_entry_type) and LEFT JOIN — a single
+      // semi-join instead of a million correlated probes.
       db.query(`
+        WITH je AS (
+          SELECT entry_id, status, exit_reason
+          FROM journey_entries
+          WHERE journey_id = $1
+        ),
+        sent AS (
+          SELECT DISTINCT jev.entry_id
+          FROM journey_events jev
+          WHERE jev.journey_id = $1 AND jev.event_type = 'action_sent'
+        )
         SELECT
           COUNT(*) AS total_entries,
           COUNT(*) FILTER (WHERE status = 'snapshot') AS snapshot,
@@ -373,16 +388,9 @@ class JourneyService {
           COUNT(*) FILTER (WHERE status = 'exited') AS exited,
           COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'booked') AS exited_booked,
           COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'unsubscribed') AS exited_unsubscribed,
-          COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'unsubscribed' AND NOT had_send) AS pre_existing_unsub
-        FROM (
-          SELECT je.*,
-            EXISTS (
-              SELECT 1 FROM journey_events jev
-              WHERE jev.entry_id = je.entry_id AND jev.event_type = 'action_sent'
-            ) AS had_send
-          FROM journey_entries je
-          WHERE je.journey_id = $1
-        ) t
+          COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'unsubscribed' AND s.entry_id IS NULL) AS pre_existing_unsub
+        FROM je
+        LEFT JOIN sent s ON s.entry_id = je.entry_id
       `, [journeyId]),
       // Header total: distinct users who unsubscribed from this journey (any source)
       db.query(
@@ -415,8 +423,7 @@ class JourneyService {
     const { rows: nodeAnalytics } = await db.query(`
       SELECT node_id, event_type, channel, COUNT(*) AS event_count
       FROM journey_events je
-      JOIN journey_entries jen ON jen.entry_id = je.entry_id
-      WHERE jen.journey_id = $1
+      WHERE je.journey_id = $1
       GROUP BY node_id, event_type, channel
       ORDER BY node_id
     `, [journeyId]);
@@ -457,8 +464,7 @@ class JourneyService {
       const { rows: processedNodes } = await db.query(
         `SELECT DISTINCT je.node_id
          FROM journey_events je
-         JOIN journey_entries jen ON jen.entry_id = je.entry_id
-         WHERE jen.journey_id = $1
+         WHERE je.journey_id = $1
            AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
         [journeyId]
       );
@@ -512,11 +518,12 @@ class JourneyService {
         }
       });
 
-      // Persist node_statuses to DB so it's available without recomputing
-      await db.query(
+      // Persist node_statuses to DB so other endpoints can read it without recomputing.
+      // Fire-and-forget: this is a GET handler — don't block the response on a write.
+      db.query(
         `UPDATE journey_flows SET node_statuses = $1 WHERE journey_id = $2`,
         [JSON.stringify(node_statuses), journeyId]
-      );
+      ).catch(err => console.warn(`[getById] node_statuses persist failed for ${journeyId}: ${err.message}`));
     }
 
     // Per-node triggered (unique entries) and exited (converted at that node) counts
@@ -525,8 +532,7 @@ class JourneyService {
         COUNT(DISTINCT je.entry_id) AS triggered,
         COUNT(DISTINCT je.entry_id) FILTER (WHERE je.event_type = 'converted') AS exited
       FROM journey_events je
-      JOIN journey_entries jen ON jen.entry_id = je.entry_id
-      WHERE jen.journey_id = $1
+      WHERE je.journey_id = $1
       GROUP BY node_id
     `, [journeyId]);
 
@@ -1770,8 +1776,8 @@ class JourneyService {
           track:             entryTrack,
           autoPaired,
           originalChannel:   rawChannel,
-          edges,
-          nodes:             nodeMap,
+          // NOTE: journey graph (edges/nodes) intentionally NOT included — workers
+          // load it via getJourneyGraph() so a 1.3M-job broadcast doesn't bloat Redis.
           templateVariables:  currentNode.data?.templateVariables || {},
           enqueuedDubaiDate,
           firstActionNodeId,
@@ -2306,8 +2312,7 @@ class JourneyService {
         MIN(je.created_at) AS first_event,
         MAX(je.created_at) AS last_event
       FROM journey_events je
-      JOIN journey_entries jen ON jen.entry_id = je.entry_id
-      WHERE jen.journey_id = $1
+      WHERE je.journey_id = $1
       GROUP BY je.node_id, je.event_type, je.channel
       ORDER BY je.node_id
     `, [journeyId]);
@@ -2616,13 +2621,16 @@ class JourneyService {
     dubaiDate.setUTCHours(targetH, targetM, 0, 0);
 
     // Convert back to UTC
-    let fireAt = new Date(dubaiDate.getTime() - dubaiOffsetMs);
+    const fireAt = new Date(dubaiDate.getTime() - dubaiOffsetMs);
 
-    // If the calculated time is in the past, push forward by one day
-    if (fireAt <= new Date()) {
-      fireAt = new Date(fireAt.getTime() + dayMs);
-    }
-
+    // FIXED-journey rule: an action node scheduled at sendHour fires on its
+    // scheduled DAY at that hour — and is NEVER bumped to the next day.
+    //   • cohort arrives BEFORE sendHour  → fireAt is in the future → waits, fires at sendHour today.
+    //   • cohort arrives AT/AFTER sendHour → fireAt is in the past   → due immediately → sends TODAY.
+    // The previous code added +1 day whenever sendHour had already passed (and even
+    // when the cohort arrived exactly on time, due to `<=`), which was a second source
+    // of the "next-day" drift on top of the processJourney send-hour gate. A past
+    // timestamp is simply due now, so the engine sends on the next tick — same day.
     return fireAt;
   }
 
@@ -2924,10 +2932,9 @@ class JourneyService {
       SELECT je.node_id,
              MIN(je.created_at) AS first_fired_at,
              MAX(je.created_at) AS last_fired_at,
-             COUNT(DISTINCT jen.entry_id) AS entry_count
+             COUNT(DISTINCT je.entry_id) AS entry_count
       FROM journey_events je
-      JOIN journey_entries jen ON jen.entry_id = je.entry_id
-      WHERE jen.journey_id = $1
+      WHERE je.journey_id = $1
         AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')
       GROUP BY je.node_id
     `, [journeyId]);
