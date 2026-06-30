@@ -1,11 +1,92 @@
 import db from '../config/database.js';
 
+// ── Buffered batch insert (opt-in via JOURNEY_LOG_BATCH=true) ──
+// High-volume journey sends do one INSERT per email (+ index writes per row).
+// To cut that load, the worker can: reserveLogId() — an id from a pre-fetched
+// sequence block (no per-row DB round-trip) — then bufferLog() the FINAL row and
+// let a timer batch-insert up to _FLUSH_MAX rows in ONE statement. Opens/clicks
+// (UPDATE by id) arrive minutes later, long after the ~1s flush, so the row
+// exists by then. Trade-off: rows buffered when the process is hard-killed are
+// lost (the email already sent) — bounded to <_FLUSH_MS of rows.
+const _ID_BLOCK  = parseInt(process.env.JOURNEY_LOG_ID_BLOCK  || '1000');
+const _FLUSH_MAX = parseInt(process.env.JOURNEY_LOG_FLUSH_MAX || '500');
+const _FLUSH_MS  = parseInt(process.env.JOURNEY_LOG_FLUSH_MS  || '1000');
+let _idPool = [];
+const _logBuffer = [];
+let _flushTimer = null;
+
 /**
  * Tracks email sends from test-send routes.
  *
  * Lifecycle: logSend() → markSent()/markFailed() → markOpened() → markClicked()
  */
 export class SendTrackService {
+
+  /**
+   * Reserve a pre-allocated id (no INSERT). Ids come from sequence blocks so the
+   * worker can build tracking URLs before sending without a per-row DB round-trip.
+   */
+  static async reserveLogId() {
+    if (_idPool.length === 0) {
+      const { rows } = await db.query(
+        `SELECT nextval('email_send_log_id_seq')::bigint AS id FROM generate_series(1, $1)`,
+        [_ID_BLOCK]
+      );
+      _idPool = rows.map(r => Number(r.id));
+    }
+    return _idPool.shift();
+  }
+
+  /**
+   * Queue a fully-formed send-log row for batched insert. Flushes when the buffer
+   * hits _FLUSH_MAX or after _FLUSH_MS, whichever comes first.
+   */
+  static bufferLog(rec) {
+    _logBuffer.push(rec);
+    if (_logBuffer.length >= _FLUSH_MAX) {
+      SendTrackService.flushLogs().catch(err => console.error('[SendTrack] flush error:', err.message));
+    } else if (!_flushTimer) {
+      _flushTimer = setTimeout(() => {
+        _flushTimer = null;
+        SendTrackService.flushLogs().catch(err => console.error('[SendTrack] flush error:', err.message));
+      }, _FLUSH_MS);
+    }
+  }
+
+  /**
+   * Insert all buffered rows in a single multi-row INSERT. Safe to call anytime
+   * (e.g. on graceful shutdown).
+   */
+  static async flushLogs() {
+    if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+    if (_logBuffer.length === 0) return;
+    const batch = _logBuffer.splice(0, _logBuffer.length);
+    const cols = ['id','unified_id','email','contact_name','subject','template_label',
+                  'day_number','source','journey_id','node_id','status','external_id',
+                  'provider','duration_ms','error_message','sent_at'];
+    const tuples = [];
+    const params = [];
+    let p = 1;
+    for (const r of batch) {
+      tuples.push(`(${cols.map((_, i) => `$${p + i}`).join(',')})`);
+      params.push(
+        r.id, r.unifiedId ?? null, r.email, r.contactName ?? null, r.subject ?? null,
+        r.templateLabel ?? null, r.dayNumber ?? null, r.source || 'journey',
+        r.journeyId ?? null, r.nodeId ?? null, r.status || 'sent', r.externalId ?? null,
+        r.provider ?? null, r.durationMs ?? null, r.error ?? null, r.sentAt || new Date()
+      );
+      p += cols.length;
+    }
+    try {
+      await db.query(
+        `INSERT INTO email_send_log (${cols.join(',')}) VALUES ${tuples.join(',')}
+         ON CONFLICT (id) DO NOTHING`,
+        params
+      );
+    } catch (err) {
+      console.error(`[SendTrack] batch insert of ${batch.length} rows failed: ${err.message}`);
+    }
+  }
 
   /**
    * Reserve a log row before sending (returns id for pixel injection).

@@ -2,7 +2,32 @@ import { Router } from 'express';
 import JourneyService from '../services/JourneyService.js';
 import ConversionDetector from '../services/ConversionDetector.js';
 import { queueCounts } from '../services/queue/index.js';
+import { cached, del as cacheDel } from '../config/cache.js';
 const router = Router();
+
+// ── Journey-detail cache (Phase 0) ──
+// GET /:id and /:id/timeline run heavy aggregations over millions of
+// journey_entries / journey_events rows. The dashboard polls them every ~30s
+// (often from several tabs at once), so we cache the computed result briefly
+// and invalidate on any successful mutation to /:id*.
+const JOURNEY_DETAIL_TTL = 30; // seconds
+const detailKey   = id => `journey:detail:${id}`;
+const timelineKey = id => `journey:timeline:${id}`;
+function invalidateJourney(id) {
+  return cacheDel(detailKey(id), timelineKey(id)).catch(() => {});
+}
+
+// Invalidate the cached detail/timeline after any successful write to /:id*
+router.use('/:id', (req, _res, next) => {
+  if (req.method === 'GET') return next();
+  const id = parseInt(req.params.id);
+  if (!Number.isNaN(id)) {
+    _res.on('finish', () => {
+      if (_res.statusCode < 400) invalidateJourney(id);
+    });
+  }
+  next();
+});
 
 // List journeys (supports ?audience=indian|rest|all)
 router.get('/', async (req, res, next) => {
@@ -243,10 +268,11 @@ router.post('/:id/reset-fire-times', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Get journey detail
+// Get journey detail (cached ~30s; invalidated on mutation)
 router.get('/:id', async (req, res, next) => {
   try {
-    const data = await JourneyService.getById(parseInt(req.params.id));
+    const id = parseInt(req.params.id);
+    const data = await cached(detailKey(id), () => JourneyService.getById(id), JOURNEY_DETAIL_TTL);
     if (!data) return res.status(404).json({ error: 'Journey not found' });
     res.json({ data });
   } catch (err) { next(err); }
@@ -434,10 +460,11 @@ router.get('/:id/entries', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Per-node predicted trigger timeline
+// Per-node predicted trigger timeline (cached ~30s; invalidated on mutation)
 router.get('/:id/timeline', async (req, res, next) => {
   try {
-    const data = await JourneyService.getJourneyTimeline(parseInt(req.params.id));
+    const id = parseInt(req.params.id);
+    const data = await cached(timelineKey(id), () => JourneyService.getJourneyTimeline(id), JOURNEY_DETAIL_TTL);
     res.json({ data });
   } catch (err) { next(err); }
 });

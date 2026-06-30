@@ -4,7 +4,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 3gb --maxmemory-policy noeviction
+    # 4 GB host shared with backend + frontend. Post payload-slim-down the queue
+    # needs only a few hundred MB, so cap at 1 GB to leave host headroom.
+    # Keep noeviction: this Redis holds BullMQ jobs — eviction would drop emails.
+    command: redis-server --maxmemory 1gb --maxmemory-policy noeviction
+    mem_limit: 1200m
 
   backend:
     build: ./backend
@@ -14,6 +18,10 @@ services:
     env_file: ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379
+      # Cap V8 old-space so the process GCs/throws instead of growing unbounded
+      # while enqueuing large broadcasts (prevents host OOM-kill on the 4 GB box).
+      - NODE_OPTIONS=--max-old-space-size=1024
+    mem_limit: 1536m
     depends_on:
       - redis
     volumes:
@@ -28,5 +36,6 @@ services:
     restart: unless-stopped
     ports:
       - "5176:3000"
+    mem_limit: 768m
     depends_on:
       - backend

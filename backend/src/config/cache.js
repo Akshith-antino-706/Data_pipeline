@@ -44,6 +44,19 @@ export async function cached(key, computeFn, ttl = DEFAULT_TTL) {
 }
 
 /**
+ * Delete exact cache keys (no KEYS scan — safe on a shared Redis).
+ */
+export async function del(...keys) {
+  const redis = getRedis();
+  if (!redis || keys.length === 0) return;
+  try {
+    await redis.del(...keys.map(k => PREFIX + k));
+  } catch (err) {
+    console.warn('[Cache] del error:', err.message);
+  }
+}
+
+/**
  * Invalidate cached keys by pattern (e.g., 'dashboard:*')
  */
 export async function invalidate(pattern) {
@@ -82,4 +95,4 @@ export async function flushAll() {
   }
 }
 
-export default { cached, invalidate, flushAll };
+export default { cached, del, invalidate, flushAll };

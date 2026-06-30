@@ -603,10 +603,17 @@ app.use((err, _req, res, _next) => {
 // ── Graceful shutdown ───────────────────────────────────────
 function shutdown(signal) {
   console.log(`\n${signal} received. Shutting down gracefully...`);
-  pool.end().then(() => {
-    console.log('Database pool closed.');
-    process.exit(0);
-  }).catch(() => process.exit(1));
+  // Flush any buffered email_send_log rows before the pool closes (no-op unless
+  // JOURNEY_LOG_BATCH is enabled).
+  import('./src/services/SendTrackService.js')
+    .then(({ SendTrackService }) => SendTrackService.flushLogs())
+    .catch(() => {})
+    .finally(() => {
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      }).catch(() => process.exit(1));
+    });
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
