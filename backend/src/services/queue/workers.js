@@ -29,6 +29,7 @@ import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.
 import WelcomeEmailService from '../WelcomeEmailService.js';
 import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import { reserveSend, releaseSend } from '../../utils/emailFrequencyCap.js';
 
 // ── Per-journey graph cache ──
 // Workers need the journey's nodes+edges only to advance an entry after a send.
@@ -337,6 +338,15 @@ async function processEmail(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'localhost_base_url', baseUrl }, false);
   }
 
+  // ── Frequency cap: max N emails / 24h per recipient (Redis INCR, no DB load) ──
+  // Reserve a slot right before sending. If over the cap, skip this email and advance
+  // the journey (the contact simply doesn't get this one).
+  const _cap = await reserveSend({ unifiedId: d.customerId, email: recipientEmail });
+  if (!_cap.allowed) {
+    console.log(`[Worker:email] FREQUENCY CAPPED — entry=${d.entryId} customer=${d.customerId} count=${_cap.count}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'frequency_capped', count: _cap.count }, false);
+  }
+
   // Batched logging (opt-in): reserve an id without inserting; the row is buffered
   // after send and flushed in bulk. Default path keeps the one-insert-per-send behavior.
   const _batchLog = process.env.JOURNEY_LOG_BATCH === 'true';
@@ -407,6 +417,9 @@ async function processEmail(job) {
   }
 
   if (!sendResult.success) {
+    // The send didn't go out — release the reserved frequency-cap slot so this
+    // failed attempt doesn't count against the recipient's 24h limit.
+    releaseSend({ unifiedId: d.customerId, email: recipientEmail });
     // Log the failure but do NOT advance the entry — let BullMQ retry.
     // Only advance after all retries are exhausted (handled by the failed event below).
     await db.query(

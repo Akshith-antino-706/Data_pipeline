@@ -8,6 +8,7 @@ import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 import { renderTemplate } from '../utils/placeholderResolver.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
+import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
@@ -245,6 +246,18 @@ class GtmJourneyService {
     let subject = renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
 
     const recipientEmail = c.email;
+
+    // Frequency cap (max N / 24h per recipient) — skip + advance if over the limit.
+    const _cap = await reserveSend({ unifiedId: c.id, email: recipientEmail });
+    if (!_cap.allowed) {
+      console.log(`[GtmJourney ${journeyId}] FREQUENCY CAPPED uid=${c.id} count=${_cap.count} — skip + advance`);
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+      }
+      return;
+    }
+
     const logId = await SendTrackService.logSend({
       unifiedId: c.id, email: recipientEmail, contactName: c.name, subject,
       templateLabel: `GTM Journey ${journeyId}`, source: 'gtm_journey', journeyId, nodeId,
@@ -275,6 +288,7 @@ class GtmJourneyService {
         }
       } catch (e) { console.error(`[GtmJourney ${journeyId}] advance failed: ${e.message}`); }
     } else {
+      releaseSend({ unifiedId: c.id, email: recipientEmail }); // failed send doesn't consume a slot
       await SendTrackService.markFailed(logId, { error: res?.error || 'unknown', provider: res?.provider || null, durationMs: ms }).catch(() => {});
       throw new Error(res?.error || 'gtm journey send failed'); // let BullMQ retry
     }

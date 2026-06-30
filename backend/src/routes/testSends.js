@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import db from '../config/database.js';
 import { SendTrackService } from '../services/SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
+import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -148,6 +149,13 @@ function leftoversCheck(html) {
 async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabel, dayNumber, source = 'test-send', journeyId, nodeId }) {
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 
+  // Frequency cap (max N / 24h per recipient) — skip if over the limit.
+  const _cap = await reserveSend({ unifiedId: recipient.unified_id, email: recipient.email });
+  if (!_cap.allowed) {
+    console.log(`[SendQueue] FREQUENCY CAPPED → ${recipient.email} count=${_cap.count} — skipped`);
+    return { email: recipient.email, unifiedId: recipient.unified_id, sendLogId: null, success: false, externalId: null, error: 'frequency_capped', ms: 0 };
+  }
+
   const logId = await SendTrackService.logSend({
     unifiedId:     recipient.unified_id,
     email:         recipient.email,
@@ -184,6 +192,7 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
     console.log(`[SendQueue] SENT    Day${dayNumber} → ${recipient.email} (log#${logId}, ${ms}ms, provider:${result.provider || '?'})`);
     SendTrackService.markSent(logId, { externalId: result.externalId || null, provider: result.provider || null, durationMs: ms }).catch(() => {});
   } else {
+    releaseSend({ unifiedId: recipient.unified_id, email: recipient.email }); // failed send doesn't consume a slot
     console.log(`[SendQueue] FAILED  Day${dayNumber} → ${recipient.email} (log#${logId}) — ${result?.error || result?.reason || 'unknown'}`);
     SendTrackService.markFailed(logId, { error: result?.error || result?.reason || 'unknown', provider: result?.provider || null, durationMs: ms }).catch(() => {});
   }
