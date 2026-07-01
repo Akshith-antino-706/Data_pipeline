@@ -724,6 +724,20 @@ cron.schedule('30 3 * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Chats sync scheduled at 3:30 AM Dubai time');
 
+// ── PhpAdmin weekly sync — pull new MySQL contacts into unified_contacts ──
+// Sundays 05:00 Dubai. Incremental (uses sync_metadata.last_synced_at watermark)
+// so subsequent runs only scan MySQL rows created since the last successful run.
+cron.schedule('0 5 * * 0', async () => {
+  try {
+    const { runPhpAdminSync } = await import('./src/services/PhpAdminWeeklySync.js');
+    const summary = await runPhpAdminSync({ triggeredBy: 'cron' });
+    console.log(`[Cron:PhpAdminWeekly] Done — fetched=${summary.mysqlRowsFetched} new=${summary.newlyInserted} status=${summary.status} in ${summary.durationMs}ms`);
+  } catch (err) {
+    console.error('[Cron:PhpAdminWeekly] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] PhpAdmin weekly sync scheduled: Sundays 05:00 Asia/Dubai');
+
 // ── Journey Engine — process due entries every 5 min ──────────────
 cron.schedule('*/5 * * * *', async () => {
   try {
