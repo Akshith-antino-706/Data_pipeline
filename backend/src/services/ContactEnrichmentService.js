@@ -70,6 +70,7 @@ export default class ContactEnrichmentService {
 
   static async _enrich({ onlyNew = true } = {}) {
     const start = Date.now();
+    const startedAt = new Date();
     let totalProcessed = 0;
     let emailsValidated = 0;
     let emailsFixed = 0;
@@ -79,6 +80,10 @@ export default class ContactEnrichmentService {
     let offset = 0;
 
     console.log(`[Enrichment] Starting ${onlyNew ? 'incremental' : 'full'} enrichment...`);
+
+    // Wrap the whole body so any failure still writes an 'error' row to
+    // sync_metadata (otherwise /data-pipeline shows stale success indefinitely).
+    try {
 
     while (true) {
       // Fetch batch of un-enriched contacts
@@ -156,10 +161,41 @@ export default class ContactEnrichmentService {
       if (contacts.length < BATCH_SIZE) break;
     }
 
-    const durationMs = Date.now() - start;
-    const result = { totalProcessed, emailsValidated, emailsFixed, emailsMarkedInvalid, mobilesFormatted, mobilesMarkedInvalid, durationMs };
-    console.log(`[Enrichment] Done in ${(durationMs / 1000).toFixed(1)}s —`, JSON.stringify(result));
-    return result;
+      const durationMs = Date.now() - start;
+      const result = { totalProcessed, emailsValidated, emailsFixed, emailsMarkedInvalid, mobilesFormatted, mobilesMarkedInvalid, durationMs };
+      console.log(`[Enrichment] Done in ${(durationMs / 1000).toFixed(1)}s —`, JSON.stringify(result));
+
+      // Record success in sync_metadata so /data-pipeline shows last-run info.
+      await db.query(`
+        INSERT INTO sync_metadata (table_name, last_synced_at, rows_synced, sync_status, error_message, sync_duration_ms, updated_at)
+        VALUES ('contact_enrichment', $1, $2, 'success', NULL, $3, NOW())
+        ON CONFLICT (table_name) DO UPDATE SET
+          last_synced_at   = EXCLUDED.last_synced_at,
+          rows_synced      = EXCLUDED.rows_synced,
+          sync_status      = 'success',
+          error_message    = NULL,
+          sync_duration_ms = EXCLUDED.sync_duration_ms,
+          updated_at       = NOW()
+      `, [startedAt, totalProcessed, durationMs]).catch(err =>
+        console.warn('[Enrichment] sync_metadata write failed:', err.message)
+      );
+
+      return result;
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      console.error(`[Enrichment] Failed after ${(durationMs / 1000).toFixed(1)}s:`, err.message);
+      await db.query(`
+        INSERT INTO sync_metadata (table_name, last_synced_at, rows_synced, sync_status, error_message, sync_duration_ms, updated_at)
+        VALUES ('contact_enrichment', $1, $2, 'error', $3, $4, NOW())
+        ON CONFLICT (table_name) DO UPDATE SET
+          rows_synced      = EXCLUDED.rows_synced,
+          sync_status      = 'error',
+          error_message    = EXCLUDED.error_message,
+          sync_duration_ms = EXCLUDED.sync_duration_ms,
+          updated_at       = NOW()
+      `, [startedAt, totalProcessed, err.message.slice(0, 500), durationMs]).catch(() => {});
+      throw err;
+    }
   }
 
   // ── Email enrichment ──────────────────────────────────────────
