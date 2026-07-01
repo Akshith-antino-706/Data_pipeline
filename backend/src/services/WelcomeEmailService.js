@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SendTrackService } from './SendTrackService.js';
+import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
@@ -90,6 +91,13 @@ class WelcomeEmailService {
 
     const { subject, html } = this._template(c, eventInfo);
 
+    // Frequency cap (max N / 24h per recipient) — skip if over the limit.
+    const _cap = await reserveSend({ unifiedId: c.id, email: c.email });
+    if (!_cap.allowed) {
+      console.log(`[Welcome] FREQUENCY CAPPED uid=${c.id} count=${_cap.count} — skip`);
+      return;
+    }
+
     // Log the attempt to email_send_log (source='gtm_welcome') for visibility
     const logId = await SendTrackService.logSend({
       unifiedId: c.id, email: c.email, subject, templateLabel: 'GTM Welcome', source: 'gtm_welcome',
@@ -104,6 +112,7 @@ class WelcomeEmailService {
       await SendTrackService.markSent(logId, { externalId: result.externalId || null, provider: result.provider || null, durationMs: ms }).catch(() => {});
       console.log(`[Welcome] ✓ sent to ${c.email} (uid=${unifiedId}, trigger: ${triggerEvent}, log#${logId})`);
     } else {
+      releaseSend({ unifiedId: c.id, email: c.email }); // failed send doesn't consume a slot
       await SendTrackService.markFailed(logId, { error: result?.error || 'unknown', provider: result?.provider || null, durationMs: ms }).catch(() => {});
       console.log(`[Welcome] ✗ send failed to ${c.email}: ${result?.error || 'unknown'}`);
     }

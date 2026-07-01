@@ -132,8 +132,8 @@ router.get('/segment-customers/download', async (req, res, next) => {
 // GET /api/v3/unified-contacts/segmentation-tree — 3-step decision tree dashboard data
 router.get('/segmentation-tree', async (req, res, next) => {
   try {
-    const { businessType, dateFrom, dateTo } = req.query;
-    const data = await UnifiedContactService.getSegmentationTree({ businessType, dateFrom, dateTo });
+    const { businessType, dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product } = req.query;
+    const data = await UnifiedContactService.getSegmentationTree({ businessType, dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });

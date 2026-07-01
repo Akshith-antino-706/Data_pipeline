@@ -364,8 +364,15 @@ export default class UnifiedContactService {
    * job in server.js. On first deploy (table empty), the fallback triggers a
    * live compute and auto-populates the table so subsequent requests are fast.
    */
-  static async getSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
-    // Date-filtered: live compute + short Redis TTL (same as before)
+  static async getSegmentationTree({ businessType, dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product } = {}) {
+    // Filtered revenue-by-segment: travel-date window AND/OR booking-date window AND/OR product.
+    const hasProduct = product && product !== 'all';
+    if (travelFrom || travelTo || bookingFrom || bookingTo || hasProduct) {
+      const cacheKey = `dashboard:tree:travel:${businessType || 'all'}:${travelFrom || ''}:${travelTo || ''}:${bookingFrom || ''}:${bookingTo || ''}:${product || 'all'}`;
+      return cached(cacheKey, () => this._computeRevenueByTravelWindow({ businessType, travelFrom, travelTo, bookingFrom, bookingTo, product }), 1800);
+    }
+
+    // Date-filtered (booking/bill date): live compute + short Redis TTL (same as before)
     if (dateFrom || dateTo) {
       const cacheKey = `dashboard:tree:${businessType || 'all'}:${dateFrom || ''}:${dateTo || ''}`;
       return cached(cacheKey, () => this._computeSegmentationTree({ businessType, dateFrom, dateTo }), 1800);
@@ -483,6 +490,66 @@ export default class UnifiedContactService {
     await invalidate('dashboard:tree:snapshot:*');
     console.log('[Snapshot] Nightly refresh complete — Redis invalidated');
     return { refreshed: ['B2C', 'B2B', 'All'], at: new Date().toISOString() };
+  }
+
+  /**
+   * Revenue-by-segment with optional filters (all AND-combined), per booking_status:
+   *   • travelFrom/travelTo  → bookings whose travel_date falls in the window
+   *   • bookingFrom/bookingTo → bookings whose bill_date (booking date) falls in the window
+   *   • product               → restrict to one booking table
+   * Returns, per segment, the count of distinct customers with a matching booking and
+   * the total revenue of those bookings.
+   */
+  static async _computeRevenueByTravelWindow({ businessType, travelFrom, travelTo, bookingFrom, bookingTo, product } = {}) {
+    const isDate = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    const clauses = [];
+    // Travel-date window (travel_date is TEXT — guard the regex before casting)
+    if (isDate(travelFrom)) clauses.push(`b.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND b.travel_date::date >= '${travelFrom}'`);
+    if (isDate(travelTo))   clauses.push(`b.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND b.travel_date::date <= '${travelTo}'`);
+    // Booking-date window (booking_date is TEXT in DD/MM/YYYY — parse via to_date)
+    if (isDate(bookingFrom)) clauses.push(`b.booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' AND to_date(b.booking_date,'DD/MM/YYYY') >= '${bookingFrom}'`);
+    if (isDate(bookingTo))   clauses.push(`b.booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' AND to_date(b.booking_date,'DD/MM/YYYY') <= '${bookingTo}'`);
+    const filterAnd = clauses.length ? ' AND ' + clauses.join(' AND ') : '';
+    const btAnd = businessType ? ` AND uc.contact_type = '${businessType}'` : '';
+
+    // Optional product filter: restrict to one booking table (else union all six).
+    const PRODUCT_TABLES = {
+      tours: 'rayna_tours', packages: 'rayna_packages', hotels: 'rayna_hotels',
+      visas: 'rayna_visas', others: 'rayna_others', flights: 'rayna_flights',
+    };
+    const TABLES = (product && PRODUCT_TABLES[product]) ? [PRODUCT_TABLES[product]] : Object.values(PRODUCT_TABLES);
+    const bookingUnion = TABLES.map(t =>
+      `SELECT unified_id, travel_date, booking_date, selling_price FROM ${t}
+       WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
+    ).join(' UNION ALL ');
+
+    const { rows: statusCounts } = await pool.query(`
+      SELECT uc.booking_status,
+             COUNT(DISTINCT uc.id)::int AS count,
+             COUNT(DISTINCT uc.id) FILTER (WHERE uc.is_indian = true)::int AS indian_count,
+             COALESCE(SUM(b.selling_price), 0)::numeric AS revenue
+      FROM unified_contacts uc
+      JOIN ( ${bookingUnion} ) b ON b.unified_id = uc.id
+      WHERE 1=1 ${btAnd} ${filterAnd}
+      GROUP BY uc.booking_status
+      ORDER BY CASE uc.booking_status
+        WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
+        WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 ELSE 6 END
+    `);
+
+    statusCounts.forEach(r => { r.revenue = parseFloat(r.revenue) || 0; });
+    const totalRevenue = statusCounts.reduce((s, r) => s + r.revenue, 0);
+
+    return {
+      totals: { total_revenue: totalRevenue, travel_filtered: true, travelFrom: travelFrom || null, travelTo: travelTo || null },
+      statusCounts,
+      breakdown: [],
+      revenueByType: {
+        label: `Travel ${travelFrom || '…'} → ${travelTo || '…'}`,
+        sources: [],
+        total: totalRevenue,
+      },
+    };
   }
 
   static async _computeSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
