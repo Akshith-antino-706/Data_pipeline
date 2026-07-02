@@ -446,7 +446,7 @@ router.post('/:id/enroll', async (req, res, next) => {
 // Process journey (advance customers through nodes)
 router.post('/:id/process', async (req, res, next) => {
   try {
-    const data = await JourneyService.processJourney(parseInt(req.params.id), { maxBatch: parseInt(req.query.batch) || null });
+    const data = await JourneyService.processJourney(parseInt(req.params.id), parseInt(req.query.batch) || 100);
     res.json({ data });
   } catch (err) { next(err); }
 });

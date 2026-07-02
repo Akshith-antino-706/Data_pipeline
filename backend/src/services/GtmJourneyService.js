@@ -226,27 +226,12 @@ class GtmJourneyService {
     const templateId = actionNode?.data?.emailTemplateId ?? actionNode?.data?.templateId ?? null;
 
     let tplBody = null, tplSubject = null;
-
-    // Day 1–7 templates are SERVER-RENDERED (visa cards, cruise grid, eVisa rows, …).
-    // Route them through the same frozen node-email path normal journeys use, so the
-    // dedicated renderer (Day3VisaRenderer, etc.) builds the real HTML. Without this,
-    // the generic placeholder fill below just ships the raw stub file.
-    let dayRendered = null;
     if (templateId) {
-      try {
-        const { getOrGenerateNodeEmail } = await import('./JourneyService.js');
-        dayRendered = await getOrGenerateNodeEmail({ journeyId, nodeId, templateId: parseInt(templateId) });
-      } catch (e) { console.warn(`[GtmJourney ${journeyId}] day-render failed for tpl=${templateId}: ${e.message}`); }
-    }
-
-    if (dayRendered?.html) {
-      tplBody = dayRendered.html;
-      tplSubject = dayRendered.subject;
-    } else if (templateId) {
-      // Non-Day (generic GTM/event) template: raw body from content_templates / html templates.
       const { rows: [t] } = await db.query('SELECT subject, body, html_template_id FROM content_templates WHERE id = $1', [parseInt(templateId)]).catch(() => ({ rows: [] }));
       if (t?.body) tplBody = t.body;
       if (t?.subject) tplSubject = t.subject;
+      // The HTML for most templates lives in the linked email_html_templates row
+      // (content_templates.body is often empty). Use that when there's no inline body.
       if (!tplBody && t?.html_template_id) {
         const { rows: [h] } = await db.query('SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [t.html_template_id]).catch(() => ({ rows: [] }));
         if (h?.html_body) tplBody = h.html_body;
@@ -255,10 +240,10 @@ class GtmJourneyService {
     }
     if (!tplBody) { tplBody = fs.readFileSync(DEFAULT_TEMPLATE_PATH, 'utf8'); console.warn(`[GtmJourney ${journeyId}] node template ${templateId} has no HTML — using default welcome template`); }
 
-    // Day-rendered HTML is already final; only generic templates get the placeholder fill.
+    // Universal placeholder fill — body AND subject (subjects may contain keys too).
     const ctx = { contact: c, event: eventRow, payload: eventRow.raw_payload || {} };
-    let html = dayRendered?.html ? tplBody : renderTemplate(tplBody, ctx);
-    let subject = dayRendered?.html ? (tplSubject || 'Rayna Tours') : renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
+    let html = renderTemplate(tplBody, ctx);
+    let subject = renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
 
     const recipientEmail = c.email;
 
