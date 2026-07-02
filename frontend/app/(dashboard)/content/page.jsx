@@ -1002,15 +1002,15 @@ export default function Content() {
                       const c = known ? (isInbox ? '#16a34a' : '#ef4444') : '#3b82f6';
                       return (
                         <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: c + '14', border: `1px solid ${c}40` }}>
-                          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>📬 Spam Check (real — rocky's inbox)</div>
+                          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>📬 Spam Check </div>
                           {placementLoading && !known ? (
                             <div style={{ fontSize: 13, color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Delivering & checking rocky's Gmail… (~15-40s)
+                              <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Delivering & checking Gmail… (~15-40s)
                             </div>
                           ) : known ? (
                             <div>
                               <div style={{ fontSize: 16, fontWeight: 800, color: c }}>{isInbox ? 'INBOX ✅ — not spam' : 'SPAM ❌'}</div>
-                              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>Verified in rocky.86agency@gmail.com via IMAP{placement.foundAt ? ` · ${new Date(placement.foundAt).toLocaleString()}` : ''}</div>
+                              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>Verified in via IMAP{placement.foundAt ? ` · ${new Date(placement.foundAt).toLocaleString()}` : ''}</div>
                             </div>
                           ) : (
                             <div>
