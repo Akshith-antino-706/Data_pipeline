@@ -1471,7 +1471,7 @@ class JourneyService {
    * - Respects wait node delays
    * - Logs action events with templateId for actual sending
    */
-  static async processJourney(journeyId) {
+  static async processJourney(journeyId, { maxBatch = null } = {}) {
     const { rows: [journey] } = await db.query(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
@@ -1623,6 +1623,10 @@ class JourneyService {
     let firstEntry = true;
 
     while (hasMore) {
+      // Bounded per-tick work: cap the fetch so this journey takes only its fair
+      // share of the tick (round-robin fairness). maxBatch=null → unbounded (legacy callers).
+      const _lim = maxBatch ? Math.min(FETCH_BATCH, maxBatch - offset) : FETCH_BATCH;
+      if (_lim <= 0) { hasMore = false; break; }
       const { rows: activeEntries } = await db.query(`
         SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
           uc.booking_status, uc.email_unsubscribe, uc.is_indian
@@ -1632,7 +1636,7 @@ class JourneyService {
           AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
         ORDER BY je.entry_id
         LIMIT $2 OFFSET $3
-      `, [journeyId, FETCH_BATCH, offset]);
+      `, [journeyId, _lim, offset]);
 
       if (activeEntries.length === 0) { hasMore = false; break; }
 
@@ -1977,7 +1981,8 @@ class JourneyService {
     }
 
     offset += activeEntries.length;
-    if (activeEntries.length < FETCH_BATCH) hasMore = false;
+    if (activeEntries.length < _lim) hasMore = false;
+    if (maxBatch && offset >= maxBatch) hasMore = false;   // fair-share cap reached
     } // end while (hasMore)
 
     // Update journey stats
@@ -2794,79 +2799,66 @@ class JourneyService {
    * next_fire_at <= NOW().
    */
   static async processDueEntries() {
-    const { rows: dueEntries } = await db.query(`
-      SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id,
-             je.entered_at, je.track, je.last_run_id,
-             uc.booking_status, uc.name, uc.email, uc.mobile AS phone, uc.is_indian,
-             uc.segments AS current_segment,
-             jf.nodes, jf.edges, jf.segment_id, jf.exit_on_conversion,
-             sd.segment_name AS journey_segment
-      FROM journey_entries je
-      JOIN journey_flows jf ON jf.journey_id = je.journey_id
-      JOIN unified_contacts uc ON uc.id = je.customer_id
-      LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
-      WHERE je.status = 'active'
-        AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
-        AND jf.status = 'active'
-        AND COALESCE(jf.journey_type, 'normal') <> 'gtm'   -- gtm journeys are event-triggered, not engine-processed
-      ORDER BY je.next_fire_at
-      LIMIT 500
-    `);
+    // ── Re-entrancy lock: never let two engine ticks overlap (double-send guard) ──
+    // In-process flag is sufficient because only ONE engine process runs this cron.
+    if (JourneyService._engineRunning) {
+      console.log('[DueEntries] previous tick still running — skipping this one');
+      return { processed: 0, enqueued: 0, journeys: 0, skipped: 'locked' };
+    }
+    JourneyService._engineRunning = true;
+    try {
+      // 1. FAIR SELECTION — every active non-gtm journey that has due entries.
+      //    (Not a 500-row sample: a large journey can no longer crowd others out,
+      //     which is what starved J245 behind J242.)
+      const { rows: dueJourneys } = await db.query(`
+        SELECT je.journey_id
+        FROM journey_entries je
+        JOIN journey_flows jf ON jf.journey_id = je.journey_id
+        WHERE je.status = 'active'
+          AND (je.next_fire_at IS NULL OR je.next_fire_at <= NOW())
+          AND jf.status = 'active'
+          AND COALESCE(jf.journey_type, 'normal') <> 'gtm'   -- gtm = event-driven, handled elsewhere
+        GROUP BY je.journey_id
+      `);
+      if (dueJourneys.length === 0) return { processed: 0, enqueued: 0, journeys: 0 };
 
-    if (dueEntries.length === 0) return { processed: 0, sent: 0, converted: 0, completed: 0 };
+      let ids = dueJourneys.map(r => r.journey_id);
 
-    let processed = 0, sent = 0, converted = 0, completed = 0;
+      // 2. Cross-tick rotation — rotate the start index so the same journey isn't
+      //    always processed first when concurrency < journey count.
+      const rot = (JourneyService._rrIndex || 0) % ids.length;
+      ids = ids.slice(rot).concat(ids.slice(0, rot));
+      JourneyService._rrIndex = ((JourneyService._rrIndex || 0) + 1) % 1_000_000;
 
-    for (const entry of dueEntries) {
-      try {
-        // 1. Check conversion — exit if booking_status changed (skip for awareness journeys)
-        if (entry.exit_on_conversion !== false) {
-          const conv = await this.checkConversion(entry);
-          if (conv.converted) {
-            await db.query(`
-              UPDATE journey_entries
-              SET status = 'converted', converted_at = NOW(), exit_reason = $2,
-                  next_fire_at = NULL, last_conversion_check = NOW()
-              WHERE entry_id = $1
-            `, [entry.entry_id, conv.reason]);
-            await db.query(`
-              INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
-              VALUES ($1, $2, 'converted', NULL, $3)
-            `, [entry.entry_id, entry.current_node_id, JSON.stringify(conv)]);
-            console.log(`[DueEntries] Converted entry ${entry.entry_id} (uid=${entry.customer_id}) → ${conv.reason}`);
-            converted++;
-            processed++;
-            continue;
-          }
+      // 3. Round-robin budget — each journey gets a bounded, fair share of this tick.
+      //    Budget must be >= the worker drain-per-tick so a lone journey isn't throttled.
+      const BUDGET      = parseInt(process.env.ENGINE_TICK_BUDGET || '30000', 10);
+      const CONCURRENCY = parseInt(process.env.ENGINE_JOURNEY_CONCURRENCY || '4', 10);
+      const perJourney  = Math.max(1, Math.floor(BUDGET / ids.length));
+
+      // 4. Process journeys in PARALLEL (bounded concurrency), each capped at its fair
+      //    share. Concurrent enqueue => the shared queue interleaves => parallel sends.
+      let processed = 0, enqueued = 0, converted = 0;
+      for (let i = 0; i < ids.length; i += CONCURRENCY) {
+        const chunk = ids.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(chunk.map(jid =>
+          this.processJourney(jid, { maxBatch: perJourney })
+            .catch(err => { console.error(`[DueEntries] journey ${jid}: ${err.message}`); return null; })
+        ));
+        for (const r of results) {
+          if (!r) continue;
+          processed += r.processed || 0; enqueued += r.enqueued || 0; converted += r.converted || 0;
         }
-
-        // 2. Process the current node — delegate to processJourney for this journey
-        // processJourney handles all node types (action/wait/condition/goal)
-        // and the sendHour gate. After processing, it advances the entry.
-        // We just need to make sure the journey gets processed.
-        // Group by journey and process once per journey.
-        processed++;
-        sent++;
-      } catch (err) {
-        console.error(`[DueEntries] Error processing entry ${entry.entry_id}: ${err.message}`);
       }
+
+      // Recalculate next_fire_at for entries that advanced to a new node this tick.
+      await this._updateNextFireAtForAdvancedEntries();
+
+      console.log(`[DueEntries] journeys=${ids.length} share=${perJourney}/journey processed=${processed} enqueued=${enqueued}`);
+      return { processed, enqueued, converted, journeys: ids.length };
+    } finally {
+      JourneyService._engineRunning = false;
     }
-
-    // Process unique journeys that have due entries
-    const uniqueJourneyIds = [...new Set(dueEntries.map(e => e.journey_id))];
-    for (const journeyId of uniqueJourneyIds) {
-      try {
-        const result = await this.processJourney(journeyId);
-        console.log(`[DueEntries] Journey ${journeyId}: processed=${result.processed}, enqueued=${result.enqueued}, converted=${result.converted}`);
-      } catch (err) {
-        console.error(`[DueEntries] Journey ${journeyId} process error: ${err.message}`);
-      }
-    }
-
-    // After processing, update next_fire_at for entries that advanced to new nodes
-    await this._updateNextFireAtForAdvancedEntries();
-
-    return { processed, sent: uniqueJourneyIds.length, converted, completed };
   }
 
   /**
