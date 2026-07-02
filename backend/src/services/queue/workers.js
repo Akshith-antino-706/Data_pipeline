@@ -604,17 +604,22 @@ async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
 
 async function _checkJourneyCompletion(journeyId) {
   try {
+    // Cheap existence check — short-circuits at the FIRST active row instead of
+    // counting all (potentially millions of) entries. During an active send this
+    // returns instantly, so the per-send completion check costs ~nothing. The old
+    // COUNT(*) over 1.3M rows ran on every send completion and, under concurrent
+    // sends, caused LWLock:BufferMapping thrash that stalled the whole DB.
     const { rows: [r] } = await db.query(
-      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+      `SELECT EXISTS(SELECT 1 FROM journey_entries WHERE journey_id = $1 AND status = 'active') AS has_active`,
       [journeyId]
     );
-    if (parseInt(r.cnt) > 0) return;
+    if (r.has_active) return;
 
     const { rows: [total] } = await db.query(
-      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1`,
+      `SELECT EXISTS(SELECT 1 FROM journey_entries WHERE journey_id = $1) AS has_any`,
       [journeyId]
     );
-    if (parseInt(total.cnt) === 0) return;
+    if (!total.has_any) return;
 
     const { rowCount } = await db.query(
       `UPDATE journey_flows SET status = 'completed', updated_at = NOW()
