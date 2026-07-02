@@ -37,11 +37,26 @@ const ALIASES = {
   event_time:    'EVENT_TIMESTAMP',
   page_url:      'PAGE_URL',
   raw_payload:   'RAW_PAYLOAD',
-  // Product-recommendation block #1 → the item the user actually triggered the event on.
+  // Product-recommendation blocks (rec1/2/3) → the item the user triggered the event on.
   rec1_name:     'ITEM_NAME',
+  rec2_name:     'ITEM_NAME',
+  rec3_name:     'ITEM_NAME',
   rec1_url:      'ITEM_URL',
+  rec2_url:      'ITEM_URL',
+  rec3_url:      'ITEM_URL',
   rec1_now:      'ITEM_PRICE',
-  rec1_image:    'ITEM_IMAGE_URL',
+  rec1_price:    'ITEM_PRICE',
+  rec2_price:    'ITEM_PRICE',
+  rec3_price:    'ITEM_PRICE',
+  rec1_image:      'ITEM_IMAGE_URL',
+  rec1_image_url:  'ITEM_IMAGE_URL',
+  rec2_image_url:  'ITEM_IMAGE_URL',
+  rec3_image_url:  'ITEM_IMAGE_URL',
+  rec1_city:     'DESTINATION_CITY',
+  rec2_city:     'DESTINATION_CITY',
+  rec3_city:     'DESTINATION_CITY',
+  // Add-on CTA → the same service/item URL the user engaged with ("Same Service URL").
+  addon_url:     'ITEM_URL',
   // unsubscribe — real link if you wire one; falls back to the template default otherwise.
   unsubscribe_url: 'UNSUBSCRIBE_URL',
 };
