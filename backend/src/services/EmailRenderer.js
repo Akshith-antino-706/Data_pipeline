@@ -231,7 +231,7 @@ export default class EmailRenderer {
     if (tpl.engine === 'liquid' && unifiedId) {
       try {
         const { rows: [ev] } = await query(
-          `SELECT raw_payload
+          `SELECT raw_payload, page_url
              FROM gtm_events
             WHERE unified_id = $1 AND raw_payload IS NOT NULL
             ORDER BY created_at DESC
@@ -240,10 +240,26 @@ export default class EmailRenderer {
         );
         const p = ev?.raw_payload || {};
         const ecom = (Array.isArray(p.ecommerceData?.items) && p.ecommerceData.items[0]) || {};
+        const itemName  = p.itemName || ecom.item_name || '';
+        const itemUrl   = p.pageUrl || ev?.page_url || '';
+        const itemImage = p.imageUrl || ecom.image_url || '';
+        const destCity  = p.city || ecom.city || '';
+        const rawPrice  = p.eventValue ?? p.ecommerceData?.value ?? ecom.price;
+        const itemPrice = (rawPrice === undefined || rawPrice === null) ? '' : String(rawPrice);
         payloadVars = {
-          destination_city: p.city || ecom.city || '',
+          destination_city: destCity,
           service_type:     p.itemCategory || ecom.item_category || '',
-          product_name:     p.itemName || ecom.item_name || '',
+          product_name:     itemName,
+          // Product-recommendation slots (rec1/2/3) → the item the contact actually
+          // engaged with. Left '' when unknown so the template's own `| default:'…'`
+          // fallback still renders (liquidjs treats '' as empty for the default filter).
+          rec1_name: itemName,      rec2_name: itemName,      rec3_name: itemName,
+          rec1_url:  itemUrl,       rec2_url:  itemUrl,       rec3_url:  itemUrl,
+          rec1_price: itemPrice,    rec2_price: itemPrice,    rec3_price: itemPrice,
+          rec1_image_url: itemImage, rec2_image_url: itemImage, rec3_image_url: itemImage,
+          rec1_city: destCity,      rec2_city: destCity,      rec3_city: destCity,
+          // "Same service URL" — the add-on CTA points at the engaged item's page.
+          addon_url: itemUrl,
         };
       } catch (err) {
         console.warn('[EmailRenderer] raw_payload lookup failed:', err.message);
@@ -275,7 +291,17 @@ export default class EmailRenderer {
       // {{unsubscribe_url}} resolve correctly. Win-back uses _url.
       unsubscribe_link: unsubscribeUrl,
       unsubscribe_url:  unsubscribeUrl,
-      ...payloadVars,        // destination_city / service_type / product_name
+      // Static marketing-link CTAs. Set here (not just as inline `| default:`) because
+      // several templates consume these via `{% assign _u = seasonal_tour_url %}` where
+      // no inline default applies. Overridable via extraVars.
+      top_tours_url:     siteBase,
+      vip_tours_url:     siteBase,
+      new_tours_url:     siteBase,
+      new_arrivals_url:  siteBase,
+      seasonal_tour_url: siteBase,
+      next_trip_url:     siteBase,
+      ugc_url:           'https://www.instagram.com/raynatours_/',
+      ...payloadVars,        // destination_city / service_type / product_name / rec* / addon_url
       ...nonEmptyExtraVars,  // caller overrides always win
     };
 
