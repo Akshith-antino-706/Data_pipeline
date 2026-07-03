@@ -6,7 +6,8 @@ import { getConnection, enqueueGtmJourney } from './queue/index.js';
 import WelcomeEmailService from './WelcomeEmailService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate } from '../utils/placeholderResolver.js';
+import { renderTemplate, buildLiquidVars } from '../utils/placeholderResolver.js';
+import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 
@@ -242,7 +243,12 @@ class GtmJourneyService {
 
     // Universal placeholder fill — body AND subject (subjects may contain keys too).
     const ctx = { contact: c, event: eventRow, payload: eventRow.raw_payload || {} };
-    let html = renderTemplate(tplBody, ctx);
+    // Liquid templates (contain {% … %}) render via LiquidRenderer with the full items[]
+    // array so {% for item in items %} shows every cart product; plain {{KEY}}-only
+    // templates keep the regex resolver (items[0] scalars only).
+    let html = /\{%/.test(tplBody)
+      ? await LiquidRenderer.render(tplBody, buildLiquidVars(ctx))
+      : renderTemplate(tplBody, ctx);
     let subject = renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
 
     const recipientEmail = c.email;

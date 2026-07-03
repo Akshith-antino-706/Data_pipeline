@@ -186,4 +186,16 @@ export function renderTemplate(html, ctx = {}) {
   return out;
 }
 
-export default { renderTemplate };
+/**
+ * Same UPPER_SNAKE values map renderTemplate uses, PLUS the raw ecommerce `items[]`
+ * array — so Liquid templates can `{% for item in items %}` over every cart product
+ * (the regex renderTemplate only ever exposes items[0]).
+ */
+export function buildLiquidVars(ctx = {}) {
+  const p = ctx.payload || ctx.event?.raw_payload || {};
+  const items = Array.isArray(p.ecommerceData?.items) ? p.ecommerceData.items
+              : Array.isArray(p.ecommerce?.items)     ? p.ecommerce.items : [];
+  return { ...buildValues(ctx), items };
+}
+
+export default { renderTemplate, buildLiquidVars };
