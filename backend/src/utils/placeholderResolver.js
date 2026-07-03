@@ -109,7 +109,7 @@ function buildValues(ctx = {}) {
     ITEM_IMAGE_URL:  p.imageUrl ?? ecom.image_url,
     ITEM_CATEGORY:   p.itemCategory,
     ITEM_REFERRER:   p.referrer,
-    CURRENCY:        p.currency ?? ecomRoot.currency,
+    CURRENCY:        p.currency ?? ecomRoot.currency ?? ecom.currency,
     DESTINATION_CITY: p.city ?? ecom.city,
     COUPON_CODE:     p.coupon ?? ecomRoot.coupon,
     PAYMENT_METHOD:  p.paymentType,
@@ -137,11 +137,13 @@ function buildValues(ctx = {}) {
     CHILD_COUNT:      ecom.children_count,
     BOOKING_DATE:     ecom.booking_date,
     SELECTED_DATE:    p.selectedDate ?? ecom.selected_date,
-    ITEM_PRICE:       p.eventValue ?? ecomRoot.value,
-    CART_VALUE:       p.eventValue ?? ecomRoot.value,
-    ORDER_TOTAL:      p.eventValue ?? ecomRoot.value,
-    ORDER_VALUE:      p.eventValue ?? ecomRoot.value,
-    ATTEMPTED_AMOUNT: p.eventValue,
+    // The live site feed leaves flat eventValue + ecommerceData.value null and puts the
+    // real price in ecommerceData.items[0].price → fall back to it, else price renders blank.
+    ITEM_PRICE:       p.eventValue ?? ecomRoot.value ?? ecom.price,
+    CART_VALUE:       p.eventValue ?? ecomRoot.value ?? ecom.price,
+    ORDER_TOTAL:      p.eventValue ?? ecomRoot.value ?? ecom.price,
+    ORDER_VALUE:      p.eventValue ?? ecomRoot.value ?? ecom.price,
+    ATTEMPTED_AMOUNT: p.eventValue ?? ecom.price,
 
     // ── generated / static URLs ──
     CART_URL:            `${SITE}/cart`,
@@ -150,6 +152,9 @@ function buildValues(ctx = {}) {
     RESUME_PAYMENT_URL:  `${SITE}/checkout`,
     RETRY_PAYMENT_URL:   orderId ? `${SITE}/payment/retry?order=${encodeURIComponent(orderId)}` : `${SITE}/checkout`,
     VIEW_BOOKING_URL:    orderId ? `${SITE}/booking/${encodeURIComponent(orderId)}` : `${SITE}/my-bookings`,
+    // Per-recipient unsubscribe. The send pipeline (injectClickTracking + server) rewrites
+    // this to a tracked /api/unsubscribe?log=<id> click. Without this it rendered blank.
+    // UNSUBSCRIBE_URL:     c.id ? `${SITE}/unsubscribe?uid=${c.id}` : `${SITE}/unsubscribe`,
 
     // ── extras (used by the legacy gtm-welcome.html) ──
     RAW_PAYLOAD: JSON.stringify(p, null, 2),
