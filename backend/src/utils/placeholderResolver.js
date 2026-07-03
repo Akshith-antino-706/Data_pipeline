@@ -111,7 +111,7 @@ function buildValues(ctx = {}) {
     ITEM_REFERRER:   p.referrer,
     CURRENCY:        p.currency ?? ecomRoot.currency ?? ecom.currency,
     DESTINATION_CITY: p.city ?? ecom.city,
-    COUPON_CODE:     p.coupon ?? ecomRoot.coupon,
+    // COUPON_CODE:     p.coupon ?? ecomRoot.coupon,
     PAYMENT_METHOD:  p.paymentType,
     ORDER_ID:        orderId,
     TAX_AMOUNT:      p.tax,
