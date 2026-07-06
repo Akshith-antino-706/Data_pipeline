@@ -309,7 +309,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
@@ -728,6 +728,11 @@ export default function Journeys() {
         segmentId: createForm.segmentId || null,
         journeyType: createForm.journeyType,
         triggerEvent: createForm.journeyType === 'continuous' ? createForm.triggerEvent : null,
+        // Continuous only: only enroll GTM events fired on/after this date (Dubai midnight).
+        // Blank → backend defaults to journey creation time (no historical backfill).
+        triggerFromDate: (createForm.journeyType === 'continuous' && createForm.triggerFromDate)
+          ? new Date(createForm.triggerFromDate + 'T00:00:00+04:00').toISOString()
+          : null,
         exitOnConversion: createForm.exitOnConversion,
         // Treat the input value as Dubai time (UTC+4) → convert to UTC ISO for the backend
         scheduledStartAt: createForm.scheduledStartAt
@@ -746,7 +751,7 @@ export default function Journeys() {
       const snapCount = res.data?.snapshot_count || 0;
       const snapNoun = createForm.journeyType === 'continuous' ? 'emails' : 'users';
       showToast(`Journey "${res.data?.name}" created — ${snapCount} ${snapNoun} snapshotted`, 'success');
-      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       await loadData();
@@ -3203,7 +3208,7 @@ export default function Journeys() {
         <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               <ArrowLeft size={15} /> Back
             </button>
@@ -3222,7 +3227,7 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
+            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
@@ -3320,6 +3325,17 @@ export default function Journeys() {
                         {createForm.triggerEvent
                           ? <>Fans out one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on. Selecting multiple events combines their items.</>
                           : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick one or more events to fan out per distinct item instead.</>}
+                      </div>
+                      <div style={{ marginTop: 12 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                          Trigger only for events on or after <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>
+                        </label>
+                        <input type="date" className="form-input" value={createForm.triggerFromDate}
+                          onChange={e => setCreateForm(f => ({ ...f, triggerFromDate: e.target.value }))}
+                          style={{ width: '100%' }} />
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                          Pick a date → only users who fire the event <strong>on/after that date</strong> (Dubai time) enter. Leave blank → <strong>all events</strong> (every past trigger is included too).
+                        </div>
                       </div>
                     </div>
                   )}

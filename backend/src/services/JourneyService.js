@@ -835,6 +835,8 @@ class JourneyService {
       return pc?.n ?? 0;
     }
     // PER-ITEM mode (GTM event) → DISTINCT (segment user × item), after exit conditions.
+    // Same cutoff as _gtmFanout: trigger_from_date set → on/after it; blank → ALL history.
+    const fromDate = journey.trigger_from_date || null;
     const { rows: [pc] } = await db.query(`
       SELECT COUNT(*)::int AS n FROM (
         SELECT DISTINCT g.unified_id, COALESCE(g.raw_payload->>'itemId', '')
@@ -842,9 +844,10 @@ class JourneyService {
         JOIN   (${sql}) seg ON seg.id = g.unified_id
         JOIN   unified_contacts uc ON uc.id = g.unified_id
         WHERE  g.event_name = ANY($${params.length + 1})
+          AND  ($${params.length + 2}::timestamptz IS NULL OR g.created_at >= $${params.length + 2})
         ${this._GTM_EXIT_SQL}
       ) x
-    `, [...params, events]);
+    `, [...params, events, fromDate]);
     return pc?.n ?? 0;
   }
 
@@ -877,6 +880,10 @@ class JourneyService {
     } else {
       // PER-ITEM mode (GTM event) → one row per (segment user × DISTINCT itemId), most
       // recent event per item, after exit conditions (unsubscribe + already-purchased).
+      // DATE CUTOFF: if the journey has a trigger_from_date (the continuous-journey date
+      // picker), only enroll events fired ON/AFTER it. If BLANK (null) → NO cutoff → enroll
+      // ALL historical events. Compared against gtm_events.created_at (idx_gtm_created).
+      const fromDate = journey.trigger_from_date || null;
       ({ rows } = await db.query(`
         WITH seg AS (${sql})
         SELECT DISTINCT ON (g.unified_id, COALESCE(g.raw_payload->>'itemId', ''))
@@ -887,9 +894,11 @@ class JourneyService {
         JOIN   seg ON seg.id = g.unified_id
         JOIN   unified_contacts uc ON uc.id = g.unified_id
         WHERE  g.event_name = ANY($${params.length + 1})
+          AND  ($${params.length + 2}::timestamptz IS NULL OR g.created_at >= $${params.length + 2})
         ${this._GTM_EXIT_SQL}
         ORDER  BY g.unified_id, COALESCE(g.raw_payload->>'itemId', ''), g.created_at DESC
-      `, [...params, events]));
+      `, [...params, events, fromDate]));
+      console.log(`[Journey ${journey.journey_id}] gtm fan-out cutoff: ${fromDate ? 'events >= ' + new Date(fromDate).toISOString() : 'ALL history (no trigger_from_date set)'}`);
     }
 
     if (!rows.length) {
@@ -1024,7 +1033,7 @@ class JourneyService {
     await this._refreshStamp(jid, { _exit: new Date().toISOString() });
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
     let customSegmentId = null;
@@ -1049,10 +1058,10 @@ class JourneyService {
     const trigEvent = jType === 'gtm' ? (rawTrig || null) : null;
 
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
       RETURNING *
-    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent]);
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null)]);
 
     // ── Snapshot segment users at creation time (NORMAL journeys only) ──────
     // GTM journeys are event-triggered (no snapshot) — users enter when they fire
@@ -1078,7 +1087,7 @@ class JourneyService {
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {

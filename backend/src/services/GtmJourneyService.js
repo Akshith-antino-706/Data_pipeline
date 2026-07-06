@@ -78,7 +78,10 @@ class GtmJourneyService {
          FROM journey_flows
        WHERE status = 'active' AND journey_type = 'gtm'
          AND trigger_event IS NOT NULL
-         AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))`,
+         AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))
+         -- DATE CUTOFF: skip real-time enrollment until the journey's trigger_from_date
+         -- has arrived (future-dated picker). The event fires "now", so NOW() is its time.
+         AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
       [eventName]
     );
     if (!journeys.length) return;
