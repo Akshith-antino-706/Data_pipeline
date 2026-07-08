@@ -980,9 +980,9 @@ router.get('/send-log', async (req, res, next) => {
  *
  * Aggregate stats: counts by status + open-rate breakdown per day template.
  */
-router.get('/send-log/summary', async (_req, res, next) => {
+router.get('/send-log/summary', async (req, res, next) => {
   try {
-    const summary = await SendTrackService.getSummary();
+    const summary = await SendTrackService.getSummary({ days: req.query.days });
     res.json({ data: summary });
   } catch (err) { next(err); }
 });

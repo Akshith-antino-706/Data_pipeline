@@ -225,15 +225,19 @@ export class SendTrackService {
 
   /**
    * Aggregate summary: counts by status and per-day breakdown.
+   * Window defaults to 30 days — full-table GROUP BY on email_send_log times
+   * out at the gateway in production.
    */
-  static async getSummary() {
+  static async getSummary({ days = 30 } = {}) {
+    const windowDays = Math.min(365, Math.max(1, parseInt(days) || 30));
     const [{ rows: byStatus }, { rows: byDay }] = await Promise.all([
       db.query(`
         SELECT status, COUNT(*) AS count, COUNT(DISTINCT email) AS unique_recipients
         FROM email_send_log
+        WHERE created_at >= NOW() - ($1 || ' days')::interval
         GROUP BY status
         ORDER BY count DESC
-      `),
+      `, [String(windowDays)]),
       db.query(`
         SELECT
           day_number,
@@ -248,11 +252,12 @@ export class SendTrackService {
           )                                                AS open_rate_pct
         FROM email_send_log
         WHERE day_number IS NOT NULL
+          AND created_at >= NOW() - ($1 || ' days')::interval
         GROUP BY day_number, template_label
         ORDER BY day_number
-      `),
+      `, [String(windowDays)]),
     ]);
-    return { byStatus, byDay };
+    return { byStatus, byDay, windowDays };
   }
 
   /**

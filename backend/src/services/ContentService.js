@@ -14,10 +14,10 @@ export class ContentService {
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const offset = (page - 1) * limit;
 
-    // Truncate `body` to 2 KB in the list response. The list view only renders
-    // a stripHtml() snippet — full body (25 KB+ each) is fetched via getById()
-    // when the editor opens. Large responses (~500 KB for 20 rows) were
-    // triggering `ERR_CONTENT_LENGTH_MISMATCH` through the production CDN.
+    // `body` is truncated to 2 KB and `external_payload` (raw Gupshup JSONB, often
+    // 10 KB+ per row) is omitted. Both are only needed by the editor, which loads
+    // the full row via getById(). Including them here produced ~200-500 KB list
+    // responses that the production CDN truncated, causing ERR_CONTENT_LENGTH_MISMATCH.
     const [countRes, dataRes] = await Promise.all([
       query(`SELECT COUNT(*) AS total FROM content_templates ${where}`, params),
       query(
@@ -30,7 +30,7 @@ export class ContentService {
                 external_category, external_language,
                 external_submitted_at, external_approved_at,
                 external_rejected_at, external_rejection_reason,
-                external_last_checked_at, external_payload
+                external_last_checked_at
            FROM content_templates ${where}
           ORDER BY updated_at DESC
           LIMIT $${idx} OFFSET $${idx + 1}`,
