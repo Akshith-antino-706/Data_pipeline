@@ -9,7 +9,8 @@
  *   https://feedback.raynatours.com/?ref=<bill_no>&name=&email=&audience=&items=
  *
  * "Most recent trip" = the bill with the latest travel_date on/before today,
- * across ALL booking types (tours/hotels/visas/packages/others). `items` lists
+ * among ACTIVE (non-cancelled, is_cancel='0') bookings, across ALL booking types
+ * (tours/hotels/visas/packages/others). `items` lists
  * every service on that one bill as `service_name|bill_type|YYYY-MM-DD`, joined
  * by ';'. Data source: the rayna_* billing tables, joined by unified_id.
  */
@@ -26,6 +27,7 @@ const UNION_SQL = BOOKING_TABLES.map(t => `
   SELECT bill_no, bill_type, service_name, travel_date FROM ${t}
    WHERE unified_id = $1
      AND bill_no IS NOT NULL
+     AND is_cancel = '0'
      AND travel_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
      AND travel_date <= to_char(CURRENT_DATE, 'YYYY-MM-DD')
      AND service_name IS NOT NULL AND service_name <> '' AND service_name <> 'MIX Charges'`).join('\n  UNION ALL\n');
