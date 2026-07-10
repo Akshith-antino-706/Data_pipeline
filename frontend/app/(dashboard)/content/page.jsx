@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet } from 'lucide-react';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet, LayoutGrid, List } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -110,6 +110,14 @@ export default function Content() {
     } catch { setPreviewFit({ scale: 1, height: null, contentW: null }); }
   }
   const [channelFilter, setChannelFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window === 'undefined') return 'card';
+    return window.localStorage.getItem('content.viewMode') === 'table' ? 'table' : 'card';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('content.viewMode', viewMode);
+  }, [viewMode]);
 
   // modal state: null = closed, 'create' = new, object = editing existing
   const [modal, setModal] = useState(null);
@@ -339,23 +347,29 @@ export default function Content() {
     return unique.map(key => ({ key, value: '' }));
   }
 
-  // Server-side pagination + channel filter. Backend supports page/limit/channel
-  // params and returns { data, total, page, limit }.
+  // Server-side pagination + channel + search filter. Backend supports
+  // page/limit/channel/search params and returns { data, total, page, limit }.
+  // Debounced 300 ms so typing in the search box doesn't hammer the API.
   useEffect(() => {
-    setLoading(true);
-    const params = { page, limit: pageSize };
-    if (channelFilter !== 'all') params.channel = channelFilter;
-    getTemplates(params)
-      .then(res => {
-        setTemplates(res.data || []);
-        setTotal(res.total ?? (res.data?.length || 0));
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [page, pageSize, channelFilter]);
+    const t = setTimeout(() => {
+      setLoading(true);
+      const params = { page, limit: pageSize };
+      if (channelFilter !== 'all') params.channel = channelFilter;
+      const q = searchQuery.trim();
+      if (q) params.search = q;
+      getTemplates(params)
+        .then(res => {
+          setTemplates(res.data || []);
+          setTotal(res.total ?? (res.data?.length || 0));
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [page, pageSize, channelFilter, searchQuery]);
 
-  // Reset to page 1 whenever the page-size or channel filter changes.
-  useEffect(() => { setPage(1); }, [pageSize, channelFilter]);
+  // Reset to page 1 whenever the page-size, channel filter, or search changes.
+  useEffect(() => { setPage(1); }, [pageSize, channelFilter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -490,7 +504,11 @@ export default function Content() {
     }
   }
 
-  if (loading) return <div className="spinner">Loading templates...</div>;
+  // Only show the full-page spinner on the very first load. Once we've rendered
+  // once, keep the layout mounted so typing in the search box doesn't unmount
+  // the input on every debounced fetch.
+  const firstLoad = loading && templates.length === 0 && !searchQuery && channelFilter === 'all' && page === 1;
+  if (firstLoad) return <div className="spinner">Loading templates...</div>;
 
   // Channel filter is now server-side, so the list we render is already filtered.
   const filtered = templates;
@@ -501,12 +519,34 @@ export default function Content() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Content Templates</h1>
-            <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+            <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               Showing {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
               –{(page - 1) * pageSize + filtered.length} of {total} templates
+              {loading && (
+                <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-tertiary)' }} />
+              )}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', minWidth: 240 }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+              <input
+                className="form-input"
+                placeholder="Search name or subject…"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ paddingLeft: 32, paddingRight: searchQuery ? 28 : 10, height: 32, fontSize: 13, width: '100%' }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', padding: 2 }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {[
                 { key: 'all', label: 'All' },
@@ -526,6 +566,36 @@ export default function Content() {
                   </button>
                 );
               })}
+            </div>
+            <div style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <button
+                onClick={() => setViewMode('card')}
+                title="Card view"
+                aria-label="Card view"
+                aria-pressed={viewMode === 'card'}
+                style={{
+                  padding: '6px 10px', border: 'none', cursor: 'pointer',
+                  background: viewMode === 'card' ? 'var(--bg-secondary)' : 'transparent',
+                  color: viewMode === 'card' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  display: 'inline-flex', alignItems: 'center',
+                }}
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                onClick={() => setViewMode('table')}
+                title="Table view"
+                aria-label="Table view"
+                aria-pressed={viewMode === 'table'}
+                style={{
+                  padding: '6px 10px', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer',
+                  background: viewMode === 'table' ? 'var(--bg-secondary)' : 'transparent',
+                  color: viewMode === 'table' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  display: 'inline-flex', alignItems: 'center',
+                }}
+              >
+                <List size={14} />
+              </button>
             </div>
             <button
               className="btn btn-primary btn-sm"
@@ -695,6 +765,7 @@ export default function Content() {
         </div>
       </motion.div>
 
+      {viewMode === 'card' && (
       <motion.div variants={fadeInUp} className="grid-auto" style={{ gap: 16 }}>
         {filtered.map(t => {
           const Icon = CHANNEL_ICON[t.channel] || Mail;
@@ -820,6 +891,86 @@ export default function Content() {
           );
         })}
       </motion.div>
+      )}
+
+      {viewMode === 'table' && (
+      <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', textAlign: 'left' }}>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Name</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Channel</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Subject</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Segment</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Updated</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ padding: '32px 14px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No templates found</td>
+                </tr>
+              )}
+              {filtered.map(t => {
+                const Icon = CHANNEL_ICON[t.channel] || Mail;
+                const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+                const updated = t.updated_at ? new Date(t.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+                return (
+                  <tr key={t.id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-primary)', fontWeight: 600 }}>{t.name}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span className="badge badge-gray" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Icon size={12} /> {t.channel}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span className={`badge ${STATUS_BADGE[t.status] || 'badge-gray'}`}>{t.status}</span>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.subject || ''}>
+                      {t.subject || '—'}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)' }}>
+                      {t.segment_label ? <span className="badge badge-gray">{t.segment_label}</span> : '—'}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{updated}</td>
+                    <td style={{ padding: '12px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
+                        <button onClick={() => openPreview(t)} title="Preview" className="btn btn-secondary btn-sm" style={{ padding: '6px 8px' }}>
+                          <Eye size={14} />
+                        </button>
+                        {hasAI && (
+                          <button onClick={() => openPreviewAI(t)} title="Preview AI"
+                            className="btn btn-sm"
+                            style={{ padding: '6px 8px', background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
+                            <Sparkles size={14} />
+                          </button>
+                        )}
+                        <button onClick={() => openEdit(t)} title="Edit" className="btn btn-secondary btn-sm" style={{ padding: '6px 8px' }}>
+                          <Edit2 size={14} />
+                        </button>
+                        {t.channel === 'email' && (
+                          <button onClick={() => viewStoredReport(t)} title="View email QA report"
+                            style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Info size={14} />
+                          </button>
+                        )}
+                        <button onClick={() => setConfirmDelete(t)} title="Delete" disabled={deleting === t.id}
+                          className="btn btn-secondary btn-sm" style={{ padding: '6px 8px', color: '#ef4444' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </motion.div>
+      )}
 
       {/* ── Pagination ── */}
       {total > 0 && (
