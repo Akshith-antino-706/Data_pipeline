@@ -25,6 +25,7 @@ import gtmRouter from './src/routes/gtm.js';
 import productsRouter from './src/routes/products.js';
 import affinityRouter from './src/routes/productAffinity.js';
 import baseTemplatesRouter from './src/routes/baseTemplates.js';
+import recommendationsRouter from './src/routes/recommendations.js';
 import syncRouter from './src/routes/sync.js';
 import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
@@ -121,6 +122,7 @@ app.use('/api', analyticsRouter);
 app.use('/api/v2/segments', segmentsRouter);
 app.use('/api/v2/strategies', strategiesRouter);
 app.use('/api/v2/content', contentRouter);
+app.use('/api/v2/recommendations', recommendationsRouter);
 app.use('/api/v2/campaigns', campaignsRouter);
 app.use('/api/v2/enrichment', enrichmentRouter);
 
@@ -723,6 +725,38 @@ cron.schedule('30 3 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Chats sync scheduled at 3:30 AM Dubai time');
+
+// ── Daily journey re-snapshot — 2:30 AM Dubai ──
+// Fixed journeys with recommendation_type IN ('on_trip','future_trip') target
+// a ROLLING segment (travel_date window). Users become eligible daily as their
+// travel_date rolls in. This cron re-enrolls newly-eligible users into their
+// matching rec journeys. Runs after the 2:00 AM segment refresh so
+// booking_status is fresh. Additive — only touches journey_entries via ON
+// CONFLICT DO NOTHING, no impact on existing snapshot-once fixed journeys.
+cron.schedule('30 2 * * *', async () => {
+  try {
+    const { runDailyJourneyReSnapshot } = await import('./src/crons/dailyJourneyReSnapshot.js');
+    await runDailyJourneyReSnapshot();
+  } catch (err) {
+    console.error('[Cron:JourneyReSnapshot] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily journey re-snapshot scheduled at 2:30 AM Dubai time');
+
+// ── Daily AI recommendation compute — 3:35 AM Dubai ──
+// Precomputes 5 AI-picked products per (user, recommendation_type) for on_trip
+// / future_trip / past_trip. Feeds the REC_ONTRIP-style journeys with per-user
+// personalized picks read at send time. Only touches user_product_recommendations
+// (new table) — no impact on existing journey/segment/render logic.
+cron.schedule('35 3 * * *', async () => {
+  try {
+    const { runDailyRecommendationCompute } = await import('./src/crons/dailyRecommendationCompute.js');
+    await runDailyRecommendationCompute();
+  } catch (err) {
+    console.error('[Cron:RecCompute] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] AI recommendation compute scheduled at 3:35 AM Dubai time');
 
 // ── PhpAdmin weekly sync — pull new MySQL contacts into unified_contacts ──
 // Sundays 05:00 Dubai. Incremental (uses sync_metadata.last_synced_at watermark)

@@ -22,6 +22,19 @@ const ENABLED    = process.env.EMAIL_CAP_ENABLED === 'true';
 const CAP        = parseInt(process.env.EMAIL_CAP_PER_24H || '3', 10);
 const WINDOW_SEC = parseInt(process.env.EMAIL_CAP_WINDOW_SEC || '86400', 10);
 
+// Test-inbox bypass. Any email in this comma-separated env var will always
+// be allowed regardless of ENABLED / CAP. Used for internal QA addresses that
+// need to receive unlimited sends during rollout of new journeys.
+const BYPASS_EMAILS = new Set(
+  (process.env.EMAIL_CAP_BYPASS_EMAILS || '')
+    .split(',')
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+function _isBypassed(email) {
+  return !!email && BYPASS_EMAILS.has(String(email).trim().toLowerCase());
+}
+
 let _redis;
 function getRedis() {
   if (_redis === null) return null;
@@ -49,6 +62,8 @@ export function capLimit() { return CAP; }
  * and we start the TTL then; over the cap → not allowed.
  */
 export async function reserveSend(target) {
+  // Bypass allowlist wins over ENABLED — QA inboxes never get capped.
+  if (_isBypassed(target?.email)) return { allowed: true, count: 0, capped: false, bypassed: true };
   if (!ENABLED) return { allowed: true, count: 0, capped: false };
   const key = capKey(target);
   if (!key) return { allowed: true, count: 0, capped: false };
@@ -66,6 +81,7 @@ export async function reserveSend(target) {
 
 /** Release a previously-reserved slot (call when the send itself failed). */
 export async function releaseSend(target) {
+  if (_isBypassed(target?.email)) return; // Nothing was reserved for bypassed users.
   if (!ENABLED) return;
   const key = capKey(target);
   if (!key) return;
