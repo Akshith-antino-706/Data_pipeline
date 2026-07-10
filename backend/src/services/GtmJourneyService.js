@@ -10,6 +10,7 @@ import { renderTemplate, buildLiquidVars } from '../utils/placeholderResolver.js
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
+import { buildReviewUrl } from '../utils/reviewUrl.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
@@ -253,6 +254,17 @@ class GtmJourneyService {
       ? await LiquidRenderer.render(tplBody, buildLiquidVars(ctx))
       : renderTemplate(tplBody, ctx);
     let subject = renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
+
+    // Per-recipient review link (post-trip templates carry the %%REVIEW_URL%% sentinel).
+    // placeholderResolver leaves it untouched, so swap it here for a feedback link
+    // pre-filled with THIS contact's most recent trip. Same as the normal-journey worker.
+    if (html && html.includes('%%REVIEW_URL%%')) {
+      const reviewUrl = await buildReviewUrl(c.id).catch(() => null);
+      if (reviewUrl) {
+        html = html.split('%%REVIEW_URL%%').join(reviewUrl);
+        console.log(`[GtmJourney ${journeyId}] injected review link for uid=${c.id}`);
+      }
+    }
 
     const recipientEmail = c.email;
 
