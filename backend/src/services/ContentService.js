@@ -2,14 +2,20 @@ import { query } from '../config/database.js';
 
 export class ContentService {
 
-  /** Get all templates with pagination & filters */
-  static async getAll({ channel, status, page = 1, limit = 20 } = {}) {
+  /** Get all templates with pagination & filters.
+   *  `search` matches ILIKE against name OR subject (case-insensitive substring). */
+  static async getAll({ channel, status, search, page = 1, limit = 20 } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
 
     if (channel) { conditions.push(`channel = $${idx++}`); params.push(channel); }
     if (status) { conditions.push(`status = $${idx++}`); params.push(status); }
+    if (search && String(search).trim()) {
+      conditions.push(`(name ILIKE $${idx} OR subject ILIKE $${idx})`);
+      params.push(`%${String(search).trim()}%`);
+      idx++;
+    }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const offset = (page - 1) * limit;

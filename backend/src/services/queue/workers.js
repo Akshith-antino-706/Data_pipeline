@@ -341,6 +341,68 @@ async function processEmail(job) {
     }
   }
 
+  // ── AI recommendation injection — additive, activates only when the journey
+  //    has recommendation_type set (new REC journeys). All existing journeys
+  //    have recommendation_type = NULL → this branch is skipped entirely.
+  //    Wrapped in try/catch so a bad rec never blocks the send. ──
+  //
+  //    Also enforces REC_JOURNEY_ALLOWLIST — if set, recipients not on the list
+  //    have their send SKIPPED (not just downgraded). Safety switch for test-only
+  //    rollout.
+  try {
+    const { rows: [jf] } = await db.query(
+      `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
+      [d.journeyId]
+    );
+    if (jf?.recommendation_type) {
+      const { injectPerUserProducts, isRecipientAllowedForRec } = await import('../RecommendationRenderer.js');
+      if (!isRecipientAllowedForRec(recipientEmail)) {
+        console.log(`[Worker:email]   REC ALLOWLIST BLOCKED — ${recipientEmail} not in REC_JOURNEY_ALLOWLIST for journey ${d.journeyId} (type=${jf.recommendation_type}). Skipping send + advancing entry.`);
+        return _logAndAdvance(d, 'action_blocked', { reason: 'rec_allowlist_blocked', recommendation_type: jf.recommendation_type }, false);
+      }
+
+      // Rec journey templates commonly use Liquid syntax ({% for %}, {{ USER_FIRST_NAME }},
+      // {% raw %}, etc.) inherited from Chathead. The FIXED-journey renderer path
+      // (EmailRenderer.render) does NOT run Liquid, so these tags survive as literal text.
+      // Run LiquidRenderer HERE, ONLY inside this rec-journey guard, so existing
+      // FIXED journeys stay untouched.
+      if (html && /\{%|\{\{\s*[A-Z_]+/.test(html)) {
+        try {
+          const { default: LiquidRenderer } = await import('../LiquidRenderer.js');
+          const { buildLiquidVars } = await import('../../utils/placeholderResolver.js');
+          const { rows: [c] } = await db.query(
+            `SELECT id, name, email, city FROM unified_contacts WHERE id = $1`,
+            [d.customerId]
+          );
+          const ctx = { contact: c || { name: d.name, email: recipientEmail }, event: {}, payload: {} };
+          html = await LiquidRenderer.render(html, buildLiquidVars(ctx));
+          console.log(`[Worker:email]   Liquid rendered for rec journey (contact_id=${d.customerId})`);
+        } catch (liqErr) {
+          console.warn(`[Worker:email]   Liquid render failed (using raw html): ${liqErr.message}`);
+        }
+      }
+
+      if (html && html.includes('{{#products}}')) {
+        const injected = await injectPerUserProducts({
+          templateHtml:       html,
+          unifiedId:          d.customerId,
+          recommendationType: jf.recommendation_type,
+          vars: {
+            customer_name: d.name || '',
+            ...(d.templateVariables || {}),
+          },
+        });
+        if (injected?.html) {
+          html = injected.html;
+          console.log(`[Worker:email]   AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
+        }
+      }
+    }
+  } catch (recErr) {
+    console.warn(`[Worker:email]   AI rec injection failed (falling back to un-injected html): ${recErr.message}`);
+    // Fall through — html stays as-is, send proceeds without rec cards.
+  }
+
   // ── Inject click/open tracking ──
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 

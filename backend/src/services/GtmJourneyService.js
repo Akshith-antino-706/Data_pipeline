@@ -266,6 +266,47 @@ class GtmJourneyService {
       }
     }
 
+    // ── AI recommendation injection + allowlist gate — additive. Existing
+    //    GTM journeys have recommendation_type = NULL → this whole block is
+    //    skipped. When set, REC_JOURNEY_ALLOWLIST decides delivery. ──
+    let recAllowlistBlocked = false;
+    try {
+      const { rows: [jf] } = await db.query(
+        `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
+        [journeyId]
+      );
+      if (jf?.recommendation_type) {
+        const { injectPerUserProducts, isRecipientAllowedForRec } = await import('./RecommendationRenderer.js');
+        if (!isRecipientAllowedForRec(c.email)) {
+          console.log(`[GtmJourney ${journeyId}] REC ALLOWLIST BLOCKED — ${c.email} not in REC_JOURNEY_ALLOWLIST (type=${jf.recommendation_type}). Skipping send + advancing.`);
+          recAllowlistBlocked = true;
+        } else if (html && html.includes('{{#products}}')) {
+          const injected = await injectPerUserProducts({
+            templateHtml:       html,
+            unifiedId:          c.id,
+            recommendationType: jf.recommendation_type,
+            vars: { customer_name: c.name || '' },
+          });
+          if (injected?.html) {
+            html = injected.html;
+            console.log(`[GtmJourney ${journeyId}] AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
+          }
+        }
+      }
+    } catch (recErr) {
+      console.warn(`[GtmJourney ${journeyId}] AI rec injection failed (falling back): ${recErr.message}`);
+    }
+
+    // If the recipient was blocked by REC_JOURNEY_ALLOWLIST, don't send — but
+    // still advance the entry so the journey doesn't spin on this user.
+    if (recAllowlistBlocked) {
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+      }
+      return;
+    }
+
     const recipientEmail = c.email;
 
     // Frequency cap (max N / 24h per recipient) — skip + advance if over the limit.

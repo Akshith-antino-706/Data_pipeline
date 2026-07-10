@@ -50,6 +50,7 @@ const GTM_EVENT_OPTIONS = [
   { value: 'click_whatsapp',           label: 'Click WhatsApp' },
   { value: 'click_email',              label: 'Click Email' },
   { value: 'click_call',               label: 'Click Call' },
+  { value: 'on_trip_started',          label: 'On Trip Started (synthetic)' },
 ];
 
 // Collapsed multi-select dropdown for the Trigger GTM Event(s) picker.
@@ -107,6 +108,367 @@ function TriggerEventMultiSelect({ value, onChange }) {
     </div>
   );
 }
+
+// Searchable segment picker. Replaces the native <select> so operators can
+// type-to-filter across large segment lists (600k+ items in some tenants) and
+// see the row count on every option.
+function SearchableSegmentSelect({ segments, value, onChange, loading }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
+
+  const selected = value ? segments.find(s => s.value === value) : null;
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return segments;
+    return segments.filter(s => s.label.toLowerCase().includes(q) || String(s.value).toLowerCase().includes(q));
+  }, [segments, q]);
+
+  const standard = filtered.filter(s => s.group === 'standard');
+  const custom = filtered.filter(s => s.group === 'custom');
+  const flat = [...standard, ...custom];
+
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const pick = (s) => { onChange(s.value); setOpen(false); setQuery(''); };
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, flat.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (flat[activeIdx]) pick(flat[activeIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  const row = (s, idx) => {
+    const on = value === s.value;
+    const active = idx === activeIdx;
+    const m = s.label.match(/^(.*?)\s*\((\d[\d,]*)\)\s*$/);
+    const label = m ? m[1] : s.label;
+    const count = m ? m[2] : null;
+    return (
+      <div key={`${s.group}-${s.value}`} data-idx={idx}
+        onMouseEnter={() => setActiveIdx(idx)}
+        onMouseDown={(e) => { e.preventDefault(); pick(s); }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+          background: active ? 'rgba(99,102,241,0.12)' : on ? 'rgba(99,102,241,0.06)' : 'transparent',
+          color: 'var(--text-primary)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {on && <span style={{ color: '#6366f1', fontSize: 12 }}>✓</span>}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: on ? 600 : 400 }}>{label}</span>
+        </span>
+        {count && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{count}</span>}
+      </div>
+    );
+  };
+
+  const groupHeader = (text) => (
+    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+      color: 'var(--text-tertiary)', padding: '10px 10px 4px' }}>{text}</div>
+  );
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button type="button" disabled={loading} onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 12px', fontSize: 13, borderRadius: 8,
+          border: `1px solid ${!value ? 'var(--red)' : 'var(--border)'}`,
+          background: 'var(--surface, #fff)',
+          color: selected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: loading ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: loading ? 0.6 : 1 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {loading ? 'Loading segments…' : selected ? selected.label : '— Select a segment —'}
+        </span>
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Search size={13} color="var(--text-tertiary)" />
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => setQuery(e.target.value)} onKeyDown={onKey}
+              placeholder="Search segments…"
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                fontSize: 13, color: 'var(--text-primary)' }} />
+            {query && (
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setQuery(''); }}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
+            )}
+          </div>
+          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+            {flat.length === 0 && (
+              <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                No segments match “{query}”
+              </div>
+            )}
+            {standard.length > 0 && groupHeader('Standard Segments')}
+            {standard.map((s, i) => row(s, i))}
+            {custom.length > 0 && groupHeader('Custom Segments')}
+            {custom.map((s, i) => row(s, standard.length + i))}
+          </div>
+          <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>{flat.length} of {segments.length}</span>
+            <span>↑↓ navigate · ↵ select · esc close</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Searchable template picker. Shares the same UX as SearchableSegmentSelect:
+// type-to-filter, keyboard nav, click-outside close. Handles the per-channel
+// label format (email → "name — subject", whatsapp → "name (wa_template_name)",
+// sms → "name") and emits a numeric id (or null) via onChange to preserve the
+// existing parseInt-based state shape.
+function SearchableTemplateSelect({ templates, value, onChange, channel = 'email', placeholder, error }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const secondaryFor = (t) => (channel === 'email' ? t.subject : channel === 'whatsapp' ? t.wa_template_name : null);
+  const formatLabel = (t) => {
+    const s = secondaryFor(t);
+    if (!s) return t.name;
+    return channel === 'email' ? `${t.name} — ${s}` : `${t.name} (${s})`;
+  };
+
+  const selected = value != null ? templates.find(t => String(t.id) === String(value)) : null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return templates;
+    return templates.filter(t => {
+      const hay = `${t.name || ''} ${secondaryFor(t) || ''}`.toLowerCase();
+      return hay.includes(q) || String(t.id).includes(q);
+    });
+  }, [templates, q, channel]);
+
+  const pick = (t) => { onChange(t ? Number(t.id) : null); setOpen(false); setQuery(''); };
+  const clear = (e) => { e.stopPropagation(); onChange(null); };
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[activeIdx]) pick(filtered[activeIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  const row = (t, idx) => {
+    const on = String(value) === String(t.id);
+    const active = idx === activeIdx;
+    const secondary = secondaryFor(t);
+    return (
+      <div key={t.id} data-idx={idx}
+        onMouseEnter={() => setActiveIdx(idx)}
+        onMouseDown={(e) => { e.preventDefault(); pick(t); }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+          background: active ? 'rgba(99,102,241,0.12)' : on ? 'rgba(99,102,241,0.06)' : 'transparent' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+          {on && <span style={{ color: '#6366f1', fontSize: 12, flexShrink: 0 }}>✓</span>}
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: on ? 600 : 500, color: 'var(--text-primary)' }}>{t.name}</span>
+            {secondary && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text-tertiary)' }}>{secondary}</span>}
+          </span>
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>#{t.id}</span>
+      </div>
+    );
+  };
+
+  const ph = placeholder || `— Select ${channel} template —`;
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 12px', fontSize: 13, borderRadius: 8,
+          border: `1px solid ${error ? 'var(--red)' : 'var(--border)'}`,
+          background: 'var(--surface, #fff)',
+          color: selected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected ? formatLabel(selected) : ph}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {selected && (
+            <span onMouseDown={clear} style={{ color: 'var(--text-tertiary)', fontSize: 12, cursor: 'pointer' }} title="Clear">×</span>
+          )}
+          <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', fontSize: 11 }}>▾</span>
+        </span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Search size={13} color="var(--text-tertiary)" />
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => setQuery(e.target.value)} onKeyDown={onKey}
+              placeholder="Search templates…"
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                fontSize: 13, color: 'var(--text-primary)' }} />
+            {query && (
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setQuery(''); }}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
+            )}
+          </div>
+          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                {templates.length === 0 ? `No ${channel} templates found` : `No templates match “${query}”`}
+              </div>
+            )}
+            {filtered.map((t, i) => row(t, i))}
+          </div>
+          <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>{filtered.length} of {templates.length}</span>
+            <span>↑↓ navigate · ↵ select · esc close</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Generic searchable single-select. Options are `{ value, label, description? }`.
+// Same UX conventions as SearchableSegmentSelect / SearchableTemplateSelect.
+function SearchableSelect({ options, value, onChange, placeholder = '— Select —', searchPlaceholder = 'Search…', error }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const selected = options.find(o => String(o.value) === String(value ?? ''));
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return options;
+    return options.filter(o => `${o.label} ${o.description || ''}`.toLowerCase().includes(q));
+  }, [options, q]);
+
+  const pick = (o) => { onChange(o.value); setOpen(false); setQuery(''); };
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[activeIdx]) pick(filtered[activeIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 12px', fontSize: 13, borderRadius: 8,
+          border: `1px solid ${error ? 'var(--red)' : 'var(--border)'}`,
+          background: 'var(--surface, #fff)',
+          color: selected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected ? selected.label : placeholder}</span>
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Search size={13} color="var(--text-tertiary)" />
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => setQuery(e.target.value)} onKeyDown={onKey}
+              placeholder={searchPlaceholder}
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: 'var(--text-primary)' }} />
+            {query && (
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setQuery(''); }}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
+            )}
+          </div>
+          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>No matches</div>
+            )}
+            {filtered.map((o, i) => {
+              const on = String(value ?? '') === String(o.value);
+              const active = i === activeIdx;
+              return (
+                <div key={String(o.value)} data-idx={i}
+                  onMouseEnter={() => setActiveIdx(i)}
+                  onMouseDown={(e) => { e.preventDefault(); pick(o); }}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                    background: active ? 'rgba(99,102,241,0.12)' : on ? 'rgba(99,102,241,0.06)' : 'transparent' }}>
+                  <span style={{ color: on ? '#6366f1' : 'transparent', fontSize: 12, marginTop: 2 }}>✓</span>
+                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: 13, fontWeight: on ? 600 : 500, color: 'var(--text-primary)' }}>{o.label}</span>
+                    {o.description && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, lineHeight: 1.4 }}>{o.description}</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const RECOMMENDATION_TYPE_OPTIONS = [
+  { value: '',            label: 'None',        description: 'No AI recommendations' },
+  { value: 'on_trip',     label: 'On Trip',     description: 'Recs based on their currently-traveling booking' },
+  { value: 'future_trip', label: 'Future Trip', description: 'Recs based on their upcoming booking' },
+  { value: 'past_trip',   label: 'Past Trip',   description: 'Recs based on their previous booking' },
+];
 
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
 // Keyed by content_template id (the Day1-7 dynamic templates).
@@ -309,7 +671,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
@@ -741,6 +1103,10 @@ export default function Journeys() {
         testMode: createForm.testMode,
         testEmail: createForm.testMode ? (createForm.testEmail || null) : null,
         testWaitSec: createForm.testMode ? (parseInt(createForm.testWaitSec) || 30) : 30,
+        // AI recommendation type — null (default) means legacy behavior, no AI
+        // recs injected at send time. 'on_trip' / 'future_trip' / 'past_trip'
+        // pulls per-user precomputed picks from user_product_recommendations.
+        recommendationType: createForm.recommendationType || null,
         nodes: [trigger, ...extraNodes],
         edges: [trigger, ...extraNodes].slice(1).map((n, i) => ({
           id: `e_${[trigger, ...extraNodes][i].id}_${n.id}`,
@@ -751,7 +1117,7 @@ export default function Journeys() {
       const snapCount = res.data?.snapshot_count || 0;
       const snapNoun = createForm.journeyType === 'continuous' ? 'emails' : 'users';
       showToast(`Journey "${res.data?.name}" created — ${snapCount} ${snapNoun} snapshotted`, 'success');
-      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       await loadData();
@@ -2816,18 +3182,13 @@ export default function Journeys() {
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
                           {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}{nodeForm.channel === 'email' && <span style={{ color: 'var(--red)', marginLeft: 3 }}>*</span>}
                         </label>
-                        <select className="form-input"
-                          style={{ borderColor: nodeForm.channel === 'email' && !nodeForm.emailTemplateId ? 'var(--red)' : undefined }}
-                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
-                          onChange={e => {
-                            const val = e.target.value ? parseInt(e.target.value) : null;
-                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, emailTemplateId: val, templateVariables: {} });
-                          }}>
-                          <option value="">— Select email template —</option>
-                          {allTemplates.email.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>
-                          ))}
-                        </select>
+                        <SearchableTemplateSelect
+                          templates={allTemplates.email}
+                          channel="email"
+                          value={nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId}
+                          error={nodeForm.channel === 'email' && !nodeForm.emailTemplateId}
+                          onChange={val => setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, emailTemplateId: val, templateVariables: {} })}
+                        />
                         {allTemplates.email.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No email templates found</div>}
 
                         {/* Dynamic sections this template will AI-rank via Claude */}
@@ -2883,14 +3244,12 @@ export default function Journeys() {
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
                           WhatsApp Template
                         </label>
-                        <select className="form-input"
-                          value={nodeForm.whatsappTemplateId || ''}
-                          onChange={e => setNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                          <option value="">— Select WhatsApp template —</option>
-                          {allTemplates.whatsapp.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}{t.wa_template_name ? ` (${t.wa_template_name})` : ''}</option>
-                          ))}
-                        </select>
+                        <SearchableTemplateSelect
+                          templates={allTemplates.whatsapp}
+                          channel="whatsapp"
+                          value={nodeForm.whatsappTemplateId}
+                          onChange={val => setNodeForm(f => ({ ...f, whatsappTemplateId: val, templateVariables: {} }))}
+                        />
                         {allTemplates.whatsapp.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No WhatsApp templates found</div>}
 
                         {/* Rest-of-world auto-pair */}
@@ -2914,17 +3273,12 @@ export default function Journeys() {
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
                           {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World SMS Template' : 'SMS Template'}
                         </label>
-                        <select className="form-input"
-                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.smsTemplateId || '')}
-                          onChange={e => {
-                            const val = e.target.value ? parseInt(e.target.value) : null;
-                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, smsTemplateId: val, templateVariables: {} });
-                          }}>
-                          <option value="">— Select SMS template —</option>
-                          {allTemplates.sms.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                          ))}
-                        </select>
+                        <SearchableTemplateSelect
+                          templates={allTemplates.sms}
+                          channel="sms"
+                          value={nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.smsTemplateId}
+                          onChange={val => setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, smsTemplateId: val, templateVariables: {} })}
+                        />
                         {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
                       </div>
                     )}
@@ -3208,7 +3562,7 @@ export default function Journeys() {
         <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               <ArrowLeft size={15} /> Back
             </button>
@@ -3227,7 +3581,7 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
+            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
@@ -3270,23 +3624,12 @@ export default function Journeys() {
                     <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
                     {segmentsLoading && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}><RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> Loading…</span>}
                   </div>
-                  <select className="form-input"
+                  <SearchableSegmentSelect
+                    segments={allSegments}
                     value={createForm.segmentId}
-                    disabled={segmentsLoading}
-                    style={{ borderColor: !createForm.segmentId ? 'var(--red)' : undefined }}
-                    onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
-                    <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment —'}</option>
-                    {allSegments.filter(s => s.group === 'standard').length > 0 && (
-                      <optgroup label="Standard Segments">
-                        {allSegments.filter(s => s.group === 'standard').map((s, i) => <option key={`std-${i}`} value={s.value}>{s.label}</option>)}
-                      </optgroup>
-                    )}
-                    {allSegments.filter(s => s.group === 'custom').length > 0 && (
-                      <optgroup label="Custom Segments">
-                        {allSegments.filter(s => s.group === 'custom').map((s, i) => <option key={`cust-${i}`} value={s.value}>{s.label}</option>)}
-                      </optgroup>
-                    )}
-                  </select>
+                    loading={segmentsLoading}
+                    onChange={(val) => setCreateForm(f => ({ ...f, segmentId: val }))}
+                  />
                 </div>
 
                 {/* Journey Type — Fixed (occasion / seasonal snapshot) vs Continuous (always-on per-user) */}
@@ -3339,6 +3682,22 @@ export default function Journeys() {
                       </div>
                     </div>
                   )}
+                </div>
+                {/* AI Recommendation Type — optional, per-journey. NULL = legacy behavior (no recs).
+                    On send, the worker looks up user_product_recommendations for the selected
+                    context and expands {{#products}}...{{/products}} blocks in the template. */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>AI Recommendation Type</label>
+                  <SearchableSelect
+                    options={RECOMMENDATION_TYPE_OPTIONS}
+                    value={createForm.recommendationType || ''}
+                    onChange={val => setCreateForm(f => ({ ...f, recommendationType: val }))}
+                    placeholder="None — no AI recommendations"
+                    searchPlaceholder="Search recommendation types…"
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                    Pick a context → templates in this journey with a <code>{'{{#products}}'}...{'{{/products}}'}</code> block will be filled with 5 personalized AI-picked products at send time. Precomputed nightly at 3:35 AM Dubai.
+                  </div>
                 </div>
                 {/* Exit on Conversion */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
@@ -3497,28 +3856,34 @@ export default function Journeys() {
                                 {editCreateNodeForm.channel === 'email' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Email Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.emailTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                      <option value="">— Select email template —</option>
-                                      {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
-                                    </select>
+                                    <SearchableTemplateSelect
+                                      templates={allTemplates.email}
+                                      channel="email"
+                                      value={editCreateNodeForm.emailTemplateId}
+                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: val, templateVariables: {} }))}
+                                    />
                                   </div>
                                 )}
                                 {editCreateNodeForm.channel === 'whatsapp' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.whatsappTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                      <option value="">— Select WhatsApp template —</option>
-                                      {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                    </select>
+                                    <SearchableTemplateSelect
+                                      templates={allTemplates.whatsapp}
+                                      channel="whatsapp"
+                                      value={editCreateNodeForm.whatsappTemplateId}
+                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: val, templateVariables: {} }))}
+                                    />
                                   </div>
                                 )}
                                 {editCreateNodeForm.channel === 'sms' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.smsTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                      <option value="">— Select SMS template —</option>
-                                      {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                    </select>
+                                    <SearchableTemplateSelect
+                                      templates={allTemplates.sms}
+                                      channel="sms"
+                                      value={editCreateNodeForm.smsTemplateId}
+                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: val, templateVariables: {} }))}
+                                    />
                                   </div>
                                 )}
                                 {/* Dynamic template variables for editCreateNodeForm */}
@@ -3666,10 +4031,12 @@ export default function Journeys() {
                           {createNodeForm.channel === 'email' && (
                             <div style={{ marginBottom: 12 }}>
                               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Email Template</label>
-                              <select className="form-input" value={createNodeForm.emailTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                <option value="">— Select email template —</option>
-                                {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
-                              </select>
+                              <SearchableTemplateSelect
+                                templates={allTemplates.email}
+                                channel="email"
+                                value={createNodeForm.emailTemplateId}
+                                onChange={val => setCreateNodeForm(f => ({ ...f, emailTemplateId: val, templateVariables: {} }))}
+                              />
                               {/* Dynamic sections this template will AI-rank via Claude */}
                               {DYNAMIC_SECTIONS[createNodeForm.emailTemplateId] && (
                                 <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
@@ -3691,30 +4058,36 @@ export default function Journeys() {
                             <>
                               <div style={{ marginBottom: 12 }}>
                                 <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                <select className="form-input" value={createNodeForm.whatsappTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                  <option value="">— Select WhatsApp template —</option>
-                                  {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                </select>
+                                <SearchableTemplateSelect
+                                  templates={allTemplates.whatsapp}
+                                  channel="whatsapp"
+                                  value={createNodeForm.whatsappTemplateId}
+                                  onChange={val => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: val }))}
+                                />
                               </div>
                               <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
                                 <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 7 }}>Rest-of-World fallback</div>
                                 <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
                                   {['email', 'sms'].map(ch => <button key={ch} onClick={() => setCreateNodeForm(f => ({ ...f, restChannel: ch }))} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: createNodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: createNodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: createNodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>{ch}</button>)}
                                 </div>
-                                <select className="form-input" value={createNodeForm.restTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, restTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                  <option value="">— Select {createNodeForm.restChannel} template —</option>
-                                  {(createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                </select>
+                                <SearchableTemplateSelect
+                                  templates={createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms}
+                                  channel={createNodeForm.restChannel}
+                                  value={createNodeForm.restTemplateId}
+                                  onChange={val => setCreateNodeForm(f => ({ ...f, restTemplateId: val }))}
+                                />
                               </div>
                             </>
                           )}
                           {createNodeForm.channel === 'sms' && (
                             <div style={{ marginBottom: 12 }}>
                               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>SMS Template</label>
-                              <select className="form-input" value={createNodeForm.smsTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                <option value="">— Select SMS template —</option>
-                                {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                              </select>
+                              <SearchableTemplateSelect
+                                templates={allTemplates.sms}
+                                channel="sms"
+                                value={createNodeForm.smsTemplateId}
+                                onChange={val => setCreateNodeForm(f => ({ ...f, smsTemplateId: val }))}
+                              />
                             </div>
                           )}
                           {/* Dynamic template variables for createNodeForm */}
