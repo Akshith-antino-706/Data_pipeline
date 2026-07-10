@@ -30,6 +30,7 @@ import WelcomeEmailService from '../WelcomeEmailService.js';
 import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../../utils/emailFrequencyCap.js';
+import { buildReviewUrl } from '../../utils/reviewUrl.js';
 
 // ── Per-journey graph cache ──
 // Workers need the journey's nodes+edges only to advance an entry after a send.
@@ -324,6 +325,19 @@ async function processEmail(job) {
       html    = rendered.html;
       subject = rendered.subject || 'Rayna Tours';
       console.log(`[Worker:email]   rendered via EmailRenderer.render (body fallback) → subject="${subject}" html=${html.length} bytes`);
+    }
+  }
+
+  // ── Per-recipient review link ──
+  // Post-trip templates carry the %%REVIEW_URL%% sentinel (the node HTML is shared
+  // across recipients, so the link CANNOT be baked in at render time). Swap it here,
+  // per recipient, for a feedback link pre-filled with THIS contact's most recent
+  // trip. The includes() guard keeps the extra booking query off every other send.
+  if (html && html.includes('%%REVIEW_URL%%')) {
+    const reviewUrl = await buildReviewUrl(d.customerId).catch(() => null);
+    if (reviewUrl) {
+      html = html.split('%%REVIEW_URL%%').join(reviewUrl);
+      console.log(`[Worker:email]   injected review link for customer=${d.customerId}`);
     }
   }
 
