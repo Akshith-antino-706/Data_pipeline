@@ -27,6 +27,41 @@ import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 import WelcomeEmailService from '../WelcomeEmailService.js';
+<<<<<<< Updated upstream
+=======
+import GtmJourneyService from '../GtmJourneyService.js';
+import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import { reserveSend, releaseSend } from '../../utils/emailFrequencyCap.js';
+import { buildReviewUrl } from '../../utils/reviewUrl.js';
+import { instrumentWorkerMetrics, traceJob } from '../../telemetry/metrics.js';
+
+// ── Per-journey graph cache ──
+// Workers need the journey's nodes+edges only to advance an entry after a send.
+// We no longer ship the full graph inside every job payload — that bloated Redis
+// (~8 KB × ~1.3M jobs ≈ 6–10 GB, well over the 3 GB cap, causing OOM during big
+// broadcasts). Instead load the graph once per journey and cache it in-process
+// with a short TTL so structural edits still propagate within a minute.
+const _graphCache = new Map(); // journeyId → { at, edges, nodeMap }
+const GRAPH_TTL_MS = 60_000;
+async function getJourneyGraph(journeyId) {
+  const hit = _graphCache.get(journeyId);
+  if (hit && (Date.now() - hit.at) < GRAPH_TTL_MS) return hit;
+  const { rows: [jf] } = await db.query(
+    'SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]
+  );
+  const nodeMap = {};
+  for (const n of (jf?.nodes || [])) nodeMap[n.id] = n;
+  const entry = { at: Date.now(), edges: jf?.edges || [], nodeMap };
+  _graphCache.set(journeyId, entry);
+  return entry;
+}
+// Prefer the graph embedded in legacy in-flight jobs (during a rolling deploy);
+// otherwise load+cache from the DB. New jobs no longer carry edges/nodes.
+async function _resolveGraph(d) {
+  if (d.edges && d.nodes) return { edges: d.edges, nodeMap: d.nodes };
+  return getJourneyGraph(d.journeyId);
+}
+>>>>>>> Stashed changes
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -65,19 +100,21 @@ export function startWorkers() {
   if (_workers) return _workers;
   const connection = getConnection();
 
-  const email = new Worker('journey-email', processEmail, {
+  // Processors are wrapped with traceJob(): a transparent span around each job
+  // (worker traces). If tracing is unavailable it returns the processor unchanged.
+  const email = new Worker('journey-email', traceJob('journey-email', processEmail), {
     connection,
     concurrency: EMAIL_CONCURRENCY,
     limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
   });
 
-  const wa = new Worker('journey-wa', processWA, {
+  const wa = new Worker('journey-wa', traceJob('journey-wa', processWA), {
     connection,
     concurrency: WA_CONCURRENCY,
     limiter: { max: WA_RATE_MAX, duration: WA_RATE_WINDOW },
   });
 
-  const sms = new Worker('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled, {
+  const sms = new Worker('journey-sms', traceJob('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled), {
     connection,
     concurrency: 5,
     limiter: { max: 10, duration: 1000 },
@@ -85,12 +122,22 @@ export function startWorkers() {
 
   // GTM event → welcome email (delayed job; durable replacement for setTimeout).
   // Rate-limited so a traffic spike can't blast the email provider.
-  const welcome = new Worker('welcome-email', processWelcome, {
+  const welcome = new Worker('welcome-email', traceJob('welcome-email', processWelcome), {
     connection,
     concurrency: 3,
     limiter: { max: 5, duration: 1000 },   // ≤5 welcome emails/sec
   });
 
+<<<<<<< Updated upstream
+=======
+  // GTM (event-triggered) journey → per-user welcome-style email (delayed, rate-limited)
+  const gtmJourney = new Worker('gtm-journey', traceJob('gtm-journey', processGtmJourney), {
+    connection,
+    concurrency: EMAIL_CONCURRENCY,
+    limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
+  });
+
+>>>>>>> Stashed changes
   // After all retries exhausted: advance the entry so it doesn't block forever.
   // Shared handler used by email, wa, and sms queues.
   const _onExhausted = (channel) => async (job, err) => {
@@ -149,7 +196,14 @@ export function startWorkers() {
     });
   }
 
+<<<<<<< Updated upstream
   _workers = { email, wa, sms, welcome };
+=======
+  _workers = { email, wa, sms, welcome, gtmJourney };
+  // Attach Prometheus job metrics (completed/failed counts + duration). Listeners only —
+  // does not affect processing, retries, or the existing 'failed' handlers above.
+  for (const [name, w] of Object.entries(_workers)) instrumentWorkerMetrics(w, name);
+>>>>>>> Stashed changes
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
