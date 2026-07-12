@@ -48,6 +48,7 @@ import authRouter from './src/routes/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
+import { httpMetricsMiddleware, metricsHandler, setQueueDepth } from './src/telemetry/metrics.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -56,6 +57,13 @@ const PORT = process.env.PORT || 3001;
 // Trust first hop (devtunnel / reverse proxy) so X-Forwarded-For is honored
 // by rate-limit and Express uses the real client IP.
 app.set('trust proxy', 1);
+
+// ── Observability: Prometheus metrics ────────────────────────
+// /metrics is intentionally OUTSIDE auth + rate limiting so Prometheus can scrape it
+// (keep it internal-only at the network/firewall level). The middleware only times
+// requests — it never alters the request/response.
+app.get('/metrics', metricsHandler);
+app.use(httpMetricsMiddleware);
 
 // ── Security Middleware ──────────────────────────────────────
 app.use(helmet({
@@ -840,6 +848,25 @@ try {
   console.log('[Workers] Journey send workers started inline');
 } catch (err) {
   console.error(`[Workers] Failed to start: ${err.message}`);
+}
+
+// ── Observability: sample BullMQ queue depth for Prometheus (read-only) ──
+// Purely additive: reads getJobCounts() every 15s and updates gauges. Never touches
+// job data or worker behavior. Fails silent if Redis/queues are unavailable.
+try {
+  const { queueCounts } = await import('./src/services/queue/index.js');
+  const CHANNELS = ['email', 'whatsapp', 'sms', 'welcome', 'gtmJourney'];
+  const sampleQueueDepth = async () => {
+    for (const ch of CHANNELS) {
+      try { setQueueDepth(ch, await queueCounts(ch)); } catch { /* ignore per-queue */ }
+    }
+  };
+  const depthTimer = setInterval(sampleQueueDepth, 15_000);
+  depthTimer.unref?.();  // don't keep the process alive on shutdown
+  sampleQueueDepth();
+  console.log('[Metrics] BullMQ queue-depth sampler started (every 15s)');
+} catch (err) {
+  console.warn(`[Metrics] queue-depth sampler not started (app continues): ${err.message}`);
 }
 
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────

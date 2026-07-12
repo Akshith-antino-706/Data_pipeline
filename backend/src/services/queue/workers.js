@@ -31,6 +31,7 @@ import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../../utils/reviewUrl.js';
+import { instrumentWorkerMetrics, traceJob } from '../../telemetry/metrics.js';
 
 // ── Per-journey graph cache ──
 // Workers need the journey's nodes+edges only to advance an entry after a send.
@@ -93,19 +94,21 @@ export function startWorkers() {
   if (_workers) return _workers;
   const connection = getConnection();
 
-  const email = new Worker('journey-email', processEmail, {
+  // Processors are wrapped with traceJob(): a transparent span around each job
+  // (worker traces). If tracing is unavailable it returns the processor unchanged.
+  const email = new Worker('journey-email', traceJob('journey-email', processEmail), {
     connection,
     concurrency: EMAIL_CONCURRENCY,
     limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
   });
 
-  const wa = new Worker('journey-wa', processWA, {
+  const wa = new Worker('journey-wa', traceJob('journey-wa', processWA), {
     connection,
     concurrency: WA_CONCURRENCY,
     limiter: { max: WA_RATE_MAX, duration: WA_RATE_WINDOW },
   });
 
-  const sms = new Worker('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled, {
+  const sms = new Worker('journey-sms', traceJob('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled), {
     connection,
     concurrency: 5,
     limiter: { max: 10, duration: 1000 },
@@ -113,14 +116,14 @@ export function startWorkers() {
 
   // GTM event → welcome email (delayed job; durable replacement for setTimeout).
   // Rate-limited so a traffic spike can't blast the email provider.
-  const welcome = new Worker('welcome-email', processWelcome, {
+  const welcome = new Worker('welcome-email', traceJob('welcome-email', processWelcome), {
     connection,
     concurrency: 3,
     limiter: { max: 5, duration: 1000 },   // ≤5 welcome emails/sec
   });
 
   // GTM (event-triggered) journey → per-user welcome-style email (delayed, rate-limited)
-  const gtmJourney = new Worker('gtm-journey', processGtmJourney, {
+  const gtmJourney = new Worker('gtm-journey', traceJob('gtm-journey', processGtmJourney), {
     connection,
     concurrency: EMAIL_CONCURRENCY,
     limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
@@ -186,6 +189,9 @@ export function startWorkers() {
   }
 
   _workers = { email, wa, sms, welcome, gtmJourney };
+  // Attach Prometheus job metrics (completed/failed counts + duration). Listeners only —
+  // does not affect processing, retries, or the existing 'failed' handlers above.
+  for (const [name, w] of Object.entries(_workers)) instrumentWorkerMetrics(w, name);
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }

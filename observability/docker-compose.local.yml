@@ -1,0 +1,68 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LOCAL observability stack for testing on your Mac.
+#   - App runs on the HOST:  cd backend && npm run dev
+#   - This stack runs in Docker and reaches the host via host.docker.internal
+# No external network needed. Traces: backend → http://localhost:4318 (Tempo below).
+#
+#   docker compose -f observability/docker-compose.local.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+name: rayna-observability-local
+
+networks:
+  obs: { driver: bridge }
+
+volumes:
+  grafana-data:
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    command: ['--config.file=/etc/prometheus/prometheus.yml']
+    volumes:
+      - ./prometheus/prometheus.local.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ['9090:9090']
+    extra_hosts: ['host.docker.internal:host-gateway']
+    networks: [obs]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    command: ['-config.file=/etc/tempo/tempo.yaml']
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports: ['3200:3200', '4318:4318', '4317:4317']
+    networks: [obs]
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ['3002:3000']
+    networks: [obs]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://host.docker.internal:6379   # your local redis on the host
+    ports: ['9121:9121']
+    extra_hosts: ['host.docker.internal:host-gateway']
+    networks: [obs]
+
+  # Postgres metrics — points at RDS (works from anywhere). DSN comes from
+  # observability/.env (PG_EXPORTER_DSN) so the password isn't hardcoded here.
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: ${PG_EXPORTER_DSN}
+    ports: ['9187:9187']
+    networks: [obs]

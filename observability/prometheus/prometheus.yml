@@ -1,0 +1,38 @@
+# Prometheus scrape config. Targets are resolved by docker service name on the
+# shared app network. Adjust 'backend:3001' if your backend service/port differ.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # The Node backend — API latency, event-loop lag, BullMQ metrics (from prom-client /metrics)
+  - job_name: 'backend'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['backend:3001']
+        labels: { service: 'rayna-backend' }
+
+  # PostgreSQL (RDS) — connections, tps, cache hit, locks, pg_stat_statements
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Redis — memory, ops/sec, keyspace, blocked clients
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Host (EC2) — CPU / memory / disk / swap
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # Containers — per-container CPU / memory
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
