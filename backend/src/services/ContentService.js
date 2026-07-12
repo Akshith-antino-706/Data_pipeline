@@ -2,22 +2,44 @@ import { query } from '../config/database.js';
 
 export class ContentService {
 
-  /** Get all templates with pagination & filters */
-  static async getAll({ channel, status, page = 1, limit = 20 } = {}) {
+  /** Get all templates with pagination & filters.
+   *  `search` matches ILIKE against name OR subject (case-insensitive substring). */
+  static async getAll({ channel, status, search, page = 1, limit = 20 } = {}) {
     const conditions = [];
     const params = [];
     let idx = 1;
 
     if (channel) { conditions.push(`channel = $${idx++}`); params.push(channel); }
     if (status) { conditions.push(`status = $${idx++}`); params.push(status); }
+    if (search && String(search).trim()) {
+      conditions.push(`(name ILIKE $${idx} OR subject ILIKE $${idx})`);
+      params.push(`%${String(search).trim()}%`);
+      idx++;
+    }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const offset = (page - 1) * limit;
 
+    // `body` is truncated to 2 KB and `external_payload` (raw Gupshup JSONB, often
+    // 10 KB+ per row) is omitted. Both are only needed by the editor, which loads
+    // the full row via getById(). Including them here produced ~200-500 KB list
+    // responses that the production CDN truncated, causing ERR_CONTENT_LENGTH_MISMATCH.
     const [countRes, dataRes] = await Promise.all([
       query(`SELECT COUNT(*) AS total FROM content_templates ${where}`, params),
       query(
-        `SELECT * FROM content_templates ${where} ORDER BY updated_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+        `SELECT id, name, channel, status, subject, LEFT(body, 2000) AS body, body_plain,
+                media_url, cta_url, cta_text, wa_template_name, wa_namespace, variables,
+                ai_generated, ai_prompt, ai_model, version, parent_id,
+                approved_by, approved_at, created_at, updated_at, created_by,
+                html_template_id, segment_label,
+                external_provider, external_template_id, external_status,
+                external_category, external_language,
+                external_submitted_at, external_approved_at,
+                external_rejected_at, external_rejection_reason,
+                external_last_checked_at
+           FROM content_templates ${where}
+          ORDER BY updated_at DESC
+          LIMIT $${idx} OFFSET $${idx + 1}`,
         [...params, limit, offset]
       ),
     ]);
@@ -30,9 +52,21 @@ export class ContentService {
     };
   }
 
-  /** Get template by ID */
+  /** Get template by ID.
+   *  For templates linked to email_html_templates (via html_template_id),
+   *  the source HTML lives in email_html_templates.html_body — return that as
+   *  `body` so the editor loads the SOURCE template, not whatever stub is
+   *  stored in content_templates.body. */
   static async getById(id) {
-    const { rows } = await query('SELECT * FROM content_templates WHERE id = $1', [id]);
+    const { rows } = await query(`
+      SELECT ct.*,
+             COALESCE(NULLIF(eht.html_body, ''), ct.body) AS body,
+             eht.html_body AS html_body,
+             eht.engine    AS html_engine
+      FROM content_templates ct
+      LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
+      WHERE ct.id = $1
+    `, [id]);
     return rows[0] || null;
   }
 
@@ -47,7 +81,10 @@ export class ContentService {
     return rows[0];
   }
 
-  /** Update a template */
+  /** Update a template.
+   *  If the row is linked to an email_html_templates entry (html_template_id),
+   *  HTML body edits go to email_html_templates.html_body (the renderer's
+   *  source of truth). Subject + name + status still update content_templates. */
   static async update(id, fields) {
     const allowedFields = ['name', 'subject', 'body', 'body_plain', 'media_url', 'cta_url', 'cta_text', 'variables', 'status'];
     const sets = [];
@@ -68,7 +105,35 @@ export class ContentService {
       `UPDATE content_templates SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       params
     );
-    return rows[0];
+    const row = rows[0];
+    if (!row) return null;
+
+    // If this content_template is linked to an email_html_templates row, the
+    // renderer reads HTML from there — keep both in sync so the editor's HTML
+    // changes actually take effect on send + preview.
+    if (row.html_template_id && fields.body !== undefined) {
+      await query(
+        `UPDATE email_html_templates
+            SET html_body  = $1,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [fields.body, row.html_template_id]
+      );
+    }
+
+    // Same for subject — store on email_html_templates.subject_line so future
+    // sends pick up the change (subject also lives on content_templates).
+    if (row.html_template_id && fields.subject !== undefined) {
+      await query(
+        `UPDATE email_html_templates
+            SET subject_line = $1,
+                updated_at   = NOW()
+          WHERE id = $2`,
+        [fields.subject, row.html_template_id]
+      );
+    }
+
+    return row;
   }
 
   /** Approve a template */

@@ -274,6 +274,13 @@ window.addEventListener('scroll', function() {
         .then(({ default: WelcomeEmailService }) =>
           WelcomeEmailService.schedule({ unifiedId: resolvedUnifiedId, eventName, eventId: event.event_id }))
         .catch(e => console.error('[Welcome] hook failed:', e.message));
+
+      // GTM (event-triggered) journeys: fan out to any active gtm journey listening
+      // to this event. Deduped per distinct item. NOT awaited — never blocks the response.
+      import('./GtmJourneyService.js')
+        .then(({ default: GtmJourneyService }) =>
+          GtmJourneyService.onEvent({ eventName, unifiedId: resolvedUnifiedId, eventId: event.event_id, itemId: body.itemId ?? null }))
+        .catch(e => console.error('[GtmJourney] hook failed:', e.message));
     }
 
     return event;

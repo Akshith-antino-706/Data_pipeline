@@ -13,9 +13,9 @@
  *     htmlTemplateId: email_html_templates.id (email channel only — fallback)
  *     name, email, phone,
  *     track:          'indian' | 'rest' | 'all',
- *     edges:          journey edges array (for advancing the entry post-send)
- *     nodes:          minimal node map { id → { id, type, data } } for track-aware edge selection
  *   }
+ * The journey graph (nodes/edges) is NOT in the payload — workers load it once
+ * per journey via getJourneyGraph() and cache it in-process (see below).
  */
 import { Worker } from 'bullmq';
 import { getConnection } from './index.js';
@@ -27,8 +27,6 @@ import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
 import WelcomeEmailService from '../WelcomeEmailService.js';
-<<<<<<< Updated upstream
-=======
 import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../../utils/emailFrequencyCap.js';
@@ -61,7 +59,6 @@ async function _resolveGraph(d) {
   if (d.edges && d.nodes) return { edges: d.edges, nodeMap: d.nodes };
   return getJourneyGraph(d.journeyId);
 }
->>>>>>> Stashed changes
 
 // Throughput tuning — adjust per provider's actual limits.
 const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20');
@@ -73,9 +70,6 @@ const WA_RATE_MAX       = parseInt(process.env.JOURNEY_WA_RATE_MAX       || '20'
 const WA_RATE_WINDOW    = parseInt(process.env.JOURNEY_WA_RATE_WINDOW    || '1000');
 
 const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
-
-// Override: redirect ALL journey emails to this address (for testing before going live)
-const EMAIL_OVERRIDE    = process.env.JOURNEY_EMAIL_OVERRIDE || null;
 
 // Throttle auto-processJourney calls: one trigger per journey per 20 seconds max
 const _processThrottle = new Map(); // journeyId → lastTriggerMs
@@ -128,8 +122,6 @@ export function startWorkers() {
     limiter: { max: 5, duration: 1000 },   // ≤5 welcome emails/sec
   });
 
-<<<<<<< Updated upstream
-=======
   // GTM (event-triggered) journey → per-user welcome-style email (delayed, rate-limited)
   const gtmJourney = new Worker('gtm-journey', traceJob('gtm-journey', processGtmJourney), {
     connection,
@@ -137,7 +129,6 @@ export function startWorkers() {
     limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
   });
 
->>>>>>> Stashed changes
   // After all retries exhausted: advance the entry so it doesn't block forever.
   // Shared handler used by email, wa, and sms queues.
   const _onExhausted = (channel) => async (job, err) => {
@@ -151,8 +142,7 @@ export function startWorkers() {
            VALUES ($1, $2, 'action_failed', $3, $4)`,
           [d.entryId, d.nodeId, channel, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
         );
-        const edges = d.edges || [];
-        const nodeMap = d.nodes || {};
+        const { edges, nodeMap } = await _resolveGraph(d);
         const outEdge = edges.find(e => e.source === d.nodeId);
         if (outEdge) {
           const nextNode = nodeMap[outEdge.target];
@@ -189,6 +179,8 @@ export function startWorkers() {
 
   welcome.on('error', (err) => console.error(`[Worker:welcome] worker error: ${err.message}`));
   welcome.on('failed', (job, err) => console.error(`[Worker:welcome] job ${job?.id} failed: ${err.message}`));
+  gtmJourney.on('error', (err) => console.error(`[Worker:gtmJourney] worker error: ${err.message}`));
+  gtmJourney.on('failed', (job, err) => console.error(`[Worker:gtmJourney] job ${job?.id} failed: ${err.message}`));
 
   for (const w of [email, wa, sms]) {
     w.on('error', (err) => {
@@ -196,21 +188,19 @@ export function startWorkers() {
     });
   }
 
-<<<<<<< Updated upstream
-  _workers = { email, wa, sms, welcome };
-=======
   _workers = { email, wa, sms, welcome, gtmJourney };
   // Attach Prometheus job metrics (completed/failed counts + duration). Listeners only —
   // does not affect processing, retries, or the existing 'failed' handlers above.
   for (const [name, w] of Object.entries(_workers)) instrumentWorkerMetrics(w, name);
->>>>>>> Stashed changes
   console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
 
 export async function stopWorkers() {
   if (!_workers) return;
-  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close()]);
+  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
+  // Flush any buffered send-log rows so a graceful restart doesn't lose them.
+  await SendTrackService.flushLogs().catch(() => {});
   _workers = null;
 }
 
@@ -218,6 +208,14 @@ export async function stopWorkers() {
 async function processWelcome(job) {
   const { unifiedId, eventName, eventId } = job.data || {};
   await WelcomeEmailService.processJob({ unifiedId, eventName, eventId });
+  return { ok: true };
+}
+
+/** GTM-journey worker: per-user welcome-style email for an event-triggered journey. */
+async function processGtmJourney(job) {
+  // Pass the FULL payload (entryId, nodeId, itemId, …) so the continuous engine can
+  // send the right node and advance the right state row.
+  await GtmJourneyService.processJob(job.data || {});
   return { ok: true };
 }
 
@@ -236,8 +234,15 @@ function _isDayCrossed(d) {
 
 async function processEmail(job) {
   const d = job.data;
-  const recipientEmail = EMAIL_OVERRIDE || d.email;
+  const recipientEmail = d.email;
   if (!recipientEmail) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
+
+  // WELCOME_EMAILS allow-list gate (validate the real user). Off-list → skip terminally
+  // and advance the entry so the journey progresses (no send, no retry storm).
+  if (!isEmailAllowed(d.email)) {
+    console.log(`[Worker:email] NOT IN WELCOME_EMAILS — skipping send for entry=${d.entryId} → ${d.email}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'not_in_allowlist' }, /*sent=*/false);
+  }
 
   if (_isDayCrossed(d)) {
     console.log(`[Worker:email] DAY CROSSED — job enqueued ${d.enqueuedDubaiDate}, skipping send for entry=${d.entryId} node=${d.nodeId}`);
@@ -285,7 +290,7 @@ async function processEmail(job) {
   }
   console.log(`[Worker:email] ── Processing job ${job.id} ──`);
   console.log(`[Worker:email]   entry=${d.entryId} customer=${d.customerId} node=${d.nodeId} journey=${d.journeyId}`);
-  console.log(`[Worker:email]   to=${recipientEmail}${EMAIL_OVERRIDE ? ` (override, real=${d.email})` : ''} template=${d.templateId}`);
+  console.log(`[Worker:email]   to=${recipientEmail} template=${d.templateId}`);
 
   // Stored node email first — the SAME rendered HTML for every contact at this node,
   // so the preview is byte-identical to what's sent. First touch renders (Claude/
@@ -329,6 +334,81 @@ async function processEmail(job) {
     }
   }
 
+  // ── Per-recipient review link ──
+  // Post-trip templates carry the %%REVIEW_URL%% sentinel (the node HTML is shared
+  // across recipients, so the link CANNOT be baked in at render time). Swap it here,
+  // per recipient, for a feedback link pre-filled with THIS contact's most recent
+  // trip. The includes() guard keeps the extra booking query off every other send.
+  if (html && html.includes('%%REVIEW_URL%%')) {
+    const reviewUrl = await buildReviewUrl(d.customerId).catch(() => null);
+    if (reviewUrl) {
+      html = html.split('%%REVIEW_URL%%').join(reviewUrl);
+      console.log(`[Worker:email]   injected review link for customer=${d.customerId}`);
+    }
+  }
+
+  // ── AI recommendation injection — additive, activates only when the journey
+  //    has recommendation_type set (new REC journeys). All existing journeys
+  //    have recommendation_type = NULL → this branch is skipped entirely.
+  //    Wrapped in try/catch so a bad rec never blocks the send. ──
+  //
+  //    Also enforces REC_JOURNEY_ALLOWLIST — if set, recipients not on the list
+  //    have their send SKIPPED (not just downgraded). Safety switch for test-only
+  //    rollout.
+  try {
+    const { rows: [jf] } = await db.query(
+      `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
+      [d.journeyId]
+    );
+    if (jf?.recommendation_type) {
+      const { injectPerUserProducts, isRecipientAllowedForRec } = await import('../RecommendationRenderer.js');
+      if (!isRecipientAllowedForRec(recipientEmail)) {
+        console.log(`[Worker:email]   REC ALLOWLIST BLOCKED — ${recipientEmail} not in REC_JOURNEY_ALLOWLIST for journey ${d.journeyId} (type=${jf.recommendation_type}). Skipping send + advancing entry.`);
+        return _logAndAdvance(d, 'action_blocked', { reason: 'rec_allowlist_blocked', recommendation_type: jf.recommendation_type }, false);
+      }
+
+      // Rec journey templates commonly use Liquid syntax ({% for %}, {{ USER_FIRST_NAME }},
+      // {% raw %}, etc.) inherited from Chathead. The FIXED-journey renderer path
+      // (EmailRenderer.render) does NOT run Liquid, so these tags survive as literal text.
+      // Run LiquidRenderer HERE, ONLY inside this rec-journey guard, so existing
+      // FIXED journeys stay untouched.
+      if (html && /\{%|\{\{\s*[A-Z_]+/.test(html)) {
+        try {
+          const { default: LiquidRenderer } = await import('../LiquidRenderer.js');
+          const { buildLiquidVars } = await import('../../utils/placeholderResolver.js');
+          const { rows: [c] } = await db.query(
+            `SELECT id, name, email, city FROM unified_contacts WHERE id = $1`,
+            [d.customerId]
+          );
+          const ctx = { contact: c || { name: d.name, email: recipientEmail }, event: {}, payload: {} };
+          html = await LiquidRenderer.render(html, buildLiquidVars(ctx));
+          console.log(`[Worker:email]   Liquid rendered for rec journey (contact_id=${d.customerId})`);
+        } catch (liqErr) {
+          console.warn(`[Worker:email]   Liquid render failed (using raw html): ${liqErr.message}`);
+        }
+      }
+
+      if (html && html.includes('{{#products}}')) {
+        const injected = await injectPerUserProducts({
+          templateHtml:       html,
+          unifiedId:          d.customerId,
+          recommendationType: jf.recommendation_type,
+          vars: {
+            customer_name: d.name || '',
+            ...(d.templateVariables || {}),
+          },
+        });
+        if (injected?.html) {
+          html = injected.html;
+          console.log(`[Worker:email]   AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
+        }
+      }
+    }
+  } catch (recErr) {
+    console.warn(`[Worker:email]   AI rec injection failed (falling back to un-injected html): ${recErr.message}`);
+    // Fall through — html stays as-is, send proceeds without rec cards.
+  }
+
   // ── Inject click/open tracking ──
   const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
 
@@ -340,16 +420,30 @@ async function processEmail(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'localhost_base_url', baseUrl }, false);
   }
 
-  const logId = await SendTrackService.logSend({
-    unifiedId: d.customerId,
-    email: recipientEmail || d.email || 'unknown',
-    subject,
-    templateLabel: d.nodeId || 'journey',
-    dayNumber: 0,
-    source: 'journey',
-    journeyId: d.journeyId || null,
-    nodeId: d.nodeId || null,
-  });
+  // ── Frequency cap: max N emails / 24h per recipient (Redis INCR, no DB load) ──
+  // Reserve a slot right before sending. If over the cap, skip this email and advance
+  // the journey (the contact simply doesn't get this one).
+  const _cap = await reserveSend({ unifiedId: d.customerId, email: recipientEmail });
+  if (!_cap.allowed) {
+    console.log(`[Worker:email] FREQUENCY CAPPED — entry=${d.entryId} customer=${d.customerId} count=${_cap.count}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'frequency_capped', count: _cap.count }, false);
+  }
+
+  // Batched logging (opt-in): reserve an id without inserting; the row is buffered
+  // after send and flushed in bulk. Default path keeps the one-insert-per-send behavior.
+  const _batchLog = process.env.JOURNEY_LOG_BATCH === 'true';
+  const logId = _batchLog
+    ? await SendTrackService.reserveLogId()
+    : await SendTrackService.logSend({
+        unifiedId: d.customerId,
+        email: recipientEmail || d.email || 'unknown',
+        subject,
+        templateLabel: d.nodeId || 'journey',
+        dayNumber: 0,
+        source: 'journey',
+        journeyId: d.journeyId || null,
+        nodeId: d.nodeId || null,
+      });
 
   const campaignSlug = `j${d.journeyId}_${(d.nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
   let trackedHtml = injectClickTracking(html, {
@@ -375,13 +469,39 @@ async function processEmail(job) {
   // Update send log status
   if (sendResult.success) {
     console.log(`[Worker:email]   ✓ SENT to=${recipientEmail} provider=${sendResult.provider} externalId=${sendResult.externalId} duration=${sendResult.durationMs}ms`);
-    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
   } else {
     console.log(`[Worker:email]   ✗ FAILED to=${recipientEmail} error=${sendResult.error} duration=${sendResult.durationMs}ms`);
+  }
+  if (_batchLog) {
+    // Buffer the FINAL row (one bulk insert for many sends) — skips the separate
+    // 'queued' INSERT + status UPDATE entirely.
+    SendTrackService.bufferLog({
+      id: logId,
+      unifiedId: d.customerId,
+      email: recipientEmail || d.email || 'unknown',
+      subject,
+      templateLabel: d.nodeId || 'journey',
+      dayNumber: 0,
+      source: 'journey',
+      journeyId: d.journeyId || null,
+      nodeId: d.nodeId || null,
+      status: sendResult.success ? 'sent' : 'failed',
+      externalId: sendResult.success ? (sendResult.externalId || null) : null,
+      provider: sendResult.provider || null,
+      durationMs: sendResult.durationMs || null,
+      error: sendResult.success ? null : (sendResult.error || 'send_failed'),
+      sentAt: new Date(),
+    });
+  } else if (sendResult.success) {
+    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
+  } else {
     SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' }).catch(() => {});
   }
 
   if (!sendResult.success) {
+    // The send didn't go out — release the reserved frequency-cap slot so this
+    // failed attempt doesn't count against the recipient's 24h limit.
+    releaseSend({ unifiedId: d.customerId, email: recipientEmail });
     // Log the failure but do NOT advance the entry — let BullMQ retry.
     // Only advance after all retries are exhausted (handled by the failed event below).
     await db.query(
@@ -523,8 +643,7 @@ async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
     [d.entryId, d.nodeId, eventType, d.channel, JSON.stringify(details || {})]
   );
 
-  const edges = d.edges || [];
-  const nodeMap = d.nodes || {};
+  const { edges, nodeMap } = await _resolveGraph(d);
   const entryTrack = d.track || 'all';
   const matchesTrack = (nodeId) => {
     const n = nodeMap[nodeId];
@@ -567,17 +686,22 @@ async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
 
 async function _checkJourneyCompletion(journeyId) {
   try {
+    // Cheap existence check — short-circuits at the FIRST active row instead of
+    // counting all (potentially millions of) entries. During an active send this
+    // returns instantly, so the per-send completion check costs ~nothing. The old
+    // COUNT(*) over 1.3M rows ran on every send completion and, under concurrent
+    // sends, caused LWLock:BufferMapping thrash that stalled the whole DB.
     const { rows: [r] } = await db.query(
-      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
+      `SELECT EXISTS(SELECT 1 FROM journey_entries WHERE journey_id = $1 AND status = 'active') AS has_active`,
       [journeyId]
     );
-    if (parseInt(r.cnt) > 0) return;
+    if (r.has_active) return;
 
     const { rows: [total] } = await db.query(
-      `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1`,
+      `SELECT EXISTS(SELECT 1 FROM journey_entries WHERE journey_id = $1) AS has_any`,
       [journeyId]
     );
-    if (parseInt(total.cnt) === 0) return;
+    if (!total.has_any) return;
 
     const { rowCount } = await db.query(
       `UPDATE journey_flows SET status = 'completed', updated_at = NOW()

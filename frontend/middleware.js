@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/', '/login', '/landing', '/rayna-logo.webp', '/favicon.ico'];
+const PUBLIC_PATHS = ['/', '/login', '/landing', '/rayna-logo.webp', '/favicon.ico', '/icon.svg', '/apple-icon.png'];
 
 export function middleware(request) {
   const { pathname } = request.nextUrl;
 
-  // Allow public routes and Next.js internals
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
@@ -31,5 +30,5 @@ export function middleware(request) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|rayna-logo.webp).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|rayna-logo.webp).*)'],
 };

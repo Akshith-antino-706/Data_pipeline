@@ -18,12 +18,14 @@ import campaignsRouter from './src/routes/campaigns.js';
 import enrichmentRouter from './src/routes/enrichment.js';
 import segmentsV3Router from './src/routes/segmentsV3.js';
 import journeysRouter from './src/routes/journeys.js';
+import unsubscribeRouter from './src/routes/unsubscribe.js';
 import agentsRouter from './src/routes/agents.js';
 import utmRouter from './src/routes/utm.js';
 import gtmRouter from './src/routes/gtm.js';
 import productsRouter from './src/routes/products.js';
 import affinityRouter from './src/routes/productAffinity.js';
 import baseTemplatesRouter from './src/routes/baseTemplates.js';
+import recommendationsRouter from './src/routes/recommendations.js';
 import syncRouter from './src/routes/sync.js';
 import mysqlSyncRouter from './src/routes/mysqlSync.js';
 import cron from 'node-cron';
@@ -93,6 +95,10 @@ app.use((req, res, next) => {
 // ── SES Webhook (before rate limiter — SNS sends many events) ──
 app.use('/api/webhooks', express.text({ type: 'text/plain' }), sesWebhookRouter);
 
+// ── Public unsubscribe page — under /api so the prod reverse-proxy routes it to the
+// backend (the frontend owns all non-/api paths). No auth, no rate limiter. ──
+app.use('/api/unsubscribe', express.urlencoded({ extended: true }), unsubscribeRouter);
+
 // Rate limiting — general: 200 req/min, mutations: 30 req/min
 const generalLimiter = rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many requests, slow down' } });
 const mutationLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false, message: { success: false, error: 'Too many write requests, slow down' } });
@@ -124,6 +130,7 @@ app.use('/api', analyticsRouter);
 app.use('/api/v2/segments', segmentsRouter);
 app.use('/api/v2/strategies', strategiesRouter);
 app.use('/api/v2/content', contentRouter);
+app.use('/api/v2/recommendations', recommendationsRouter);
 app.use('/api/v2/campaigns', campaignsRouter);
 app.use('/api/v2/enrichment', enrichmentRouter);
 
@@ -339,7 +346,10 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('083_journey_node_emails.sql');
     await runMigrationFile('084_daily_ai_templates.sql');
     await runMigrationFile('085_email_qa_reports.sql');
-    res.json({ success: true, message: 'Journey migrations (071-085) completed' });
+    await runMigrationFile('086_journey_node_synced.sql');
+    await runMigrationFile('087_journey_type.sql');
+    await runMigrationFile('088_journey_trigger_event.sql');
+    res.json({ success: true, message: 'Journey migrations (071-088) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -486,8 +496,19 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
     }
   } catch { /* keep original if decode fails */ }
 
+  // Unsubscribe links go to our CONFIRMATION page (prefetch-safe — the actual opt-out
+  // happens on the confirmation POST, not on this GET). All other links redirect normally.
+  let redirectTo = destination;
+  try {
+    const d = new URL(destination);
+    if (d.pathname.includes('unsubscribe') || d.searchParams.has('unsubscribe')) {
+      const base = process.env.TRACKING_BASE_URL || `http://localhost:${process.env.PORT || 3001}`;
+      redirectTo = `${base}/api/unsubscribe?log=${req.params.id}`;
+    }
+  } catch { /* keep destination if URL invalid */ }
+
   // Redirect first — don't keep the recipient waiting
-  res.redirect(302, destination);
+  res.redirect(302, redirectTo);
 
   const id = parseInt(req.params.id);
   if (!isNaN(id)) {
@@ -525,39 +546,10 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
         }),
       ];
 
-      // ── Unsubscribe link detection ──
-      // If the destination URL contains "/unsubscribe", this click IS the unsubscribe event.
-      // Parse utm_campaign (format: j127_node_2) to get journey_id + node_id,
-      // immediately set email_unsubscribe='Yes', and insert into unsubscribe_log.
-      try {
-        const destUrl = new URL(destination);
-        const isUnsubLink = destUrl.pathname.includes('unsubscribe') || destUrl.searchParams.has('unsubscribe');
-        if (isUnsubLink && logRows.unified_id) {
-          // Parse campaign "j127_node_2" → journeyId=127, nodeId="node_2"
-          const campaign = utmData.utmCampaign || '';
-          const match = campaign.match(/^j(\d+)_(.+)$/);
-          const journeyId = match ? parseInt(match[1]) : (logRows.journey_id || null);
-          const nodeId    = match ? match[2] : (logRows.node_id || null);
-
-          tasks.push(
-            db.query(
-              `UPDATE unified_contacts SET email_unsubscribe = 'Yes', updated_at = NOW()
-               WHERE id = $1 AND email_unsubscribe <> 'Yes'`,
-              [logRows.unified_id]
-            ).then(({ rowCount }) => {
-              if (rowCount > 0) {
-                return db.query(
-                  `INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign, source_log_id)
-                   VALUES ($1, $2, $3, $4, $5, $6)
-                   ON CONFLICT DO NOTHING`,
-                  [logRows.unified_id, logRows.email, journeyId, nodeId, 'email_link', id]
-                );
-              }
-            })
-          );
-          console.log(`[Track] Unsubscribe click: uid=${logRows.unified_id} email=${logRows.email} journey=${journeyId} node=${nodeId}`);
-        }
-      } catch { /* skip if destination URL is invalid */ }
+      // NOTE: unsubscribe is NO LONGER performed here. Clicking an unsubscribe link now
+      // redirects (above) to the /unsubscribe confirmation page, and the opt-out happens
+      // only when the recipient confirms (POST). This prevents mailbox/scanner link
+      // prefetch from falsely unsubscribing people.
 
       await Promise.all(tasks);
     } catch (e) { console.error('[Track] email-send click error:', e.message); }
@@ -621,10 +613,17 @@ app.use((err, _req, res, _next) => {
 // ── Graceful shutdown ───────────────────────────────────────
 function shutdown(signal) {
   console.log(`\n${signal} received. Shutting down gracefully...`);
-  pool.end().then(() => {
-    console.log('Database pool closed.');
-    process.exit(0);
-  }).catch(() => process.exit(1));
+  // Flush any buffered email_send_log rows before the pool closes (no-op unless
+  // JOURNEY_LOG_BATCH is enabled).
+  import('./src/services/SendTrackService.js')
+    .then(({ SendTrackService }) => SendTrackService.flushLogs())
+    .catch(() => {})
+    .finally(() => {
+      pool.end().then(() => {
+        console.log('Database pool closed.');
+        process.exit(0);
+      }).catch(() => process.exit(1));
+    });
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -735,6 +734,52 @@ cron.schedule('30 3 * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Chats sync scheduled at 3:30 AM Dubai time');
 
+// ── Daily journey re-snapshot — 2:30 AM Dubai ──
+// Fixed journeys with recommendation_type IN ('on_trip','future_trip') target
+// a ROLLING segment (travel_date window). Users become eligible daily as their
+// travel_date rolls in. This cron re-enrolls newly-eligible users into their
+// matching rec journeys. Runs after the 2:00 AM segment refresh so
+// booking_status is fresh. Additive — only touches journey_entries via ON
+// CONFLICT DO NOTHING, no impact on existing snapshot-once fixed journeys.
+cron.schedule('30 2 * * *', async () => {
+  try {
+    const { runDailyJourneyReSnapshot } = await import('./src/crons/dailyJourneyReSnapshot.js');
+    await runDailyJourneyReSnapshot();
+  } catch (err) {
+    console.error('[Cron:JourneyReSnapshot] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily journey re-snapshot scheduled at 2:30 AM Dubai time');
+
+// ── Daily AI recommendation compute — 3:35 AM Dubai ──
+// Precomputes 5 AI-picked products per (user, recommendation_type) for on_trip
+// / future_trip / past_trip. Feeds the REC_ONTRIP-style journeys with per-user
+// personalized picks read at send time. Only touches user_product_recommendations
+// (new table) — no impact on existing journey/segment/render logic.
+cron.schedule('35 3 * * *', async () => {
+  try {
+    const { runDailyRecommendationCompute } = await import('./src/crons/dailyRecommendationCompute.js');
+    await runDailyRecommendationCompute();
+  } catch (err) {
+    console.error('[Cron:RecCompute] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] AI recommendation compute scheduled at 3:35 AM Dubai time');
+
+// ── PhpAdmin weekly sync — pull new MySQL contacts into unified_contacts ──
+// Sundays 05:00 Dubai. Incremental (uses sync_metadata.last_synced_at watermark)
+// so subsequent runs only scan MySQL rows created since the last successful run.
+cron.schedule('0 5 * * 0', async () => {
+  try {
+    const { runPhpAdminSync } = await import('./src/services/PhpAdminWeeklySync.js');
+    const summary = await runPhpAdminSync({ triggeredBy: 'cron' });
+    console.log(`[Cron:PhpAdminWeekly] Done — fetched=${summary.mysqlRowsFetched} new=${summary.newlyInserted} status=${summary.status} in ${summary.durationMs}ms`);
+  } catch (err) {
+    console.error('[Cron:PhpAdminWeekly] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] PhpAdmin weekly sync scheduled: Sundays 05:00 Asia/Dubai');
+
 // ── Journey Engine — process due entries every 5 min ──────────────
 cron.schedule('*/5 * * * *', async () => {
   try {
@@ -747,6 +792,18 @@ cron.schedule('*/5 * * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey engine scheduled: every 5 min (Asia/Dubai)');
+
+// ── CONTINUOUS (gtm) journey engine — every 1 min: fire due per-user state rows ──
+cron.schedule('* * * * *', async () => {
+  try {
+    const { default: ContinuousJourneyService } = await import('./src/services/ContinuousJourneyService.js');
+    const r = await ContinuousJourneyService.processDue();
+    if (r.enqueued > 0 || r.exited > 0) console.log(`[Cron:Continuous] due=${r.due} enqueued=${r.enqueued} exited=${r.exited}`);
+  } catch (err) {
+    console.error('[Cron:Continuous] Error:', err.message);
+  }
+});
+console.log('[Cron] Continuous GTM engine scheduled: every 1 min');
 
 // ── Journey auto-start — check every minute for scheduled journeys ──
 cron.schedule('* * * * *', async () => {

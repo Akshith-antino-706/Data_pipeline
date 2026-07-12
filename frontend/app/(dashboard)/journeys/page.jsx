@@ -32,6 +32,444 @@ const NODE_COLORS = {
   wait: 'var(--yellow)', goal: 'var(--purple)'
 };
 
+// GTM trigger events a journey can fan out over. `value` MUST match gtm_events.event_name.
+// (Note: availability is stored as 'check_availability_click', not 'check_availability'.)
+const GTM_EVENT_OPTIONS = [
+  { value: 'view_item',                label: 'View Item' },
+  { value: 'add_to_cart',              label: 'Add to Cart' },
+  { value: 'add_to_wishlist',          label: 'Add to Wishlist' },
+  { value: 'share',                    label: 'Share' },
+  { value: 'event_date',               label: 'Event Date' },
+  { value: 'check_availability_click', label: 'Check Availability' },
+  { value: 'begin_checkout',           label: 'Begin Checkout' },
+  { value: 'add_payment_info',         label: 'Add Payment Info' },
+  { value: 'purchase',                 label: 'Purchase' },
+  { value: 'payment_failed',           label: 'Payment Failed' },
+  { value: 'generate_lead',            label: 'Generate Lead' },
+  { value: 'lead',                     label: 'Lead' },
+  { value: 'click_whatsapp',           label: 'Click WhatsApp' },
+  { value: 'click_email',              label: 'Click Email' },
+  { value: 'click_call',               label: 'Click Call' },
+  { value: 'on_trip_started',          label: 'On Trip Started (synthetic)' },
+];
+
+// Collapsed multi-select dropdown for the Trigger GTM Event(s) picker.
+// value/onChange use a comma-separated string (e.g. 'view_item,add_payment_info').
+function TriggerEventMultiSelect({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  const selected = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const labelFor = (v) => GTM_EVENT_OPTIONS.find(o => o.value === v)?.label || v;
+  const toggle = (val) => {
+    const set = new Set(selected);
+    if (set.has(val)) set.delete(val); else set.add(val);
+    onChange([...set].join(','));
+  };
+  const summary = selected.length === 0 ? 'Select event(s)…'
+    : selected.length <= 2 ? selected.map(labelFor).join(', ')
+    : `${selected.length} events selected`;
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '8px 12px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 8,
+          background: 'var(--surface)', color: selected.length ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          maxHeight: 248, overflowY: 'auto', padding: 6, border: '1px solid var(--border)', borderRadius: 8,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 8px 28px rgba(0,0,0,0.20)' }}>
+          {GTM_EVENT_OPTIONS.map(o => {
+            const on = selected.includes(o.value);
+            return (
+              <label key={o.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: on ? 'rgba(99,102,241,0.10)' : 'transparent' }}>
+                <input type="checkbox" checked={on} onChange={() => toggle(o.value)} style={{ accentColor: '#6366f1', width: 14, height: 14, cursor: 'pointer' }} />
+                <span style={{ color: on ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: on ? 600 : 400 }}>{o.label}</span>
+              </label>
+            );
+          })}
+          {selected.length > 0 && (
+            <button type="button" onClick={() => onChange('')}
+              style={{ width: '100%', marginTop: 4, paddingTop: 6, fontSize: 11, border: 'none', borderTop: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Searchable segment picker. Replaces the native <select> so operators can
+// type-to-filter across large segment lists (600k+ items in some tenants) and
+// see the row count on every option.
+function SearchableSegmentSelect({ segments, value, onChange, loading }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
+
+  const selected = value ? segments.find(s => s.value === value) : null;
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return segments;
+    return segments.filter(s => s.label.toLowerCase().includes(q) || String(s.value).toLowerCase().includes(q));
+  }, [segments, q]);
+
+  const standard = filtered.filter(s => s.group === 'standard');
+  const custom = filtered.filter(s => s.group === 'custom');
+  const flat = [...standard, ...custom];
+
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const pick = (s) => { onChange(s.value); setOpen(false); setQuery(''); };
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, flat.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (flat[activeIdx]) pick(flat[activeIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  const row = (s, idx) => {
+    const on = value === s.value;
+    const active = idx === activeIdx;
+    const m = s.label.match(/^(.*?)\s*\((\d[\d,]*)\)\s*$/);
+    const label = m ? m[1] : s.label;
+    const count = m ? m[2] : null;
+    return (
+      <div key={`${s.group}-${s.value}`} data-idx={idx}
+        onMouseEnter={() => setActiveIdx(idx)}
+        onMouseDown={(e) => { e.preventDefault(); pick(s); }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+          background: active ? 'rgba(99,102,241,0.12)' : on ? 'rgba(99,102,241,0.06)' : 'transparent',
+          color: 'var(--text-primary)' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {on && <span style={{ color: '#6366f1', fontSize: 12 }}>✓</span>}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: on ? 600 : 400 }}>{label}</span>
+        </span>
+        {count && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{count}</span>}
+      </div>
+    );
+  };
+
+  const groupHeader = (text) => (
+    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+      color: 'var(--text-tertiary)', padding: '10px 10px 4px' }}>{text}</div>
+  );
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button type="button" disabled={loading} onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 12px', fontSize: 13, borderRadius: 8,
+          border: `1px solid ${!value ? 'var(--red)' : 'var(--border)'}`,
+          background: 'var(--surface, #fff)',
+          color: selected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: loading ? 'not-allowed' : 'pointer', textAlign: 'left', opacity: loading ? 0.6 : 1 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {loading ? 'Loading segments…' : selected ? selected.label : '— Select a segment —'}
+        </span>
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Search size={13} color="var(--text-tertiary)" />
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => setQuery(e.target.value)} onKeyDown={onKey}
+              placeholder="Search segments…"
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                fontSize: 13, color: 'var(--text-primary)' }} />
+            {query && (
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setQuery(''); }}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
+            )}
+          </div>
+          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+            {flat.length === 0 && (
+              <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                No segments match “{query}”
+              </div>
+            )}
+            {standard.length > 0 && groupHeader('Standard Segments')}
+            {standard.map((s, i) => row(s, i))}
+            {custom.length > 0 && groupHeader('Custom Segments')}
+            {custom.map((s, i) => row(s, standard.length + i))}
+          </div>
+          <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>{flat.length} of {segments.length}</span>
+            <span>↑↓ navigate · ↵ select · esc close</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Searchable template picker. Shares the same UX as SearchableSegmentSelect:
+// type-to-filter, keyboard nav, click-outside close. Handles the per-channel
+// label format (email → "name — subject", whatsapp → "name (wa_template_name)",
+// sms → "name") and emits a numeric id (or null) via onChange to preserve the
+// existing parseInt-based state shape.
+function SearchableTemplateSelect({ templates, value, onChange, channel = 'email', placeholder, error }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const secondaryFor = (t) => (channel === 'email' ? t.subject : channel === 'whatsapp' ? t.wa_template_name : null);
+  const formatLabel = (t) => {
+    const s = secondaryFor(t);
+    if (!s) return t.name;
+    return channel === 'email' ? `${t.name} — ${s}` : `${t.name} (${s})`;
+  };
+
+  const selected = value != null ? templates.find(t => String(t.id) === String(value)) : null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return templates;
+    return templates.filter(t => {
+      const hay = `${t.name || ''} ${secondaryFor(t) || ''}`.toLowerCase();
+      return hay.includes(q) || String(t.id).includes(q);
+    });
+  }, [templates, q, channel]);
+
+  const pick = (t) => { onChange(t ? Number(t.id) : null); setOpen(false); setQuery(''); };
+  const clear = (e) => { e.stopPropagation(); onChange(null); };
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[activeIdx]) pick(filtered[activeIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  const row = (t, idx) => {
+    const on = String(value) === String(t.id);
+    const active = idx === activeIdx;
+    const secondary = secondaryFor(t);
+    return (
+      <div key={t.id} data-idx={idx}
+        onMouseEnter={() => setActiveIdx(idx)}
+        onMouseDown={(e) => { e.preventDefault(); pick(t); }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+          background: active ? 'rgba(99,102,241,0.12)' : on ? 'rgba(99,102,241,0.06)' : 'transparent' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+          {on && <span style={{ color: '#6366f1', fontSize: 12, flexShrink: 0 }}>✓</span>}
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, fontWeight: on ? 600 : 500, color: 'var(--text-primary)' }}>{t.name}</span>
+            {secondary && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text-tertiary)' }}>{secondary}</span>}
+          </span>
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>#{t.id}</span>
+      </div>
+    );
+  };
+
+  const ph = placeholder || `— Select ${channel} template —`;
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 12px', fontSize: 13, borderRadius: 8,
+          border: `1px solid ${error ? 'var(--red)' : 'var(--border)'}`,
+          background: 'var(--surface, #fff)',
+          color: selected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected ? formatLabel(selected) : ph}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {selected && (
+            <span onMouseDown={clear} style={{ color: 'var(--text-tertiary)', fontSize: 12, cursor: 'pointer' }} title="Clear">×</span>
+          )}
+          <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', fontSize: 11 }}>▾</span>
+        </span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Search size={13} color="var(--text-tertiary)" />
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => setQuery(e.target.value)} onKeyDown={onKey}
+              placeholder="Search templates…"
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                fontSize: 13, color: 'var(--text-primary)' }} />
+            {query && (
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setQuery(''); }}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
+            )}
+          </div>
+          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                {templates.length === 0 ? `No ${channel} templates found` : `No templates match “${query}”`}
+              </div>
+            )}
+            {filtered.map((t, i) => row(t, i))}
+          </div>
+          <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
+            <span>{filtered.length} of {templates.length}</span>
+            <span>↑↓ navigate · ↵ select · esc close</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Generic searchable single-select. Options are `{ value, label, description? }`.
+// Same UX conventions as SearchableSegmentSelect / SearchableTemplateSelect.
+function SearchableSelect({ options, value, onChange, placeholder = '— Select —', searchPlaceholder = 'Search…', error }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIdx, setActiveIdx] = useState(0);
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const selected = options.find(o => String(o.value) === String(value ?? ''));
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return options;
+    return options.filter(o => `${o.label} ${o.description || ''}`.toLowerCase().includes(q));
+  }, [options, q]);
+
+  const pick = (o) => { onChange(o.value); setOpen(false); setQuery(''); };
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[activeIdx]) pick(filtered[activeIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          padding: '10px 12px', fontSize: 13, borderRadius: 8,
+          border: `1px solid ${error ? 'var(--red)' : 'var(--border)'}`,
+          background: 'var(--surface, #fff)',
+          color: selected ? 'var(--text-primary)' : 'var(--text-tertiary)',
+          cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected ? selected.label : placeholder}</span>
+        <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+          border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Search size={13} color="var(--text-tertiary)" />
+            <input ref={inputRef} type="text" value={query}
+              onChange={e => setQuery(e.target.value)} onKeyDown={onKey}
+              placeholder={searchPlaceholder}
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13, color: 'var(--text-primary)' }} />
+            {query && (
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setQuery(''); }}
+                style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
+            )}
+          </div>
+          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>No matches</div>
+            )}
+            {filtered.map((o, i) => {
+              const on = String(value ?? '') === String(o.value);
+              const active = i === activeIdx;
+              return (
+                <div key={String(o.value)} data-idx={i}
+                  onMouseEnter={() => setActiveIdx(i)}
+                  onMouseDown={(e) => { e.preventDefault(); pick(o); }}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                    background: active ? 'rgba(99,102,241,0.12)' : on ? 'rgba(99,102,241,0.06)' : 'transparent' }}>
+                  <span style={{ color: on ? '#6366f1' : 'transparent', fontSize: 12, marginTop: 2 }}>✓</span>
+                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: 13, fontWeight: on ? 600 : 500, color: 'var(--text-primary)' }}>{o.label}</span>
+                    {o.description && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2, lineHeight: 1.4 }}>{o.description}</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const RECOMMENDATION_TYPE_OPTIONS = [
+  { value: '',            label: 'None',        description: 'No AI recommendations' },
+  { value: 'on_trip',     label: 'On Trip',     description: 'Recs based on their currently-traveling booking' },
+  { value: 'future_trip', label: 'Future Trip', description: 'Recs based on their upcoming booking' },
+  { value: 'past_trip',   label: 'Past Trip',   description: 'Recs based on their previous booking' },
+];
+
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
 // Keyed by content_template id (the Day1-7 dynamic templates).
 const DYNAMIC_SECTIONS = {
@@ -50,6 +488,48 @@ const NODE_LABELS = {
   trigger: 'Entry Trigger', action: 'Send Message', condition: 'Branch',
   wait: 'Wait / Delay', goal: 'Conversion Goal'
 };
+
+// Wait-node delay input. CONTINUOUS journeys use a RELATIVE offset (+N min/hours/days,
+// per the PDF "+2h / +24h" format) since each user runs on their own clock; the value is
+// stored as fractional waitDays (the engine's _waitMs handles fractions). FIXED journeys
+// keep a plain days input (they run on an absolute schedule).
+const _toDays = (v, u) => (u === 'minutes' ? v / 1440 : u === 'hours' ? v / 24 : v);
+// Human-readable wait label from fractional days: 0.00347 → "5 min", 0.0833 → "2 hours", 1 → "1 day".
+const formatWaitLabel = (waitDays) => {
+  const mins = Math.round((parseFloat(waitDays) || 0) * 1440);
+  if (mins <= 0) return '0 min';
+  if (mins < 60) return `${mins} min`;
+  if (mins < 1440) { const h = mins / 60; return `${Number.isInteger(h) ? h : h.toFixed(1)} hour${h === 1 ? '' : 's'}`; }
+  const d = mins / 1440;
+  return `${Number.isInteger(d) ? d : +d.toFixed(2)} day${d === 1 ? '' : 's'}`;
+};
+function WaitDelayInput({ nodeForm, setNodeForm, continuous }) {
+  const wd = parseFloat(nodeForm.waitDays) || 0;
+  if (!continuous) {
+    return (
+      <input type="number" min="1" value={nodeForm.waitDays}
+        onChange={e => setNodeForm(f => ({ ...f, waitDays: parseFloat(e.target.value) || 1, waitUnit: 'days' }))}
+        placeholder="Days" style={{ width: 120, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+    );
+  }
+  const unit = nodeForm.waitUnit || (wd < 1 / 24 ? 'minutes' : wd < 1 ? 'hours' : 'days');
+  const disp = unit === 'minutes' ? Math.round(wd * 1440) : unit === 'hours' ? +(wd * 24).toFixed(2) : +wd.toFixed(2);
+  const box = { padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12 };
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)' }}>+</span>
+      <input type="number" min="1" value={disp}
+        onChange={e => { const v = parseFloat(e.target.value) || 0; setNodeForm(f => ({ ...f, waitDays: _toDays(v, unit), waitUnit: unit })); }}
+        style={{ ...box, width: 80 }} />
+      <select value={unit} onChange={e => setNodeForm(f => ({ ...f, waitUnit: e.target.value }))} style={{ ...box }}>
+        <option value="minutes">minutes</option>
+        <option value="hours">hours</option>
+        <option value="days">days</option>
+      </select>
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>after previous node</span>
+    </div>
+  );
+}
 
 const CHANNEL_CONFIG = {
   whatsapp: { color: '#25d366', icon: MessageCircle, label: 'WhatsApp' },
@@ -191,7 +671,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
@@ -412,13 +892,18 @@ export default function Journeys() {
 
   // Returns the custom (non-system) variable names for a given template.
   // Always parses from body HTML (the ground truth) — the variables DB column can be stale.
+  // Placeholders auto-filled from the triggering GTM event — never shown as inputs.
+  const GTM_AUTO_VARS = new Set(['event_id', 'raw_payload', 'event_name', 'event_time', 'page_url', 'item_name', 'customer_name', 'cta_url']);
   const getTemplateCustomVars = (templateId, channel) => {
     if (!templateId) return [];
     const list = allTemplates[channel] || [];
     const tpl = list.find(t => String(t.id) === String(templateId));
     if (!tpl) return [];
     const vars = [...new Set([...(tpl.body || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
-    return vars.filter(v => !SYSTEM_VARS.has(v));
+    // GTM event template (e.g. welcome_gtm_event) → all fields come from the event,
+    // so show NO manual input boxes.
+    if (vars.some(v => ['event_id', 'raw_payload', 'event_name', 'event_time'].includes(v))) return [];
+    return vars.filter(v => !SYSTEM_VARS.has(v) && !GTM_AUTO_VARS.has(v));
   };
 
   const loadTemplates = async () => {
@@ -603,6 +1088,13 @@ export default function Journeys() {
         name: createForm.name,
         description: createForm.description,
         segmentId: createForm.segmentId || null,
+        journeyType: createForm.journeyType,
+        triggerEvent: createForm.journeyType === 'continuous' ? createForm.triggerEvent : null,
+        // Continuous only: only enroll GTM events fired on/after this date (Dubai midnight).
+        // Blank → backend defaults to journey creation time (no historical backfill).
+        triggerFromDate: (createForm.journeyType === 'continuous' && createForm.triggerFromDate)
+          ? new Date(createForm.triggerFromDate + 'T00:00:00+04:00').toISOString()
+          : null,
         exitOnConversion: createForm.exitOnConversion,
         // Treat the input value as Dubai time (UTC+4) → convert to UTC ISO for the backend
         scheduledStartAt: createForm.scheduledStartAt
@@ -611,6 +1103,10 @@ export default function Journeys() {
         testMode: createForm.testMode,
         testEmail: createForm.testMode ? (createForm.testEmail || null) : null,
         testWaitSec: createForm.testMode ? (parseInt(createForm.testWaitSec) || 30) : 30,
+        // AI recommendation type — null (default) means legacy behavior, no AI
+        // recs injected at send time. 'on_trip' / 'future_trip' / 'past_trip'
+        // pulls per-user precomputed picks from user_product_recommendations.
+        recommendationType: createForm.recommendationType || null,
         nodes: [trigger, ...extraNodes],
         edges: [trigger, ...extraNodes].slice(1).map((n, i) => ({
           id: `e_${[trigger, ...extraNodes][i].id}_${n.id}`,
@@ -619,8 +1115,9 @@ export default function Journeys() {
         }))
       });
       const snapCount = res.data?.snapshot_count || 0;
-      showToast(`Journey "${res.data?.name}" created — ${snapCount} users snapshotted`, 'success');
-      setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 });
+      const snapNoun = createForm.journeyType === 'continuous' ? 'emails' : 'users';
+      showToast(`Journey "${res.data?.name}" created — ${snapCount} ${snapNoun} snapshotted`, 'success');
+      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       await loadData();
@@ -790,12 +1287,19 @@ export default function Journeys() {
   // ── Filtered Journeys ─────────────────────────────────────────
   const filteredJourneys = useMemo(() => {
     let filtered = journeys;
-    // B2B/B2C filter
+    // B2B/B2C scope filter.
+    //   'All'  → show every journey (B2C + B2B).
+    //   'B2B'  → journeys whose NAME or SEGMENT mentions B2B (e.g. "All B2B users").
+    //   'B2C'  → everything that isn't B2B.
+    // Classify by name OR segment containing "B2B" (substring, not startsWith — so segments
+    // like "All B2B users" are caught; the old startsWith only matched names, which hid
+    // B2B-segment journeys whose title didn't literally start with "B2B").
     filtered = filtered.filter(j => {
+      if (businessType === 'All') return true;
       const name = (j.name || '').toUpperCase();
       const seg = (j.segment_name || '').toUpperCase();
-      if (businessType === 'B2B') return name.includes('B2B') || seg.startsWith('B2B');
-      return !name.includes('B2B') && !seg.startsWith('B2B');
+      const isB2B = name.includes('B2B') || seg.includes('B2B');
+      return businessType === 'B2B' ? isB2B : !isB2B;
     });
     if (statusFilter !== 'all') {
       filtered = filtered.filter(j => j.status === statusFilter);
@@ -1457,8 +1961,7 @@ export default function Journeys() {
                                       placeholder={nodeForm.type === 'wait' ? 'e.g. Wait 3 days' : 'Step description...'}
                                       style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                                     {nodeForm.type === 'wait' && (
-                                      <input type="number" value={nodeForm.waitDays} onChange={e => setNodeForm(f => ({...f, waitDays: parseInt(e.target.value) || 1}))}
-                                        placeholder="Days to wait" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                                      <WaitDelayInput nodeForm={nodeForm} setNodeForm={setNodeForm} continuous={detail?.journey_type === 'gtm'} />
                                     )}
                                     <div className="flex gap-1.5">
                                       <button onClick={() => handleAddNode(i - 1)} className="btn btn-sm btn-primary" style={{ fontSize: 11 }}>Add</button>
@@ -1660,6 +2163,11 @@ export default function Journeys() {
                                           {fmt(nStats.completed)} done
                                         </span>
                                       )}
+                                      {nStats.exited > 0 && (
+                                        <span title="Exited here (purchased / unsubscribed)" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontWeight: 700 }}>
+                                          {fmt(nStats.exited)} exited
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                   {hasSent && (
@@ -1770,7 +2278,7 @@ export default function Journeys() {
                                       <div className="flex items-center gap-2" style={{ padding: '4px 0 10px' }}>
                                         <Clock size={14} color={color} />
                                         <span className="text-secondary text-sm">
-                                          Wait <strong>{waitDays} day{waitDays !== 1 ? 's' : ''}</strong> before proceeding
+                                          Wait <strong>{formatWaitLabel(waitDays)}</strong> before proceeding
                                         </span>
                                       </div>
 
@@ -2185,8 +2693,7 @@ export default function Journeys() {
                             <input value={nodeForm.label} onChange={e => setNodeForm(f => ({...f, label: e.target.value}))}
                               placeholder="Step description..." style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
                             {nodeForm.type === 'wait' && (
-                              <input type="number" value={nodeForm.waitDays} onChange={e => setNodeForm(f => ({...f, waitDays: parseInt(e.target.value) || 1}))}
-                                placeholder="Days" style={{ width: 100, padding: '6px 10px', border: '1px solid var(--border-color)', borderRadius: 6, fontSize: 12, marginBottom: 8 }} />
+                              <WaitDelayInput nodeForm={nodeForm} setNodeForm={setNodeForm} continuous={detail?.journey_type === 'gtm'} />
                             )}
                             <div className="flex gap-1.5">
                               <button onClick={() => handleAddNode(nodes.length - 1)} className="btn btn-sm btn-primary" style={{ fontSize: 11 }}>Add</button>
@@ -2675,18 +3182,13 @@ export default function Journeys() {
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
                           {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World Email Template' : 'Email Template'}{nodeForm.channel === 'email' && <span style={{ color: 'var(--red)', marginLeft: 3 }}>*</span>}
                         </label>
-                        <select className="form-input"
-                          style={{ borderColor: nodeForm.channel === 'email' && !nodeForm.emailTemplateId ? 'var(--red)' : undefined }}
-                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.emailTemplateId || '')}
-                          onChange={e => {
-                            const val = e.target.value ? parseInt(e.target.value) : null;
-                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, emailTemplateId: val, templateVariables: {} });
-                          }}>
-                          <option value="">— Select email template —</option>
-                          {allTemplates.email.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>
-                          ))}
-                        </select>
+                        <SearchableTemplateSelect
+                          templates={allTemplates.email}
+                          channel="email"
+                          value={nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId}
+                          error={nodeForm.channel === 'email' && !nodeForm.emailTemplateId}
+                          onChange={val => setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, emailTemplateId: val, templateVariables: {} })}
+                        />
                         {allTemplates.email.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No email templates found</div>}
 
                         {/* Dynamic sections this template will AI-rank via Claude */}
@@ -2742,14 +3244,12 @@ export default function Journeys() {
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
                           WhatsApp Template
                         </label>
-                        <select className="form-input"
-                          value={nodeForm.whatsappTemplateId || ''}
-                          onChange={e => setNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                          <option value="">— Select WhatsApp template —</option>
-                          {allTemplates.whatsapp.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}{t.wa_template_name ? ` (${t.wa_template_name})` : ''}</option>
-                          ))}
-                        </select>
+                        <SearchableTemplateSelect
+                          templates={allTemplates.whatsapp}
+                          channel="whatsapp"
+                          value={nodeForm.whatsappTemplateId}
+                          onChange={val => setNodeForm(f => ({ ...f, whatsappTemplateId: val, templateVariables: {} }))}
+                        />
                         {allTemplates.whatsapp.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No WhatsApp templates found</div>}
 
                         {/* Rest-of-world auto-pair */}
@@ -2773,17 +3273,12 @@ export default function Journeys() {
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
                           {nodeForm.channel === 'whatsapp' ? '🌍 Rest-of-World SMS Template' : 'SMS Template'}
                         </label>
-                        <select className="form-input"
-                          value={nodeForm.channel === 'whatsapp' ? (nodeForm.restTemplateId || '') : (nodeForm.smsTemplateId || '')}
-                          onChange={e => {
-                            const val = e.target.value ? parseInt(e.target.value) : null;
-                            setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, smsTemplateId: val, templateVariables: {} });
-                          }}>
-                          <option value="">— Select SMS template —</option>
-                          {allTemplates.sms.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                          ))}
-                        </select>
+                        <SearchableTemplateSelect
+                          templates={allTemplates.sms}
+                          channel="sms"
+                          value={nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.smsTemplateId}
+                          onChange={val => setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, smsTemplateId: val, templateVariables: {} })}
+                        />
                         {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
                       </div>
                     )}
@@ -2839,27 +3334,40 @@ export default function Journeys() {
                 {/* ── WAIT fields ── */}
                 {nodeForm.type === 'wait' && (
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <input type="number" min={1} max={365} className="form-input"
-                        style={{ width: 100 }}
-                        value={nodeForm.waitDays}
-                        onChange={e => {
-                          const days = Math.max(1, parseInt(e.target.value) || 1);
-                          setNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
-                        }} />
-                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                        {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                      {[1, 2, 3, 5, 7, 14].map(d => (
-                        <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
-                          style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
-                          {d}d
-                        </button>
-                      ))}
-                    </div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                      {detail?.journey_type === 'gtm' ? 'Delay Before Next Node' : 'Days to Wait'}
+                    </label>
+                    {detail?.journey_type === 'gtm' ? (
+                      <>
+                        {/* CONTINUOUS: relative per-user offset (+2h / +24h …) → stored as fractional waitDays */}
+                        <WaitDelayInput nodeForm={nodeForm} setNodeForm={setNodeForm} continuous={true} />
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Relative per-user delay after the previous node — e.g. +2 hours, +24 hours.</div>
+                      </>
+                    ) : (
+                      <>
+                        {/* FIXED: absolute schedule — plain days + quick-picks */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <input type="number" min={1} max={365} className="form-input"
+                            style={{ width: 100 }}
+                            value={nodeForm.waitDays}
+                            onChange={e => {
+                              const days = Math.max(1, parseInt(e.target.value) || 1);
+                              setNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` }));
+                            }} />
+                          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                            {nodeForm.waitDays === 1 ? 'day' : 'days'} before advancing to the next node
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                          {[1, 2, 3, 5, 7, 14].map(d => (
+                            <button key={d} onClick={() => setNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
+                              style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: nodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: nodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: nodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)', fontWeight: 600 }}>
+                              {d}d
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -3054,7 +3562,7 @@ export default function Journeys() {
         <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               <ArrowLeft size={15} /> Back
             </button>
@@ -3073,7 +3581,7 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30 }); }}>
+            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
@@ -3116,23 +3624,80 @@ export default function Journeys() {
                     <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
                     {segmentsLoading && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}><RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> Loading…</span>}
                   </div>
-                  <select className="form-input"
+                  <SearchableSegmentSelect
+                    segments={allSegments}
                     value={createForm.segmentId}
-                    disabled={segmentsLoading}
-                    style={{ borderColor: !createForm.segmentId ? 'var(--red)' : undefined }}
-                    onChange={e => setCreateForm(f => ({ ...f, segmentId: e.target.value }))}>
-                    <option value="">{segmentsLoading ? 'Loading segments…' : '— Select a segment —'}</option>
-                    {allSegments.filter(s => s.group === 'standard').length > 0 && (
-                      <optgroup label="Standard Segments">
-                        {allSegments.filter(s => s.group === 'standard').map((s, i) => <option key={`std-${i}`} value={s.value}>{s.label}</option>)}
-                      </optgroup>
-                    )}
-                    {allSegments.filter(s => s.group === 'custom').length > 0 && (
-                      <optgroup label="Custom Segments">
-                        {allSegments.filter(s => s.group === 'custom').map((s, i) => <option key={`cust-${i}`} value={s.value}>{s.label}</option>)}
-                      </optgroup>
-                    )}
-                  </select>
+                    loading={segmentsLoading}
+                    onChange={(val) => setCreateForm(f => ({ ...f, segmentId: val }))}
+                  />
+                </div>
+
+                {/* Journey Type — Fixed (occasion / seasonal snapshot) vs Continuous (always-on per-user) */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>Journey Type</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {[
+                      { key: 'fixed', title: 'Fixed (Occasion / Seasonal)', desc: 'Runs in a date window against the segment — e.g. Diwali, Eid, holiday campaigns. Snapshots the audience once, sends on schedule, then ends.' },
+                      { key: 'continuous', title: 'Continuous (Always-on)', desc: 'Per-user automation that runs forever. Users enter anytime (GTM event / lifecycle) and progress independently node-by-node — e.g. product-view, cart, payment-failed, on-trip, future-trip.' },
+                    ].map(opt => {
+                      const active = createForm.journeyType === opt.key;
+                      return (
+                        <button key={opt.key} type="button"
+                          onClick={() => setCreateForm(f => ({ ...f, journeyType: opt.key }))}
+                          style={{ flex: 1, textAlign: 'left', cursor: 'pointer', padding: '10px 12px', borderRadius: 10,
+                            background: active ? 'rgba(139,92,246,0.10)' : 'var(--bg-secondary)',
+                            border: `1px solid ${active ? 'rgba(139,92,246,0.45)' : 'var(--border)'}` }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: active ? '#8b5cf6' : 'var(--text-primary)' }}>
+                            {active ? '● ' : '○ '}{opt.title}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.4 }}>{opt.desc}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {createForm.journeyType === 'continuous' && (
+                    <div style={{ marginTop: 10 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                        Trigger GTM Event(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional · select one or more)</span>
+                      </label>
+                      <TriggerEventMultiSelect
+                        value={createForm.triggerEvent}
+                        onChange={v => setCreateForm(f => ({ ...f, triggerEvent: v }))}
+                      />
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                        {createForm.triggerEvent
+                          ? <>Fans out one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on. Selecting multiple events combines their items.</>
+                          : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick one or more events to fan out per distinct item instead.</>}
+                      </div>
+                      <div style={{ marginTop: 12 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                          Trigger only for events on or after <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>
+                        </label>
+                        <input type="date" className="form-input" value={createForm.triggerFromDate}
+                          onChange={e => setCreateForm(f => ({ ...f, triggerFromDate: e.target.value }))}
+                          style={{ width: '100%' }} />
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                          Pick a date → only users who fire the event <strong>on/after that date</strong> (Dubai time) enter. Leave blank → <strong>all events</strong> (every past trigger is included too).
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* AI Recommendation Type — optional, per-journey. NULL = legacy behavior (no recs).
+                    On send, the worker looks up user_product_recommendations for the selected
+                    context and expands {{#products}}...{{/products}} blocks in the template. */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>AI Recommendation Type</label>
+                  <SearchableSelect
+                    options={RECOMMENDATION_TYPE_OPTIONS}
+                    value={createForm.recommendationType || ''}
+                    onChange={val => setCreateForm(f => ({ ...f, recommendationType: val }))}
+                    placeholder="None — no AI recommendations"
+                    searchPlaceholder="Search recommendation types…"
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                    Pick a context → templates in this journey with a <code>{'{{#products}}'}...{'{{/products}}'}</code> block will be filled with 5 personalized AI-picked products at send time. Precomputed nightly at 3:35 AM Dubai.
+                  </div>
                 </div>
                 {/* Exit on Conversion */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
@@ -3221,7 +3786,7 @@ export default function Journeys() {
                   const color = NODE_COLORS[n.type];
                   const Icon = NODE_ICONS[n.type];
                   const detail = n.type === 'action' ? (n.channel ? n.channel.charAt(0).toUpperCase() + n.channel.slice(1) : 'Action')
-                    : n.type === 'wait' ? `Wait ${n.waitDays || 1} day${(n.waitDays || 1) !== 1 ? 's' : ''}`
+                    : n.type === 'wait' ? `Wait ${formatWaitLabel(n.waitDays || 1)}`
                     : n.type === 'condition' ? (n.condition === 'booked' ? 'Has Booked?' : n.condition === 'opened_email' ? 'Opened Email?' : n.condition === 'clicked_link' ? 'Clicked Link?' : n.condition || 'Condition')
                     : n.type === 'goal' ? `Goal: ${n.goalType ? n.goalType.charAt(0).toUpperCase() + n.goalType.slice(1) : 'Booking'}` : '';
                   const templateId = n.emailTemplateId || n.whatsappTemplateId || n.smsTemplateId;
@@ -3291,28 +3856,34 @@ export default function Journeys() {
                                 {editCreateNodeForm.channel === 'email' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>Email Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.emailTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                      <option value="">— Select email template —</option>
-                                      {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
-                                    </select>
+                                    <SearchableTemplateSelect
+                                      templates={allTemplates.email}
+                                      channel="email"
+                                      value={editCreateNodeForm.emailTemplateId}
+                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, emailTemplateId: val, templateVariables: {} }))}
+                                    />
                                   </div>
                                 )}
                                 {editCreateNodeForm.channel === 'whatsapp' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.whatsappTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                      <option value="">— Select WhatsApp template —</option>
-                                      {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                    </select>
+                                    <SearchableTemplateSelect
+                                      templates={allTemplates.whatsapp}
+                                      channel="whatsapp"
+                                      value={editCreateNodeForm.whatsappTemplateId}
+                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: val, templateVariables: {} }))}
+                                    />
                                   </div>
                                 )}
                                 {editCreateNodeForm.channel === 'sms' && (
                                   <div style={{ marginBottom: 10 }}>
                                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>SMS Template</label>
-                                    <select className="form-input" value={editCreateNodeForm.smsTemplateId || ''} onChange={e => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                      <option value="">— Select SMS template —</option>
-                                      {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                    </select>
+                                    <SearchableTemplateSelect
+                                      templates={allTemplates.sms}
+                                      channel="sms"
+                                      value={editCreateNodeForm.smsTemplateId}
+                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: val, templateVariables: {} }))}
+                                    />
                                   </div>
                                 )}
                                 {/* Dynamic template variables for editCreateNodeForm */}
@@ -3351,17 +3922,23 @@ export default function Journeys() {
                             {/* WAIT */}
                             {editCreateNodeForm.type === 'wait' && (
                               <div style={{ marginBottom: 10 }}>
-                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <input type="number" min={1} className="form-input" style={{ width: 80 }} value={editCreateNodeForm.waitDays}
-                                    onChange={e => { const d = Math.max(1, parseInt(e.target.value) || 1); setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` })); }} />
-                                  <div style={{ display: 'flex', gap: 5 }}>
-                                    {[1, 2, 3, 7].map(d => (
-                                      <button key={d} onClick={() => setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
-                                        style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: editCreateNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: editCreateNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
-                                    ))}
+                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                                  {createForm.journeyType === 'continuous' ? 'Delay Before Next Node' : 'Days to Wait'}
+                                </label>
+                                {createForm.journeyType === 'continuous' ? (
+                                  <WaitDelayInput nodeForm={editCreateNodeForm} setNodeForm={setEditCreateNodeForm} continuous={true} />
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <input type="number" min={1} className="form-input" style={{ width: 80 }} value={editCreateNodeForm.waitDays}
+                                      onChange={e => { const d = Math.max(1, parseInt(e.target.value) || 1); setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` })); }} />
+                                    <div style={{ display: 'flex', gap: 5 }}>
+                                      {[1, 2, 3, 7].map(d => (
+                                        <button key={d} onClick={() => setEditCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))}
+                                          style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', fontWeight: 600, border: editCreateNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border-color)', background: editCreateNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: editCreateNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>
+                                      ))}
+                                    </div>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             )}
                             {/* CONDITION */}
@@ -3454,10 +4031,12 @@ export default function Journeys() {
                           {createNodeForm.channel === 'email' && (
                             <div style={{ marginBottom: 12 }}>
                               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Email Template</label>
-                              <select className="form-input" value={createNodeForm.emailTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, emailTemplateId: e.target.value ? parseInt(e.target.value) : null, templateVariables: {} }))}>
-                                <option value="">— Select email template —</option>
-                                {allTemplates.email.map(t => <option key={t.id} value={t.id}>{t.name}{t.subject ? ` — ${t.subject}` : ''}</option>)}
-                              </select>
+                              <SearchableTemplateSelect
+                                templates={allTemplates.email}
+                                channel="email"
+                                value={createNodeForm.emailTemplateId}
+                                onChange={val => setCreateNodeForm(f => ({ ...f, emailTemplateId: val, templateVariables: {} }))}
+                              />
                               {/* Dynamic sections this template will AI-rank via Claude */}
                               {DYNAMIC_SECTIONS[createNodeForm.emailTemplateId] && (
                                 <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
@@ -3479,30 +4058,36 @@ export default function Journeys() {
                             <>
                               <div style={{ marginBottom: 12 }}>
                                 <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                <select className="form-input" value={createNodeForm.whatsappTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                  <option value="">— Select WhatsApp template —</option>
-                                  {allTemplates.whatsapp.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                </select>
+                                <SearchableTemplateSelect
+                                  templates={allTemplates.whatsapp}
+                                  channel="whatsapp"
+                                  value={createNodeForm.whatsappTemplateId}
+                                  onChange={val => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: val }))}
+                                />
                               </div>
                               <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
                                 <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 7 }}>Rest-of-World fallback</div>
                                 <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
                                   {['email', 'sms'].map(ch => <button key={ch} onClick={() => setCreateNodeForm(f => ({ ...f, restChannel: ch }))} style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: createNodeForm.restChannel === ch ? '1.5px solid #3B82F6' : '1.5px solid var(--border)', background: createNodeForm.restChannel === ch ? 'rgba(59,130,246,0.12)' : 'transparent', color: createNodeForm.restChannel === ch ? '#3B82F6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>{ch}</button>)}
                                 </div>
-                                <select className="form-input" value={createNodeForm.restTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, restTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                  <option value="">— Select {createNodeForm.restChannel} template —</option>
-                                  {(createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                </select>
+                                <SearchableTemplateSelect
+                                  templates={createNodeForm.restChannel === 'email' ? allTemplates.email : allTemplates.sms}
+                                  channel={createNodeForm.restChannel}
+                                  value={createNodeForm.restTemplateId}
+                                  onChange={val => setCreateNodeForm(f => ({ ...f, restTemplateId: val }))}
+                                />
                               </div>
                             </>
                           )}
                           {createNodeForm.channel === 'sms' && (
                             <div style={{ marginBottom: 12 }}>
                               <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>SMS Template</label>
-                              <select className="form-input" value={createNodeForm.smsTemplateId || ''} onChange={e => setCreateNodeForm(f => ({ ...f, smsTemplateId: e.target.value ? parseInt(e.target.value) : null }))}>
-                                <option value="">— Select SMS template —</option>
-                                {allTemplates.sms.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                              </select>
+                              <SearchableTemplateSelect
+                                templates={allTemplates.sms}
+                                channel="sms"
+                                value={createNodeForm.smsTemplateId}
+                                onChange={val => setCreateNodeForm(f => ({ ...f, smsTemplateId: val }))}
+                              />
                             </div>
                           )}
                           {/* Dynamic template variables for createNodeForm */}
@@ -3542,13 +4127,22 @@ export default function Journeys() {
                       {/* WAIT */}
                       {createNodeForm.type === 'wait' && (
                         <div style={{ marginBottom: 14 }}>
-                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Days to Wait</label>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="number" min={1} className="form-input" style={{ width: 80 }} value={createNodeForm.waitDays} onChange={e => { const days = Math.max(1, parseInt(e.target.value) || 1); setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` })); }} />
-                            <div style={{ display: 'flex', gap: 5 }}>
-                              {[1, 2, 3, 7].map(d => <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))} style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>)}
+                          <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
+                            {createForm.journeyType === 'continuous' ? 'Delay Before Next Node' : 'Days to Wait'}
+                          </label>
+                          {createForm.journeyType === 'continuous' ? (
+                            <>
+                              <WaitDelayInput nodeForm={createNodeForm} setNodeForm={setCreateNodeForm} continuous={true} />
+                              <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Relative per-user delay — e.g. +30 minutes, +2 hours, +24 hours.</div>
+                            </>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <input type="number" min={1} className="form-input" style={{ width: 80 }} value={createNodeForm.waitDays} onChange={e => { const days = Math.max(1, parseInt(e.target.value) || 1); setCreateNodeForm(f => ({ ...f, waitDays: days, label: `Wait ${days} ${days === 1 ? 'Day' : 'Days'}` })); }} />
+                              <div style={{ display: 'flex', gap: 5 }}>
+                                {[1, 2, 3, 7].map(d => <button key={d} onClick={() => setCreateNodeForm(f => ({ ...f, waitDays: d, label: `Wait ${d} ${d === 1 ? 'Day' : 'Days'}` }))} style={{ padding: '4px 10px', borderRadius: 20, fontSize: 12, cursor: 'pointer', fontWeight: 600, border: createNodeForm.waitDays === d ? '1.5px solid var(--yellow)' : '1.5px solid var(--border)', background: createNodeForm.waitDays === d ? 'var(--yellow)14' : 'transparent', color: createNodeForm.waitDays === d ? 'var(--yellow)' : 'var(--text-secondary)' }}>{d}d</button>)}
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       )}
                       {/* CONDITION */}

@@ -102,12 +102,13 @@ router.get('/mapping-stats', async (req, res) => {
         .sort((a, b) => new Date(b.last_synced_at) - new Date(a.last_synced_at))[0];
       cronJobs = [
         { name: 'daily_billing_sync', label: 'Daily Billing Sync',     schedule: '0 1 * * *',   humanSchedule: 'Daily at 1:00 AM Dubai', meta: latestRayna || null },
-        { name: 'contact_enrichment', label: 'Contact Enrichment',     schedule: '30 1 * * *',  humanSchedule: 'Daily at 1:30 AM Dubai', meta: null },
+        { name: 'contact_enrichment', label: 'Contact Enrichment',     schedule: '30 1 * * *',  humanSchedule: 'Daily at 1:30 AM Dubai', meta: sm.contact_enrichment || null },
         { name: 'snapshot_refresh',   label: 'Segmentation Snapshot',  schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai', meta: null },
         { name: 'unsubscribe_sync',   label: 'Unsubscribe Sync',       schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai', meta: sm.unsubscribed || sm.unsubscribe_sync || null },
-        { name: 'chats_sync',         label: 'Chats Sync',             schedule: '30 3 * * *',  humanSchedule: 'Daily at 3:30 AM Dubai', meta: sm.chats_sync || null },
-        { name: 'journey_engine',     label: 'Journey Engine',         schedule: '*/5 * * * *', humanSchedule: 'Every 5 minutes',         meta: null },
-        { name: 'journey_autostart',  label: 'Journey Auto-start',     schedule: '* * * * *',   humanSchedule: 'Every minute',            meta: null },
+        { name: 'chats_sync',            label: 'Chats Sync',              schedule: '30 3 * * *',  humanSchedule: 'Daily at 3:30 AM Dubai',       meta: sm.chats_sync || null },
+        { name: 'phpadmin_weekly_sync',  label: 'phpAdmin Contacts Sync',  schedule: '0 5 * * 0',   humanSchedule: 'Weekly on Sunday 5:00 AM Dubai', meta: sm.phpadmin_weekly_sync || null },
+        { name: 'journey_engine',        label: 'Journey Engine',          schedule: '*/5 * * * *', humanSchedule: 'Every 5 minutes',              meta: null },
+        { name: 'journey_autostart',     label: 'Journey Auto-start',      schedule: '* * * * *',   humanSchedule: 'Every minute',                 meta: null },
       ];
     } catch { /* ignore */ }
 

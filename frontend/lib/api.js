@@ -57,6 +57,13 @@ export const previewTemplate = (id, variables = {}) =>
     body: JSON.stringify({ variables }),
   });
 export const previewTemplateAI = (id) => request(`/api/v2/content/templates/${id}/preview-ai`);
+// Render arbitrary HTML through the server's Liquid + sample-vars pipeline.
+// Used by the Edit modal so the live preview matches what users will see.
+export const renderPreviewHtml = (html, { engine = 'liquid', variables = {} } = {}) =>
+  request('/api/v2/content/preview/render', {
+    method: 'POST',
+    body: JSON.stringify({ html, engine, variables }),
+  });
 export const createTemplate = (data) => request('/api/v2/content/templates', { method: 'POST', body: JSON.stringify(data) });
 export const updateTemplate = (id, data) => request(`/api/v2/content/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteTemplate = (id) => request(`/api/v2/content/templates/${id}`, { method: 'DELETE' });
@@ -376,6 +383,10 @@ export const searchContactsByEmail = (q) => { const qs = new URLSearchParams({ q
 // Uses the unified /send-daily-ai endpoint so Test Send == Preview AI == journey send.
 export const sendTestDay = (day, emails) =>
   request(`/api/v3/test-sends/send-daily-ai`, { method: 'POST', body: JSON.stringify({ templateId: day, emails }) });
+// Send any approved email template (non-Day) from content_templates to recipient emails.
+// Pulls the stored body HTML as-is (no Day-specific dynamic data assembly).
+export const sendTemplate = (templateId, emails) =>
+  request(`/api/v3/test-sends/send-template`, { method: 'POST', body: JSON.stringify({ templateId, emails }) });
 // Post-send QA report for a template's email (grammar, content, URLs, spam-risk, errors)
 export const analyzeTestEmail = (templateId) =>
   request(`/api/v3/test-sends/analyze-email`, { method: 'POST', body: JSON.stringify({ templateId }) });

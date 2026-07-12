@@ -330,7 +330,25 @@ export default class UnifiedContactService {
       `SELECT SUM(rev)::numeric AS total_revenue, SUM(cnt)::int AS total_bookings FROM (${revenueSQL}) t`
     );
 
-    return { ...rows[0], total_revenue: revRows[0].total_revenue || 0, total_bookings: revRows[0].total_bookings || 0 };
+    // WhatsApp conversations active in the last 7 days = chats whose last message
+    // (last_msg_at) landed within the window. Scoped to the business type via the
+    // linked unified contact when a B2C/B2B filter is set.
+    const convClause = businessType
+      ? 'AND EXISTS (SELECT 1 FROM unified_contacts u WHERE u.id = c.unified_id AND u.contact_type = $1)'
+      : '';
+    const { rows: convRows } = await pool.query(`
+      SELECT COUNT(*)::int AS conversations_7d
+      FROM chats c
+      WHERE c.last_msg_at >= NOW() - INTERVAL '7 days'
+      ${convClause}
+    `, btParam);
+
+    return {
+      ...rows[0],
+      total_revenue: revRows[0].total_revenue || 0,
+      total_bookings: revRows[0].total_bookings || 0,
+      conversations_7d: convRows[0].conversations_7d || 0,
+    };
   }
 
   /**
@@ -346,8 +364,15 @@ export default class UnifiedContactService {
    * job in server.js. On first deploy (table empty), the fallback triggers a
    * live compute and auto-populates the table so subsequent requests are fast.
    */
-  static async getSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
-    // Date-filtered: live compute + short Redis TTL (same as before)
+  static async getSegmentationTree({ businessType, dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product } = {}) {
+    // Filtered revenue-by-segment: travel-date window AND/OR booking-date window AND/OR product.
+    const hasProduct = product && product !== 'all';
+    if (travelFrom || travelTo || bookingFrom || bookingTo || hasProduct) {
+      const cacheKey = `dashboard:tree:travel:${businessType || 'all'}:${travelFrom || ''}:${travelTo || ''}:${bookingFrom || ''}:${bookingTo || ''}:${product || 'all'}`;
+      return cached(cacheKey, () => this._computeRevenueByTravelWindow({ businessType, travelFrom, travelTo, bookingFrom, bookingTo, product }), 1800);
+    }
+
+    // Date-filtered (booking/bill date): live compute + short Redis TTL (same as before)
     if (dateFrom || dateTo) {
       const cacheKey = `dashboard:tree:${businessType || 'all'}:${dateFrom || ''}:${dateTo || ''}`;
       return cached(cacheKey, () => this._computeSegmentationTree({ businessType, dateFrom, dateTo }), 1800);
@@ -467,6 +492,66 @@ export default class UnifiedContactService {
     return { refreshed: ['B2C', 'B2B', 'All'], at: new Date().toISOString() };
   }
 
+  /**
+   * Revenue-by-segment with optional filters (all AND-combined), per booking_status:
+   *   • travelFrom/travelTo  → bookings whose travel_date falls in the window
+   *   • bookingFrom/bookingTo → bookings whose bill_date (booking date) falls in the window
+   *   • product               → restrict to one booking table
+   * Returns, per segment, the count of distinct customers with a matching booking and
+   * the total revenue of those bookings.
+   */
+  static async _computeRevenueByTravelWindow({ businessType, travelFrom, travelTo, bookingFrom, bookingTo, product } = {}) {
+    const isDate = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    const clauses = [];
+    // Travel-date window (travel_date is TEXT — guard the regex before casting)
+    if (isDate(travelFrom)) clauses.push(`b.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND b.travel_date::date >= '${travelFrom}'`);
+    if (isDate(travelTo))   clauses.push(`b.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND b.travel_date::date <= '${travelTo}'`);
+    // Booking-date window (booking_date is TEXT in DD/MM/YYYY — parse via to_date)
+    if (isDate(bookingFrom)) clauses.push(`b.booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' AND to_date(b.booking_date,'DD/MM/YYYY') >= '${bookingFrom}'`);
+    if (isDate(bookingTo))   clauses.push(`b.booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' AND to_date(b.booking_date,'DD/MM/YYYY') <= '${bookingTo}'`);
+    const filterAnd = clauses.length ? ' AND ' + clauses.join(' AND ') : '';
+    const btAnd = businessType ? ` AND uc.contact_type = '${businessType}'` : '';
+
+    // Optional product filter: restrict to one booking table (else union all six).
+    const PRODUCT_TABLES = {
+      tours: 'rayna_tours', packages: 'rayna_packages', hotels: 'rayna_hotels',
+      visas: 'rayna_visas', others: 'rayna_others', flights: 'rayna_flights',
+    };
+    const TABLES = (product && PRODUCT_TABLES[product]) ? [PRODUCT_TABLES[product]] : Object.values(PRODUCT_TABLES);
+    const bookingUnion = TABLES.map(t =>
+      `SELECT unified_id, travel_date, booking_date, selling_price FROM ${t}
+       WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
+    ).join(' UNION ALL ');
+
+    const { rows: statusCounts } = await pool.query(`
+      SELECT uc.booking_status,
+             COUNT(DISTINCT uc.id)::int AS count,
+             COUNT(DISTINCT uc.id) FILTER (WHERE uc.is_indian = true)::int AS indian_count,
+             COALESCE(SUM(b.selling_price), 0)::numeric AS revenue
+      FROM unified_contacts uc
+      JOIN ( ${bookingUnion} ) b ON b.unified_id = uc.id
+      WHERE 1=1 ${btAnd} ${filterAnd}
+      GROUP BY uc.booking_status
+      ORDER BY CASE uc.booking_status
+        WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
+        WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 ELSE 6 END
+    `);
+
+    statusCounts.forEach(r => { r.revenue = parseFloat(r.revenue) || 0; });
+    const totalRevenue = statusCounts.reduce((s, r) => s + r.revenue, 0);
+
+    return {
+      totals: { total_revenue: totalRevenue, travel_filtered: true, travelFrom: travelFrom || null, travelTo: travelTo || null },
+      statusCounts,
+      breakdown: [],
+      revenueByType: {
+        label: `Travel ${travelFrom || '…'} → ${travelTo || '…'}`,
+        sources: [],
+        total: totalRevenue,
+      },
+    };
+  }
+
   static async _computeSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
     const btWhere = businessType ? `WHERE contact_type = '${businessType}'` : '';
 
@@ -496,16 +581,23 @@ export default class UnifiedContactService {
           WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
           WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 END
       `),
-      // 2. Full breakdown (revenue from rayna tables directly)
+      // 2. Full breakdown — revenue SCOPED to each contact's booking-status period (not lifetime):
+      //    FUTURE_TRAVEL → only upcoming bookings (travel_date > today)
+      //    ON_TRIP       → only bookings travelling now (today-7 .. today)
+      //    PAST_BOOKING / CANCELLED / PROSPECT → all confirmed bookings (their travel is all past / none)
       pool.query(`
           WITH contact_rev AS (
-            SELECT unified_id, SUM(selling_price) AS rev FROM (
-              SELECT unified_id, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-              UNION ALL SELECT unified_id, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-              UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-              UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-              UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
-              UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+            SELECT unified_id,
+              SUM(selling_price) AS all_rev,
+              SUM(selling_price) FILTER (WHERE travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE) AS future_rev,
+              SUM(selling_price) FILTER (WHERE travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE) AS ontrip_rev
+            FROM (
+              SELECT unified_id, travel_date, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
+              UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL
             ) all_bookings GROUP BY unified_id
           )
           SELECT
@@ -514,7 +606,11 @@ export default class UnifiedContactService {
               uc.geography,
               COUNT(*)::int AS count,
               COUNT(*) FILTER (WHERE uc.is_indian = true)::int AS indian_count,
-              COALESCE(SUM(cr.rev), 0) AS revenue
+              COALESCE(SUM(CASE uc.booking_status
+                WHEN 'FUTURE_TRAVEL' THEN COALESCE(cr.future_rev, 0)
+                WHEN 'ON_TRIP'       THEN COALESCE(cr.ontrip_rev, 0)
+                ELSE COALESCE(cr.all_rev, 0)
+              END), 0) AS revenue
           FROM unified_contacts uc
           LEFT JOIN contact_rev cr ON cr.unified_id = uc.id
           ${btWhere}
@@ -536,17 +632,24 @@ export default class UnifiedContactService {
         UNION ALL SELECT 'others', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_others WHERE is_cancel <> '1'${dateAnd}
         UNION ALL SELECT 'flights', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_flights WHERE is_cancel <> '1'${dateAnd}
       `),
-      // 5. Revenue per booking_status (with date filter + flights)
+      // 5. Revenue per booking_status — SCOPED to each status's travel period (matches breakdown #2):
+      //    FUTURE_TRAVEL → upcoming bookings only · ON_TRIP → this-week only · others → all confirmed
       pool.query(`
-        SELECT uc.booking_status, COALESCE(SUM(r.selling_price), 0)::numeric AS revenue
+        SELECT uc.booking_status, COALESCE(SUM(
+          CASE uc.booking_status
+            WHEN 'FUTURE_TRAVEL' THEN CASE WHEN r.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND r.travel_date::date > CURRENT_DATE THEN r.selling_price ELSE 0 END
+            WHEN 'ON_TRIP'       THEN CASE WHEN r.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND r.travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE THEN r.selling_price ELSE 0 END
+            ELSE r.selling_price
+          END
+        ), 0)::numeric AS revenue
         FROM unified_contacts uc
         JOIN (
-          SELECT unified_id, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
-          UNION ALL SELECT unified_id, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
-          UNION ALL SELECT unified_id, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
-          UNION ALL SELECT unified_id, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
-          UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
-          UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          SELECT unified_id, travel_date, selling_price FROM rayna_tours WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_packages WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_hotels WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_visas WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
+          UNION ALL SELECT unified_id, travel_date, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL${dateAnd}
         ) r ON r.unified_id = uc.id
         ${btWhere}
         GROUP BY uc.booking_status

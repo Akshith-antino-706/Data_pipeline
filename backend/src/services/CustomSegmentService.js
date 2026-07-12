@@ -24,7 +24,29 @@ export default class CustomSegmentService {
       const sub = [];
 
       if (cond.type === 'gtm') {
-        if (cond.gtmEvent) {
+        // Count-based: COUNT of GTM events (optionally a specific event, optionally within
+        // the last N days) compared with ≥ / ≤ / between. Falls back to the legacy
+        // "fired at least once" EXISTS when no count is set.
+        const cv = cond.countValue;
+        const hasCount = Array.isArray(cv)
+          ? cv.some(v => v !== '' && v != null)
+          : (cv !== '' && cv != null);
+        if (hasCount) {
+          const where = ['ge.unified_id = uc.id'];
+          if (cond.gtmEvent) { params.push(cond.gtmEvent); where.push(`ge.event_name = $${idx++}`); }
+          const days = parseInt(cond.windowDays);
+          if (days > 0) { params.push(days); where.push(`ge.created_at >= NOW() - ($${idx++} || ' days')::interval`); }
+          const countSql = `(SELECT COUNT(*) FROM gtm_events ge WHERE ${where.join(' AND ')})`;
+          const op = cond.countOp || 'gte';
+          if (op === 'between' && Array.isArray(cv)) {
+            if (cv[0] !== '' && cv[0] != null) { params.push(parseInt(cv[0])); sub.push(`${countSql} >= $${idx++}`); }
+            if (cv[1] !== '' && cv[1] != null) { params.push(parseInt(cv[1])); sub.push(`${countSql} <= $${idx++}`); }
+          } else if (op === 'lte') {
+            params.push(parseInt(cv)); sub.push(`${countSql} <= $${idx++}`);
+          } else {
+            params.push(parseInt(cv)); sub.push(`${countSql} >= $${idx++}`);
+          }
+        } else if (cond.gtmEvent) {
           params.push(cond.gtmEvent);
           sub.push(`EXISTS (SELECT 1 FROM gtm_events ge WHERE ge.unified_id = uc.id AND ge.event_name = $${idx++})`);
         }
@@ -126,6 +148,25 @@ export default class CustomSegmentService {
           case 'booking_date': {
             if (cond.value?.[0]) { needsBookingDate = true; params.push(cond.value[0]); sub.push(`booking_agg.max_booking_date >= $${idx++}::date`); }
             if (cond.value?.[1]) { needsBookingDate = true; params.push(cond.value[1]); sub.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
+            break;
+          }
+          case 'last_booking_age': {
+            // Relative recency of the LAST booking (booking_agg.max_booking_date) vs today.
+            // value = preset key, or an explicit [minDaysAgo, maxDaysAgo] pair.
+            //   minDaysAgo → booking happened AT LEAST that many days ago (max_booking_date <= today - min)
+            //   maxDaysAgo → booking happened AT MOST that many days ago (max_booking_date >= today - max)
+            // Contacts with no booking have NULL max_booking_date → excluded (correct for every preset).
+            const PRESETS = {
+              recent_90: [null, 90],     // within the last 90 days
+              '90_180':  [90, 180],      // last booking 90–180 days ago
+              '90_plus': [90, null],     // last booking more than 90 days ago
+              '180_plus':[180, null],    // last booking 180+ days ago
+            };
+            let minD = null, maxD = null;
+            if (Array.isArray(cond.value)) { [minD, maxD] = cond.value; }
+            else if (PRESETS[cond.value]) { [minD, maxD] = PRESETS[cond.value]; }
+            if (minD != null && minD !== '') { needsBookingDate = true; params.push(parseInt(minD)); sub.push(`booking_agg.max_booking_date <= (CURRENT_DATE - $${idx++}::int)`); }
+            if (maxD != null && maxD !== '') { needsBookingDate = true; params.push(parseInt(maxD)); sub.push(`booking_agg.max_booking_date >= (CURRENT_DATE - $${idx++}::int)`); }
             break;
           }
           case 'revenue': {

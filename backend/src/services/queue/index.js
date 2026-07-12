@@ -49,16 +49,18 @@ function _initQueues() {
     wa:       new Queue('journey-wa',        { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     sms:      new Queue('journey-sms',       { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     welcome:  new Queue('welcome-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    gtmJourney: new Queue('gtm-journey',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
   };
   return _queues;
 }
 
 export function getQueue(channel) {
   const q = _initQueues();
-  if (channel === 'email')    return q.email;
-  if (channel === 'whatsapp') return q.wa;
-  if (channel === 'sms')      return q.sms;
-  if (channel === 'welcome')  return q.welcome;
+  if (channel === 'email')      return q.email;
+  if (channel === 'whatsapp')   return q.wa;
+  if (channel === 'sms')        return q.sms;
+  if (channel === 'welcome')    return q.welcome;
+  if (channel === 'gtmJourney') return q.gtmJourney;
   throw new Error(`Unknown channel for queue: ${channel}`);
 }
 
@@ -68,6 +70,11 @@ export function getQueue(channel) {
  */
 export async function enqueueWelcome(data, delayMs = 0) {
   return getQueue('welcome').add('welcome-send', data, { delay: Math.max(0, delayMs) });
+}
+
+/** Enqueue a DELAYED gtm-journey send (event-triggered per-user email). */
+export async function enqueueGtmJourney(data, delayMs = 0) {
+  return getQueue('gtmJourney').add('gtm-journey-send', data, { delay: Math.max(0, delayMs) });
 }
 
 /**
@@ -99,6 +106,7 @@ export async function closeQueues() {
     _queues.wa.close(),
     _queues.sms.close(),
     _queues.welcome.close(),
+    _queues.gtmJourney.close(),
   ]);
   _queues = null;
   if (_connection) {

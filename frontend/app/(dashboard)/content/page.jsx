@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, previewTemplate, previewTemplateAI, createTemplate, updateTemplate, deleteTemplate, sendTestDay, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet } from 'lucide-react';
+import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet, LayoutGrid, List } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
 const STATUS_BADGE = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
@@ -23,6 +23,49 @@ const ROCKY_EMAIL = 'rocky.86agency@gmail.com';
 
 const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link']);
 
+
+const PREVIEW_SAMPLE = {
+  USER_NAME: 'Avinash Kumar', USER_FIRST_NAME: 'Avinash', USER_EMAIL: 'avinash@example.com',
+  USER_PHONE: '+971 50 123 4567', USER_CITY: 'Dubai', USER_COUNTRY: 'United Arab Emirates',
+  IS_INDIAN_USER: 'No', IS_LOCAL_USER: 'Yes', BOOKING_STATUS: 'PROSPECT', PRODUCT_TIER: 'LUXURY',
+  CUSTOMER_SEGMENT: 'High Intent', RID: '641500',
+  PAGE_URL: 'https://www.raynatours.com/singapore/night-safari-singapore-e-4683',
+  ITEM_URL: 'https://www.raynatours.com/singapore/night-safari-singapore-e-4683',
+  PAGE_TITLE: 'Night Safari Singapore', EVENT_TIMESTAMP: '6/14/2026, 3:49 PM',
+  EVENT_NAME: 'view_item', EVENT_ID: '151774', JOURNEY_ID: '184', NODE_ID: 'node_1',
+  ITEM_NAME: 'Night Safari Singapore', ITEM_ID: '4683',
+  ITEM_IMAGE_URL: 'https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/4683.jpg',
+  ITEM_CATEGORY: 'tours', ITEM_REFERRER: 'https://www.raynatours.com/singapore',
+  CURRENCY: 'INR', DESTINATION_CITY: 'Singapore', COUPON_CODE: 'RAYNA10',
+  PAYMENT_METHOD: 'Card', ORDER_ID: 'TXN-90817', TAX_AMOUNT: '120', CONTENT_TYPE: 'product',
+  CLICK_LOCATION: 'header', SHARE_METHOD: 'whatsapp', EMAIL_CLICKED: 'avinash@example.com',
+  PHONE_CLICKED: '+971501234567', WHATSAPP_NUMBER_CLICKED: '+971501234567', FORM_NAME: 'Enquiry',
+  LEAD_SOURCE: 'website', LEAD_TYPE: 'visa', LEAD_VALUE: '5000', PRODUCT_CONTEXT: 'Singapore Tours',
+  PRODUCT_INTEREST: 'Wildlife', ERROR_CODE: 'E102', ERROR_MESSAGE: 'Payment declined',
+  UTM_CAMPAIGN: 'summer_sale', UTM_SOURCE: 'google',
+  ADULT_COUNT: '2', CHILD_COUNT: '1', BOOKING_DATE: '20 Jun 2026', SELECTED_DATE: '25 Jun 2026',
+  ITEM_PRICE: '1,299', CART_VALUE: '1,299', ORDER_TOTAL: '1,419', ORDER_VALUE: '1,299',
+  ATTEMPTED_AMOUNT: '1,419',
+  CART_URL: 'https://www.raynatours.com/cart', WISHLIST_URL: 'https://www.raynatours.com/wishlist',
+  RESUME_CHECKOUT_URL: 'https://www.raynatours.com/checkout',
+  RESUME_PAYMENT_URL: 'https://www.raynatours.com/checkout',
+  RETRY_PAYMENT_URL: 'https://www.raynatours.com/payment/retry?order=TXN-90817',
+  VIEW_BOOKING_URL: 'https://www.raynatours.com/booking/TXN-90817',
+  RAW_PAYLOAD: '{ "itemName": "Night Safari Singapore", "itemId": 4683 }',
+};
+// Legacy lowercase keys → canonical (matches backend placeholderResolver aliases)
+const PREVIEW_ALIASES = {
+  customer_name: 'USER_FIRST_NAME', user_name: 'USER_NAME', item_name: 'ITEM_NAME',
+  item_image: 'ITEM_IMAGE_URL', cta_url: 'ITEM_URL', event_name: 'EVENT_NAME',
+  event_id: 'EVENT_ID', event_time: 'EVENT_TIMESTAMP', page_url: 'PAGE_URL', raw_payload: 'RAW_PAYLOAD',
+};
+// Fill {{KEY}} with sample values for the live preview (unknown keys → highlighted chip).
+const fillPreviewHtml = (html) => String(html || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_m, raw) => {
+  const key = PREVIEW_ALIASES[raw] || PREVIEW_ALIASES[raw.toLowerCase()] || raw.toUpperCase();
+  if (key in PREVIEW_SAMPLE) return PREVIEW_SAMPLE[key];
+  return `<span style="background:#fde68a;color:#92400e;padding:0 3px;border-radius:3px;font-size:11px">{{${raw}}}</span>`;
+});
+
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
@@ -31,9 +74,14 @@ const stripHtml = (html) => {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 };
 
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+
 export default function Content() {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [preview, setPreview] = useState(null);
   const [previewDevice, setPreviewDevice] = useState('desktop'); // desktop | tablet | mobile
   const previewIframeRef = useRef(null);
@@ -62,6 +110,14 @@ export default function Content() {
     } catch { setPreviewFit({ scale: 1, height: null, contentW: null }); }
   }
   const [channelFilter, setChannelFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window === 'undefined') return 'card';
+    return window.localStorage.getItem('content.viewMode') === 'table' ? 'table' : 'card';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('content.viewMode', viewMode);
+  }, [viewMode]);
 
   // modal state: null = closed, 'create' = new, object = editing existing
   const [modal, setModal] = useState(null);
@@ -70,6 +126,28 @@ export default function Content() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // template object to confirm
+
+  // Edit-modal live preview — debounced server render so what you see in the
+  // preview pane matches what EmailRenderer will actually send. Falls back to
+  // the raw HTML (with client-side fill) while the server is still rendering
+  // or if the request fails.
+  const [livePreviewHtml, setLivePreviewHtml] = useState('');
+  const [livePreviewLoading, setLivePreviewLoading] = useState(false);
+  useEffect(() => {
+    if (!form.body) { setLivePreviewHtml(''); return; }
+    const t = setTimeout(async () => {
+      setLivePreviewLoading(true);
+      try {
+        const res = await renderPreviewHtml(form.body, { engine: 'liquid' });
+        setLivePreviewHtml(res?.data?.html || '');
+      } catch {
+        setLivePreviewHtml(''); // fall back to client-side fillPreviewHtml below
+      } finally {
+        setLivePreviewLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [form.body]);
 
   // ── Global recipients (shared by all card Test Send buttons) ──
   const [recipients, setRecipients] = useState([]);        // searched/listed contacts
@@ -212,17 +290,88 @@ export default function Content() {
     } finally { setSendingDay(null); setSendingMode(null); }
   }
 
+  // Send for non-Day approved email templates (e.g. weekly broadcasts ids 83-89).
+  // No QA / IMAP placement flow — those are Day1-7 only. Just send + toast.
+  async function handleGenericSend(tpl, { emails, mode } = {}) {
+    const recipients = emails && emails.length ? emails : selectedEmails;
+    if (recipients.length === 0) return;
+    setSendingDay(tpl.id);
+    setSendingMode(mode || 'selected');
+    try {
+      const res = await sendTemplate(tpl.id, recipients);
+      const sent = res?.data?.sent ?? recipients.length;
+      hotToast.success(`Sent "${tpl.name}" to ${sent} recipient(s)`);
+
+      // QA scan (Claude) + inbox placement — same as Day 1-7 Test Send
+      setQaReport({ template: tpl, report: null });
+      setPlacement(null);
+      setQaLoading(true);
+
+      // 1. Content report (grammar / missing / urls / spam-risk) via Claude
+      let report = null;
+      try {
+        const r = await analyzeTestEmail(tpl.id);
+        report = r?.data || null;
+      } catch (e) {
+        report = { error: e.message };
+      }
+      const subject = report?.subject || '';
+
+      // 2. Real inbox placement via IMAP — retry while Gmail delivers (~15-40s)
+      let placementResult = null;
+      for (let attempt = 1; attempt <= 4 && !report?.error; attempt++) {
+        await new Promise(r => setTimeout(r, attempt === 1 ? 15000 : 12000));
+        try {
+          const r = await checkInboxPlacement(subject, tpl.id);
+          const p = r?.data;
+          if (p?.available && p.placement !== 'not_found') { placementResult = p; break; }
+          placementResult = p || { available: false, error: 'Not found after retries' };
+        } catch (e) {
+          placementResult = { available: false, error: e.message };
+        }
+      }
+
+      // 3. Reveal the complete report at once
+      setPlacement(placementResult);
+      setQaReport({ template: tpl, report });
+      setQaLoading(false);
+    } catch (err) {
+      hotToast.error(err.message || 'Send failed');
+      setQaLoading(false);
+    } finally { setSendingDay(null); setSendingMode(null); }
+  }
+
   function extractVars(html) {
     const matches = [...html.matchAll(/\{\{(\w+)\}\}/g)];
     const unique = [...new Set(matches.map(m => m[1]))];
     return unique.map(key => ({ key, value: '' }));
   }
 
+  // Server-side pagination + channel + search filter. Backend supports
+  // page/limit/channel/search params and returns { data, total, page, limit }.
+  // Debounced 300 ms so typing in the search box doesn't hammer the API.
   useEffect(() => {
-    getTemplates({ limit: 50 })
-      .then(res => { setTemplates(res.data || []); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+    const t = setTimeout(() => {
+      setLoading(true);
+      const params = { page, limit: pageSize };
+      if (channelFilter !== 'all') params.channel = channelFilter;
+      const q = searchQuery.trim();
+      if (q) params.search = q;
+      getTemplates(params)
+        .then(res => {
+          setTemplates(res.data || []);
+          setTotal(res.total ?? (res.data?.length || 0));
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [page, pageSize, channelFilter, searchQuery]);
+
+  // Reset to page 1 whenever the page-size, channel filter, or search changes.
+  useEffect(() => { setPage(1); }, [pageSize, channelFilter, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   async function openPreview(tpl) {
     setPreviewDevice('desktop');
@@ -253,17 +402,44 @@ export default function Content() {
     setModal('create');
   }
 
-  function openEdit(tpl) {
-    const body = tpl.body || '';
+  async function openEdit(tpl) {
+    // Open immediately with whatever the list row has (may be empty body for
+    // templates linked via html_template_id) so the modal feels instant…
     setForm({
       name: tpl.name || '',
       channel: tpl.channel || 'email',
       subject: tpl.subject || '',
-      body,
-      fileName: body ? 'existing-template.html' : '',
+      body: tpl.body || '',
+      fileName: tpl.body ? 'existing-template.html' : '',
     });
-    setDynVars(extractVars(body));
+    setDynVars(extractVars(tpl.body || ''));
     setModal(tpl);
+
+    // …then fetch the full record. getById now LEFT JOINs email_html_templates
+    // and returns the SOURCE html_body so the editor shows the actual template
+    // (with Liquid tags intact), not a rendered output. Falls back to the
+    // server-rendered preview if no source HTML exists.
+    try {
+      const res = await getTemplate(tpl.id);
+      const full = res?.data || res;
+      const sourceHtml = full?.body || full?.html_body || '';
+      if (sourceHtml) {
+        setForm(f => ({ ...f, body: sourceHtml, fileName: 'existing-template.html' }));
+        setDynVars(extractVars(sourceHtml));
+        return;
+      }
+    } catch { /* fall through to preview-rendered HTML */ }
+
+    if (!tpl.body) {
+      try {
+        const res = await previewTemplate(tpl.id);
+        const html = res?.data?.html || '';
+        if (html) {
+          setForm(f => ({ ...f, body: html, fileName: 'existing-template.html' }));
+          setDynVars(extractVars(html));
+        }
+      } catch { /* leave editor empty if render fails */ }
+    }
   }
 
   function handleFileChange(e) {
@@ -286,6 +462,7 @@ export default function Content() {
     try {
       await deleteTemplate(id);
       setTemplates(prev => prev.filter(t => t.id !== id));
+      setTotal(t => Math.max(0, t - 1));
       hotToast.success('Template deleted');
     } catch (err) {
       hotToast.error(err.message || 'Failed to delete template');
@@ -312,6 +489,7 @@ export default function Content() {
       if (modal === 'create') {
         const res = await createTemplate(payload);
         setTemplates(prev => [res.data, ...prev]);
+        setTotal(t => t + 1);
         hotToast.success('Template created');
       } else {
         const res = await updateTemplate(modal.id, payload);
@@ -326,11 +504,14 @@ export default function Content() {
     }
   }
 
-  if (loading) return <div className="spinner">Loading templates...</div>;
+  // Only show the full-page spinner on the very first load. Once we've rendered
+  // once, keep the layout mounted so typing in the search box doesn't unmount
+  // the input on every debounced fetch.
+  const firstLoad = loading && templates.length === 0 && !searchQuery && channelFilter === 'all' && page === 1;
+  if (firstLoad) return <div className="spinner">Loading templates...</div>;
 
-  const filtered = channelFilter === 'all'
-    ? templates
-    : templates.filter(t => t.channel === channelFilter);
+  // Channel filter is now server-side, so the list we render is already filtered.
+  const filtered = templates;
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
@@ -338,11 +519,34 @@ export default function Content() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Content Templates</h1>
-            <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-              {filtered.length} of {templates.length} templates
+            <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              Showing {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
+              –{(page - 1) * pageSize + filtered.length} of {total} templates
+              {loading && (
+                <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-tertiary)' }} />
+              )}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', minWidth: 240 }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+              <input
+                className="form-input"
+                placeholder="Search name or subject…"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{ paddingLeft: 32, paddingRight: searchQuery ? 28 : 10, height: 32, fontSize: 13, width: '100%' }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', padding: 2 }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {[
                 { key: 'all', label: 'All' },
@@ -362,6 +566,36 @@ export default function Content() {
                   </button>
                 );
               })}
+            </div>
+            <div style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <button
+                onClick={() => setViewMode('card')}
+                title="Card view"
+                aria-label="Card view"
+                aria-pressed={viewMode === 'card'}
+                style={{
+                  padding: '6px 10px', border: 'none', cursor: 'pointer',
+                  background: viewMode === 'card' ? 'var(--bg-secondary)' : 'transparent',
+                  color: viewMode === 'card' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  display: 'inline-flex', alignItems: 'center',
+                }}
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                onClick={() => setViewMode('table')}
+                title="Table view"
+                aria-label="Table view"
+                aria-pressed={viewMode === 'table'}
+                style={{
+                  padding: '6px 10px', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer',
+                  background: viewMode === 'table' ? 'var(--bg-secondary)' : 'transparent',
+                  color: viewMode === 'table' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  display: 'inline-flex', alignItems: 'center',
+                }}
+              >
+                <List size={14} />
+              </button>
             </div>
             <button
               className="btn btn-primary btn-sm"
@@ -531,6 +765,7 @@ export default function Content() {
         </div>
       </motion.div>
 
+      {viewMode === 'card' && (
       <motion.div variants={fadeInUp} className="grid-auto" style={{ gap: 16 }}>
         {filtered.map(t => {
           const Icon = CHANNEL_ICON[t.channel] || Mail;
@@ -545,8 +780,8 @@ export default function Content() {
                   <Icon size={12} /> {t.channel}
                 </span>
                 {t.segment_label && <span className="badge badge-gray">{t.segment_label}</span>}
-                {/* (i) View stored QA report — Day 1-7 email templates */}
-                {t.id >= 1 && t.id <= 7 && t.channel === 'email' && (
+                {/* (i) View stored QA report — ALL email templates */}
+                {t.channel === 'email' && (
                   <button onClick={() => viewStoredReport(t)} title="View email QA report"
                     style={{ marginLeft: 'auto', width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Info size={15} />
@@ -611,14 +846,42 @@ export default function Content() {
                     <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
                   </button>
                 );
+                // Approved email templates outside the Day 1-7 sequence (e.g. weekly
+                // broadcasts ids 83-89) also get Test Send + Test Send to selected,
+                // routed through the generic /send-template endpoint.
+                const hasGenericSend = !hasAI && t.channel === 'email' && t.status === 'approved';
+                const genericRockyBtn = (
+                  <button className="btn btn-sm" onClick={() => handleGenericSend(t, { emails: [ROCKY_EMAIL], mode: 'rocky' })}
+                    disabled={isSending}
+                    title={`Send a QA test to ${ROCKY_EMAIL}`}
+                    style={{ gap: 6, flex: 1, background: 'rgba(59,130,246,0.1)', color: '#2563eb', border: '1px solid rgba(59,130,246,0.25)', cursor: isSending ? 'not-allowed' : 'pointer', opacity: isSending && !rockySending ? 0.5 : 1 }}>
+                    <Send size={14} /> {rockySending ? 'Sending…' : 'Test Send'}
+                  </button>
+                );
+                const genericSelectedBtn = (
+                  <button className="btn btn-sm" onClick={() => handleGenericSend(t, { emails: selectedEmails, mode: 'selected' })}
+                    disabled={noRecipients || isSending}
+                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length} selected`}
+                    style={{ gap: 6, flex: 1, background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients || (isSending && !selSending) ? 0.5 : 1 }}>
+                    <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
+                  </button>
+                );
+
                 // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · two Test Send buttons
-                return hasAI ? (
+                if (hasAI) return (
                   <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
                     <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
                     <div style={{ display: 'flex', gap: 8 }}>{rockyBtn}{selectedBtn}</div>
                   </div>
-                ) : (
+                );
+                if (hasGenericSend) return (
+                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{editBtn}{deleteBtn}</div>
+                    <div style={{ display: 'flex', gap: 8 }}>{genericRockyBtn}{genericSelectedBtn}</div>
+                  </div>
+                );
+                return (
                   <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
                     {previewBtn}{editBtn}{deleteBtn}
                   </div>
@@ -628,6 +891,175 @@ export default function Content() {
           );
         })}
       </motion.div>
+      )}
+
+      {viewMode === 'table' && (
+      <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', textAlign: 'left' }}>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Name</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Channel</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Subject</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Segment</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Updated</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ padding: '32px 14px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No templates found</td>
+                </tr>
+              )}
+              {filtered.map(t => {
+                const Icon = CHANNEL_ICON[t.channel] || Mail;
+                const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+                const updated = t.updated_at ? new Date(t.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+                return (
+                  <tr key={t.id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-primary)', fontWeight: 600 }}>{t.name}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span className="badge badge-gray" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Icon size={12} /> {t.channel}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span className={`badge ${STATUS_BADGE[t.status] || 'badge-gray'}`}>{t.status}</span>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.subject || ''}>
+                      {t.subject || '—'}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)' }}>
+                      {t.segment_label ? <span className="badge badge-gray">{t.segment_label}</span> : '—'}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{updated}</td>
+                    <td style={{ padding: '12px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
+                        <button onClick={() => openPreview(t)} title="Preview" className="btn btn-secondary btn-sm" style={{ padding: '6px 8px' }}>
+                          <Eye size={14} />
+                        </button>
+                        {hasAI && (
+                          <button onClick={() => openPreviewAI(t)} title="Preview AI"
+                            className="btn btn-sm"
+                            style={{ padding: '6px 8px', background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
+                            <Sparkles size={14} />
+                          </button>
+                        )}
+                        <button onClick={() => openEdit(t)} title="Edit" className="btn btn-secondary btn-sm" style={{ padding: '6px 8px' }}>
+                          <Edit2 size={14} />
+                        </button>
+                        {t.channel === 'email' && (
+                          <button onClick={() => viewStoredReport(t)} title="View email QA report"
+                            style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Info size={14} />
+                          </button>
+                        )}
+                        <button onClick={() => setConfirmDelete(t)} title="Delete" disabled={deleting === t.id}
+                          className="btn btn-secondary btn-sm" style={{ padding: '6px 8px', color: '#ef4444' }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </motion.div>
+      )}
+
+      {/* ── Pagination ── */}
+      {total > 0 && (
+        <motion.div
+          variants={fadeInUp}
+          style={{
+            marginTop: 20,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
+            padding: '12px 16px',
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
+            <span>Rows per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
+              className="form-input"
+              style={{ padding: '4px 8px', fontSize: 13, width: 'auto', minWidth: 64 }}
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span style={{ marginLeft: 8 }}>
+              Page <strong style={{ color: 'var(--text-primary)' }}>{page}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong>
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              style={{ opacity: page === 1 ? 0.4 : 1, cursor: page === 1 ? 'not-allowed' : 'pointer' }}
+              title="First page"
+            >«</button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+              style={{ opacity: page === 1 ? 0.4 : 1, cursor: page === 1 ? 'not-allowed' : 'pointer' }}
+            >Prev</button>
+
+            {/* Compact page numbers: show first, last, current ±1, with ellipses */}
+            {(() => {
+              const pages = new Set([1, totalPages, page, page - 1, page + 1]);
+              const visible = [...pages]
+                .filter((p) => p >= 1 && p <= totalPages)
+                .sort((a, b) => a - b);
+              const out = [];
+              visible.forEach((p, i) => {
+                if (i > 0 && p - visible[i - 1] > 1) {
+                  out.push(<span key={`gap-${p}`} style={{ padding: '0 4px', color: 'var(--text-tertiary)' }}>…</span>);
+                }
+                out.push(
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={`btn btn-sm ${p === page ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ minWidth: 32 }}
+                  >
+                    {p}
+                  </button>
+                );
+              });
+              return out;
+            })()}
+
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              style={{ opacity: page >= totalPages ? 0.4 : 1, cursor: page >= totalPages ? 'not-allowed' : 'pointer' }}
+            >Next</button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setPage(totalPages)}
+              disabled={page >= totalPages}
+              style={{ opacity: page >= totalPages ? 0.4 : 1, cursor: page >= totalPages ? 'not-allowed' : 'pointer' }}
+              title="Last page"
+            >»</button>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Delete Confirm Modal ── */}
       <AnimatePresence>
@@ -870,7 +1302,7 @@ export default function Content() {
               exit={{ opacity: 0, scale: 0.96, y: 16 }}
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
               onClick={e => e.stopPropagation()}
-              style={{ background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}
+              style={{ background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: 1040, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}
             >
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border-color)' }}>
@@ -927,30 +1359,54 @@ export default function Content() {
                   </div>
                 )}
 
-                {/* HTML file upload */}
+                {/* HTML body — edit directly with live preview, or upload a file */}
                 <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>HTML Template File *</label>
-                  <div style={{ position: 'relative', border: `2px dashed ${form.body ? 'var(--green)' : 'var(--border-color)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', cursor: 'pointer', background: form.body ? 'color-mix(in srgb, var(--green) 5%, transparent)' : 'var(--bg-secondary)', transition: 'all 0.2s', overflow: 'hidden' }}>
-                    {/* invisible overlay input — most reliable cross-browser approach */}
-                    <input
-                      type="file"
-                      accept=".html,.htm,text/html"
-                      onChange={handleFileChange}
-                      style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%', height: '100%', zIndex: 2 }}
-                    />
-                    {form.body ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
-                        <FileText size={24} color="var(--green)" />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>{form.fileName}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Click to replace</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>HTML Template *</label>
+                    <label style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: 'var(--brand-primary)', cursor: 'pointer', padding: '4px 10px', border: '1px solid var(--border-color)', borderRadius: 6 }}>
+                      <Upload size={12} /> Upload .html
+                      <input type="file" accept=".html,.htm,text/html" onChange={handleFileChange} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+                    </label>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, height: 380 }}>
+                    {/* Editor */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>HTML</div>
+                      <textarea
+                        value={form.body}
+                        onChange={e => {
+                          const html = e.target.value;
+                          setForm(f => ({ ...f, body: html, fileName: html.trim() ? (f.fileName || 'inline-template.html') : '' }));
+                          setDynVars(extractVars(html));
+                        }}
+                        spellCheck={false}
+                        placeholder="<html>…</html> — edit directly. Use {{KEY}} placeholders (e.g. {{USER_NAME}}, {{ITEM_NAME}})."
+                        style={{ flex: 1, width: '100%', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: 1.5, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', whiteSpace: 'pre', overflow: 'auto' }}
+                      />
+                    </div>
+                    {/* Live preview (sample data) — server-rendered via Liquid
+                        so {% case %} / {% if %} blocks expand correctly. */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Live Preview · sample data
+                        </div>
+                        {livePreviewLoading && (
+                          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> rendering…
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
-                        <Upload size={24} color="var(--text-tertiary)" />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Click to upload HTML file</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Accepts .html / .htm files</div>
-                      </div>
-                    )}
+                      <iframe
+                        title="template-preview"
+                        srcDoc={
+                          form.body
+                            ? (livePreviewHtml || fillPreviewHtml(form.body))
+                            : '<div style="font-family:sans-serif;color:#9ca3af;padding:16px;font-size:13px">Preview appears here as you type…</div>'
+                        }
+                        style={{ flex: 1, width: '100%', borderRadius: 8, border: '1px solid var(--border-color)', background: '#fff' }}
+                      />
+                    </div>
                   </div>
                 </div>
 

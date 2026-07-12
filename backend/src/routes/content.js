@@ -126,9 +126,9 @@ async function renderDayTemplatePreview(day) {
 // GET /api/v2/content/templates — list all 7 day-templates
 router.get('/templates', async (req, res, next) => {
   try {
-    const { channel, status, page, limit } = req.query;
+    const { channel, status, search, page, limit } = req.query;
     const data = await ContentService.getAll({
-      channel, status,
+      channel, status, search,
       page: parseInt(page) || 1,
       limit: parseInt(limit) || 20,
     });

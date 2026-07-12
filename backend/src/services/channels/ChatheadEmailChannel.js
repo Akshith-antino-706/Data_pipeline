@@ -7,6 +7,8 @@
  *   AWS_EMAIL_CAMPAIGN_ID   defaults to 1
  */
 
+import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+
 const DEFAULT_API_URL  = 'http://95.211.169.194/apis/aws/send/index.php';
 const DEFAULT_FROM     = 'Rayna Tours <explore@promotions.raynatours.com>';
 
@@ -24,6 +26,14 @@ export class ChatheadEmailChannel {
     if (!to)      return { success: false, error: 'recipient (to) required' };
     if (!subject) return { success: false, error: 'subject required' };
     if (!html)    return { success: false, error: 'html body required' };
+
+    // WELCOME_EMAILS allow-list gate — only configured addresses may receive mail.
+    // Disabled when WELCOME_EMAILS is unset/empty (allows all). Universal backstop:
+    // every send path that reaches this transport is validated here.
+    if (!isEmailAllowed(to)) {
+      console.log(`[AWS Email] Skipped — ${to} not in WELCOME_EMAILS allow-list`);
+      return { success: false, skipped: true, reason: 'not_in_allowlist', provider: 'allowlist' };
+    }
 
     if (!this.isConfigured()) {
       console.log(`[AWS Email] Simulated send → ${to} | subject="${subject}" | bytes=${html.length}`);

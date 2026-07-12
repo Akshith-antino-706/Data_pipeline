@@ -15,8 +15,10 @@ const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren:
 function formatDate(d) {
   if (!d) return '--';
   const dt = new Date(d);
-  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' +
-    dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const today = new Date();
+  today.setHours(dt.getHours(), dt.getMinutes(), dt.getSeconds(), dt.getMilliseconds());
+  return today.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' +
+    today.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatNum(n) {

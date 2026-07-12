@@ -1,6 +1,7 @@
 import { query } from '../config/database.js';
 import ProductAffinityService from './ProductAffinityService.js';
 import PopularityService from './PopularityService.js';
+import LiquidRenderer from './LiquidRenderer.js';
 
 /**
  * EmailRenderer — Renders HTML email templates with dynamic data
@@ -46,6 +47,8 @@ export default class EmailRenderer {
     const nonEmptyExtraVars = Object.fromEntries(
       Object.entries(extraVars).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     );
+    const siteBaseGeneral = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
+    const unsubscribeUrlGeneral = `${siteBaseGeneral}/unsubscribe?uid=${unifiedId || ''}`;
     const vars = {
       first_name: user.name?.split(' ')[0] || 'there',
       full_name: user.name || 'Valued Customer',
@@ -59,7 +62,8 @@ export default class EmailRenderer {
       holiday_name: '',
       city_name: user.city || 'Dubai',
       utm_link: 'https://www.raynatours.com',
-      unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,
+      unsubscribe_link: unsubscribeUrlGeneral,
+      unsubscribe_url:  unsubscribeUrlGeneral,
       ...nonEmptyExtraVars,
     };
 
@@ -203,7 +207,7 @@ export default class EmailRenderer {
    */
   static async renderForJourneyNode({ htmlTemplateId, unifiedId, journeyId, nodeId, runId, extraVars = {} }) {
     const { rows: [tpl] } = await query(
-      `SELECT id, name, html_body, preview_text,
+      `SELECT id, name, html_body, preview_text, engine, subject_line,
               uses_popular_products, product_type, product_limit
          FROM email_html_templates WHERE id = $1`,
       [htmlTemplateId]
@@ -220,6 +224,48 @@ export default class EmailRenderer {
       user = u || {};
     }
 
+    // For Liquid (win-back) templates, fetch the contact's latest GTM event so
+    // destination_city + service_type land in the template from raw_payload.
+    // Day 1–7 (engine='regex') don't use these vars — skip the lookup.
+    let payloadVars = {};
+    if (tpl.engine === 'liquid' && unifiedId) {
+      try {
+        const { rows: [ev] } = await query(
+          `SELECT raw_payload, page_url
+             FROM gtm_events
+            WHERE unified_id = $1 AND raw_payload IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [unifiedId]
+        );
+        const p = ev?.raw_payload || {};
+        const ecom = (Array.isArray(p.ecommerceData?.items) && p.ecommerceData.items[0]) || {};
+        const itemName  = p.itemName || ecom.item_name || '';
+        const itemUrl   = p.pageUrl || ev?.page_url || '';
+        const itemImage = p.imageUrl || ecom.image_url || '';
+        const destCity  = p.city || ecom.city || '';
+        const rawPrice  = p.eventValue ?? p.ecommerceData?.value ?? ecom.price;
+        const itemPrice = (rawPrice === undefined || rawPrice === null) ? '' : String(rawPrice);
+        payloadVars = {
+          destination_city: destCity,
+          service_type:     p.itemCategory || ecom.item_category || '',
+          product_name:     itemName,
+          // Product-recommendation slots (rec1/2/3) → the item the contact actually
+          // engaged with. Left '' when unknown so the template's own `| default:'…'`
+          // fallback still renders (liquidjs treats '' as empty for the default filter).
+          rec1_name: itemName,      rec2_name: itemName,      rec3_name: itemName,
+          rec1_url:  itemUrl,       rec2_url:  itemUrl,       rec3_url:  itemUrl,
+          rec1_price: itemPrice,    rec2_price: itemPrice,    rec3_price: itemPrice,
+          rec1_image_url: itemImage, rec2_image_url: itemImage, rec3_image_url: itemImage,
+          rec1_city: destCity,      rec2_city: destCity,      rec3_city: destCity,
+          // "Same service URL" — the add-on CTA points at the engaged item's page.
+          addon_url: itemUrl,
+        };
+      } catch (err) {
+        console.warn('[EmailRenderer] raw_payload lookup failed:', err.message);
+      }
+    }
+
     const utmLink = extraVars.utm_link
       || this._buildUtmLink({ journeyId, nodeId, htmlTemplateName: tpl.name, unifiedId });
 
@@ -228,6 +274,8 @@ export default class EmailRenderer {
     const nonEmptyExtraVars = Object.fromEntries(
       Object.entries(extraVars).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
     );
+    const siteBase = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
+    const unsubscribeUrl = `${siteBase}/unsubscribe?uid=${unifiedId || ''}`;
     const vars = {
       first_name:       user.name?.split(' ')[0] || 'there',
       full_name:        user.name || 'Valued Traveller',
@@ -239,17 +287,43 @@ export default class EmailRenderer {
       holiday_name:     '',
       city_name:        user.city || 'Dubai',
       utm_link:         utmLink,
-      unsubscribe_link: `https://www.raynatours.com/unsubscribe?uid=${unifiedId || ''}`,
-      ...nonEmptyExtraVars,
+      // Provide BOTH names so templates using either {{unsubscribe_link}} or
+      // {{unsubscribe_url}} resolve correctly. Win-back uses _url.
+      unsubscribe_link: unsubscribeUrl,
+      unsubscribe_url:  unsubscribeUrl,
+      // Static marketing-link CTAs. Set here (not just as inline `| default:`) because
+      // several templates consume these via `{% assign _u = seasonal_tour_url %}` where
+      // no inline default applies. Overridable via extraVars.
+      top_tours_url:     siteBase,
+      vip_tours_url:     siteBase,
+      new_tours_url:     siteBase,
+      new_arrivals_url:  siteBase,
+      seasonal_tour_url: siteBase,
+      next_trip_url:     siteBase,
+      ugc_url:           'https://www.instagram.com/raynatours_/',
+      ...payloadVars,        // destination_city / service_type / product_name / rec* / addon_url
+      ...nonEmptyExtraVars,  // caller overrides always win
     };
 
-    let subject = (extraVars.subject_override || tpl.preview_text || tpl.name || '').toString();
+    let subject = (extraVars.subject_override || tpl.subject_line || tpl.preview_text || tpl.name || '').toString();
     let html    = tpl.html_body || '';
 
+    // Subject: always regex (subjects don't carry Liquid control flow).
     for (const [k, v] of Object.entries(vars)) {
-      const re = new RegExp(`\\{\\{${k}\\}\\}`, 'g');
-      subject = subject.replace(re, v);
-      html    = html.replace(re, v);
+      subject = subject.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v);
+    }
+
+    // Body: Liquid for win-back (engine='liquid'), regex for Day 1-7 + legacy.
+    if (tpl.engine === 'liquid') {
+      try {
+        html = await LiquidRenderer.render(html, vars);
+      } catch (err) {
+        console.error('[EmailRenderer] Liquid render failed:', err.message);
+        // fall through to regex pass so something still renders
+      }
+    }
+    for (const [k, v] of Object.entries(vars)) {
+      html = html.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v);
     }
 
     let slotsFilled = 0;
@@ -499,18 +573,26 @@ export default class EmailRenderer {
    * @param {object} extraVars - custom variable values from the journey node (override sample defaults)
    */
   static async renderPreview(templateId, extraVars = {}) {
+    // Sample data — win-back templates need service_type + destination_city
+    // to exercise the Liquid case branches.
     const sampleVars = {
-      offer_tag: 'PREVIEW20',
-      holiday_name: 'Diwali',
-      city_name: 'Dubai',
-      utm_link: 'https://www.raynatours.com',
-      unsubscribe_link: '#',
-      // User-supplied values override sample defaults
+      first_name:        'Vaibhav',
+      offer_tag:         'PREVIEW20',
+      holiday_name:      'Diwali',
+      city_name:         'Dubai',
+      destination_city:  'Dubai',
+      service_type:      'Activity',
+      product_name:      'Desert Safari',
+      coupon_code:       'PREVIEW10',
+      utm_link:          'https://www.raynatours.com',
+      unsubscribe_link:  '#',
+      unsubscribe_url:   '#',
       ...extraVars,
     };
 
     const { rows: [tpl] } = await query(`
-      SELECT ct.*, eht.html_body, eht.name as html_name
+      SELECT ct.*, eht.html_body, eht.name as html_name,
+             eht.engine as html_engine, eht.subject_line as html_subject_line
       FROM content_templates ct
       LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
       WHERE ct.id = $1
@@ -518,11 +600,21 @@ export default class EmailRenderer {
 
     if (!tpl) throw new Error('Template not found');
 
-    let subject = tpl.subject || '';
+    let subject = tpl.subject || tpl.html_subject_line || '';
     let html = tpl.html_body || tpl.body || '';
 
     for (const [key, val] of Object.entries(sampleVars)) {
       subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
+    }
+
+    if (tpl.html_engine === 'liquid') {
+      try {
+        html = await LiquidRenderer.render(html, sampleVars);
+      } catch (err) {
+        console.error('[EmailRenderer] Liquid preview failed:', err.message);
+      }
+    }
+    for (const [key, val] of Object.entries(sampleVars)) {
       html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
     }
 

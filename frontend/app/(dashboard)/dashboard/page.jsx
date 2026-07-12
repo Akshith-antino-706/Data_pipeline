@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats } from '@/lib/api';
-import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2, Filter } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 
@@ -27,15 +27,47 @@ const STATUS_LABELS = {
   B2B_NEW_LEAD: 'New Lead', B2B_PROSPECT: 'B2B Prospect',
 };
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Month-year options (e.g. "Jan 2026") from 1 year ahead down to 2 years back.
+const MONTH_YEAR_OPTIONS = (() => {
+  const cy = new Date().getFullYear();
+  const opts = [];
+  for (let y = cy + 1; y >= cy - 2; y--) {
+    for (let m = 12; m >= 1; m--) opts.push({ value: `${y}-${String(m).padStart(2, '0')}`, label: `${MONTH_NAMES[m - 1]} ${y}` });
+  }
+  return opts;
+})();
+
+const PRODUCT_OPTIONS = [
+  { value: 'all', label: 'All Products' },
+  { value: 'tours', label: 'Tours' },
+  { value: 'packages', label: 'Packages' },
+  { value: 'hotels', label: 'Hotels' },
+  { value: 'visas', label: 'Visas' },
+  { value: 'others', label: 'Others' },
+  { value: 'flights', label: 'Flights' },
+];
+
 export default function Dashboard() {
   const [tree, setTree] = useState(null);
   const [activity, setActivity] = useState(null);
   const [treeLoading, setTreeLoading] = useState(true);
   const [activityLoading, setActivityLoading] = useState(true);
+  // Travel-date revenue filter (Revenue by Segment section)
+  const [travelFrom, setTravelFrom] = useState('');
+  const [travelTo, setTravelTo] = useState('');
+  const [bookingFrom, setBookingFrom] = useState('');
+  const [bookingTo, setBookingTo] = useState('');
+  const [product, setProduct] = useState('all');
+  const [showFilter, setShowFilter] = useState(false);
+  // Filtered revenue-by-segment — scoped to THIS section only (separate from the
+  // base dashboard `tree`, so the filter doesn't change any other card).
+  const [revData, setRevData] = useState(null);
+  const [revLoading, setRevLoading] = useState(false);
   const { businessType } = useBusinessType();
 
   // ── email schedule summary ─────────────────────────────────────────
-  const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null });
+  const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null, conversations: null });
 
   useEffect(() => {
     const btParam = businessType === 'All' ? {} : { businessType };
@@ -45,9 +77,10 @@ export default function Dashboard() {
       getJourneys({ limit: 1 }),
     ]).then(([contacts, campaigns, journeys]) => {
       setQuickStats({
-        contacts:  contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts  ?? null : null,
-        campaigns: campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
-        journeys:  journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
+        contacts:      contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts   ?? null : null,
+        conversations: contacts.status  === 'fulfilled' ? contacts.value?.data?.conversations_7d ?? null : null,
+        campaigns:     campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
+        journeys:      journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
       });
     });
   }, [businessType]);
@@ -70,6 +103,7 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
+  // Base dashboard data — NOT affected by the Revenue-by-Segment filter.
   const loadData = () => {
     const params = {};
     if (businessType !== 'All') params.businessType = businessType;
@@ -90,12 +124,54 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, [businessType]);
 
+  // Scoped fetch: only re-fetches the Revenue-by-Segment numbers when a filter is set.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const active = !!(travelFrom || travelTo || bookingFrom || bookingTo || (product && product !== 'all'));
+    if (!active) { setRevData(null); setRevLoading(false); return; }
+    const params = {};
+    if (businessType !== 'All') params.businessType = businessType;
+    if (travelFrom) params.travelFrom = travelFrom;
+    if (travelTo) params.travelTo = travelTo;
+    if (bookingFrom) params.bookingFrom = bookingFrom;
+    if (bookingTo) params.bookingTo = bookingTo;
+    if (product && product !== 'all') params.product = product;
+    setRevLoading(true);
+    getSegmentationTree(params).catch(() => ({})).then(setRevData).finally(() => setRevLoading(false));
+  }, [businessType, travelFrom, travelTo, bookingFrom, bookingTo, product]);
+
+  // ── travel-date preset helpers ──
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const applyMonth = (offset) => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+    setTravelFrom(ymd(start)); setTravelTo(ymd(end));
+  };
+  const applyYear = () => {
+    const y = new Date().getFullYear();
+    setTravelFrom(`${y}-01-01`); setTravelTo(`${y}-12-31`);
+  };
+  const applyMonthPick = (val) => {
+    if (!val) return;
+    const [y, m] = val.split('-').map(Number);
+    setTravelFrom(ymd(new Date(y, m - 1, 1))); setTravelTo(ymd(new Date(y, m, 0)));
+  };
+  const clearFilters = () => { setTravelFrom(''); setTravelTo(''); setBookingFrom(''); setBookingTo(''); setProduct('all'); };
+  const filterActive = !!(travelFrom || travelTo || bookingFrom || bookingTo || (product && product !== 'all'));
+  const activeCount = (travelFrom || travelTo ? 1 : 0) + (bookingFrom || bookingTo ? 1 : 0) + (product && product !== 'all' ? 1 : 0);
+  // current "YYYY-MM" if the travel range exactly spans one month (to highlight the month picker)
+  const pickedMonth = (travelFrom && travelTo && travelFrom.slice(0, 7) === travelTo.slice(0, 7)) ? travelFrom.slice(0, 7) : '';
+
   const fmt = (n) => Number(n || 0).toLocaleString();
   const fmtAED = (n) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const fmtM = (n) => `AED ${(Number(n || 0) / 1000000).toFixed(2)}M`;
 
   const totals = tree?.totals || {};
-  const statusCounts = tree?.statusCounts || [];
+  // Revenue-by-Segment uses the FILTERED data when a filter is active; everything
+  // else on the dashboard keeps using the unfiltered `tree`.
+  const statusCounts = ((filterActive ? revData : tree)?.statusCounts) || [];
+  const revTableLoading = treeLoading || revLoading;
   const revenueByType = tree?.revenueByType;
   const logs = activity?.logs || [];
 
@@ -150,11 +226,11 @@ export default function Dashboard() {
         </Link>
         <Link href="/segment-activity" className="card kpi no-underline color-inherit">
           <div className="icon-box"><TrendingUp size={18} color="var(--purple)" /></div>
-          {activityLoading
+          {quickStats.conversations === null
             ? <div className="skeleton" style={{ width: 60, height: 28, borderRadius: 6, margin: '4px 0 8px' }} />
-            : <div className="kpi-value kpi-purple">{fmt(totalConverted)}</div>
+            : <div className="kpi-value kpi-purple">{fmt(quickStats.conversations)}</div>
           }
-          <div className="kpi-label">Conversions (7d)</div>
+          <div className="kpi-label">Conversations (7d)</div>
         </Link>
         <Link href="/campaigns" className="card kpi no-underline color-inherit">
           <div className="icon-box"><DollarSign size={18} color="var(--orange)" /></div>
@@ -321,10 +397,88 @@ export default function Dashboard() {
       {/* Revenue by Segment */}
       <motion.div variants={fadeInUp}>
         <div className="card">
-          <div className="card-header">
+          <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <h3>Revenue by Segment</h3>
+            <button
+              onClick={() => setShowFilter(v => !v)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: (filterActive || showFilter) ? '#0f172a' : 'transparent', color: (filterActive || showFilter) ? '#fff' : 'inherit' }}
+            >
+              <Filter size={15} /> Filter{activeCount > 0 ? ` (${activeCount})` : ''}
+            </button>
           </div>
-          {treeLoading ? (
+
+          {/* Inline expanding filter panel — affects ONLY this section */}
+          {showFilter && (() => {
+            const inp = { padding: '6px 8px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 6, fontSize: 13, width: '100%', background: '#fff' };
+            const rowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr', alignItems: 'center', gap: 12, marginBottom: 12 };
+            const lbl = { fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #475569)' };
+            const presetBtn = { padding: '5px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: '#fff' };
+            const presetOn = { background: '#0f172a', color: '#fff', borderColor: '#0f172a' };
+            const isMonth = (off) => { const n = new Date(); const s = new Date(n.getFullYear(), n.getMonth() + off, 1); return pickedMonth === `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}`; };
+            const isYear = travelFrom === `${new Date().getFullYear()}-01-01` && travelTo === `${new Date().getFullYear()}-12-31`;
+            return (
+              <div style={{ padding: 16, borderBottom: '1px solid var(--border, #eef2f7)', background: 'var(--surface-2, #f8fafc)' }}>
+                <div style={{ maxWidth: 560 }}>
+                  <div style={rowStyle}>
+                    <span style={lbl}>Product</span>
+                    <select value={product} onChange={(e) => setProduct(e.target.value)} style={inp}>
+                      {PRODUCT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+
+                  <div style={rowStyle}>
+                    <span style={lbl}>Travel month</span>
+                    <select value={pickedMonth} onChange={(e) => applyMonthPick(e.target.value)} style={inp}>
+                      <option value="">Select month…</option>
+                      {MONTH_YEAR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+
+                  <div style={{ ...rowStyle, marginBottom: 14 }}>
+                    <span style={lbl} />
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button style={{ ...presetBtn, ...(isMonth(0) ? presetOn : {}) }} onClick={() => applyMonth(0)}>This Month</button>
+                      <button style={{ ...presetBtn, ...(isMonth(1) ? presetOn : {}) }} onClick={() => applyMonth(1)}>Next Month</button>
+                      <button style={{ ...presetBtn, ...(isYear ? presetOn : {}) }} onClick={applyYear}>This Year</button>
+                    </div>
+                  </div>
+
+                  <div style={rowStyle}>
+                    <span style={lbl}>Travel date</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="date" value={travelFrom} max={travelTo || undefined} onChange={(e) => setTravelFrom(e.target.value)} style={inp} />
+                      <span style={{ color: 'var(--text-tertiary)' }}>→</span>
+                      <input type="date" value={travelTo} min={travelFrom || undefined} onChange={(e) => setTravelTo(e.target.value)} style={inp} />
+                    </div>
+                  </div>
+
+                  <div style={rowStyle}>
+                    <span style={lbl}>Booking date</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="date" value={bookingFrom} max={bookingTo || undefined} onChange={(e) => setBookingFrom(e.target.value)} style={inp} />
+                      <span style={{ color: 'var(--text-tertiary)' }}>→</span>
+                      <input type="date" value={bookingTo} min={bookingFrom || undefined} onChange={(e) => setBookingTo(e.target.value)} style={inp} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                    <button onClick={clearFilters} style={{ padding: '6px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: '#fff', color: '#ef4444' }}>Clear all</button>
+                    <button onClick={() => setShowFilter(false)} style={{ padding: '6px 16px', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: '#0f172a', color: '#fff' }}>Done</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {filterActive && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 16px', fontSize: 12, color: 'var(--text-secondary, #475569)', background: 'var(--surface-2, #f8fafc)', borderBottom: '1px solid var(--border, #eef2f7)' }}>
+              {product !== 'all' && <span style={{ background: '#eef2f7', borderRadius: 12, padding: '2px 10px' }}>{PRODUCT_OPTIONS.find(o => o.value === product)?.label}</span>}
+              {(travelFrom || travelTo) && <span style={{ background: '#eef2f7', borderRadius: 12, padding: '2px 10px' }}>Travel{travelFrom ? ` ${travelFrom}` : ''} → {travelTo || '…'}</span>}
+              {(bookingFrom || bookingTo) && <span style={{ background: '#eef2f7', borderRadius: 12, padding: '2px 10px' }}>Booked{bookingFrom ? ` ${bookingFrom}` : ''} → {bookingTo || '…'}</span>}
+              <button onClick={clearFilters} style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}>Clear</button>
+            </div>
+          )}
+          {revTableLoading ? (
             <div className="table-wrap">
               <table>
                 <thead>
