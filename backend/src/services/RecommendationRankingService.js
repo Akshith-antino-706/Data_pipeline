@@ -92,7 +92,7 @@ async function _fetchCandidates(city, excludeProductId, limit = 100) {
       AND name IS NOT NULL
       AND image_url IS NOT NULL AND image_url <> ''
       AND url IS NOT NULL AND url <> ''
-      AND (available IS NULL OR available = true)
+      AND available = true
     ORDER BY COALESCE(sale_price, normal_price) DESC NULLS LAST
     LIMIT $4`;
   const { rows: cityRows } = await db.query(cityQ, params);
@@ -122,7 +122,7 @@ async function _fetchCandidates(city, excludeProductId, limit = 100) {
         AND name IS NOT NULL
         AND image_url IS NOT NULL AND image_url <> ''
         AND url IS NOT NULL AND url <> ''
-        AND (available IS NULL OR available = true)
+        AND available = true
       ORDER BY COALESCE(sale_price, normal_price) DESC NULLS LAST
       LIMIT $4
     `, [country, excludeProductId ? String(excludeProductId) : null, excluded, limit]);
@@ -141,7 +141,7 @@ async function _fetchCandidates(city, excludeProductId, limit = 100) {
       AND name IS NOT NULL
       AND image_url IS NOT NULL AND image_url <> ''
       AND url IS NOT NULL AND url <> ''
-      AND (available IS NULL OR available = true)
+      AND available = true
     ORDER BY COALESCE(sale_price, normal_price) DESC NULLS LAST
     LIMIT $3
   `, [excludeProductId ? String(excludeProductId) : null, excluded, limit]);

@@ -11,7 +11,7 @@
  *
  * Filters:
  *   - Products with valid URL + image only (no broken cards / 404 links)
- *   - available IS NULL OR available = true
+ *   - available = true (explicitly-checked products only)
  *   - Same URL / image / availability filters as on-trip candidate fetch
  *
  * If Claude fails → fallback to top-5 candidates by booking count (still
@@ -144,7 +144,7 @@ async function _fetchTrendingCandidates(category, limit = 30) {
       AND p.name IS NOT NULL
       AND p.image_url IS NOT NULL AND p.image_url <> ''
       AND p.url IS NOT NULL AND p.url <> ''
-      AND (p.available IS NULL OR p.available = true)
+      AND p.available = true
     ORDER BY COALESCE(b.bookings, 0) DESC,
              COALESCE(p.sale_price, p.normal_price) DESC NULLS LAST
     LIMIT $2
