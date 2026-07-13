@@ -326,7 +326,13 @@ class GtmJourneyService {
     });
 
     // Inject click/open tracking (so product links + opens are tracked, like normal sends)
-    const baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3001}`;
+    let baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || 'https://promotions.raynatours.com';
+    // Safety net: a mis-set env (e.g. TRACKING_BASE_URL=http://localhost:3001) must NEVER
+    // ship localhost tracking links on real sends. In production, force the public domain.
+    // (Local dev keeps localhost so tracking can be tested against a local server.)
+    if (process.env.NODE_ENV === 'production' && /localhost|127\.0\.0\.1/.test(baseUrl)) {
+      baseUrl = 'https://promotions.raynatours.com';
+    }
     html = injectClickTracking(html, { logId, baseUrl, campaign: `gtm_${journeyId}`, content: 'gtm_journey', unifiedId: c.id, journeyId, nodeId });
     html = injectOpenPixel(html, logId, baseUrl);
 
