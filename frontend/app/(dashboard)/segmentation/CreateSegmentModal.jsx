@@ -78,6 +78,14 @@ const FIELD_CONFIG = {
     label: 'Booking Date', type: 'date-range',
     defaultOperator: 'between',
   },
+  travel_date_within: {
+    label: 'Travel Date within ± days (today)', type: 'days-window',
+    defaultOperator: 'within',
+  },
+  booking_date_within: {
+    label: 'Booking Date within ± days (today)', type: 'days-window',
+    defaultOperator: 'within',
+  },
   last_booking_age: {
     label: 'Last Booking (recency)', type: 'single-select',
     options: ['recent_90', '90_180', '90_plus', '180_plus'],
@@ -303,6 +311,29 @@ function ConditionValueInput({ fieldKey, condition, onChange }) {
         </div>
       );
 
+    case 'days-window': {
+      // Single number X + direction → dynamic window vs CURRENT_DATE (re-evaluated daily).
+      //   within → [today-X, today+X] | after (+) → [today, today+X] | before (−) → [today-X, today]
+      const dir = condition.operator || 'within';
+      const sign = dir === 'after' ? '+' : dir === 'before' ? '−' : '±';
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <select value={dir} onChange={e => onChange({ ...condition, operator: e.target.value })}
+            style={{ ...selectStyle, maxWidth: 180 }}>
+            <option value="within">± before &amp; after</option>
+            <option value="after">+ after today (upcoming)</option>
+            <option value="before">− before today (past)</option>
+          </select>
+          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>today {sign}</span>
+          <input type="number" min="0" placeholder="X"
+            value={(condition.value ?? '') === '' ? '' : condition.value}
+            onChange={e => onChange({ ...condition, value: e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0) })}
+            style={{ ...inputStyle, maxWidth: 80 }} />
+          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>days = date</span>
+        </div>
+      );
+    }
+
     case 'number-range': {
       const opVal = condition.operator || 'between';
       return (
@@ -351,6 +382,7 @@ function isFieldValid(cond) {
     case 'boolean':       return cond.value === true || cond.value === false;
     case 'text':          return typeof cond.value === 'string' && cond.value.trim().length > 0;
     case 'date-range':    return Array.isArray(cond.value) && !!(cond.value[0] || cond.value[1]);
+    case 'days-window':   return cond.value !== '' && cond.value != null && Number.isFinite(Number(cond.value)) && Number(cond.value) >= 0;
     case 'number-range':
       if (cond.operator === 'between') return Array.isArray(cond.value) && (cond.value[0] !== '' || cond.value[1] !== '');
       return cond.value !== '' && cond.value != null;
