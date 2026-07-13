@@ -494,7 +494,7 @@ export async function computeForUser({ unifiedId, recommendationType, topN = 5, 
   return {
     unifiedId,
     recommendationType,
-    destinationCity: booking.destinationCity,
+    destinationCity,
     productIds:      ranking.productIds || [],
     source:          ranking.source,
     rationale:       ranking.rationale,
