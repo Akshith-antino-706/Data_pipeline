@@ -150,6 +150,41 @@ export default class CustomSegmentService {
             if (cond.value?.[1]) { needsBookingDate = true; params.push(cond.value[1]); sub.push(`booking_agg.min_booking_date <= $${idx++}::date`); }
             break;
           }
+          // ── DYNAMIC relative windows centered on today (for continuous journeys) ──
+          // value = X (days) → an ACTIVE booking whose date is within CURRENT_DATE ± X.
+          // Correlated EXISTS (EXACT, not min/max overlap) + CURRENT_DATE (self-updating,
+          // re-evaluated on every daily re-scan). travel_date is 'YYYY-MM-DD';
+          // booking_date is 'DD/MM/YYYY'. X is parseInt → SQL-safe.
+          case 'travel_date_within': {
+            const x = parseInt(cond.value);
+            if (!isNaN(x)) {
+              // Direction via cond.operator: 'after' → [today, today+X] (upcoming);
+              // 'before' → [today-X, today] (past); 'within'/default → [today-X, today+X].
+              const lo = cond.operator === 'after'  ? 'CURRENT_DATE' : `(CURRENT_DATE - ${x})`;
+              const hi = cond.operator === 'before' ? 'CURRENT_DATE' : `(CURRENT_DATE + ${x})`;
+              const ex = RAYNA_TABLES.map(t =>
+                `SELECT 1 FROM ${t} b WHERE b.unified_id = uc.id AND b.is_cancel <> '1'
+                   AND b.travel_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                   AND b.travel_date::date BETWEEN ${lo} AND ${hi}`
+              ).join(' UNION ALL ');
+              sub.push(`EXISTS (${ex} LIMIT 1)`);
+            }
+            break;
+          }
+          case 'booking_date_within': {
+            const x = parseInt(cond.value);
+            if (!isNaN(x)) {
+              const lo = cond.operator === 'after'  ? 'CURRENT_DATE' : `(CURRENT_DATE - ${x})`;
+              const hi = cond.operator === 'before' ? 'CURRENT_DATE' : `(CURRENT_DATE + ${x})`;
+              const ex = RAYNA_TABLES.map(t =>
+                `SELECT 1 FROM ${t} b WHERE b.unified_id = uc.id AND b.is_cancel <> '1'
+                   AND b.booking_date ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+                   AND TO_DATE(b.booking_date,'DD/MM/YYYY') BETWEEN ${lo} AND ${hi}`
+              ).join(' UNION ALL ');
+              sub.push(`EXISTS (${ex} LIMIT 1)`);
+            }
+            break;
+          }
           case 'last_booking_age': {
             // Relative recency of the LAST booking (booking_agg.max_booking_date) vs today.
             // value = preset key, or an explicit [minDaysAgo, maxDaysAgo] pair.
