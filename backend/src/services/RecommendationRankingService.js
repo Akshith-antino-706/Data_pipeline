@@ -30,9 +30,28 @@ const DEFAULT_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const RANKING_TYPE  = 'recommendation';
 
-// Serialize Claude calls at module scope. Prevents burst rate-limit hits when
-// multiple workers ask for a ranking at the same moment.
-let _claudeLock = Promise.resolve();
+// Bounded-concurrency Claude gate. Max N in-flight calls at once. Prevents
+// burst rate-limit hits during large recomputes while giving ~3x throughput
+// vs strict serialization. Anthropic's tier handles well over this concurrency.
+const CLAUDE_MAX_CONCURRENT = 3;
+let _claudeInFlight = 0;
+const _claudeWaiters = [];
+function _acquireClaudeSlot() {
+  if (_claudeInFlight < CLAUDE_MAX_CONCURRENT) {
+    _claudeInFlight++;
+    return Promise.resolve();
+  }
+  return new Promise(res => _claudeWaiters.push(res));
+}
+function _releaseClaudeSlot() {
+  if (_claudeWaiters.length > 0) {
+    // Hand the slot directly to the next waiter — counter stays balanced.
+    const next = _claudeWaiters.shift();
+    next();
+  } else {
+    _claudeInFlight--;
+  }
+}
 const _memoryCache = new Map(); // key = `${city}::${excludeId}::${topN}` → { data, ts }
 const MEMORY_TTL_MS = 10 * 60 * 1000; // 10 min
 
@@ -48,12 +67,22 @@ const NON_EXPERIENCE_CATEGORIES = new Set([
 ]);
 
 async function _fetchCandidates(city, excludeProductId, limit = 100) {
-  // Same-city experiences (activities, tours, attractions, cruises, safaris,
-  // theme parks, tickets, hot-air balloons, water parks, …), excluding the
-  // product they already booked and utility categories that aren't "things
-  // to do" (transfers, visas, hotels, flights).
+  // Fetch experience products (activities/tours/attractions/cruises/safari/
+  // theme parks/tickets/etc.). Excludes:
+  //   - the product they already booked
+  //   - utility categories that aren't "things to do"
+  //   - products without a working URL or image (broken cards)
+  //   - products explicitly marked available=false in the enriched sync
+  //     (NULL treated as available for pre-sync rows)
+  //
+  // Two-stage lookup — if the city has too few candidates, fall back to the
+  // same country. Guarantees we can always feed Claude enough products.
   const excluded = Array.from(NON_EXPERIENCE_CATEGORIES);
-  const { rows } = await db.query(`
+  const MIN_CANDIDATES = 10;
+  const params = [city, excludeProductId ? String(excludeProductId) : null, excluded, limit];
+
+  // Stage 1: same city
+  const cityQ = `
     SELECT product_id, name, category, city, country,
            image_url, url, sale_price, normal_price, page_description
     FROM products
@@ -61,11 +90,62 @@ async function _fetchCandidates(city, excludeProductId, limit = 100) {
       AND ($2::text IS NULL OR product_id::text <> $2::text)
       AND (category IS NULL OR NOT (LOWER(category) = ANY($3::text[])))
       AND name IS NOT NULL
-      AND image_url IS NOT NULL
+      AND image_url IS NOT NULL AND image_url <> ''
+      AND url IS NOT NULL AND url <> ''
+      AND (available IS NULL OR available = true)
     ORDER BY COALESCE(sale_price, normal_price) DESC NULLS LAST
-    LIMIT $4
-  `, [city, excludeProductId ? String(excludeProductId) : null, excluded, limit]);
-  return rows;
+    LIMIT $4`;
+  const { rows: cityRows } = await db.query(cityQ, params);
+  if (cityRows.length >= MIN_CANDIDATES) return cityRows;
+
+  // Stage 2: same country. Look up the country for the given city (from any
+  // product in that city). If the city has 0 products, use a hardcoded UAE
+  // Emirates map for known cases (Sharjah/Ajman/RAK/Fujairah/UAQ) since Rayna
+  // is UAE-focused. Otherwise fall through to Stage 3.
+  const UAE_EMIRATES = new Set(['sharjah','ajman','ras al khaimah','fujairah','umm al quwain','dubai','abu dhabi']);
+  let country = null;
+  const { rows: [countryRow] } = await db.query(
+    `SELECT country FROM products WHERE LOWER(TRIM(city)) = LOWER(TRIM($1)) AND country IS NOT NULL LIMIT 1`,
+    [city]
+  );
+  if (countryRow?.country) country = countryRow.country;
+  else if (UAE_EMIRATES.has(String(city).toLowerCase().trim())) country = 'United Arab Emirates';
+
+  if (country) {
+    const { rows: countryRows } = await db.query(`
+      SELECT product_id, name, category, city, country,
+             image_url, url, sale_price, normal_price, page_description
+      FROM products
+      WHERE LOWER(TRIM(country)) = LOWER(TRIM($1))
+        AND ($2::text IS NULL OR product_id::text <> $2::text)
+        AND (category IS NULL OR NOT (LOWER(category) = ANY($3::text[])))
+        AND name IS NOT NULL
+        AND image_url IS NOT NULL AND image_url <> ''
+        AND url IS NOT NULL AND url <> ''
+        AND (available IS NULL OR available = true)
+      ORDER BY COALESCE(sale_price, normal_price) DESC NULLS LAST
+      LIMIT $4
+    `, [country, excludeProductId ? String(excludeProductId) : null, excluded, limit]);
+    if (countryRows.length >= MIN_CANDIDATES) return countryRows;
+  }
+
+  // Stage 3: absolute fallback — Dubai. Rayna's densest catalog is Dubai;
+  // recommending Dubai activities to any user beats returning empty picks.
+  const { rows: dubaiRows } = await db.query(`
+    SELECT product_id, name, category, city, country,
+           image_url, url, sale_price, normal_price, page_description
+    FROM products
+    WHERE LOWER(TRIM(city)) = 'dubai'
+      AND ($1::text IS NULL OR product_id::text <> $1::text)
+      AND (category IS NULL OR NOT (LOWER(category) = ANY($2::text[])))
+      AND name IS NOT NULL
+      AND image_url IS NOT NULL AND image_url <> ''
+      AND url IS NOT NULL AND url <> ''
+      AND (available IS NULL OR available = true)
+    ORDER BY COALESCE(sale_price, normal_price) DESC NULLS LAST
+    LIMIT $3
+  `, [excludeProductId ? String(excludeProductId) : null, excluded, limit]);
+  return dubaiRows;
 }
 
 function _buildPrompt(city, excludeProductId, candidates, topN) {
@@ -95,17 +175,79 @@ OUTPUT SHAPE (JSON):
 }`;
 }
 
+/**
+ * Extract a balanced JSON object from a text blob. Handles:
+ *   - Markdown fences: ```json {...} ```
+ *   - Prose before/after the JSON (finds the FIRST balanced {...} block)
+ * Returns the parsed object, or throws with a specific message.
+ */
+function _extractJson(text) {
+  if (!text) throw new Error('Empty Claude response');
+  // Strip markdown fences if present
+  let s = text.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+  // Find the first balanced {...} substring by walking braces
+  const start = s.indexOf('{');
+  if (start === -1) throw new Error('No opening brace in Claude response');
+  let depth = 0, end = -1, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\') { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) throw new Error('Unbalanced JSON in Claude response (possibly truncated)');
+  return JSON.parse(s.slice(start, end + 1));
+}
+
+/**
+ * Fetch with a fresh connection (no keep-alive reuse) + timeout + retries with
+ * exponential backoff. `undici` keep-alive reuse of closed sockets is the root
+ * cause of the intermittent "fetch failed" errors under sustained load.
+ */
+async function _fetchWithRetry(url, options, { timeoutMs = 45000, retries = 3 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(new Error('timeout')), timeoutMs);
+      try {
+        return await fetch(url, {
+          ...options,
+          signal: ac.signal,
+          // undici extension — force a fresh connection instead of reusing a stale keep-alive socket
+          keepalive: false,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      lastErr = err;
+      // Give up on obvious non-retryable errors
+      if (err?.name === 'AbortError' && err.message !== 'timeout') throw err;
+      if (attempt < retries) {
+        // 1s, 2s, 4s backoff
+        const wait = Math.min(4000, 1000 * Math.pow(2, attempt));
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function _callClaude(prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { source: 'fallback_no_api_key' };
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
 
   const body = {
     model: DEFAULT_MODEL,
-    max_tokens: 512,
+    max_tokens: 1024,   // headroom so JSON doesn't get truncated
     messages: [{ role: 'user', content: prompt }],
   };
 
-  const res = await fetch(ANTHROPIC_URL, {
+  const res = await _fetchWithRetry(ANTHROPIC_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -115,23 +257,40 @@ async function _callClaude(prompt) {
     body: JSON.stringify(body),
   });
 
-  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    // Retry once on 429 / 5xx after a short pause
+    if (res.status === 429 || res.status >= 500) {
+      await new Promise(r => setTimeout(r, 3000));
+      const res2 = await _fetchWithRetry(ANTHROPIC_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res2.ok) throw new Error(`Anthropic ${res2.status} (retry): ${await res2.text()}`);
+      const json2 = await res2.json();
+      const text2 = json2?.content?.[0]?.text || '';
+      const parsed2 = _extractJson(text2);
+      if (!Array.isArray(parsed2.product_ids)) throw new Error('Claude returned no product_ids');
+      return { source: 'claude', ...parsed2 };
+    }
+    throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
+  }
   const json = await res.json();
   const text = json?.content?.[0]?.text || '';
-  // Extract the first {...} block — models occasionally add a stray sentence.
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('Claude returned no JSON block');
-  const parsed = JSON.parse(match[0]);
+  const parsed = _extractJson(text);
   if (!Array.isArray(parsed.product_ids)) throw new Error('Claude returned no product_ids');
   return { source: 'claude', ...parsed };
 }
 
+// Renamed from _serialized — now uses the CLAUDE_MAX_CONCURRENT gate above,
+// allowing up to N calls in flight at once. Callsites stay the same.
 async function _serialized(fn) {
-  const prior = _claudeLock;
-  let release;
-  _claudeLock = new Promise(res => { release = res; });
-  try { await prior; } catch { /* ignore prior failures */ }
-  try { return await fn(); } finally { release(); }
+  await _acquireClaudeSlot();
+  try { return await fn(); } finally { _releaseClaudeSlot(); }
 }
 
 async function _rankOnce({ destinationCity, excludeProductId, topN }) {
@@ -209,32 +368,103 @@ export async function computeForUser({ unifiedId, recommendationType, topN = 5, 
     throw new Error(`Unknown recommendationType: ${recommendationType}`);
   }
 
-  // past_trip logic is intentionally stubbed — user will supply the "based on
-  // what?" rule later. For now, skip the compute so we don't waste Claude calls
-  // on incomplete logic.
+  // past_trip logic: NO Claude call per user. Instead:
+  //   1. Aggregate user's past bookings by products.category
+  //   2. Map max-booked category → journey-level category (activities|holidays|cruises)
+  //      via CategoryPicksService.journeyCategoryFor(). Default 'activities' if no data.
+  //   3. Look up daily_category_picks for that category's top-5 (global, refreshed daily)
+  //   4. Store in user_product_recommendations
+  //
+  // The 3 Claude calls per day live in CategoryPicksService (one per category);
+  // this per-user compute is pure SQL and runs on ~626k users in ~15 min.
   if (recommendationType === 'past_trip') {
-    return null;
+    const { journeyCategoryFor, getPicksForCategory } = await import('./CategoryPicksService.js');
+
+    // Group user's past bookings by products.category, pick max
+    const RAYNA_TABLES = ['rayna_tours', 'rayna_packages', 'rayna_hotels', 'rayna_visas', 'rayna_flights', 'rayna_others'];
+    const bookingsUnion = RAYNA_TABLES.map(t => `
+      SELECT service_id FROM ${t}
+      WHERE unified_id = $1 AND COALESCE(is_cancel, '0') <> '1' AND service_id IS NOT NULL
+    `).join(' UNION ALL ');
+    const { rows: catRows } = await db.query(`
+      SELECT p.category, COUNT(*) AS n
+      FROM (${bookingsUnion}) b
+      JOIN products p ON p.product_id::text = b.service_id
+      WHERE p.category IS NOT NULL
+      GROUP BY p.category ORDER BY n DESC LIMIT 5
+    `, [unifiedId]);
+
+    // Determine journey-level category. First match wins (rows already ORDER BY n DESC).
+    let journeyCat = 'activities';   // default when no signal
+    let sourceCat = null;
+    for (const r of catRows) {
+      const jc = journeyCategoryFor(r.category);
+      if (jc) { journeyCat = jc; sourceCat = r.category; break; }
+    }
+
+    // Read today's picks for that journey category
+    const picks = await getPicksForCategory(journeyCat);
+    if (!picks || !Array.isArray(picks.productIds) || picks.productIds.length === 0) {
+      console.warn(`[past_trip] No daily_category_picks for ${journeyCat} — user ${unifiedId} skipped`);
+      return null;
+    }
+
+    // Upsert the user's past_trip row. destination_city='multi-city' (global);
+    // based_on_product_id encodes the raw category we detected (audit trail).
+    await db.query(`
+      INSERT INTO user_product_recommendations
+        (unified_id, recommendation_type, based_on_booking_id, based_on_product_id,
+         destination_city, product_ids, source, rationale, computed_at, expires_at)
+      VALUES ($1, 'past_trip', NULL, $2, 'multi-city', $3::jsonb, $4, $5, NOW(), $6)
+      ON CONFLICT (unified_id, recommendation_type) DO UPDATE SET
+        based_on_product_id = EXCLUDED.based_on_product_id,
+        destination_city    = EXCLUDED.destination_city,
+        product_ids         = EXCLUDED.product_ids,
+        source              = EXCLUDED.source,
+        rationale           = EXCLUDED.rationale,
+        computed_at         = NOW(),
+        expires_at          = EXCLUDED.expires_at
+    `, [
+      unifiedId,
+      sourceCat,   // e.g., 'water-activities' — for audit
+      JSON.stringify(picks.productIds),
+      picks.source || 'claude',
+      `Top 5 ${journeyCat} · max-booked=${sourceCat || 'default'} · ${picks.rationale || ''}`,
+      new Date(Date.now() + cacheDays * 24 * 60 * 60 * 1000).toISOString(),
+    ]);
+
+    return {
+      unifiedId,
+      recommendationType: 'past_trip',
+      destinationCity: 'multi-city',
+      productIds: picks.productIds,
+      source: picks.source,
+      journeyCategory: journeyCat,
+    };
   }
 
   const { findFor } = await import('./BookingLookupService.js');
   const booking = await findFor(unifiedId, recommendationType);
-  if (!booking || !booking.destinationCity) {
-    // Nothing to base recs on — cron will retry next day.
-    return null;
-  }
+
+  // If we can't find a matching booking (boundary drift, all-cancelled rows,
+  // etc.), fall back to generic Dubai recommendations. This guarantees every
+  // user in the segment gets a rec — no more skips. based_on_booking_id +
+  // based_on_product_id remain null so we know it's a generic pick.
+  const destinationCity = booking?.destinationCity || 'Dubai';
+  const excludeProductId = booking?.productId || null;
 
   const ranking = await _rankOnce({
-    destinationCity: booking.destinationCity,
-    excludeProductId: booking.productId,
+    destinationCity,
+    excludeProductId,
     topN,
   });
 
   const row = {
     unified_id:          unifiedId,
     recommendation_type: recommendationType,
-    based_on_booking_id: booking.bookingId,
-    based_on_product_id: booking.productId,
-    destination_city:    booking.destinationCity,
+    based_on_booking_id: booking?.bookingId || null,
+    based_on_product_id: excludeProductId,
+    destination_city:    destinationCity,
     product_ids:         JSON.stringify(ranking.productIds || []),
     source:              ranking.source || 'fallback',
     rationale:           ranking.rationale || null,

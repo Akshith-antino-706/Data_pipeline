@@ -15,10 +15,8 @@ const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren:
 function formatDate(d) {
   if (!d) return '--';
   const dt = new Date(d);
-  const today = new Date();
-  today.setHours(dt.getHours(), dt.getMinutes(), dt.getSeconds(), dt.getMilliseconds());
-  return today.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' +
-    today.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' +
+    dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatNum(n) {
@@ -400,7 +398,7 @@ export default function DataPipeline() {
                 <div><span style={{ opacity: 0.7 }}>Schedule:</span> {job.humanSchedule} <span style={{ opacity: 0.5 }}>({job.schedule})</span></div>
                 {job.meta ? (
                   <>
-                    <div><span style={{ opacity: 0.7 }}>Last run:</span> {formatDate(job.meta.last_synced_at)}</div>
+                    <div><span style={{ opacity: 0.7 }}>Last synced:</span> {formatDate(job.meta.last_synced_at)}</div>
                     <div>
                       <span style={{ opacity: 0.7 }}>Rows:</span> {formatNum(job.meta.rows_synced)}
                       {job.meta.sync_duration_ms != null && (
