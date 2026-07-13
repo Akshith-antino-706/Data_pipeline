@@ -797,6 +797,23 @@ cron.schedule('* * * * *', async () => {
 });
 console.log('[Cron] Continuous GTM engine scheduled: every 1 min');
 
+// ── CONTINUOUS (gtm) PER-USER re-enrollment — once a day ──
+// Re-scans each ACTIVE per-user (non-event) continuous journey's segment and boards
+// any NEW matching users at the START of the belt (first action node), so they ride
+// the sequence in order. Event-triggered GTM journeys are NOT touched (they enroll in
+// real time via onEvent). Idempotent — ON CONFLICT DO NOTHING means already-boarded /
+// completed users are never re-added. Runs at 4 AM Dubai (after the 2 AM segment
+// refresh, so dynamic travel_date segments use the fresh day).
+cron.schedule('0 4 * * *', async () => {
+  try {
+    const { runDailyContinuousReEnroll } = await import('./src/crons/dailyContinuousReEnroll.js');
+    await runDailyContinuousReEnroll();
+  } catch (err) {
+    console.error('[Cron:ContinuousReEnroll] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Continuous per-user re-enrollment scheduled: daily 4 AM (Asia/Dubai)');
+
 // ── Journey auto-start — check every minute for scheduled journeys ──
 cron.schedule('* * * * *', async () => {
   try {
