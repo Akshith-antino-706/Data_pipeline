@@ -16,9 +16,29 @@ import { query } from '../config/database.js';
  * Score = (purchase_count * 100) + (checkout_count * 50) + (cart_count * 25) + (wishlist_count * 15) + (view_count * 5)
  */
 
-const PRODUCT_API = 'https://data-projects-flax.vercel.app/api/generate-feed?format=json';
+// Enriched feed API — returns full product records (tour + holiday + cruise + yacht)
+// with all metadata (content, location, amenities, reviews, options) pre-populated.
+// Replaces the older /generate-feed + /product-details two-step flow.
+const PRODUCT_API = 'https://data-projects-flax.vercel.app/api/enriched-feed?format=json&types=tour,holiday,cruise,yacht';
 const PRODUCT_DETAILS_API = 'https://data-projects-flax.vercel.app/api/product-details';
 const DETAIL_CONCURRENCY = 12;
+
+// Coerce API values to safe DB inputs.
+// - Empty strings → null (avoids "" polluting text columns that we later NULL-check)
+// - Numeric strings → Number (some fields come as strings like "175")
+// - Objects/arrays → JSON.stringify for JSONB columns
+const _txt  = (v) => (v === undefined || v === null || v === '') ? null : String(v);
+const _num  = (v) => (v === undefined || v === null || v === '' || Number.isNaN(Number(v))) ? null : Number(v);
+const _int  = (v) => { const n = _num(v); return n === null ? null : Math.trunc(n); };
+const _bool = (v) => (v === undefined || v === null) ? null : (v === true || v === 'true' || v === 1 || v === '1');
+const _jsn  = (v) => (v === undefined || v === null) ? null : JSON.stringify(v);
+const _ts   = (v) => {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
 
 const AFFINITY_WEIGHTS = {
   purchase: 100,
@@ -33,75 +53,177 @@ export default class ProductAffinityService {
   // ── Product Catalog Sync ──────────────────────────────────────
 
   /**
-   * Pull all products from Rayna product API and upsert into local products table
+   * Pull all products from the ENRICHED Rayna product API and upsert into the
+   * local products table with FULL detail (content, location, amenities,
+   * reviews, options, type-specific fields for tour/holiday/cruise/yacht).
+   *
+   * All columns added by migration 094 are populated here — one flat row per
+   * product. Writes a sync_metadata row so the /data-pipeline UI shows the
+   * last-run info.
    */
   static async syncProducts() {
-    console.log('[ProductSync] Fetching product catalog...');
+    console.log('[ProductSync] Fetching enriched product catalog...');
     const start = Date.now();
+    const startedAt = new Date();
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 90000);
 
+    let synced = 0;
+    let errMsg = null;
     try {
       const res = await fetch(PRODUCT_API, { signal: controller.signal });
       if (!res.ok) throw new Error(`Product API returned ${res.status}`);
 
       const data = await res.json();
       const products = data.products || [];
-      console.log(`[ProductSync] Received ${products.length} products`);
+      console.log(`[ProductSync] Received ${products.length} products from enriched-feed`);
+      if (products.length === 0) {
+        return { synced: 0, duration: '0.0' };
+      }
 
-      if (products.length === 0) return { synced: 0 };
-
-      // Deduplicate by productId (API may return dupes)
+      // Deduplicate by productId (API can return dupes across types)
       const seen = new Set();
       const uniqueProducts = products.filter(p => {
-        const id = p.productId || p.name;
+        const id = p.productId ?? p.name;
         if (seen.has(id)) return false;
         seen.add(id);
         return true;
       });
       console.log(`[ProductSync] ${products.length} → ${uniqueProducts.length} after dedup`);
 
-      // Batch upsert
-      let synced = 0;
-      const BATCH = 100;
+      // Batch smaller (50) since each row is much wider now (~74 columns).
+      const BATCH = 50;
+
+      const COLUMN_LIST = [
+        // Existing 15 columns
+        'product_id','name','type','category','normal_price','sale_price','currency',
+        'country','city','city_id','url','image_url','page_title','page_description',
+        'synced_at',
+        // New enriched columns (48)
+        'listing_rating','listing_review_count','listing_amenities','enriched_flag',
+        'detail_title','detail_share_url','detail_promotion_badge',
+        'location_address','location_title','location_latitude','location_longitude',
+        'amenities_all','amenity_duration','amenity_pickup','amenity_transport',
+        'amenity_meals','amenity_language','amenity_group_size','amenity_hotel',
+        'amenity_nights','amenity_confirmation','amenity_voucher','amenity_cancellation',
+        'transfer_types',
+        'description_text','content_overview','content_highlights','content_inclusions',
+        'content_exclusions','content_how_to_redeem','content_know_before_you_go','content_sections',
+        'meta_title','meta_description','meta_keywords','meta_h1',
+        'available','next_available_dates','options','options_count','lowest_option_price',
+        'review_average_rating','review_total_count',
+        'review_excellent','review_very_good','review_average','review_poor','review_terrible',
+        'cruise_next_date','cruise_total_dates',
+        'holiday_hotels','holiday_tours','holiday_categories',
+        'yacht_type','yacht_min_guests','yacht_max_guests',
+        'all_image_links','image_count','first_seen_date',
+      ];
+
+      // Everything EXCEPT product_id is overwritten on conflict.
+      const UPDATE_COLS = COLUMN_LIST.slice(1).map(c => `${c} = EXCLUDED.${c}`).join(', ');
+      const COLS_PER_ROW = COLUMN_LIST.length;   // = 74 total (15 existing + 59 enriched)
 
       for (let i = 0; i < uniqueProducts.length; i += BATCH) {
         const batch = uniqueProducts.slice(i, i + BATCH);
         const values = [];
         const placeholders = batch.map((p, idx) => {
-          const base = idx * 14;
+          const base = idx * COLS_PER_ROW;
           values.push(
-            p.productId || (900000 + i + idx), p.name, p.type, p.item_group_id,
-            p.normalPrice, p.salePrice, p.currency || 'AED',
-            p.country, p.city, p.cityId,
-            p.url, p.image,
-            p.pageTitle || null, p.pageDescription || null
+            // Existing 15
+            _int(p.productId) ?? (900000 + i + idx),
+            _txt(p.name), _txt(p.type), _txt(p.item_group_id),
+            _num(p.normalPrice), _num(p.salePrice), _txt(p.currency) || 'AED',
+            _txt(p.country), _txt(p.city), _int(p.cityId),
+            _txt(p.url), _txt(p.image),
+            _txt(p.meta_title || p.name), _txt(p.meta_description),
+            new Date().toISOString(),                              // synced_at
+            // Listing / detail
+            _num(p.listing_rating), _int(p.listing_reviewCount), _txt(p.listing_amenities),
+            _bool(p._enriched),
+            _txt(p.detail_title), _txt(p.detail_shareUrl), _txt(p.detail_promotionBadge),
+            // Location
+            _txt(p.location_address), _txt(p.location_title),
+            _num(p.location_latitude), _num(p.location_longitude),
+            // Amenities
+            _txt(p.amenities_all), _txt(p.amenity_duration), _txt(p.amenity_pickup),
+            _txt(p.amenity_transport), _txt(p.amenity_meals), _txt(p.amenity_language),
+            _txt(p.amenity_group_size), _txt(p.amenity_hotel), _txt(p.amenity_nights),
+            _txt(p.amenity_confirmation), _txt(p.amenity_voucher), _txt(p.amenity_cancellation),
+            _txt(p.transfer_types),
+            // Content
+            _txt(p.description_text), _txt(p.content_overview), _txt(p.content_highlights),
+            _txt(p.content_inclusions), _txt(p.content_exclusions),
+            _txt(p.content_how_to_redeem), _txt(p.content_know_before_you_go),
+            _jsn(p.content_sections),
+            // Meta / SEO
+            _txt(p.meta_title), _txt(p.meta_description), _txt(p.meta_keywords), _txt(p.meta_h1),
+            // Availability / booking
+            _bool(p.available), _jsn(p.next_available_dates), _jsn(p.options),
+            _int(p.options_count), _num(p.lowest_option_price),
+            // Reviews
+            _num(p.review_averageRating), _int(p.review_totalCount),
+            _int(p.review_excellent), _int(p.review_veryGood), _int(p.review_average),
+            _int(p.review_poor), _int(p.review_terrible),
+            // Cruise
+            _ts(p.cruise_nextDate), _int(p.cruise_totalDates),
+            // Holiday
+            _jsn(p.holiday_hotels), _jsn(p.holiday_tours), _jsn(p.holiday_categories),
+            // Yacht
+            _txt(p.yacht_type), _int(p.yacht_minGuests), _int(p.yacht_maxGuests),
+            // Media / lifecycle
+            _jsn(p.all_image_links), _int(p.image_count), _ts(p.first_seen_date),
           );
-          return `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8},$${base+9},$${base+10},$${base+11},$${base+12},$${base+13},$${base+14})`;
+          const params = Array.from({ length: COLS_PER_ROW }, (_, k) => `$${base + k + 1}`).join(',');
+          return `(${params})`;
         });
 
         await query(`
-          INSERT INTO products (product_id, name, type, category, normal_price, sale_price, currency, country, city, city_id, url, image_url, page_title, page_description)
+          INSERT INTO products (${COLUMN_LIST.join(', ')})
           VALUES ${placeholders.join(',')}
-          ON CONFLICT (product_id) DO UPDATE SET
-            name = EXCLUDED.name, type = EXCLUDED.type, category = EXCLUDED.category,
-            normal_price = EXCLUDED.normal_price, sale_price = EXCLUDED.sale_price,
-            country = EXCLUDED.country, city = EXCLUDED.city, city_id = EXCLUDED.city_id,
-            url = EXCLUDED.url, image_url = EXCLUDED.image_url,
-            page_title = EXCLUDED.page_title, page_description = EXCLUDED.page_description,
-            synced_at = NOW()
+          ON CONFLICT (product_id) DO UPDATE SET ${UPDATE_COLS}
         `, values);
 
         synced += batch.length;
       }
 
-      const duration = ((Date.now() - start) / 1000).toFixed(1);
+      const durationMs = Date.now() - start;
+      const duration = (durationMs / 1000).toFixed(1);
       console.log(`[ProductSync] Done — ${synced} products synced in ${duration}s`);
 
-      const enriched = await this.enrichProductDetails();
+      // Record run in sync_metadata so /data-pipeline UI shows the last-run info.
+      // Fail-safe — a metadata write failure never blocks the sync result.
+      await query(`
+        INSERT INTO sync_metadata (table_name, last_synced_at, rows_synced, sync_status, error_message, sync_duration_ms, updated_at)
+        VALUES ('products_enriched_sync', $1, $2, 'success', NULL, $3, NOW())
+        ON CONFLICT (table_name) DO UPDATE SET
+          last_synced_at   = EXCLUDED.last_synced_at,
+          rows_synced      = EXCLUDED.rows_synced,
+          sync_status      = 'success',
+          error_message    = NULL,
+          sync_duration_ms = EXCLUDED.sync_duration_ms,
+          updated_at       = NOW()
+      `, [startedAt, synced, durationMs]).catch(err =>
+        console.warn('[ProductSync] sync_metadata write failed:', err.message)
+      );
 
-      return { synced, duration, enriched };
+      return { synced, duration };
+    } catch (err) {
+      errMsg = err.message;
+      const durationMs = Date.now() - start;
+      // Write failure metadata so the UI shows the error.
+      await query(`
+        INSERT INTO sync_metadata (table_name, last_synced_at, rows_synced, sync_status, error_message, sync_duration_ms, updated_at)
+        VALUES ('products_enriched_sync', $1, $2, 'error', $3, $4, NOW())
+        ON CONFLICT (table_name) DO UPDATE SET
+          last_synced_at   = EXCLUDED.last_synced_at,
+          rows_synced      = EXCLUDED.rows_synced,
+          sync_status      = 'error',
+          error_message    = EXCLUDED.error_message,
+          sync_duration_ms = EXCLUDED.sync_duration_ms,
+          updated_at       = NOW()
+      `, [startedAt, synced, errMsg, durationMs]).catch(() => {});
+      throw err;
     } finally {
       clearTimeout(timeout);
     }

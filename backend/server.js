@@ -743,6 +743,35 @@ cron.schedule('30 2 * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily journey re-snapshot scheduled at 2:30 AM Dubai time');
 
+// ── Daily category picks — 3:45 AM Dubai ──
+// Computes top-5 products per journey-level category (activities / holidays /
+// cruises) via Claude. Feeds past-trip AI recs (see dailyPastTripCompute).
+// 3 Claude calls per run. Runs AFTER the 3:35 AM on_trip/future_trip compute.
+cron.schedule('45 3 * * *', async () => {
+  try {
+    const { runDailyCategoryPicksCompute } = await import('./src/crons/dailyCategoryPicksCompute.js');
+    await runDailyCategoryPicksCompute();
+  } catch (err) {
+    console.error('[Cron:CategoryPicks] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily category picks compute scheduled at 3:45 AM Dubai time');
+
+// ── Daily past-trip user compute — 4:00 AM Dubai ──
+// For every PAST_BOOKING user, aggregate their bookings by products.category,
+// map to journey-level category (activities/holidays/cruises), then attach the
+// daily_category_picks top-5. Pure SQL — no per-user Claude call.
+// ~626k users processed in ~15-20 min. Runs AFTER category picks (3:45 AM).
+cron.schedule('0 4 * * *', async () => {
+  try {
+    const { runDailyPastTripCompute } = await import('./src/crons/dailyPastTripCompute.js');
+    await runDailyPastTripCompute();
+  } catch (err) {
+    console.error('[Cron:PastTrip] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily past-trip user compute scheduled at 4:00 AM Dubai time');
+
 // ── Daily AI recommendation compute — 3:35 AM Dubai ──
 // Precomputes 5 AI-picked products per (user, recommendation_type) for on_trip
 // / future_trip / past_trip. Feeds the REC_ONTRIP-style journeys with per-user
@@ -757,6 +786,21 @@ cron.schedule('35 3 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] AI recommendation compute scheduled at 3:35 AM Dubai time');
+
+// ── Weekly enriched products sync — Mondays 5:00 AM Dubai ──
+// Pulls all products (tour + holiday + cruise + yacht) from the enriched-feed
+// API and upserts into `products`. Writes sync_metadata['products_enriched_sync']
+// so the /data-pipeline UI shows last-run info + row count + status.
+cron.schedule('0 5 * * 1', async () => {
+  try {
+    const { default: ProductAffinityService } = await import('./src/services/ProductAffinityService.js');
+    const result = await ProductAffinityService.syncProducts();
+    console.log(`[Cron:ProductSync] Done — synced=${result.synced} duration=${result.duration}s`);
+  } catch (err) {
+    console.error('[Cron:ProductSync] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Enriched products sync scheduled: Mondays 05:00 Asia/Dubai');
 
 // ── PhpAdmin weekly sync — pull new MySQL contacts into unified_contacts ──
 // Sundays 05:00 Dubai. Incremental (uses sync_metadata.last_synced_at watermark)

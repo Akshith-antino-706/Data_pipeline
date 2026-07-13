@@ -166,6 +166,68 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /:id/recommendations — most recent AI recommendation row for this contact,
+// with the 5 product_ids hydrated into full product objects.
+// Returns { recommendation: <row> | null } — frontend hides the section on null.
+router.get('/:id/recommendations', async (req, res, next) => {
+  try {
+    const db = (await import('../config/database.js')).default;
+    const unifiedId = parseInt(req.params.id, 10);
+    if (!unifiedId) return res.status(400).json({ error: 'Invalid unified_id' });
+
+    // Most recently computed row for this user (any recommendation_type).
+    const { rows: recRows } = await db.query(`
+      SELECT unified_id, recommendation_type, based_on_booking_id, based_on_product_id,
+             destination_city, product_ids, source, rationale,
+             computed_at, expires_at
+      FROM user_product_recommendations
+      WHERE unified_id = $1 AND expires_at > NOW()
+      ORDER BY computed_at DESC
+      LIMIT 1
+    `, [unifiedId]);
+
+    if (recRows.length === 0) return res.json({ recommendation: null });
+    const rec = recRows[0];
+
+    // Hydrate the ordered product_ids into full product rows.
+    const ids = Array.isArray(rec.product_ids) ? rec.product_ids.map(Number) : [];
+    let products = [];
+    if (ids.length > 0) {
+      const { rows: prodRows } = await db.query(`
+        SELECT product_id, name, category, city, image_url AS image, url,
+               sale_price, normal_price, listing_rating
+        FROM products WHERE product_id = ANY($1::int[])
+      `, [ids]);
+      const byId = new Map(prodRows.map(p => [p.product_id, p]));
+      products = ids.map(id => byId.get(id)).filter(Boolean);
+    }
+
+    // Look up the "based_on" product name (their original booking) for the meta line.
+    let basedOnName = null;
+    if (rec.based_on_product_id) {
+      const { rows: [b] } = await db.query(
+        `SELECT name FROM products WHERE product_id::text = $1 LIMIT 1`,
+        [String(rec.based_on_product_id)]
+      );
+      basedOnName = b?.name || null;
+    }
+
+    res.json({
+      recommendation: {
+        recommendationType: rec.recommendation_type,
+        destinationCity: rec.destination_city,
+        basedOnProductId: rec.based_on_product_id,
+        basedOnProductName: basedOnName,
+        source: rec.source,
+        rationale: rec.rationale,
+        computedAt: rec.computed_at,
+        expiresAt: rec.expires_at,
+        products,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
 // GET /:id/journeys — journeys this contact is enrolled in (via journey_entries)
 router.get('/:id/journeys', async (req, res, next) => {
   try {

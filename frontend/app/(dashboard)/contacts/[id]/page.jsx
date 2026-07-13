@@ -3,13 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys } from '@/lib/api';
+import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations } from '@/lib/api';
 import {
   ArrowLeft, Globe, MessageSquare, Mail, Phone, Building2,
   Calendar, Clock, Ticket, DollarSign, Plane, Hotel, MessageCircle,
   Layers, FileText, Palmtree, Hash, MapPin, ChevronDown, ChevronUp,
   Zap, Activity, User, Pencil, X, Check, Loader2, GitBranch,
-  Eye, MousePointerClick, Send, ExternalLink,
+  Eye, MousePointerClick, Send, ExternalLink, Sparkles,
 } from 'lucide-react';
 
 const fadeIn = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35 } } };
@@ -41,6 +41,7 @@ export default function ContactProfile() {
   const [gtmLoading, setGtmLoading] = useState(true);
   const [journeys, setJourneys] = useState([]);
   const [journeysLoading, setJourneysLoading] = useState(true);
+  const [aiRec, setAiRec] = useState(null);   // { recommendationType, products[], ... } or null
   const [expandedJourneys, setExpandedJourneys] = useState(() => new Set());
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
@@ -66,6 +67,12 @@ export default function ContactProfile() {
       .then(res => setJourneys(res.data || []))
       .catch(() => setJourneys([]))
       .finally(() => setJourneysLoading(false));
+
+    // Load most recent AI recommendation for this contact. Silently ignored
+    // when the user has no cached recs — the section just doesn't render.
+    getContactRecommendations(id)
+      .then(res => setAiRec(res?.recommendation || null))
+      .catch(() => setAiRec(null));
   }, [id]);
 
   if (contactLoading) return <ProfileSkeleton />;
@@ -519,6 +526,13 @@ export default function ContactProfile() {
         </motion.div>
       )}
 
+      {/* AI Recommendations — only rendered if this contact has a cached row */}
+      {aiRec && Array.isArray(aiRec.products) && aiRec.products.length > 0 && (
+        <motion.div variants={fadeIn}>
+          <AIRecommendationSection rec={aiRec} />
+        </motion.div>
+      )}
+
       {/* Timeline */}
       {(contact.first_seen_at || contact.last_seen_at || contact.created_at) && (
         <motion.div variants={fadeIn}>
@@ -552,6 +566,63 @@ function Section({ title, children }) {
     <div className="card" style={{ padding: 20, marginBottom: 12 }}>
       <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600 }}>{title}</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 32px' }}>{children}</div>
+    </div>
+  );
+}
+
+// AI recommendation section — one card with 5 product tiles in a horizontal grid.
+// Only rendered by the caller when a non-empty rec exists for this contact.
+function AIRecommendationSection({ rec }) {
+  const TYPE_LABEL = { on_trip: 'On Trip', future_trip: 'Future Trip', past_trip: 'Past Trip' };
+  const label = TYPE_LABEL[rec.recommendationType] || rec.recommendationType;
+  const computedAgo = (() => {
+    if (!rec.computedAt) return '—';
+    const d = new Date(rec.computedAt);
+    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+    if (days === 0) return 'today';
+    if (days === 1) return 'yesterday';
+    return `${days} days ago`;
+  })();
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 12 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5, fontWeight: 600 }}>
+          <Sparkles size={13} style={{ color: '#8b5cf6' }} />
+          AI Recommendations — {label}
+        </div>
+        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: rec.source === 'claude' ? 'rgba(139,92,246,0.1)' : 'rgba(148,163,184,0.15)', color: rec.source === 'claude' ? '#8b5cf6' : 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          {rec.source || 'fallback'}
+        </span>
+      </div>
+
+      {/* Meta line */}
+      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 14 }}>
+        {rec.basedOnProductName ? <>Based on <strong style={{ color: 'var(--text-secondary)' }}>{rec.basedOnProductName}</strong></> : 'Based on their booking'}
+        {rec.destinationCity && <> in <strong style={{ color: 'var(--text-secondary)' }}>{rec.destinationCity}</strong></>}
+        {' · '}Computed {computedAgo}
+      </div>
+
+      {/* Product grid — 5 tiles across */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+        {rec.products.map(p => (
+          <a key={p.product_id} href={p.url || 'https://www.raynatours.com'} target="_blank" rel="noopener noreferrer"
+             style={{ textDecoration: 'none', color: 'inherit', border: '1px solid var(--border, #e5e7eb)', borderRadius: 8, overflow: 'hidden', background: 'var(--card-bg, #fff)', display: 'flex', flexDirection: 'column' }}>
+            {p.image && <img src={p.image} alt={p.name} style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />}
+            <div style={{ padding: 10, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.name}</div>
+              {p.category && <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{p.category}</div>}
+              <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {p.sale_price != null ? `AED ${Math.round(Number(p.sale_price))}` : '—'}
+                </span>
+                <ExternalLink size={11} style={{ color: 'var(--text-tertiary)' }} />
+              </div>
+            </div>
+          </a>
+        ))}
+      </div>
     </div>
   );
 }

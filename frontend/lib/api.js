@@ -281,6 +281,7 @@ export const getUnifiedContacts = (params = {}) => {
 };
 export const getUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`);
 export const getContactJourneys = (id) => request(`/api/v3/unified-contacts/${id}/journeys`);
+export const getContactRecommendations = (id) => request(`/api/v3/unified-contacts/${id}/recommendations`);
 export const updateUnifiedContact = (id, data) => request(`/api/v3/unified-contacts/${id}`, {
   method: 'PATCH',
   headers: { 'Content-Type': 'application/json' },
