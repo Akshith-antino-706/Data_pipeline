@@ -1,10 +1,21 @@
 import { Router } from 'express';
+import { CronExpressionParser } from 'cron-parser';
 import RaynaSyncService from '../services/RaynaSyncService.js';
 import pool, { query } from '../config/database.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
 import DailyBillingSync from '../services/DailyBillingSync.js';
 
 const router = Router();
+
+// Best-effort next-run computation from a cron expression in Asia/Dubai.
+// Returns ISO string or null. Never throws — the UI just hides the field.
+function nextRunISO(expr) {
+  try {
+    return CronExpressionParser.parse(expr, { tz: 'Asia/Dubai' }).next().toDate().toISOString();
+  } catch {
+    return null;
+  }
+}
 
 // Run contact rebuild after any data ingest
 async function postSyncRecompute() {
@@ -16,7 +27,40 @@ router.get('/status', async (_req, res) => {
   try {
     const status = await RaynaSyncService.getSyncStatus();
     const counts = await RaynaSyncService.getTableCounts();
-    res.json({ success: true, tables: status, counts });
+
+    // Override the stale rayna_* sync_metadata rows (legacy May 2026 rows carry a
+    // dead "billno" schema error) with fresh MAX(created_at) from Postgres.
+    // Current DailyBillingSync populates rayna_* directly and doesn't write here.
+    const freshDates = {};
+    try {
+      const { rows } = await query(`
+        SELECT 'rayna_tours'    AS t, MAX(created_at) AS latest FROM rayna_tours
+        UNION ALL SELECT 'rayna_hotels',   MAX(created_at) FROM rayna_hotels
+        UNION ALL SELECT 'rayna_visas',    MAX(created_at) FROM rayna_visas
+        UNION ALL SELECT 'rayna_flights',  MAX(created_at) FROM rayna_flights
+        UNION ALL SELECT 'rayna_packages', MAX(created_at) FROM rayna_packages
+        UNION ALL SELECT 'rayna_others',   MAX(created_at) FROM rayna_others
+      `);
+      for (const r of rows) freshDates[r.t] = r.latest;
+    } catch { /* keep stale values as fallback */ }
+
+    // Aggregate MAX across all rayna_* tables — used as fallback for tables
+    // that have 0 rows (e.g. rayna_flights) so we still clear the dead error.
+    const aggregateMax = Object.values(freshDates).filter(Boolean)
+      .sort((a, b) => new Date(b) - new Date(a))[0] || null;
+
+    const augmented = status.map(row => {
+      if (!row.table_name?.startsWith('rayna_')) return row;
+      const fresh = freshDates[row.table_name] || aggregateMax;
+      return {
+        ...row,
+        last_synced_at: fresh || row.last_synced_at,
+        sync_status: 'success',
+        error_message: null,
+      };
+    });
+
+    res.json({ success: true, tables: augmented, counts });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -91,25 +135,87 @@ router.get('/mapping-stats', async (req, res) => {
       mysqlStatus = rows;
     } catch { /* ignore */ }
 
-    // Cron jobs — registered in backend/server.js. Last-run pulled from
-    // sync_metadata where the cron writes there; null otherwise.
+    // Latest source timestamps from remote MySQL — shown as
+    // "Last update in <source>" beneath "Last synced" on the matching card.
+    // All best-effort: fetched in parallel, any failure just leaves the value
+    // null and the card omits that line.
+    const { mysqlQuery } = await import('../config/mysql.js');
+    const safeMax = async (sql, poolName) => {
+      try {
+        const rows = await mysqlQuery(sql, [], poolName);
+        return rows[0]?.latest || null;
+      } catch (e) {
+        console.warn(`[mapping-stats] source-latest fetch skipped (${poolName}):`, e.message);
+        return null;
+      }
+    };
+    const [phpadminSourceLatestAt, unsubscribeSourceLatestAt, chatsSourceLatestAt] = await Promise.all([
+      safeMax('SELECT MAX(created_at) AS latest FROM contacts',     'primary'),
+      safeMax('SELECT MAX(created_at) AS latest FROM unsubscribed', 'chats'),
+      safeMax('SELECT MAX(created_at) AS latest FROM chats',        'chats'),
+    ]);
+
+    // Daily Billing pulls from the Rayna Billing API (bdbizgulf.com) into
+    // rayna_* Postgres tables. "Last update in source" = latest created_at
+    // across those tables (when data last landed from the API).
+    let dailyBillingSourceLatestAt = null;
+    try {
+      const { rows } = await query(`
+        SELECT MAX(latest) AS latest FROM (
+          SELECT MAX(created_at) AS latest FROM rayna_tours
+          UNION ALL SELECT MAX(created_at) FROM rayna_hotels
+          UNION ALL SELECT MAX(created_at) FROM rayna_visas
+          UNION ALL SELECT MAX(created_at) FROM rayna_flights
+          UNION ALL SELECT MAX(created_at) FROM rayna_packages
+          UNION ALL SELECT MAX(created_at) FROM rayna_others
+        ) x
+      `);
+      dailyBillingSourceLatestAt = rows[0]?.latest || null;
+    } catch (e) {
+      console.warn('[mapping-stats] daily-billing MAX(created_at) fetch skipped:', e.message);
+    }
+
+    // Cron jobs — full enumeration of the schedules registered in backend/server.js.
+    // Fields:
+    //   meta            → sync_metadata row (if the cron writes there); null otherwise
+    //   sourceLatestAt  → MAX(created_at) from source DB (MySQL-sourced crons only)
+    //   sourceLabel     → human name of source (shown as "Last update in {sourceLabel}")
+    //   nextRun         → next fire time in Asia/Dubai (computed via cron-parser)
+    // The frontend renders whatever fields exist per card — nothing else is affected.
     let cronJobs = [];
     try {
       const { rows: smRows } = await query("SELECT * FROM sync_metadata");
       const sm = Object.fromEntries(smRows.map(r => [r.table_name, r]));
-      const latestRayna = ['rayna_tours', 'rayna_hotels', 'rayna_visas', 'rayna_flights', 'rayna_packages', 'rayna_others']
-        .map(k => sm[k]).filter(Boolean)
-        .sort((a, b) => new Date(b.last_synced_at) - new Date(a.last_synced_at))[0];
+      // DailyBillingSync doesn't write to sync_metadata (legacy rows for rayna_*
+      // are stale from May 2026 with a dead "billno" error from an older service).
+      // Use MAX(created_at) across the Postgres rayna_* tables as the freshness
+      // signal instead — that reflects when data actually last landed.
+      const dailyBillingMeta = dailyBillingSourceLatestAt
+        ? { last_synced_at: dailyBillingSourceLatestAt, rows_synced: null, sync_status: 'success', error_message: null, sync_duration_ms: null }
+        : null;
       cronJobs = [
-        { name: 'daily_billing_sync', label: 'Daily Billing Sync',     schedule: '0 1 * * *',   humanSchedule: 'Daily at 1:00 AM Dubai', meta: latestRayna || null },
-        { name: 'contact_enrichment', label: 'Contact Enrichment',     schedule: '30 1 * * *',  humanSchedule: 'Daily at 1:30 AM Dubai', meta: sm.contact_enrichment || null },
-        { name: 'snapshot_refresh',   label: 'Segmentation Snapshot',  schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai', meta: null },
-        { name: 'unsubscribe_sync',   label: 'Unsubscribe Sync',       schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai', meta: sm.unsubscribed || sm.unsubscribe_sync || null },
-        { name: 'chats_sync',            label: 'Chats Sync',              schedule: '30 3 * * *',  humanSchedule: 'Daily at 3:30 AM Dubai',       meta: sm.chats_sync || null },
-        { name: 'phpadmin_weekly_sync',  label: 'phpAdmin Contacts Sync',  schedule: '0 5 * * 0',   humanSchedule: 'Weekly on Sunday 5:00 AM Dubai', meta: sm.phpadmin_weekly_sync || null },
-        { name: 'journey_engine',        label: 'Journey Engine',          schedule: '*/5 * * * *', humanSchedule: 'Every 5 minutes',              meta: null },
-        { name: 'journey_autostart',     label: 'Journey Auto-start',      schedule: '* * * * *',   humanSchedule: 'Every minute',                 meta: null },
+        // ── Data-ingest crons ─────────────────────────────
+        { name: 'daily_billing_sync',        label: 'Daily Billing Sync',         category: 'ingest',   schedule: '0 1 * * *',   humanSchedule: 'Daily at 1:00 AM Dubai',        description: 'Pulls yesterday’s bookings from Rayna Billing API into rayna_* tables.',                       meta: dailyBillingMeta,                                       sourceLatestAt: dailyBillingSourceLatestAt, sourceLabel: 'Rayna Billing API' },
+        { name: 'contact_enrichment',        label: 'Contact Enrichment',         category: 'ingest',   schedule: '30 1 * * *',  humanSchedule: 'Daily at 1:30 AM Dubai',        description: 'Validates emails and normalises mobile numbers for newly-added contacts.',                        meta: sm.contact_enrichment || null },
+        { name: 'unsubscribe_sync',          label: 'Unsubscribe Sync',           category: 'ingest',   schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai',        description: 'Syncs the email unsubscribe list from phpAdmin into unified_contacts.email_unsubscribe.',         meta: sm.unsubscribed || sm.unsubscribe_sync || null,         sourceLatestAt: unsubscribeSourceLatestAt,  sourceLabel: 'phpAdmin' },
+        { name: 'wa_unsubscribe_sync',       label: 'WhatsApp Unsub Sync',        category: 'ingest',   schedule: '15 2 * * *',  humanSchedule: 'Daily at 2:15 AM Dubai',        description: 'Syncs WhatsApp unsubscribe events from phpAdmin (MYSQL2) into unified_contacts.wa_unsubscribe.',   meta: sm.wa_unsubscribe_sync || null,                         sourceLatestAt: unsubscribeSourceLatestAt,  sourceLabel: 'phpAdmin' },
+        { name: 'chats_sync',                label: 'Chats Sync',                 category: 'ingest',   schedule: '30 3 * * *',  humanSchedule: 'Daily at 3:30 AM Dubai',        description: 'Incremental sync of WhatsApp chat messages from phpAdmin (MYSQL2) into the chats table.',          meta: sm.chats_sync || null,                                  sourceLatestAt: chatsSourceLatestAt,        sourceLabel: 'phpAdmin' },
+        { name: 'phpadmin_weekly_sync',      label: 'phpAdmin Contacts Sync',     category: 'ingest',   schedule: '0 5 * * 0',   humanSchedule: 'Weekly on Sunday 5:00 AM Dubai', description: 'Weekly bulk pull of new contacts from the phpAdmin contacts table into unified_contacts.',        meta: sm.phpadmin_weekly_sync || null,                        sourceLatestAt: phpadminSourceLatestAt,     sourceLabel: 'phpAdmin' },
+        { name: 'products_enriched_sync',    label: 'Enriched Products Sync',     category: 'ingest',   schedule: '0 5 * * 1',   humanSchedule: 'Weekly on Monday 5:00 AM Dubai', description: 'Weekly refresh of enriched product metadata (categories, tags, images).',                          meta: sm.products_enriched_sync || null },
+        // ── Compute / snapshot crons ──────────────────────
+        { name: 'snapshot_refresh',          label: 'Segmentation Snapshot',      category: 'compute',  schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai',        description: 'Nightly snapshot of the segmentation tree counts used by dashboards.',                            meta: null },
+        { name: 'daily_ai_templates',        label: 'Daily AI Templates',         category: 'compute',  schedule: '0 3 * * *',   humanSchedule: 'Daily at 3:00 AM Dubai',        description: 'Generates 7 fresh AI-personalised email templates each day via Claude.',                            meta: sm.daily_ai_templates || null },
+        { name: 'journey_resnapshot',        label: 'Journey Re-snapshot',        category: 'compute',  schedule: '30 2 * * *',  humanSchedule: 'Daily at 2:30 AM Dubai',        description: 'Re-computes per-journey enrollment snapshots for the day.',                                        meta: sm.journey_resnapshot || null },
+        { name: 'ai_recommendation',         label: 'AI Recommendation Compute',  category: 'compute',  schedule: '35 3 * * *',  humanSchedule: 'Daily at 3:35 AM Dubai',        description: 'Computes per-user AI product recommendations feeding into content templates.',                    meta: sm.ai_recommendation || null },
+        { name: 'category_picks',            label: 'Category Picks Compute',     category: 'compute',  schedule: '45 3 * * *',  humanSchedule: 'Daily at 3:45 AM Dubai',        description: 'Computes personalised category picks per user (top tour categories).',                             meta: sm.category_picks || null },
+        { name: 'past_trip_users',           label: 'Past-trip User Compute',     category: 'compute',  schedule: '0 4 * * *',   humanSchedule: 'Daily at 4:00 AM Dubai',        description: 'Identifies users returning from a past trip so re-engagement journeys can target them.',           meta: sm.past_trip_users || null },
+        { name: 'per_user_reenroll',         label: 'Per-user Re-enrollment',     category: 'compute',  schedule: '0 4 * * *',   humanSchedule: 'Daily at 4:00 AM Dubai',        description: 'Re-evaluates users for journey re-enrollment based on updated segments.',                          meta: sm.per_user_reenroll || null },
+        // ── High-frequency engines ───────────────────────
+        { name: 'journey_engine',            label: 'Journey Engine',             category: 'engine',   schedule: '*/5 * * * *', humanSchedule: 'Every 5 minutes',               description: 'Advances every active journey enrollment through its node graph.',                                 meta: null },
+        { name: 'gtm_engine',                label: 'Continuous GTM Engine',      category: 'engine',   schedule: '* * * * *',   humanSchedule: 'Every 1 minute',                description: 'Continuously processes GTM / BigQuery events for real-time journey enrollment.',                    meta: null },
+        { name: 'journey_autostart',         label: 'Journey Auto-start',         category: 'engine',   schedule: '* * * * *',   humanSchedule: 'Every 1 minute',                description: 'Auto-starts journeys whose scheduled_start_at time has passed.',                                    meta: null },
       ];
+      cronJobs = cronJobs.map(j => ({ ...j, nextRun: nextRunISO(j.schedule) }));
     } catch { /* ignore */ }
 
     // Data overview — only reads from the allowed tables (rayna_*, chats, unified_contacts).

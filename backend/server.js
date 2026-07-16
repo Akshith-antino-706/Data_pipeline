@@ -704,6 +704,18 @@ cron.schedule('0 2 * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Unsubscribe sync scheduled at 2:00 AM Dubai time');
 
+// ── WhatsApp Unsubscribe Sync — MYSQL2 → RDS daily at 2:15 AM Dubai ──
+cron.schedule('15 2 * * *', async () => {
+  try {
+    const { default: WhatsAppUnsubscribeSyncService } = await import('./src/services/WhatsAppUnsubscribeSyncService.js');
+    const result = await WhatsAppUnsubscribeSyncService.sync({ triggeredBy: 'cron' });
+    console.log(`[Cron:WAUnsubSync] Done — fetched=${result.mysqlRowsFetched} flipped=${result.flipped} status=${result.status}`);
+  } catch (err) {
+    console.error('[Cron:WAUnsubSync] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] WhatsApp unsubscribe sync scheduled at 2:15 AM Dubai time');
+
 // ── Contact Enrichment — validate emails + format mobiles daily at 1:30 AM Dubai ──
 cron.schedule('30 1 * * *', async () => {
   try {
