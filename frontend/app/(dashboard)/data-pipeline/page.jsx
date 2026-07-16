@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { getRaynaSyncStatus, getMappingStats, triggerRaynaSync, triggerRaynaSyncEndpoint, refreshBookingMapping } from '@/lib/api';
-import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare } from 'lucide-react';
+import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Info } from 'lucide-react';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 
 const SOURCE_ICONS = { tours: MapPin, hotels: Building2, visas: Globe, flights: Plane, packages: MapPin, others: Database };
@@ -15,18 +15,28 @@ const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren:
 function formatDate(d) {
   if (!d) return '--';
   const dt = new Date(d);
-  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' +
-    dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Dubai' }) + ' ' +
+    dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dubai' });
 }
 
 function formatNum(n) {
   return (n || 0).toLocaleString();
 }
 
-function StatusBadge() {
+function StatusBadge({ status = 'success' }) {
+  const cfg = {
+    success:   { cls: 'badge-green',  bg: 'rgba(34,197,94,0.12)',  color: '#16a34a', label: 'Synced',    Icon: CheckCircle2 },
+    error:     { cls: 'badge-red',    bg: 'rgba(220,38,38,0.12)',  color: '#dc2626', label: 'Failed',    Icon: XCircle },
+    scheduled: { cls: 'badge-slate',  bg: 'rgba(100,116,139,0.14)', color: '#475569', label: 'Scheduled', Icon: Clock },
+    running:   { cls: 'badge-amber',  bg: 'rgba(245,158,11,0.14)', color: '#b45309', label: 'Running',   Icon: Clock },
+  }[status] || { bg: 'rgba(100,116,139,0.14)', color: '#475569', label: status, Icon: Clock };
+  const { bg, color, label, Icon } = cfg;
   return (
-    <span className="badge-green" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
-      <CheckCircle2 size={13} /> Synced
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px',
+      borderRadius: 20, fontSize: 12, fontWeight: 600, background: bg, color,
+    }}>
+      <Icon size={13} /> {label}
     </span>
   );
 }
@@ -247,8 +257,7 @@ export default function DataPipeline() {
   const dataOverview = mappingStats?.dataOverview || {};
   const deptBreakdown = mappingStats?.deptBreakdown || [];
   const mysqlStatus = mappingStats?.mysqlStatus || [];
-  // Daily-only — drop the every-5-min and every-minute Journey jobs.
-  const cronJobs = (mappingStats?.cronJobs || []).filter(j => !/^\*/.test(j.schedule));
+  const cronJobs = mappingStats?.cronJobs || [];
 
 
   return (
@@ -375,45 +384,117 @@ export default function DataPipeline() {
         </div>
       </motion.div>
 
-      {/* Cron Jobs — only ones with run history (active) */}
-      <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <div className="card-header" style={{ marginBottom: 18 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Cron Jobs</h3>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{cronJobs.length} scheduled</span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-          {cronJobs.map(job => (
-            <div key={job.name} style={{
-              padding: '14px 16px', borderRadius: 8, background: 'var(--bg-primary)',
-              border: '1px solid var(--border-color)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Clock size={15} style={{ color: 'var(--brand-primary)' }} />
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{job.label}</div>
-                </div>
-                {job.meta?.sync_status && <StatusBadge status={job.meta.sync_status} />}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                <div><span style={{ opacity: 0.7 }}>Schedule:</span> {job.humanSchedule} <span style={{ opacity: 0.5 }}>({job.schedule})</span></div>
-                {job.meta ? (
-                  <>
-                    <div><span style={{ opacity: 0.7 }}>Last synced:</span> {formatDate(job.meta.last_synced_at)}</div>
-                    <div>
-                      <span style={{ opacity: 0.7 }}>Rows:</span> {formatNum(job.meta.rows_synced)}
-                      {job.meta.sync_duration_ms != null && (
-                        <> <span style={{ opacity: 0.5 }}>· {(job.meta.sync_duration_ms / 1000).toFixed(1)}s</span></>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ opacity: 0.6, fontStyle: 'italic' }}>No history tracked</div>
-                )}
-              </div>
+      {/* Cron Jobs — grouped by category */}
+      {(() => {
+        const CAT_META = {
+          ingest:  { label: 'Data Ingest',       hint: 'Pull raw data from external sources into our tables.' },
+          compute: { label: 'Compute & Snapshots', hint: 'Nightly analytics and precompute jobs.' },
+          engine:  { label: 'Real-time Engines',   hint: 'Continuously running loops.' },
+        };
+        const grouped = ['ingest', 'compute', 'engine'].map(cat => ({
+          cat,
+          meta: CAT_META[cat],
+          jobs: cronJobs.filter(j => (j.category || 'ingest') === cat),
+        })).filter(g => g.jobs.length > 0);
+
+        const rowsSyncedText = (meta) => {
+          if (!meta) return null;
+          if (meta.rows_synced == null && meta.sync_duration_ms == null) return null;
+          const rows = meta.rows_synced != null ? `${formatNum(meta.rows_synced)} rows` : null;
+          const dur  = meta.sync_duration_ms != null ? `${(meta.sync_duration_ms / 1000).toFixed(1)}s` : null;
+          return [rows, dur].filter(Boolean).join(' · ');
+        };
+
+        return (
+          <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
+            <div className="card-header" style={{ marginBottom: 8 }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Cron Jobs</h3>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{cronJobs.length} scheduled · all times in Asia/Dubai</span>
             </div>
-          ))}
-        </div>
-      </motion.div>
+
+            {grouped.map(({ cat, meta, jobs }) => (
+              <div key={cat} style={{ marginTop: 22 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)' }}>{meta.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', opacity: 0.7 }}>{meta.hint}</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
+                  {jobs.map(job => {
+                    const status = job.meta?.sync_status || (job.meta ? 'success' : 'scheduled');
+                    const hasErr = job.meta?.sync_status === 'error' && job.meta?.error_message;
+                    const rowsLine = rowsSyncedText(job.meta);
+                    return (
+                      <div key={job.name} style={{
+                        padding: 16, borderRadius: 10, background: 'var(--bg-primary)',
+                        border: '1px solid var(--border-color)',
+                        display: 'flex', flexDirection: 'column', gap: 10,
+                      }}>
+                        {/* Header row: icon + label + badge */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                            <Clock size={15} style={{ color: 'var(--brand-primary)', flexShrink: 0 }} />
+                            <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.label}</div>
+                          </div>
+                          <StatusBadge status={status} />
+                        </div>
+
+                        {/* Description */}
+                        {job.description && (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.55, opacity: 0.9 }}>
+                            <Info size={12} style={{ marginTop: 2, flexShrink: 0, opacity: 0.6 }} />
+                            <span>{job.description}</span>
+                          </div>
+                        )}
+
+                        {/* Key/value grid: schedule, next run, last synced, source freshness */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', rowGap: 4, columnGap: 8, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                          <span style={{ opacity: 0.7 }}>Schedule</span>
+                          <span>{job.humanSchedule} <span style={{ opacity: 0.5 }}>({job.schedule})</span></span>
+
+                          {job.nextRun && (<>
+                            <span style={{ opacity: 0.7 }}>Next run</span>
+                            <span>{formatDate(job.nextRun)}</span>
+                          </>)}
+
+                          {job.meta ? (<>
+                            <span style={{ opacity: 0.7 }}>Last synced</span>
+                            <span>{formatDate(job.meta.last_synced_at)}</span>
+                          </>) : (<>
+                            <span style={{ opacity: 0.7 }}>Last synced</span>
+                            <span style={{ opacity: 0.6, fontStyle: 'italic' }}>Not tracked in sync_metadata</span>
+                          </>)}
+
+                          {job.sourceLatestAt && (<>
+                            <span style={{ opacity: 0.7 }}>Source updated</span>
+                            <span>{formatDate(job.sourceLatestAt)} <span style={{ opacity: 0.5 }}>({job.sourceLabel || 'source'})</span></span>
+                          </>)}
+
+                          {rowsLine && (<>
+                            <span style={{ opacity: 0.7 }}>Last run</span>
+                            <span>{rowsLine}</span>
+                          </>)}
+                        </div>
+
+                        {/* Error banner if last run failed */}
+                        {hasErr && (
+                          <div style={{
+                            padding: '8px 10px', borderRadius: 6, fontSize: 11.5,
+                            background: 'rgba(220,38,38,0.08)', color: '#b91c1c',
+                            border: '1px solid rgba(220,38,38,0.2)',
+                          }}>
+                            <div style={{ fontWeight: 600, marginBottom: 2 }}>Last error</div>
+                            <div style={{ lineHeight: 1.5, wordBreak: 'break-word' }}>{job.meta.error_message}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+        );
+      })()}
 
       {/* Booking <-> Customer Mapping */}
       <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
