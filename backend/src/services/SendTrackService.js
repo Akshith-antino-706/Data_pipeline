@@ -120,26 +120,32 @@ export class SendTrackService {
   /**
    * Called by the open-tracking pixel endpoint.
    */
-  static async markOpened(id) {
+  // meta = { ua, ip } from the tracking request — stored for bot filtering (Phase 2).
+  // COALESCE keeps the FIRST event's UA/IP (matches the opened_at/clicked_at semantics).
+  static async markOpened(id, meta = {}) {
     await db.query(`
       UPDATE email_send_log
       SET status = CASE WHEN status NOT IN ('clicked') THEN 'opened' ELSE status END,
-          opened_at = COALESCE(opened_at, NOW())
+          opened_at = COALESCE(opened_at, NOW()),
+          open_ua = COALESCE(open_ua, $2),
+          open_ip = COALESCE(open_ip, $3)
       WHERE id = $1
-    `, [id]);
+    `, [id, meta.ua || null, meta.ip || null]);
   }
 
   /**
    * Called by the click-tracking redirect endpoint.
    */
-  static async markClicked(id) {
+  static async markClicked(id, meta = {}) {
     await db.query(`
       UPDATE email_send_log
       SET status = 'clicked',
           opened_at  = COALESCE(opened_at, NOW()),
-          clicked_at = COALESCE(clicked_at, NOW())
+          clicked_at = COALESCE(clicked_at, NOW()),
+          click_ua = COALESCE(click_ua, $2),
+          click_ip = COALESCE(click_ip, $3)
       WHERE id = $1
-    `, [id]);
+    `, [id, meta.ua || null, meta.ip || null]);
   }
 
   /**

@@ -2385,7 +2385,11 @@ export default function Journeys() {
                                   const nc        = nodeEntryCountsMap[node.id];
                                   const sent      = campaignData?.sent_by_node?.[node.id] ?? camp?.sent ?? parseInt(nodeStats?.action_sent) ?? 0;
                                   const read      = campaignData?.opens?.[node.id] ?? camp?.read ?? (parseInt(nodeStats?.action_read) || 0);
-                                  const clicked   = campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked) || 0);
+                                  const clicked   = campaignData?.clicks?.[node.id] ?? campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked) || 0);
+                                  // Bot-filtered (Phase 1): human_* = ≥bot_window_sec after send; landed = real GTM website hit
+                                  const humanRead   = campaignData?.human_opens?.[node.id];
+                                  const humanClick  = campaignData?.human_clicks?.[node.id];
+                                  const landedClick = campaignData?.landed_clicks?.[node.id];
                                   const bounced   = campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? (parseInt(nodeStats?.action_bounced) || 0);
                                   const delivered = campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? (parseInt(nodeStats?.action_delivered) || 0);
                                   const failed    = parseInt(nodeStats?.action_failed) || camp?.failed || 0;
@@ -2419,8 +2423,13 @@ export default function Journeys() {
                                         {[
                                           { label: 'SENT',    value: sent,          color: sent > 0 ? 'var(--green)' : 'var(--text-muted)', sub: null,                              shimmer: false },
                                           { label: 'PENDING', value: qWaiting || 0, color: qWaiting > 0 ? '#f59e0b' : 'var(--text-muted)', sub: null,                              shimmer: false },
-                                          { label: 'OPENED',  value: read,          color: read > 0 ? '#3b82f6' : 'var(--text-muted)',    sub: openRate  ? `${openRate}%`  : null, shimmer: nodeAnalyticsLoading },
-                                          { label: 'CLICKED', value: clicked,       color: clicked > 0 ? '#8b5cf6' : 'var(--text-muted)', sub: clickRate ? `${clickRate}%` : null, shimmer: nodeAnalyticsLoading },
+                                          { label: 'OPENED',  value: read,          color: read > 0 ? '#3b82f6' : 'var(--text-muted)',    sub: openRate  ? `${openRate}%`  : null, shimmer: nodeAnalyticsLoading,
+                                            extra: (humanRead != null ? [{ label: 'Human', value: humanRead, color: '#3b82f6' }] : []) },
+                                          { label: 'CLICKED', value: clicked,       color: clicked > 0 ? '#8b5cf6' : 'var(--text-muted)', sub: clickRate ? `${clickRate}%` : null, shimmer: nodeAnalyticsLoading,
+                                            extra: [
+                                              ...(humanClick  != null ? [{ label: 'Human',  value: humanClick,  color: '#8b5cf6' }] : []),
+                                              ...(landedClick != null ? [{ label: 'Landed', value: landedClick, color: '#22c55e' }] : []),
+                                            ] },
                                         ].map(m => (
                                           <div key={m.label} style={{ background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 8px', textAlign: 'center', border: '1px solid var(--border-color)' }}>
                                             {m.shimmer ? (
@@ -2433,6 +2442,12 @@ export default function Journeys() {
                                                 <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{fmt(m.value)}</div>
                                                 <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.5px', marginTop: 2 }}>{m.label}</div>
                                                 {m.sub && <div style={{ fontSize: 10, color: m.color, marginTop: 2, fontWeight: 600 }}>{m.sub} rate</div>}
+                                                {m.extra && m.extra.map(e => (
+                                                  <div key={e.label} title="Bot-filtered: Human = clicked/opened after the scanner window; Landed = reached the website (GTM)"
+                                                    style={{ fontSize: 9.5, color: e.color, marginTop: 2, fontWeight: 600 }}>
+                                                    {e.label}: {fmt(e.value)}
+                                                  </div>
+                                                ))}
                                               </>
                                             )}
                                           </div>

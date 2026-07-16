@@ -2431,9 +2431,11 @@ class JourneyService {
       ORDER BY c.created_at ASC
     `, [segmentLabel, journeyId]);
 
-    // Click counts per node from email_send_log — rows with clicked_at set
+    // Click counts per node from email_send_log — UNIQUE users who clicked (distinct
+    // unified_id), consistent with the opens metric below. (Was COUNT(*), which over-counted
+    // nodes that had duplicate send rows for a user, e.g. a re-sent node.)
     const { rows: clickRows } = await db.query(`
-      SELECT node_id, COUNT(*) AS click_count
+      SELECT node_id, COUNT(DISTINCT unified_id) AS click_count
       FROM email_send_log
       WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
       GROUP BY node_id
@@ -2448,6 +2450,45 @@ class JourneyService {
       GROUP BY node_id
     `, [journeyId]);
     const openMap = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.open_count) || 0]));
+
+    // ── Phase 1 bot filtering (existing data, no new capture) ──────────────────────
+    // Email opens/clicks are heavily inflated by email-security scanners (SafeLinks,
+    // Mimecast, Proofpoint…) that auto-open/click every link, and by Apple Mail Privacy
+    // pixel prefetch. These three metrics strip most of that out:
+    //   human_*  = distinct users whose open/click fired ≥ BOT_WINDOW_SEC after send
+    //              (instant hits <window are the scanner signature — no human is that fast)
+    //   landed_clicks = distinct users who clicked AND produced a real website GTM event
+    //              for this journey (a genuine landing — bots don't run the site's JS).
+    //              NOTE: only meaningful when the email links point to GTM-instrumented
+    //              raynatours.com pages; review/social links won't have gtm_events.
+    const BOT_WINDOW_SEC = parseInt(process.env.BOT_ENGAGEMENT_WINDOW_SEC || '15', 10);
+
+    const { rows: humanClickRows } = await db.query(`
+      SELECT node_id, COUNT(DISTINCT unified_id) AS c
+      FROM email_send_log
+      WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
+        AND sent_at IS NOT NULL AND clicked_at - sent_at >= ($2 || ' seconds')::interval
+      GROUP BY node_id
+    `, [journeyId, String(BOT_WINDOW_SEC)]);
+    const humanClickMap = Object.fromEntries(humanClickRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+
+    const { rows: humanOpenRows } = await db.query(`
+      SELECT node_id, COUNT(DISTINCT unified_id) AS c
+      FROM email_send_log
+      WHERE journey_id = $1 AND node_id IS NOT NULL AND opened_at IS NOT NULL
+        AND sent_at IS NOT NULL AND opened_at - sent_at >= ($2 || ' seconds')::interval
+      GROUP BY node_id
+    `, [journeyId, String(BOT_WINDOW_SEC)]);
+    const humanOpenMap = Object.fromEntries(humanOpenRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+
+    const { rows: landedRows } = await db.query(`
+      SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS c
+      FROM email_send_log esl
+      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL
+        AND EXISTS (SELECT 1 FROM gtm_events g WHERE g.unified_id = esl.unified_id AND g.journey_id = $1)
+      GROUP BY esl.node_id
+    `, [journeyId]);
+    const landedClickMap = Object.fromEntries(landedRows.map(r => [r.node_id, parseInt(r.c) || 0]));
 
     // Delivered counts per node via SES events (event_type = 'Delivery')
     const { rows: deliveredRows } = await db.query(`
@@ -2485,13 +2526,25 @@ class JourneyService {
       total_failed: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.fail_count) || 0), 0),
       total_conversions: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.conversion_count) || 0), 0),
       total_revenue: campaignsWithClicks.reduce((s, c) => s + (parseFloat(c.revenue_total) || 0), 0),
+      // Bot-filtered (Phase 1)
+      total_human_opens: Object.values(humanOpenMap).reduce((s, n) => s + n, 0),
+      total_human_clicks: Object.values(humanClickMap).reduce((s, n) => s + n, 0),
+      total_landed_clicks: Object.values(landedClickMap).reduce((s, n) => s + n, 0),
     };
 
     return {
       journey: journey[0], campaigns: campaignsWithClicks, totals,
       target_count: targetCount,
+      // `clicks` is the correctly-named key (these are EMAIL click-tracking counts from
+      // email_send_log.clicked_at, NOT gtm_events). `gtm_clicks` kept as a back-compat alias.
+      clicks: gtmClickMap,
       gtm_clicks: gtmClickMap,
       opens: openMap,
+      // Phase 1 bot-filtered metrics (see comment above their queries).
+      human_opens: humanOpenMap,
+      human_clicks: humanClickMap,
+      landed_clicks: landedClickMap,
+      bot_window_sec: BOT_WINDOW_SEC,
       delivered_by_node: deliveredByNodeMap,
       bounced_by_node: bouncedByNodeMap,
     };

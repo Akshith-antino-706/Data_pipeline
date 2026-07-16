@@ -470,7 +470,8 @@ app.get('/api/track/email-send/open/:id', async (req, res) => {
   if (!isNaN(id)) {
     try {
       const { SendTrackService } = await import('./src/services/SendTrackService.js');
-      await SendTrackService.markOpened(id);
+      // Capture UA + IP (Phase 2 bot filtering). `trust proxy` is set, so req.ip is the real client IP.
+      await SendTrackService.markOpened(id, { ua: req.headers['user-agent'] || null, ip: req.ip || null });
     } catch (e) { console.error('[Track] email-send open error:', e.message); }
   }
 });
@@ -528,7 +529,8 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
       ).then(r => r.rows[0] || {});
 
       const tasks = [
-        SendTrackService.markClicked(id),
+        // Capture UA + IP (Phase 2 bot filtering). `trust proxy` is set → req.ip is the real client IP.
+        SendTrackService.markClicked(id, { ua: req.headers['user-agent'] || null, ip: req.ip || null }),
         SendTrackService.logUtmVisit({
           logId: id,
           unifiedId: logRows.unified_id,
