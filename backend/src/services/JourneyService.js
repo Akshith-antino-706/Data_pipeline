@@ -2403,20 +2403,33 @@ class JourneyService {
 
     const segmentLabel = journey[0].segment_name || journey[0].custom_segment_name || journey[0].segment_label;
 
-    // Get segment customer count for target — handle both standard and custom segments
-    let targetCount = 0;
-    if (journey[0].custom_segment_id) {
-      const seg = await CustomSegmentService.getById(journey[0].custom_segment_id);
-      if (seg) {
-        targetCount = await CustomSegmentService.getCountPreview(seg.conditions || []);
+    // Segment target count — kicked off CONCURRENTLY and GUARDED. For custom segments this
+    // recomputes membership live via CustomSegmentService.getCountPreview, whose correlated
+    // rayna-table subqueries can take 15-25s (e.g. last_booking_age / travel_date_within).
+    // Running it inline before the engagement queries is exactly what pushed the endpoint past
+    // the proxy timeout → campaignData null → opened/clicked rendered EMPTY. Here it runs in
+    // parallel with the engagement block (different tables, little contention) and any
+    // error/slowness degrades to 0 (the frontend falls back to detail.total_entries) instead
+    // of failing the whole response.
+    const targetCountPromise = (async () => {
+      try {
+        if (journey[0].custom_segment_id) {
+          const seg = await CustomSegmentService.getById(journey[0].custom_segment_id);
+          return seg ? (await CustomSegmentService.getCountPreview(seg.conditions || [])) : 0;
+        }
+        if (journey[0].segment_id) {
+          const { rows: [segCount] } = await db.query(
+            `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
+            [journey[0].segment_id]
+          );
+          return parseInt(segCount?.cnt) || 0;
+        }
+        return 0;
+      } catch (e) {
+        console.error(`[campaign-analytics] targetCount failed for journey ${journeyId}:`, e.message);
+        return 0;
       }
-    } else if (journey[0].segment_id) {
-      const { rows: [segCount] } = await db.query(
-        `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
-        [journey[0].segment_id]
-      );
-      targetCount = parseInt(segCount?.cnt) || 0;
-    }
+    })();
 
     // Get campaign metrics — prefer direct journey_id match, fallback to segment_label
     const { rows: campaigns } = await db.query(`
@@ -2431,44 +2444,83 @@ class JourneyService {
       ORDER BY c.created_at ASC
     `, [segmentLabel, journeyId]);
 
-    // Click counts per node from email_send_log — rows with clicked_at set
-    const { rows: clickRows } = await db.query(`
-      SELECT node_id, COUNT(*) AS click_count
-      FROM email_send_log
-      WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
-      GROUP BY node_id
-    `, [journeyId]);
-    const gtmClickMap = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.click_count) || 0]));
+    // ── Per-node engagement — PERF: partial-index scans, run SEQUENTIALLY ────────
+    // email_send_log is ~17M rows / 6.4GB. The table has PARTIAL indexes:
+    //   idx_esl_journey_node_opened  … (journey_id, node_id) WHERE opened_at  IS NOT NULL
+    //   idx_esl_journey_node_clicked … (journey_id, node_id) WHERE clicked_at IS NOT NULL
+    // so each metric only touches the opened/clicked SUBSET of a journey's rows. Each query
+    // in isolation is fast (J267: opens 3.2s, clicks 0.9s, landed 1.5s). But running them
+    // via Promise.all made the endpoint ~10× SLOWER (J267 95s): 5+ COUNT(DISTINCT) scans of
+    // the SAME huge table concurrently thrash the shared buffer cache and storm the disk with
+    // random heap reads. So we run them SEQUENTIALLY — each gets a warm cache; total ≈ 7s.
+    // opens+human_opens (and clicks+human_clicks) are folded into ONE scan each via a FILTER,
+    // since they share a partial index and predicate.
+    //
+    //   human_* = distinct users whose open/click fired ≥ BOT_WINDOW_SEC after send
+    //             (instant hits < window are the scanner signature — no human is that fast).
+    //   landed_clicks = distinct clickers who produced a real website GTM event for this
+    //             journey (genuine landing; only meaningful when links hit raynatours.com).
+    const BOT_WINDOW_SEC = parseInt(process.env.BOT_ENGAGEMENT_WINDOW_SEC || '15', 10);
 
-    // Open counts per node from email_send_log — unique users who opened (distinct unified_id)
+    // Opens + human_opens — one scan via idx_esl_journey_node_opened
     const { rows: openRows } = await db.query(`
-      SELECT node_id, COUNT(DISTINCT unified_id) AS open_count
+      SELECT node_id,
+        COUNT(DISTINCT unified_id) AS c,
+        COUNT(DISTINCT unified_id) FILTER (
+          WHERE sent_at IS NOT NULL AND opened_at - sent_at >= ($2 || ' seconds')::interval
+        ) AS h
       FROM email_send_log
       WHERE journey_id = $1 AND node_id IS NOT NULL AND opened_at IS NOT NULL
       GROUP BY node_id
-    `, [journeyId]);
-    const openMap = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.open_count) || 0]));
+    `, [journeyId, String(BOT_WINDOW_SEC)]);
 
-    // Delivered counts per node via SES events (event_type = 'Delivery')
+    // Clicks + human_clicks — one scan via idx_esl_journey_node_clicked
+    const { rows: clickRows } = await db.query(`
+      SELECT node_id,
+        COUNT(DISTINCT unified_id) AS c,
+        COUNT(DISTINCT unified_id) FILTER (
+          WHERE sent_at IS NOT NULL AND clicked_at - sent_at >= ($2 || ' seconds')::interval
+        ) AS h
+      FROM email_send_log
+      WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
+      GROUP BY node_id
+    `, [journeyId, String(BOT_WINDOW_SEC)]);
+
+    // Landed clicks — clicked AND has a real GTM event for this journey
+    const { rows: landedRows } = await db.query(`
+      SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS c
+      FROM email_send_log esl
+      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL
+        AND EXISTS (SELECT 1 FROM gtm_events g WHERE g.unified_id = esl.unified_id AND g.journey_id = $1)
+      GROUP BY esl.node_id
+    `, [journeyId]);
+
+    // Delivered — SES events
     const { rows: deliveredRows } = await db.query(`
       SELECT esl.node_id, COUNT(*) AS delivered_count
-      FROM email_send_log esl
-      JOIN ses_events se ON se.message_id = esl.external_id
+      FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
       WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Delivery'
       GROUP BY esl.node_id
     `, [journeyId]);
-    const deliveredByNodeMap = Object.fromEntries(deliveredRows.map(r => [r.node_id, parseInt(r.delivered_count) || 0]));
 
-    // Bounced counts per node via SES events (event_type = 'Bounce')
+    // Bounced — SES events
     const { rows: bounceRows } = await db.query(`
       SELECT esl.node_id, COUNT(*) AS bounce_count
-      FROM email_send_log esl
-      JOIN ses_events se ON se.message_id = esl.external_id
+      FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
       WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Bounce'
       GROUP BY esl.node_id
     `, [journeyId]);
-    const bouncedByNodeMap = Object.fromEntries(bounceRows.map(r => [r.node_id, parseInt(r.bounce_count) || 0]));
 
+    const targetCount = await targetCountPromise;
+
+    const openMap        = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+    const gtmClickMap    = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+    const humanOpenMap   = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.h) || 0]));
+    const humanClickMap  = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.h) || 0]));
+    const landedClickMap = Object.fromEntries(landedRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+    const deliveredByNodeMap = Object.fromEntries(deliveredRows.map(r => [r.node_id, parseInt(r.delivered_count) || 0]));
+    const bouncedByNodeMap   = Object.fromEntries(bounceRows.map(r => [r.node_id, parseInt(r.bounce_count) || 0]));
+what 
     // Merge click counts into each campaign row by node_id
     const campaignsWithClicks = campaigns.map(c => ({
       ...c,
@@ -2485,13 +2537,25 @@ class JourneyService {
       total_failed: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.fail_count) || 0), 0),
       total_conversions: campaignsWithClicks.reduce((s, c) => s + (parseInt(c.conversion_count) || 0), 0),
       total_revenue: campaignsWithClicks.reduce((s, c) => s + (parseFloat(c.revenue_total) || 0), 0),
+      // Bot-filtered (Phase 1)
+      total_human_opens: Object.values(humanOpenMap).reduce((s, n) => s + n, 0),
+      total_human_clicks: Object.values(humanClickMap).reduce((s, n) => s + n, 0),
+      total_landed_clicks: Object.values(landedClickMap).reduce((s, n) => s + n, 0),
     };
 
     return {
       journey: journey[0], campaigns: campaignsWithClicks, totals,
       target_count: targetCount,
+      // `clicks` is the correctly-named key (these are EMAIL click-tracking counts from
+      // email_send_log.clicked_at, NOT gtm_events). `gtm_clicks` kept as a back-compat alias.
+      clicks: gtmClickMap,
       gtm_clicks: gtmClickMap,
       opens: openMap,
+      // Phase 1 bot-filtered metrics (see comment above their queries).
+      human_opens: humanOpenMap,
+      human_clicks: humanClickMap,
+      landed_clicks: landedClickMap,
+      bot_window_sec: BOT_WINDOW_SEC,
       delivered_by_node: deliveredByNodeMap,
       bounced_by_node: bouncedByNodeMap,
     };

@@ -120,9 +120,16 @@ async function processEventAsync(message, eventType) {
       };
       const mapping = statusMap[eventType];
       if (mapping) {
+        // Phase 2: capture UA + IP from the SES Open/Click payload (COALESCE — first wins).
+        const uaCol = eventType === 'Open' ? 'open_ua' : eventType === 'Click' ? 'click_ua' : null;
+        const ipCol = eventType === 'Open' ? 'open_ip' : eventType === 'Click' ? 'click_ip' : null;
+        const ua = eventType === 'Open' ? message.open?.userAgent : eventType === 'Click' ? message.click?.userAgent : null;
+        const ip = eventType === 'Open' ? message.open?.ipAddress  : eventType === 'Click' ? message.click?.ipAddress  : null;
+        const metaSet = uaCol ? `, ${uaCol} = COALESCE(${uaCol}, $3), ${ipCol} = COALESCE(${ipCol}, $4)` : '';
+        const params = uaCol ? [mapping.status, messageId, ua || null, ip || null] : [mapping.status, messageId];
         await db.query(`
           UPDATE email_send_log
-          SET status = $1 ${mapping.extra || ''}
+          SET status = $1 ${mapping.extra || ''} ${metaSet}
           WHERE external_id = $2
             AND status NOT IN ('bounced', 'complained')
             AND CASE
@@ -130,7 +137,7 @@ async function processEventAsync(message, eventType) {
               WHEN $1 = 'opened'    THEN status NOT IN ('clicked')
               ELSE TRUE
             END
-        `, [mapping.status, messageId]);
+        `, params);
       }
     }
 
