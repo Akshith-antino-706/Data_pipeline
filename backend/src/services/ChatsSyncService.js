@@ -59,7 +59,7 @@ export default class ChatsSyncService {
    */
   static async sync() {
     const t0 = Date.now();
-    const result = { watermark: null, inserted: 0, unifiedMatched: 0, elapsedMs: 0 };
+    const result = { watermark: null, inserted: 0, unifiedMatched: 0, promoted: 0, elapsedMs: 0 };
     let syncStatus = 'success';
     let errorMessage = null;
 
@@ -139,6 +139,111 @@ export default class ChatsSyncService {
     `);
     result.unifiedMatched = (p1.rowCount || 0) + (p2.rowCount || 0);
     console.log(`[ChatsSync] unified_id matched — phone: ${p1.rowCount || 0}, email: ${p2.rowCount || 0}`);
+
+    // 4. Promote chat-only users (still unified_id IS NULL after step 3) into
+    //    unified_contacts as PROSPECT/B2C rows. Handles both wa_id-only and
+    //    email-only chats. Dedup by normalized phone / lowercased email so we
+    //    only create one unified_contact per unique key.
+    // created_at / updated_at use the EARLIEST chat date for that phone/email
+    // (not NOW()) so acquisition-date reporting stays accurate even if the
+    // MySQL sync lags behind. DISTINCT ON picks the newest name/country per
+    // key while the aggregated MIN() gives the historical first-contact date.
+    const p3 = await pgQuery(`
+      WITH agg AS (
+        SELECT normalize_phone(wa_id) AS phone_key, MIN(created_at) AS first_at
+        FROM chats
+        WHERE unified_id IS NULL
+          AND wa_id IS NOT NULL AND wa_id <> ''
+          AND normalize_phone(wa_id) IS NOT NULL
+        GROUP BY normalize_phone(wa_id)
+      ),
+      latest AS (
+        SELECT DISTINCT ON (normalize_phone(c.wa_id))
+          normalize_phone(c.wa_id) AS phone_key,
+          c.wa_id, c.wa_name, c.country
+        FROM chats c
+        WHERE c.unified_id IS NULL
+          AND c.wa_id IS NOT NULL AND c.wa_id <> ''
+          AND normalize_phone(c.wa_id) IS NOT NULL
+        ORDER BY normalize_phone(c.wa_id), c.created_at DESC
+      )
+      INSERT INTO unified_contacts
+        (mobile, name, country, sources, booking_status, contact_type, created_at, updated_at)
+      SELECT l.wa_id, l.wa_name, l.country,
+             'chats', 'PROSPECT', 'B2C', a.first_at, a.first_at
+      FROM latest l JOIN agg a ON a.phone_key = l.phone_key
+      WHERE NOT EXISTS (
+        SELECT 1 FROM unified_contacts uc
+        WHERE normalize_phone(uc.mobile) = l.phone_key
+      )
+    `);
+    const p4 = await pgQuery(`
+      WITH agg AS (
+        SELECT LOWER(TRIM(email)) AS email_key, MIN(created_at) AS first_at
+        FROM chats
+        WHERE unified_id IS NULL
+          AND email IS NOT NULL AND email <> ''
+          AND (wa_id IS NULL OR wa_id = '' OR normalize_phone(wa_id) IS NULL)
+        GROUP BY LOWER(TRIM(email))
+      ),
+      latest AS (
+        SELECT DISTINCT ON (LOWER(TRIM(c.email)))
+          LOWER(TRIM(c.email)) AS email_key,
+          c.email, c.wa_name, c.country
+        FROM chats c
+        WHERE c.unified_id IS NULL
+          AND c.email IS NOT NULL AND c.email <> ''
+          AND (c.wa_id IS NULL OR c.wa_id = '' OR normalize_phone(c.wa_id) IS NULL)
+        ORDER BY LOWER(TRIM(c.email)), c.created_at DESC
+      )
+      INSERT INTO unified_contacts
+        (email, name, country, sources, booking_status, contact_type, created_at, updated_at)
+      SELECT l.email, l.wa_name, l.country,
+             'chats', 'PROSPECT', 'B2C', a.first_at, a.first_at
+      FROM latest l JOIN agg a ON a.email_key = l.email_key
+      WHERE NOT EXISTS (
+        SELECT 1 FROM unified_contacts uc
+        WHERE LOWER(TRIM(uc.email)) = l.email_key
+      )
+    `);
+    result.promoted = (p3.rowCount || 0) + (p4.rowCount || 0);
+    console.log(`[ChatsSync] promoted new contacts — by phone: ${p3.rowCount || 0}, by email: ${p4.rowCount || 0}`);
+
+    // 5. Re-run unified_id backfill so the newly-created rows link back to their
+    //    source chats. Idempotent — only touches chats where unified_id IS NULL.
+    if (result.promoted > 0) {
+      const p5 = await pgQuery(`
+        WITH ranked AS (
+          SELECT DISTINCT ON (normalize_phone(mobile))
+                 normalize_phone(mobile) AS phone_key, id
+          FROM unified_contacts
+          WHERE mobile IS NOT NULL AND mobile <> ''
+            AND normalize_phone(mobile) IS NOT NULL
+          ORDER BY normalize_phone(mobile), id DESC
+        )
+        UPDATE chats c SET unified_id = r.id
+        FROM ranked r
+        WHERE c.unified_id IS NULL
+          AND c.wa_id IS NOT NULL
+          AND normalize_phone(c.wa_id) = r.phone_key
+      `);
+      const p6 = await pgQuery(`
+        WITH ranked AS (
+          SELECT DISTINCT ON (lower(trim(email)))
+                 lower(trim(email)) AS email_key, id
+          FROM unified_contacts
+          WHERE email IS NOT NULL AND email <> ''
+          ORDER BY lower(trim(email)), id DESC
+        )
+        UPDATE chats c SET unified_id = r.id
+        FROM ranked r
+        WHERE c.unified_id IS NULL
+          AND c.email IS NOT NULL AND c.email <> ''
+          AND lower(trim(c.email)) = r.email_key
+      `);
+      result.unifiedMatched += (p5.rowCount || 0) + (p6.rowCount || 0);
+      console.log(`[ChatsSync] post-promote backfill — phone: ${p5.rowCount || 0}, email: ${p6.rowCount || 0}`);
+    }
 
     } catch (err) {
       syncStatus = 'error';
