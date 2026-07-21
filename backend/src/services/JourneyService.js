@@ -2444,83 +2444,92 @@ class JourneyService {
       ORDER BY c.created_at ASC
     `, [segmentLabel, journeyId]);
 
-    // ── Per-node engagement — PERF: partial-index scans, run SEQUENTIALLY ────────
-    // email_send_log is ~17M rows / 6.4GB. The table has PARTIAL indexes:
-    //   idx_esl_journey_node_opened  … (journey_id, node_id) WHERE opened_at  IS NOT NULL
-    //   idx_esl_journey_node_clicked … (journey_id, node_id) WHERE clicked_at IS NOT NULL
-    // so each metric only touches the opened/clicked SUBSET of a journey's rows. Each query
-    // in isolation is fast (J267: opens 3.2s, clicks 0.9s, landed 1.5s). But running them
-    // via Promise.all made the endpoint ~10× SLOWER (J267 95s): 5+ COUNT(DISTINCT) scans of
-    // the SAME huge table concurrently thrash the shared buffer cache and storm the disk with
-    // random heap reads. So we run them SEQUENTIALLY — each gets a warm cache; total ≈ 7s.
-    // opens+human_opens (and clicks+human_clicks) are folded into ONE scan each via a FILTER,
-    // since they share a partial index and predicate.
-    //
-    //   human_* = distinct users whose open/click fired ≥ BOT_WINDOW_SEC after send
-    //             (instant hits < window are the scanner signature — no human is that fast).
-    //   landed_clicks = distinct clickers who produced a real website GTM event for this
-    //             journey (genuine landing; only meaningful when links hit raynatours.com).
+    // ── Per-node engagement — served from the precomputed rollup (journey_node_stats) ──
+    // Computing these live means scanning email_send_log (~17M rows / 6.4GB). For big,
+    // ACTIVELY-SENDING journeys (e.g. J332) that's 55-100s — past the proxy timeout → 504.
+    // The 30-min rollup cron (JourneyStatsService) already stores per-node opens / clicks /
+    // human / landed / delivered / bounced, so we read those (a few indexed rows → ms).
+    // A journey with no rollup row yet (brand-new, not cronned) falls back to a live compute
+    // — those journeys are small, so the fallback stays fast. `stats_as_of` (returned below)
+    // tells the UI how fresh the rollup is; POST /journeys/analytics/:id/refresh recomputes.
     const BOT_WINDOW_SEC = parseInt(process.env.BOT_ENGAGEMENT_WINDOW_SEC || '15', 10);
 
-    // Opens + human_opens — one scan via idx_esl_journey_node_opened
-    const { rows: openRows } = await db.query(`
-      SELECT node_id,
-        COUNT(DISTINCT unified_id) AS c,
-        COUNT(DISTINCT unified_id) FILTER (
-          WHERE sent_at IS NOT NULL AND opened_at - sent_at >= ($2 || ' seconds')::interval
-        ) AS h
-      FROM email_send_log
-      WHERE journey_id = $1 AND node_id IS NOT NULL AND opened_at IS NOT NULL
-      GROUP BY node_id
-    `, [journeyId, String(BOT_WINDOW_SEC)]);
+    let openMap, gtmClickMap, humanOpenMap, humanClickMap, landedClickMap,
+        deliveredByNodeMap, bouncedByNodeMap;
+    let statsAsOf = null, rollupTargetCount = null;
 
-    // Clicks + human_clicks — one scan via idx_esl_journey_node_clicked
-    const { rows: clickRows } = await db.query(`
-      SELECT node_id,
-        COUNT(DISTINCT unified_id) AS c,
-        COUNT(DISTINCT unified_id) FILTER (
-          WHERE sent_at IS NOT NULL AND clicked_at - sent_at >= ($2 || ' seconds')::interval
-        ) AS h
-      FROM email_send_log
-      WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
-      GROUP BY node_id
-    `, [journeyId, String(BOT_WINDOW_SEC)]);
+    const { rows: statRows } = await db.query(
+      `SELECT * FROM journey_node_stats WHERE journey_id = $1`, [journeyId]
+    );
+    const perNode = statRows.filter(r => r.node_id !== '__ALL__');
 
-    // Landed clicks — clicked AND has a real GTM event for this journey
-    const { rows: landedRows } = await db.query(`
-      SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS c
-      FROM email_send_log esl
-      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL
-        AND EXISTS (SELECT 1 FROM gtm_events g WHERE g.unified_id = esl.unified_id AND g.journey_id = $1)
-      GROUP BY esl.node_id
-    `, [journeyId]);
+    if (perNode.length > 0) {
+      // FAST PATH — read the rollup (no email_send_log scan).
+      const num = (v) => parseInt(v) || 0;
+      openMap            = Object.fromEntries(perNode.map(r => [r.node_id, num(r.opened)]));
+      gtmClickMap        = Object.fromEntries(perNode.map(r => [r.node_id, num(r.clicked)]));
+      humanOpenMap       = Object.fromEntries(perNode.map(r => [r.node_id, num(r.human_opened)]));
+      humanClickMap      = Object.fromEntries(perNode.map(r => [r.node_id, num(r.human_clicked)]));
+      landedClickMap     = Object.fromEntries(perNode.map(r => [r.node_id, num(r.landed)]));
+      deliveredByNodeMap = Object.fromEntries(perNode.map(r => [r.node_id, num(r.delivered)]));
+      bouncedByNodeMap   = Object.fromEntries(perNode.map(r => [r.node_id, num(r.bounced)]));
+      const allRow = statRows.find(r => r.node_id === '__ALL__');
+      rollupTargetCount = allRow ? num(allRow.target_count) : null;
+      statsAsOf = perNode.reduce((m, r) => (!m || r.computed_at > m ? r.computed_at : m), null);
+    } else {
+      // FALLBACK — live compute for journeys not yet in the rollup (sequential partial-index
+      // scans; small journeys only, so fast). Mirrors what the cron aggregator computes.
+      const { rows: openRows } = await db.query(`
+        SELECT node_id,
+          COUNT(DISTINCT unified_id) AS c,
+          COUNT(DISTINCT unified_id) FILTER (
+            WHERE sent_at IS NOT NULL AND opened_at - sent_at >= ($2 || ' seconds')::interval
+          ) AS h
+        FROM email_send_log
+        WHERE journey_id = $1 AND node_id IS NOT NULL AND opened_at IS NOT NULL
+        GROUP BY node_id
+      `, [journeyId, String(BOT_WINDOW_SEC)]);
+      const { rows: clickRows } = await db.query(`
+        SELECT node_id,
+          COUNT(DISTINCT unified_id) AS c,
+          COUNT(DISTINCT unified_id) FILTER (
+            WHERE sent_at IS NOT NULL AND clicked_at - sent_at >= ($2 || ' seconds')::interval
+          ) AS h
+        FROM email_send_log
+        WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
+        GROUP BY node_id
+      `, [journeyId, String(BOT_WINDOW_SEC)]);
+      const { rows: landedRows } = await db.query(`
+        SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS c
+        FROM email_send_log esl
+        WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM gtm_events g WHERE g.unified_id = esl.unified_id AND g.journey_id = $1)
+        GROUP BY esl.node_id
+      `, [journeyId]);
+      const { rows: deliveredRows } = await db.query(`
+        SELECT esl.node_id, COUNT(*) AS delivered_count
+        FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
+        WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Delivery'
+        GROUP BY esl.node_id
+      `, [journeyId]);
+      const { rows: bounceRows } = await db.query(`
+        SELECT esl.node_id, COUNT(*) AS bounce_count
+        FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
+        WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Bounce'
+        GROUP BY esl.node_id
+      `, [journeyId]);
+      openMap        = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+      gtmClickMap    = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+      humanOpenMap   = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.h) || 0]));
+      humanClickMap  = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.h) || 0]));
+      landedClickMap = Object.fromEntries(landedRows.map(r => [r.node_id, parseInt(r.c) || 0]));
+      deliveredByNodeMap = Object.fromEntries(deliveredRows.map(r => [r.node_id, parseInt(r.delivered_count) || 0]));
+      bouncedByNodeMap   = Object.fromEntries(bounceRows.map(r => [r.node_id, parseInt(r.bounce_count) || 0]));
+    }
 
-    // Delivered — SES events
-    const { rows: deliveredRows } = await db.query(`
-      SELECT esl.node_id, COUNT(*) AS delivered_count
-      FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
-      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Delivery'
-      GROUP BY esl.node_id
-    `, [journeyId]);
+    // Prefer the rollup's target_count (already computed); else the live guarded promise.
+    const targetCount = rollupTargetCount != null ? rollupTargetCount : await targetCountPromise;
 
-    // Bounced — SES events
-    const { rows: bounceRows } = await db.query(`
-      SELECT esl.node_id, COUNT(*) AS bounce_count
-      FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
-      WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Bounce'
-      GROUP BY esl.node_id
-    `, [journeyId]);
-
-    const targetCount = await targetCountPromise;
-
-    const openMap        = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.c) || 0]));
-    const gtmClickMap    = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.c) || 0]));
-    const humanOpenMap   = Object.fromEntries(openRows.map(r => [r.node_id, parseInt(r.h) || 0]));
-    const humanClickMap  = Object.fromEntries(clickRows.map(r => [r.node_id, parseInt(r.h) || 0]));
-    const landedClickMap = Object.fromEntries(landedRows.map(r => [r.node_id, parseInt(r.c) || 0]));
-    const deliveredByNodeMap = Object.fromEntries(deliveredRows.map(r => [r.node_id, parseInt(r.delivered_count) || 0]));
-    const bouncedByNodeMap   = Object.fromEntries(bounceRows.map(r => [r.node_id, parseInt(r.bounce_count) || 0]));
-what 
     // Merge click counts into each campaign row by node_id
     const campaignsWithClicks = campaigns.map(c => ({
       ...c,
@@ -2558,6 +2567,9 @@ what
       bot_window_sec: BOT_WINDOW_SEC,
       delivered_by_node: deliveredByNodeMap,
       bounced_by_node: bouncedByNodeMap,
+      // When the engagement numbers came from the rollup, this is that rollup's compute time
+      // (null = computed live just now). The UI can show "as of …" + a refresh affordance.
+      stats_as_of: statsAsOf,
     };
   }
 

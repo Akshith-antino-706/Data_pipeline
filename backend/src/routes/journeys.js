@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import db from '../config/database.js';
 import JourneyService from '../services/JourneyService.js';
 import ConversionDetector from '../services/ConversionDetector.js';
 import { queueCounts } from '../services/queue/index.js';
@@ -134,10 +135,57 @@ router.get('/queue-counts', async (_req, res, next) => {
 
 // Journey Operations Dashboard — aggregate for /journeys/dashboard
 // (MUST be declared before '/:id' so 'dashboard' isn't parsed as a journey id)
-router.get('/dashboard', async (_req, res, next) => {
+router.get('/dashboard', async (req, res, next) => {
   try {
-    const data = await JourneyService.getOpsDashboard();
+    // Cache 30 min: getOpsDashboard fires several heavy email_send_log scans; without this
+    // the page recomputes them live on EVERY load (slow). 30 min keeps the ops view fresh
+    // enough while collapsing repeat loads to an instant cache hit. Bypass with ?fresh=1.
+    const data = req.query.fresh
+      ? await JourneyService.getOpsDashboard()
+      : await cached('journey:ops-dashboard', () => JourneyService.getOpsDashboard(), 1800);
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// ── Analytics tab — reads the precomputed journey_node_stats rollup (NEVER scans
+//    email_send_log live). Populated by the 30-min cron (JourneyStatsService). Fast &
+//    isolated: a plain SELECT on a small table, independent of journey size.
+//    Declared before '/:id' so these static prefixes aren't parsed as a journey id.
+
+// Per-journey summary rows (the '__ALL__' rollup row of each journey) + freshness meta.
+router.get('/analytics/table', async (req, res, next) => {
+  try {
+    const params = [];
+    let where = `node_id = '__ALL__'`;
+    if (req.query.status) { params.push(req.query.status); where += ` AND journey_status = $${params.length}`; }
+    const { rows } = await db.query(
+      `SELECT * FROM journey_node_stats WHERE ${where} ORDER BY entries DESC, journey_id DESC`, params
+    );
+    const { rows: [meta] } = await db.query(
+      `SELECT last_run_at, last_run_ms, journeys_run FROM journey_stats_meta WHERE id = true`
+    );
+    res.json({ success: true, data: { journeys: rows, meta: meta || null } });
+  } catch (err) { next(err); }
+});
+
+// Node-level rows for one journey (rollup row first, then each node).
+router.get('/analytics/:id/nodes', async (req, res, next) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM journey_node_stats WHERE journey_id = $1 ORDER BY (node_id = '__ALL__') DESC, node_id`,
+      [parseInt(req.params.id)]
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) { next(err); }
+});
+
+// On-demand recompute of a single journey (the "Refresh" button). Recomputes live and
+// upserts into the rollup; a few seconds for big journeys — used sparingly, not on load.
+router.post('/analytics/:id/refresh', async (req, res, next) => {
+  try {
+    const { refreshJourney } = await import('../services/JourneyStatsService.js');
+    const r = await refreshJourney(parseInt(req.params.id));
+    res.json({ success: true, data: r });
   } catch (err) { next(err); }
 });
 
@@ -579,8 +627,11 @@ router.get('/:id/gtm-node-stats', async (req, res, next) => {
 router.get('/:id/node-conversions', async (req, res, next) => {
   try {
     const journeyId = parseInt(req.params.id);
-    const db = (await import('../config/database.js')).default;
 
+    // Cache 30 min: this scans all 6 rayna booking tables + joins every opener (~9s on J332,
+    // and it grows with the data). It's a slow-moving analytics stat, so a cache keeps the
+    // detail screen snappy without a live recompute each open. Bypass with ?fresh=1.
+    const compute = async () => {
     const { rows } = await db.query(`
       WITH node_windows AS (
         SELECT
@@ -625,11 +676,11 @@ router.get('/:id/node-conversions', async (req, res, next) => {
       ORDER BY nw.node_start
     `, [journeyId]);
 
-    const data = {};
+    const out = {};
     for (const row of rows) {
       const openers   = parseInt(row.total_openers) || 0;
       const converted = parseInt(row.converted)     || 0;
-      data[row.node_id] = {
+      out[row.node_id] = {
         node_start:      row.node_start,
         node_end:        row.node_end,
         total_openers:   openers,
@@ -637,7 +688,12 @@ router.get('/:id/node-conversions', async (req, res, next) => {
         conversion_rate: openers > 0 ? Math.round((converted / openers) * 10000) / 100 : 0,
       };
     }
+    return out;
+    };
 
+    const data = req.query.fresh
+      ? await compute()
+      : await cached(`journey:node-conversions:${journeyId}`, compute, 1800);
     res.json({ data });
   } catch (err) { next(err); }
 });
