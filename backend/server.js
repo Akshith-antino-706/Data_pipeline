@@ -895,6 +895,28 @@ cron.schedule('* * * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey auto-start scheduled: every 1 min (Asia/Dubai)');
 
+// ── Journey Analytics rollup — powers the dashboard Analytics tab ──
+// Precomputes per-journey/per-node stats into journey_node_stats so the tab reads a small
+// flat table (ms) instead of aggregating email_send_log (~17M rows) live for every journey
+// (which would time out). Runs every 30 min, ALL journeys, SEQUENTIALLY (never parallel —
+// concurrent COUNT(DISTINCT) scans of the same huge table thrash the cache). Isolated: only
+// this job + the read endpoints touch that table, so no other flow is affected. Fully
+// reversible (drop the table). An in-flight guard prevents overlapping runs.
+let _journeyStatsRunning = false;
+cron.schedule(process.env.JOURNEY_STATS_CRON || '*/30 * * * *', async () => {
+  if (_journeyStatsRunning) { console.warn('[Cron:JourneyStats] previous run still in progress, skipping'); return; }
+  _journeyStatsRunning = true;
+  try {
+    const { refreshAllJourneys } = await import('./src/services/JourneyStatsService.js');
+    await refreshAllJourneys();
+  } catch (err) {
+    console.error('[Cron:JourneyStats] Error:', err.message);
+  } finally {
+    _journeyStatsRunning = false;
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Journey analytics rollup scheduled: every 30 min (Asia/Dubai)');
+
 // ── Startup env validation — fail fast in production ──
 // Catches missing TRACKING_BASE_URL before workers send emails with localhost
 // links (root cause of June 4 incident — broken click tracking for ~500k).

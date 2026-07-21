@@ -5,8 +5,8 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   GitBranch, Users, Send, Clock, Mail, Eye, TrendingUp, MousePointerClick,
-  AlertTriangle, RefreshCw, Sparkles, XCircle, UserMinus, Activity, Calendar,
-  ChevronRight, ChevronDown, Layers, Inbox, X, Loader2, GitFork, Flag, Zap,
+  AlertTriangle, RefreshCw, Sparkles, XCircle, Activity, Calendar,
+  ChevronRight, ChevronDown, Layers, X, Loader2, GitFork, Flag, Zap,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -41,7 +41,6 @@ function fmtDateTime(d) {
 export default function JourneyDashboardPage() {
   const router = useRouter();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -97,31 +96,23 @@ export default function JourneyDashboardPage() {
   };
 
   const load = async (isRefresh) => {
-    if (isRefresh) setRefreshing(true); else setLoading(true);
+    if (isRefresh) setRefreshing(true);
     try {
       const res = await getJourneyOpsDashboard();
       setData(res.data);
       setError(null);
     } catch (e) {
       setError(e.message || 'Failed to load dashboard');
-    } finally { setLoading(false); setRefreshing(false); }
+    } finally { setRefreshing(false); }
   };
 
   useEffect(() => { load(); }, []);
 
-  if (loading) {
-    return (
-      <div style={{ padding: 28 }}>
-        <div className="skeleton" style={{ width: 280, height: 30, borderRadius: 8, marginBottom: 20 }} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-          {[...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: 86, borderRadius: 12 }} />)}
-        </div>
-        <div className="skeleton" style={{ width: '100%', height: 300, borderRadius: 12 }} />
-      </div>
-    );
-  }
-
-  if (error) {
+  // NOTE: we intentionally DON'T block the whole page on `loading`. The header and the
+  // (independently-fetched) date accordion render immediately; each dashboard section shows
+  // its own inline skeleton until `data` arrives — so content appears progressively instead
+  // of the user staring at a blank page until every query finishes.
+  if (error && !data) {
     return (
       <div style={{ padding: 28 }}>
         <div className="card" style={{ padding: 28, textAlign: 'center', color: '#ef4444' }}>
@@ -132,8 +123,13 @@ export default function JourneyDashboardPage() {
     );
   }
 
-  const { kpis, forecast, forecastChart, forecastJourneyNames, runningNow, engagement, journeys, health } = data;
+  const loaded = !!data;
+  const {
+    kpis = {}, forecast = [], forecastChart = [], forecastJourneyNames = [],
+    runningNow = [], engagement = [], journeys = [], health = {},
+  } = data || {};
   const colorFor = (name) => PALETTE[forecastJourneyNames.indexOf(name) % PALETTE.length] || '#8b5cf6';
+  const SectionSkeleton = ({ h = 240 }) => <div className="skeleton" style={{ width: '100%', height: h, borderRadius: 10 }} />;
 
   const KPIS = [
     { label: 'Active Journeys', value: kpis.activeJourneys, icon: GitBranch, color: '#8b5cf6' },
@@ -157,7 +153,7 @@ export default function JourneyDashboardPage() {
             <Activity size={24} color="#8b5cf6" /> Journey Operations
           </h1>
           <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 }}>
-            What's running, what's sending today &amp; tomorrow, and journey health · updated {fmtDateTime(data.generatedAt)}
+            What's running, what's sending today &amp; tomorrow, and journey health {loaded ? `· updated ${fmtDateTime(data.generatedAt)}` : '· loading…'}
           </div>
         </div>
         <button className="btn btn-sm" onClick={() => load(true)} disabled={refreshing}
@@ -190,7 +186,9 @@ export default function JourneyDashboardPage() {
 
       {/* KPI strip */}
       <motion.div variants={fadeIn} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {KPIS.map(k => (
+        {!loaded
+          ? [...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: 86, borderRadius: 12 }} />)
+          : KPIS.map(k => (
           <div key={k.label} className="card" style={{ padding: '16px 18px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               <k.icon size={14} color={k.color} /> {k.label}
@@ -204,7 +202,9 @@ export default function JourneyDashboardPage() {
       <motion.div variants={fadeIn} className="card" style={{ padding: 22, marginBottom: 20 }}>
         <SectionTitle icon={Calendar} color="#22c55e" title="Send Forecast — next 7 days"
           subtitle="Scheduled emails per day, resolved to the exact journey · node · template that will fire" />
-        {forecastChart.length === 0 ? (
+        {!loaded ? (
+          <SectionSkeleton h={240} />
+        ) : forecastChart.length === 0 ? (
           <Empty text="No journey sends scheduled in the next 7 days" />
         ) : (
           <>
@@ -262,7 +262,7 @@ export default function JourneyDashboardPage() {
         {/* ── Running now ── */}
         <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
           <SectionTitle icon={Layers} color="#3b82f6" title="Running now" subtitle="Where every active enrollment currently sits" />
-          {runningNow.length === 0 ? <Empty text="No active enrollments" /> : (
+          {!loaded ? <SectionSkeleton h={180} /> : runningNow.length === 0 ? <Empty text="No active enrollments" /> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {runningNow.map(j => {
                 const total = j.nodes.reduce((s, n) => s + n.count, 0);
@@ -298,7 +298,7 @@ export default function JourneyDashboardPage() {
         {/* ── Engagement timeseries ── */}
         <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
           <SectionTitle icon={TrendingUp} color="#ec4899" title="Engagement (30 days)" subtitle="Delivered · Opened · Clicked across all journey sends" />
-          {engagement.length === 0 ? <Empty text="No journey sends in the last 30 days" /> : (
+          {!loaded ? <SectionSkeleton h={240} /> : engagement.length === 0 ? <Empty text="No journey sends in the last 30 days" /> : (
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={engagement} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -436,68 +436,6 @@ export default function JourneyDashboardPage() {
           </div>
         )}
       </motion.div>
-
-      {/* ── Health add-ons grid ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))', gap: 20 }}>
-        {/* Queue health */}
-        <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
-          <SectionTitle icon={Inbox} color="#f59e0b" title="Queue health" subtitle="BullMQ depth per channel" />
-          {!health.queue ? <Empty text="Queue stats unavailable" /> : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {['email', 'whatsapp', 'sms'].map(ch => {
-                const q = health.queue[ch];
-                return (
-                  <div key={ch} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--bg-secondary)' }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', width: 80, textTransform: 'capitalize' }}>{ch}</span>
-                    {q ? (
-                      <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text-secondary)' }}>
-                        <span>waiting <strong style={{ color: 'var(--text-primary)' }}>{q.waiting ?? 0}</strong></span>
-                        <span>active <strong style={{ color: 'var(--text-primary)' }}>{q.active ?? 0}</strong></span>
-                        <span>delayed <strong style={{ color: 'var(--text-primary)' }}>{q.delayed ?? 0}</strong></span>
-                        <span style={{ color: (q.failed ?? 0) > 0 ? '#ef4444' : undefined }}>failed <strong style={{ color: (q.failed ?? 0) > 0 ? '#ef4444' : 'var(--text-primary)' }}>{q.failed ?? 0}</strong></span>
-                      </div>
-                    ) : <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>unavailable</span>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </motion.div>
-
-        {/* Recent failures */}
-        <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
-          <SectionTitle icon={XCircle} color="#ef4444" title="Recent send failures (24h)" subtitle="Failed journey emails" />
-          {(!health.failures || health.failures.length === 0) ? <Empty text="No failures in the last 24h 🎉" /> : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
-              {health.failures.map((f, i) => (
-                <div key={i} style={{ padding: '8px 10px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.18)' }}>
-                  <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{f.email}</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>{f.journeyName} · {f.nodeId} · {fmtDateTime(f.at)}</div>
-                  {f.error && <div style={{ fontSize: 10.5, color: '#ef4444', marginTop: 2 }}>{f.error}</div>}
-                </div>
-              ))}
-            </div>
-          )}
-        </motion.div>
-
-        {/* Unsubscribes by node */}
-        <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
-          <SectionTitle icon={UserMinus} color="#a855f7" title="Unsubscribes by node" subtitle="Which emails drive opt-outs" />
-          {(!health.unsubscribesByNode || health.unsubscribesByNode.length === 0) ? <Empty text="No journey unsubscribes recorded" /> : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
-              {health.unsubscribesByNode.map((u, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary)' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.journeyName}</div>
-                    <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>{u.nodeId || '—'}</div>
-                  </div>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: '#a855f7' }}>{u.count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </motion.div>
-      </div>
 
       {/* ── Template preview modal (action nodes) ── */}
       {templateModal && (

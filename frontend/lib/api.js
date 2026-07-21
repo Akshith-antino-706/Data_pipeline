@@ -118,6 +118,10 @@ export const getJourneys = (params = {}) => {
   return request(`/api/v3/journeys?${qs}`);
 };
 export const getJourneyOpsDashboard = () => request('/api/v3/journeys/dashboard');
+// Analytics tab — reads the precomputed journey_node_stats rollup (fast; never scans live)
+export const getJourneyAnalyticsTable = (status) => request(`/api/v3/journeys/analytics/table${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+export const getJourneyAnalyticsNodes = (id) => request(`/api/v3/journeys/analytics/${id}/nodes`);
+export const refreshJourneyAnalytics  = (id) => request(`/api/v3/journeys/analytics/${id}/refresh`, { method: 'POST' });
 export const getJourney = (id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
 export const updateJourney = (id, data) => request(`/api/v3/journeys/${id}`, { method: 'PUT', body: JSON.stringify(data) });

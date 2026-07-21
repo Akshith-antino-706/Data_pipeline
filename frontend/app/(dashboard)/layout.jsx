@@ -3,7 +3,7 @@
 import { useState, Component } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList, Gauge } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList, Gauge, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -17,6 +17,7 @@ const NAV = [
   { href: '/contacts', icon: UserCheck, label: 'Contacts' },
   { href: '/journeys', icon: GitBranch, label: 'Journeys' },
   { href: '/journeys/dashboard', icon: Gauge, label: 'Journey Dashboard' },
+  { href: '/journeys/analytics', icon: BarChart3, label: 'Journey Analytics' },
   { href: '/campaigns', icon: Megaphone, label: 'Campaigns' },
   { href: '/content', icon: FileText, label: 'Content' },
   { href: '/log', icon: ClipboardList, label: 'Send Log' },
