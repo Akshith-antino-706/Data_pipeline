@@ -3130,11 +3130,12 @@ class JourneyService {
    * Returns: { kpis, forecast, forecastChart, runningNow, engagement, journeys, health }
    */
   static async getOpsDashboard() {
-    // ── Load all non-draft journeys with their graphs (for node→template resolution) ──
+    // ── Load journeys with their graphs (for node→template resolution). Includes drafts so
+    //    the dashboard's status filter can show them (they simply have no entries/sends). ──
     const { rows: journeyRows } = await db.query(`
       SELECT journey_id, name, status, nodes, edges, node_statuses, total_conversions
       FROM journey_flows
-      WHERE status IN ('active','paused','completed')
+      WHERE status IN ('active','paused','completed','draft')
       ORDER BY journey_id
     `);
     const jById = new Map();

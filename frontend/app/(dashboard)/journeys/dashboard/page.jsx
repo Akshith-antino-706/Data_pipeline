@@ -47,7 +47,8 @@ export default function JourneyDashboardPage() {
   // Journeys accordion. Date mode (default today): only journeys+nodes active on
   // that date, fetched filtered from the backend. All-time mode ('' date): the full
   // journey list with lazily-loaded per-node breakdowns.
-  const [journeyDate, setJourneyDate] = useState(dubaiToday()); // default = today
+  const [journeyDate, setJourneyDate] = useState(''); // default = all time (no date scope)
+  const [statusFilter, setStatusFilter] = useState('all'); // journey status filter
   const [expanded, setExpanded] = useState(() => new Set());
   const [nodeDetails, setNodeDetails] = useState({}); // all-time: journeyId → { loading, nodes, error }
   const [byDate, setByDate] = useState({ loading: true, journeys: [], error: null, isToday: true });
@@ -143,6 +144,14 @@ export default function JourneyDashboardPage() {
 
   const hasFallback = health.aiFallback?.length > 0;
   const hasStuck = health.stuckEntries?.length > 0;
+
+  // Journey status filter — chips are built from whatever statuses are actually present
+  // in the current list (all-time = ops-dashboard journeys; date mode = byDate journeys).
+  const journeyList = journeyDate ? byDate.journeys : journeys;
+  const statusCounts = journeyList.reduce((m, j) => { m[j.status] = (m[j.status] || 0) + 1; return m; }, {});
+  const statusChips = ['all', ...Object.keys(statusCounts).sort()];
+  const statusMatch = (j) => statusFilter === 'all' || j.status === statusFilter;
+  const visibleJourneys = journeyList.filter(statusMatch);
 
   return (
     <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.05 } } }} style={{ padding: 28, maxWidth: 1400, margin: '0 auto' }}>
@@ -329,13 +338,29 @@ export default function JourneyDashboardPage() {
             <Calendar size={15} color="var(--text-tertiary)" />
             <input type="date" value={journeyDate} onChange={e => setJourneyDate(e.target.value)}
               style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12.5 }} />
-            <button className="btn btn-sm btn-secondary" onClick={() => setJourneyDate(dubaiToday())} style={{ gap: 5 }} title="Jump to today">Today</button>
-            {journeyDate && (
-              <button className="btn btn-sm btn-secondary" onClick={() => setJourneyDate('')} style={{ gap: 5 }}>
-                <X size={13} /> All time
-              </button>
-            )}
+            <button className="btn btn-sm btn-secondary" onClick={() => setJourneyDate(dubaiToday())} style={{ gap: 5 }} title="Scope to today">Today</button>
+            <button className="btn btn-sm btn-secondary" onClick={() => setJourneyDate('')} disabled={!journeyDate}
+              style={{ gap: 5, opacity: journeyDate ? 1 : 0.5 }} title="Show all journeys, all nodes (no date scope)">
+              <X size={13} /> All time
+            </button>
           </div>
+        </div>
+
+        {/* Status filter chips — built from whatever statuses are present */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          {statusChips.map(s => {
+            const on = statusFilter === s;
+            const count = s === 'all' ? journeyList.length : statusCounts[s];
+            return (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 20, cursor: 'pointer',
+                  border: `1px solid ${on ? '#8b5cf6' : 'var(--border)'}`,
+                  background: on ? 'rgba(139,92,246,0.12)' : 'var(--bg-secondary)',
+                  color: on ? '#8b5cf6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>
+                {s === 'all' ? 'All' : s} <span style={{ opacity: 0.65, marginLeft: 2 }}>{count ?? 0}</span>
+              </button>
+            );
+          })}
         </div>
 
         {journeyDate ? (
@@ -346,11 +371,11 @@ export default function JourneyDashboardPage() {
             </div>
           ) : byDate.error ? (
             <div style={{ color: '#ef4444', fontSize: 12, padding: '8px 0' }}>{byDate.error}</div>
-          ) : byDate.journeys.length === 0 ? (
-            <Empty text={`No journey has a node fired, running or scheduled on ${dayLabel(journeyDate)}`} />
+          ) : visibleJourneys.length === 0 ? (
+            <Empty text={`No ${statusFilter === 'all' ? '' : statusFilter + ' '}journey has a node fired, running or scheduled on ${dayLabel(journeyDate)}`} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {byDate.journeys.map(j => {
+              {visibleJourneys.map(j => {
                 const isOpen = expanded.has(j.journeyId);
                 return (
                   <div key={j.journeyId} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-secondary)' }}>
@@ -370,11 +395,8 @@ export default function JourneyDashboardPage() {
                       </button>
                     </div>
                     {isOpen && (
-                      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px', background: 'var(--card)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {j.nodes.map(n => (
-                          <NodeRow key={n.nodeId} node={n} dateActive
-                            onViewTemplate={() => openTemplate(j.journeyId, n, j.name)} />
-                        ))}
+                      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px', background: 'var(--card)' }}>
+                        <NodeTable nodes={j.nodes} dateActive onViewTemplate={(n) => openTemplate(j.journeyId, n, j.name)} />
                       </div>
                     )}
                   </div>
@@ -382,10 +404,14 @@ export default function JourneyDashboardPage() {
               })}
             </div>
           )
+        ) : !loaded ? (
+          <SectionSkeleton h={120} />
+        ) : visibleJourneys.length === 0 ? (
+          <Empty text={`No ${statusFilter === 'all' ? '' : statusFilter + ' '}journeys`} />
         ) : (
-          // ── All-time mode: full journey list with lazy node breakdowns ──
+          // ── All-time mode: full journey list; per-node breakdown is fetched LAZILY on expand ──
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {journeys.map(j => {
+            {visibleJourneys.map(j => {
               const isOpen = expanded.has(j.journeyId);
               const det = nodeDetails[j.journeyId];
               return (
@@ -421,12 +447,7 @@ export default function JourneyDashboardPage() {
                       ) : det.nodes.length === 0 ? (
                         <Empty text="This journey has no nodes" />
                       ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {det.nodes.map(n => (
-                            <NodeRow key={n.nodeId} node={n} dateActive={false}
-                              onViewTemplate={() => openTemplate(j.journeyId, n, j.name)} />
-                          ))}
-                        </div>
+                        <NodeTable nodes={det.nodes} dateActive={false} onViewTemplate={(n) => openTemplate(j.journeyId, n, j.name)} />
                       )}
                     </div>
                   )}
@@ -473,6 +494,69 @@ export default function JourneyDashboardPage() {
 }
 
 const NODE_ICON = { action: Mail, wait: Clock, condition: GitFork, goal: Flag, trigger: Zap };
+
+// Tabular per-node breakdown shown when a journey is expanded (both date + all-time modes).
+function NodeTable({ nodes, onViewTemplate }) {
+  const num = (v) => (v || 0).toLocaleString();
+  const th = { padding: '7px 10px', fontSize: 10.5, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', textAlign: 'left' };
+  const thR = { ...th, textAlign: 'right' };
+  const td = { padding: '8px 10px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border)' };
+  const tdR = { ...td, textAlign: 'right' };
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={th}>Node</th>
+            <th style={th}>Type</th>
+            <th style={thR}>Delivered</th>
+            <th style={thR}>Opened</th>
+            <th style={thR}>Clicked</th>
+            <th style={thR}>Failed</th>
+            <th style={th}>State</th>
+            <th style={th} />
+          </tr>
+        </thead>
+        <tbody>
+          {nodes.map(n => {
+            const isAction = n.type === 'action';
+            const running = n.running ?? n.active ?? 0;
+            const scheduled = n.scheduled ?? n.scheduledOnDate ?? 0;
+            const fired = n.fired ?? ((n.total || 0) > 0);
+            const stateBits = [];
+            if (fired) stateBits.push('Fired');
+            if (running > 0) stateBits.push(`▶ ${num(running)}`);
+            if (scheduled > 0) stateBits.push(`⏱ ${num(scheduled)}`);
+            if (n.type === 'wait') stateBits.push(`waits ${n.waitDays ?? 1}d`);
+            return (
+              <tr key={n.nodeId}>
+                <td style={{ ...td, maxWidth: 320 }}>
+                  {n.dayNumber && <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6', marginRight: 6 }}>DAY {n.dayNumber}</span>}
+                  <span style={{ fontWeight: 600 }}>{n.label}</span>
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: 10.5 }}> · {n.nodeId}</span>
+                </td>
+                <td style={{ ...td, color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{n.type}</td>
+                <td style={tdR}>{isAction ? num(n.delivered) : '—'}</td>
+                <td style={tdR}>{isAction ? <>{num(n.opened)}{n.openRate != null && <span style={{ color: '#8b5cf6', marginLeft: 4 }}>{n.openRate}%</span>}</> : '—'}</td>
+                <td style={tdR}>{isAction ? <>{num(n.clicked)}{n.clickRate != null && <span style={{ color: '#22c55e', marginLeft: 4 }}>{n.clickRate}%</span>}</> : '—'}</td>
+                <td style={tdR}>{isAction && n.failed > 0 ? <span style={{ color: '#ef4444' }}>{num(n.failed)}</span> : '—'}</td>
+                <td style={{ ...td, color: 'var(--text-secondary)', fontSize: 11, whiteSpace: 'nowrap' }}>{stateBits.join(' · ') || '—'}</td>
+                <td style={tdR}>
+                  {isAction && n.hasTemplate && (
+                    <button onClick={() => onViewTemplate(n)} className="btn btn-sm"
+                      style={{ gap: 4, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)', padding: '4px 8px', whiteSpace: 'nowrap' }}>
+                      <Eye size={12} /> Template
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function NodeRow({ node, dateActive, onViewTemplate }) {
   const Icon = NODE_ICON[node.type] || Layers;
