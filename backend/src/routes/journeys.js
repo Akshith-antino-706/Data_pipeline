@@ -156,10 +156,15 @@ router.get('/dashboard', async (req, res, next) => {
 router.get('/analytics/table', async (req, res, next) => {
   try {
     const params = [];
-    let where = `node_id = '__ALL__'`;
-    if (req.query.status) { params.push(req.query.status); where += ` AND journey_status = $${params.length}`; }
+    let where = `s.node_id = '__ALL__'`;
+    if (req.query.status) { params.push(req.query.status); where += ` AND s.journey_status = $${params.length}`; }
+    // Join journey_flows for journey_type so the UI can filter fixed vs continuous
+    // (continuous = journey_type 'gtm'; everything else is a fixed/scheduled journey).
     const { rows } = await db.query(
-      `SELECT * FROM journey_node_stats WHERE ${where} ORDER BY entries DESC, journey_id DESC`, params
+      `SELECT s.*, COALESCE(jf.journey_type, 'normal') AS journey_type
+       FROM journey_node_stats s
+       LEFT JOIN journey_flows jf ON jf.journey_id = s.journey_id
+       WHERE ${where} ORDER BY s.entries DESC, s.journey_id DESC`, params
     );
     const { rows: [meta] } = await db.query(
       `SELECT last_run_at, last_run_ms, journeys_run FROM journey_stats_meta WHERE id = true`
@@ -168,12 +173,22 @@ router.get('/analytics/table', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Node-level rows for one journey (rollup row first, then each node).
+// Node-level rows for one journey. Default = cumulative rollup rows. With ?date=YYYY-MM-DD,
+// returns per-node metrics scoped to that Dubai date (all columns, computed on demand, cached
+// 5 min) — only nodes that actually sent that day.
 router.get('/analytics/:id/nodes', async (req, res, next) => {
   try {
+    const jid = parseInt(req.params.id);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '')) {
+      const { computeNodesForDate } = await import('../services/JourneyStatsService.js');
+      const data = req.query.fresh
+        ? await computeNodesForDate(jid, req.query.date)
+        : await cached(`journey:analytics-nodes:${jid}:${req.query.date}`, () => computeNodesForDate(jid, req.query.date), 300);
+      return res.json({ success: true, data });
+    }
     const { rows } = await db.query(
       `SELECT * FROM journey_node_stats WHERE journey_id = $1 ORDER BY (node_id = '__ALL__') DESC, node_id`,
-      [parseInt(req.params.id)]
+      [jid]
     );
     res.json({ success: true, data: rows });
   } catch (err) { next(err); }
@@ -193,7 +208,17 @@ router.post('/analytics/:id/refresh', async (req, res, next) => {
 // (?date=YYYY-MM-DD, defaults to today). Powers the date-filtered dashboard accordion.
 router.get('/active-on-date', async (req, res, next) => {
   try {
-    const data = await JourneyService.getJourneysActiveOnDate(req.query.date);
+    // Cache 60s per date: this aggregates today's email_send_log + 4.9M active journey_entries
+    // (~12-44s under load) and the dashboard POLLS it every ~30s. Without a cache, every poll
+    // re-runs the heavy scan, and under send-load it exceeds the 60s proxy → nginx returns an
+    // HTML 504 → the UI throws "Unexpected token '<'". A short cache keeps it fresh enough for
+    // an ops view while collapsing repeat polls. Bypass with ?fresh=1.
+    // Resolve the Dubai date for the cache key so 'today' doesn't go stale across midnight.
+    const dubaiToday = new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : dubaiToday;
+    const data = req.query.fresh
+      ? await JourneyService.getJourneysActiveOnDate(req.query.date)
+      : await cached(`journey:active-on-date:${date}`, () => JourneyService.getJourneysActiveOnDate(req.query.date), 60);
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
