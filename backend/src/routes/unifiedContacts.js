@@ -36,6 +36,38 @@ router.get('/filters', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Contacts grouped by source. Optional ?date=YYYY-MM-DD scopes to contacts ADDED on that
+// Dubai calendar day (created_at); otherwise all-time. Returns per-source counts + total.
+// Cached 10 min (breakdown moves slowly; past-date results are immutable). Declared before
+// '/:id' so 'sources-breakdown' isn't parsed as a contact id.
+router.get('/sources-breakdown', async (req, res, next) => {
+  try {
+    const db = (await import('../config/database.js')).default;
+    const { cached } = await import('../config/cache.js');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : null;
+
+    const compute = async () => {
+      const params = [];
+      let where = '';
+      if (date) { params.push(date); where = `WHERE (created_at AT TIME ZONE 'Asia/Dubai')::date = $1::date`; }
+      const { rows } = await db.query(`
+        SELECT COALESCE(NULLIF(TRIM(sources), ''), '(unknown)') AS source, COUNT(*)::int AS count
+        FROM unified_contacts
+        ${where}
+        GROUP BY COALESCE(NULLIF(TRIM(sources), ''), '(unknown)')
+        ORDER BY count DESC
+      `, params);
+      const total = rows.reduce((s, r) => s + r.count, 0);
+      return { date, total, sources: rows };
+    };
+
+    const data = req.query.fresh
+      ? await compute()
+      : await cached(`contacts:sources-breakdown:${date || 'all'}`, compute, 600);
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
 router.get('/', async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
