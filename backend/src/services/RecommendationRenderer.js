@@ -53,6 +53,9 @@ export async function hydrateProducts(productIds) {
       product_strike_price: (r.sale_price != null && r.normal_price != null && Number(r.normal_price) > Number(r.sale_price))
         ? Math.round(Number(r.normal_price))
         : '',
+      product_discount_percent: (r.sale_price != null && r.normal_price != null && Number(r.normal_price) > Number(r.sale_price))
+        ? Math.round(((Number(r.normal_price) - Number(r.sale_price)) / Number(r.normal_price)) * 100)
+        : '',
       product_rating:       '4.7',   // No ratings column yet in `products` — placeholder
       product_reviews:      '',
     }));
