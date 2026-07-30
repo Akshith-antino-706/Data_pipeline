@@ -816,6 +816,24 @@ cron.schedule('0 5 * * 1', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Enriched products sync scheduled: Mondays 05:00 Asia/Dubai');
 
+// ── Product URL health check — Mondays 06:00 Dubai (1 hour AFTER enriched sync) ──
+// Verifies every product's product-page URL still resolves. Marks products
+// returning a definitive 404/410 (after 3 retries) as available=false so
+// broken cards drop out of the AI recommendation candidate pool.
+// Runs AFTER the enriched sync so the sync writes fresh `available` values
+// first and this cron catches URLs the source API still claims are live.
+// Rate-limited (~1.2s between requests) — takes ~30 min for ~1400 URLs.
+cron.schedule('0 6 * * 1', async () => {
+  try {
+    const { runWeeklyProductUrlHealthCheck } = await import('./src/crons/weeklyProductUrlHealthCheck.js');
+    const result = await runWeeklyProductUrlHealthCheck();
+    console.log(`[Cron:UrlHealthCheck] Done — checked=${result.checked} dead=${result.dead} flipped=${result.flipped} in ${(result.durationMs/1000).toFixed(1)}s`);
+  } catch (err) {
+    console.error('[Cron:UrlHealthCheck] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Product URL health check scheduled: Mondays 06:00 Asia/Dubai');
+
 // ── PhpAdmin weekly sync — pull new MySQL contacts into unified_contacts ──
 // Sundays 05:00 Dubai. Incremental (uses sync_metadata.last_synced_at watermark)
 // so subsequent runs only scan MySQL rows created since the last successful run.

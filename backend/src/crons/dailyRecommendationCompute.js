@@ -35,6 +35,16 @@ const STATUS_FOR_TYPE = {
   past_trip:   'PAST_BOOKING',
 };
 
+// How many products to store per user, per rec type. on_trip / future_trip
+// pull 15 same-city activities so we have more alternatives to what the user
+// already booked. past_trip serves the shared daily_category_picks top-5,
+// so topN is a no-op there (the picks table is fixed at 5).
+const TOP_N_FOR_TYPE = {
+  on_trip:     15,
+  future_trip: 15,
+  past_trip:   5,
+};
+
 async function _eligibleUsers(recommendationType, limit) {
   const status = STATUS_FOR_TYPE[recommendationType];
   if (!status) return [];
@@ -65,7 +75,7 @@ async function _runOneType(recommendationType) {
   let computed = 0, skipped = 0, failed = 0;
   for (const unifiedId of users) {
     try {
-      const result = await computeForUser({ unifiedId, recommendationType });
+      const result = await computeForUser({ unifiedId, recommendationType, topN: TOP_N_FOR_TYPE[recommendationType] });
       if (result === null) {
         skipped++; // No relevant booking OR past_trip stub
       } else {
