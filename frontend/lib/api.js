@@ -299,6 +299,8 @@ export const createUnifiedContact = (data) => request('/api/v3/unified-contacts'
 export const deleteUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`, {
   method: 'DELETE',
 });
+export const getContactSourcesBreakdown = (date) =>
+  request(`/api/v3/unified-contacts/sources-breakdown${date ? `?date=${date}` : ''}`);
 export const getUnifiedStats = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/stats${qs ? `?${qs}` : ''}`);

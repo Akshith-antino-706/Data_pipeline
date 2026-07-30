@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats } from '@/lib/api';
+import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats, getContactSourcesBreakdown } from '@/lib/api';
 import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2, Filter } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
@@ -65,6 +65,22 @@ export default function Dashboard() {
   const [revData, setRevData] = useState(null);
   const [revLoading, setRevLoading] = useState(false);
   const { businessType } = useBusinessType();
+
+  // ── Contacts by source (date filter = contacts ADDED on that Dubai day) ──
+  // Computed once (useState initializer) so it doesn't run Date.now() on every render.
+  const [dubaiToday] = useState(() => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10));
+  const [sourceDate, setSourceDate] = useState('');
+  const [sourcesData, setSourcesData] = useState(null);
+  const [sourcesLoading, setSourcesLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setSourcesLoading(true);
+    getContactSourcesBreakdown(sourceDate || undefined)
+      .then(r => { if (!cancelled) setSourcesData(r.data || null); })
+      .catch(() => { if (!cancelled) setSourcesData(null); })
+      .finally(() => { if (!cancelled) setSourcesLoading(false); });
+    return () => { cancelled = true; };
+  }, [sourceDate]);
 
   // ── email schedule summary ─────────────────────────────────────────
   const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null, conversations: null });
@@ -390,6 +406,63 @@ export default function Dashboard() {
             <div style={{ padding: '20px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>
               No activity in the last 7 days
             </div>
+          )}
+        </div>
+      </motion.div>
+
+      {/* Contacts by Source — with a Dubai-date filter (future dates disabled). Picking a
+          date shows how many contacts were ADDED to unified_contacts that day, by source. */}
+      <motion.div variants={fadeInUp}>
+        <div className="card mb-24">
+          <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <h3>Contacts by Source</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="date" value={sourceDate} max={dubaiToday}
+                onChange={e => setSourceDate(e.target.value)}
+                title="Show contacts added on this day (Dubai time). Future dates are disabled."
+                style={{ padding: '6px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--card, #fff)', color: 'var(--text-primary)' }}
+              />
+              {sourceDate && <button onClick={() => setSourceDate('')} className="btn btn-sm btn-ghost">Clear</button>}
+            </div>
+          </div>
+
+          {sourcesLoading ? (
+            <div style={{ padding: '4px 4px' }}>
+              {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: 22, borderRadius: 6, marginBottom: 10 }} />)}
+            </div>
+          ) : !sourcesData ? (
+            <div style={{ padding: '20px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>Failed to load sources.</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 16, padding: '0 4px' }}>
+                <span style={{ fontSize: 28, fontWeight: 700, color: '#3b82f6' }}>{fmt(sourcesData.total)}</span>
+                <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
+                  {sourceDate ? `contacts added on ${sourceDate}` : 'total contacts'} · {sourcesData.sources.length} source{sourcesData.sources.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {sourcesData.sources.length === 0 ? (
+                <div style={{ padding: '12px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>
+                  No contacts were added on {sourceDate}.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 4px', maxHeight: 380, overflowY: 'auto' }}>
+                  {sourcesData.sources.map(s => {
+                    const maxc = sourcesData.sources[0]?.count || 1;
+                    const w = Math.max(2, Math.round((s.count / maxc) * 100));
+                    return (
+                      <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ width: 170, fontSize: 12.5, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={s.source}>{s.source}</div>
+                        <div style={{ flex: 1, background: 'var(--bg-secondary, #f1f5f9)', borderRadius: 6, height: 22, overflow: 'hidden' }}>
+                          <div style={{ width: `${w}%`, height: '100%', background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)', borderRadius: 6 }} />
+                        </div>
+                        <div style={{ width: 90, textAlign: 'right', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(s.count)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
         </div>
       </motion.div>
