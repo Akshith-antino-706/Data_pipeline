@@ -26,7 +26,7 @@ export function AuthProvider({ children }) {
           document.cookie = 'rayna-auth=1; path=/; max-age=604800; SameSite=Lax';
         }
       }
-    } catch {}
+    } catch { /* ignore malformed storage */ }
     setHydrated(true);
   }, []);
 
@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
       throw new Error(data.error || 'Login failed');
     }
 
-    const authData = { token: data.data.token, user: data.data.user };
+    const authData = { token: data.data.token, refreshToken: data.data.refreshToken, user: data.data.user };
     localStorage.setItem(AUTH_KEY, JSON.stringify(authData));
     document.cookie = 'rayna-auth=1; path=/; max-age=604800; SameSite=Lax';
     setAuth(authData);
@@ -55,6 +55,17 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
+    const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    // Read the refresh token straight from storage (state may be stale) and revoke it server-side.
+    let refreshToken = null;
+    try { refreshToken = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null')?.refreshToken || null; } catch { /* ignore */ }
+    if (refreshToken) {
+      fetch(`${BASE}/api/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      }).catch(() => {});
+    }
     localStorage.removeItem(AUTH_KEY);
     document.cookie = 'rayna-auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
     setAuth(null);

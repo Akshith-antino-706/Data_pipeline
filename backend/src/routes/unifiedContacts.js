@@ -44,12 +44,18 @@ router.get('/sources-breakdown', async (req, res, next) => {
   try {
     const db = (await import('../config/database.js')).default;
     const { cached } = await import('../config/cache.js');
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : null;
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    const from = re.test(req.query.from || '') ? req.query.from : null;
+    const to   = re.test(req.query.to   || '') ? req.query.to   : null;
 
     const compute = async () => {
       const params = [];
-      let where = '';
-      if (date) { params.push(date); where = `WHERE (created_at AT TIME ZONE 'Asia/Dubai')::date = $1::date`; }
+      const conds = [];
+      // Filter by the Dubai calendar day the contact was added (created_at). from/to are
+      // inclusive; either bound may be omitted for open-ended ranges.
+      if (from) { params.push(from); conds.push(`(created_at AT TIME ZONE 'Asia/Dubai')::date >= $${params.length}::date`); }
+      if (to)   { params.push(to);   conds.push(`(created_at AT TIME ZONE 'Asia/Dubai')::date <= $${params.length}::date`); }
+      const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
       const { rows } = await db.query(`
         SELECT COALESCE(NULLIF(TRIM(sources), ''), '(unknown)') AS source, COUNT(*)::int AS count
         FROM unified_contacts
@@ -58,12 +64,12 @@ router.get('/sources-breakdown', async (req, res, next) => {
         ORDER BY count DESC
       `, params);
       const total = rows.reduce((s, r) => s + r.count, 0);
-      return { date, total, sources: rows };
+      return { from, to, total, sources: rows };
     };
 
     const data = req.query.fresh
       ? await compute()
-      : await cached(`contacts:sources-breakdown:${date || 'all'}`, compute, 600);
+      : await cached(`contacts:sources-breakdown:${from || 'all'}:${to || 'all'}`, compute, 600);
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
