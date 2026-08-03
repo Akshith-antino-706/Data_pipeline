@@ -2,18 +2,48 @@ const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 const AUTH_KEY = 'rayna-auth';
 
+function getAuth() {
+  try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; }
+}
+function setAuth(a) {
+  try { localStorage.setItem(AUTH_KEY, JSON.stringify(a)); } catch { /* ignore */ }
+}
 function getToken() {
-  try {
-    const stored = localStorage.getItem(AUTH_KEY);
-    if (!stored) return null;
-    const parsed = JSON.parse(stored);
-    return parsed?.token || null;
-  } catch {
-    return null;
+  return getAuth()?.token || null;
+}
+function clearAuthAndRedirect() {
+  try { localStorage.removeItem(AUTH_KEY); } catch { /* ignore */ }
+  if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+    window.location.href = '/login';
   }
 }
 
-async function request(path, options = {}) {
+// Exchange the refresh token for a new access token. De-duped so many concurrent 401s
+// trigger only ONE refresh call. Returns the new access token, or null if refresh failed.
+let _refreshPromise = null;
+function tryRefresh() {
+  const auth = getAuth();
+  if (!auth?.refreshToken) return Promise.resolve(null);
+  if (!_refreshPromise) {
+    _refreshPromise = fetch(`${BASE}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: auth.refreshToken }),
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        const data = d?.data;
+        if (!data?.token) return null;
+        setAuth({ ...auth, token: data.token, refreshToken: data.refreshToken || auth.refreshToken, user: data.user || auth.user });
+        return data.token;
+      })
+      .catch(() => null)
+      .finally(() => { _refreshPromise = null; });
+  }
+  return _refreshPromise;
+}
+
+async function request(path, options = {}, _retried = false) {
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -26,10 +56,13 @@ async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
 
   if (res.status === 401) {
-    localStorage.removeItem(AUTH_KEY);
-    if (!window.location.pathname.includes('/login')) {
-      window.location.href = '/login';
+    // Access token likely expired — try a one-time refresh, then retry the original request.
+    // Don't attempt this for auth endpoints themselves (avoids a refresh loop).
+    if (!_retried && !path.startsWith('/api/auth/')) {
+      const newToken = await tryRefresh();
+      if (newToken) return request(path, options, true);
     }
+    clearAuthAndRedirect();
     throw new Error('Session expired. Please log in again.');
   }
 
@@ -299,8 +332,12 @@ export const createUnifiedContact = (data) => request('/api/v3/unified-contacts'
 export const deleteUnifiedContact = (id) => request(`/api/v3/unified-contacts/${id}`, {
   method: 'DELETE',
 });
-export const getContactSourcesBreakdown = (date) =>
-  request(`/api/v3/unified-contacts/sources-breakdown${date ? `?date=${date}` : ''}`);
+export const getContactSourcesBreakdown = (from, to) => {
+  const qs = [];
+  if (from) qs.push(`from=${from}`);
+  if (to) qs.push(`to=${to}`);
+  return request(`/api/v3/unified-contacts/sources-breakdown${qs.length ? `?${qs.join('&')}` : ''}`);
+};
 export const getUnifiedStats = (params = {}) => {
   const qs = new URLSearchParams(params).toString();
   return request(`/api/v3/unified-contacts/stats${qs ? `?${qs}` : ''}`);

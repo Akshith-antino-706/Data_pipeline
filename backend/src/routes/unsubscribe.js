@@ -72,6 +72,12 @@ function shell(inner) {
   .btn{display:inline-block;border:none;border-radius:10px;padding:12px 22px;font-size:14px;font-weight:600;cursor:pointer;margin:6px}
   .btn-danger{background:#e92d2a;color:#fff}
   .btn-ghost{background:#fff;color:#5f6368;border:1px solid #d6d8dc}
+  .btn-primary{background:#0ea5e9;color:#fff}
+  .input{width:100%;padding:12px 14px;border:1px solid #d6d8dc;border-radius:10px;font-size:14px;margin:10px 0 4px;outline:none}
+  .input:focus{border-color:#0ea5e9}
+  details{margin:14px 0 4px;text-align:left}
+  summary{cursor:pointer;font-weight:600;color:#0ea5e9;font-size:14px;list-style:none;text-align:center;padding:6px 0}
+  summary::-webkit-details-marker{display:none}
   .ok{color:#16a34a;font-weight:700;font-size:34px}
   .sails{display:inline-block;height:30px;margin-bottom:6px}
   a{color:#0ea5e9;text-decoration:none}
@@ -89,12 +95,23 @@ router.get('/', async (req, res) => {
     if (c.unsubscribed) return res.send(shell(`<h1>You're already unsubscribed</h1><p><span class="email">${escapeHtml(c.email)}</span> is no longer subscribed to Rayna Tours marketing emails.</p>`));
     const ref = req.query.t ? `t=${encodeURIComponent(req.query.t)}` : `log=${encodeURIComponent(req.query.log)}`;
     return res.send(shell(`
-      <h1>Unsubscribe from emails?</h1>
-      <p>You're about to unsubscribe <span class="email">${escapeHtml(c.email)}</span> from Rayna Tours marketing emails. You won't receive offers, holiday picks, or visa updates from us.</p>
+      <h1>Manage email preferences</h1>
+      <p>For <span class="email">${escapeHtml(c.email)}</span>, choose an option below.</p>
+
       <form method="POST" action="/api/unsubscribe/confirm?${ref}" style="margin-top:18px">
-        <button type="submit" class="btn btn-danger">Confirm unsubscribe</button>
-        <a href="https://www.raynatours.com" class="btn btn-ghost" style="text-decoration:none">Keep me subscribed</a>
-      </form>`));
+        <button type="submit" class="btn btn-danger">Unsubscribe from emails</button>
+      </form>
+
+      <details>
+        <summary>Change email address instead</summary>
+        <p style="text-align:left;margin:8px 0 0">Prefer to keep getting our offers at a different address? Update it here — you'll stay subscribed.</p>
+        <form method="POST" action="/api/unsubscribe/change-email?${ref}">
+          <input class="input" type="email" name="email" required placeholder="your new email address" autocomplete="email" />
+          <button type="submit" class="btn btn-primary" style="width:100%;margin:6px 0 0">Update email address</button>
+        </form>
+      </details>
+
+      <div style="margin-top:16px"><a href="https://www.raynatours.com" class="btn btn-ghost" style="text-decoration:none">Keep me subscribed</a></div>`));
   } catch (e) {
     console.error('[Unsubscribe GET] error:', e.message);
     res.status(500).send(shell(`<h1>Something went wrong</h1><p>Please try again later.</p>`));
@@ -130,6 +147,49 @@ router.post('/confirm', async (req, res) => {
       <p style="margin-top:18px"><a href="https://www.raynatours.com">Back to Rayna Tours</a></p>`));
   } catch (e) {
     console.error('[Unsubscribe POST] error:', e.message);
+    res.status(500).send(shell(`<h1>Something went wrong</h1><p>We couldn't process your request. Please try again later.</p>`));
+  }
+});
+
+// POST /unsubscribe/change-email — update the contact's email in place (same user ID),
+// keeping them subscribed. The link identifies the contact (uid from ?log= / ?t=), so the
+// change is scoped to that account. Requires the POST (human form submit), so link
+// pre-fetch by scanners can't trigger it. express.urlencoded parses the form body.
+router.post('/change-email', express.urlencoded({ extended: false }), async (req, res) => {
+  const ref = req.query.t ? `t=${encodeURIComponent(req.query.t)}` : `log=${encodeURIComponent(req.query.log)}`;
+  try {
+    const c = await resolveContact({ log: req.query.log, t: req.query.t });
+    if (!c) return res.status(400).send(shell(`<h1>Link not valid</h1><p>This link is invalid or has expired.</p>`));
+
+    const newEmail = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+      return res.status(400).send(shell(`<h1>Invalid email</h1><p>Please enter a valid email address.</p><p style="margin-top:14px"><a href="/api/unsubscribe?${ref}">← Go back</a></p>`));
+    }
+    if (newEmail === String(c.email || '').trim().toLowerCase()) {
+      return res.send(shell(`<h1>No change needed</h1><p><span class="email">${escapeHtml(newEmail)}</span> is already the email on file.</p><p style="margin-top:14px"><a href="/api/unsubscribe?${ref}">← Go back</a></p>`));
+    }
+
+    // Guard against silently overwriting a DIFFERENT contact's email (would create a duplicate).
+    const { rows: [dup] } = await db.query(
+      'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = $1 AND id <> $2 LIMIT 1', [newEmail, c.uid]
+    );
+    if (dup) {
+      return res.status(409).send(shell(`<h1>Email already in use</h1><p><span class="email">${escapeHtml(newEmail)}</span> is already linked to another account. Please contact <a href="mailto:info@raynatours.com">info@raynatours.com</a>.</p>`));
+    }
+
+    const { rowCount } = await db.query(
+      'UPDATE unified_contacts SET email = $1, updated_at = NOW() WHERE id = $2', [newEmail, c.uid]
+    );
+    if (!rowCount) return res.status(400).send(shell(`<h1>Something went wrong</h1><p>We couldn't update your email. Please try again later.</p>`));
+
+    console.log(`[Unsubscribe] uid=${c.uid} changed email ${c.email} -> ${newEmail}`);
+    return res.send(shell(`
+      <div class="ok">✓</div>
+      <h1>Email updated</h1>
+      <p>Your email has been changed to <span class="email">${escapeHtml(newEmail)}</span>. You'll keep receiving Rayna Tours emails at your new address.</p>
+      <p style="margin-top:18px"><a href="https://www.raynatours.com">Back to Rayna Tours</a></p>`));
+  } catch (e) {
+    console.error('[Unsubscribe change-email] error:', e.message);
     res.status(500).send(shell(`<h1>Something went wrong</h1><p>We couldn't process your request. Please try again later.</p>`));
   }
 });

@@ -69,18 +69,19 @@ export default function Dashboard() {
   // ── Contacts by source (date filter = contacts ADDED on that Dubai day) ──
   // Computed once (useState initializer) so it doesn't run Date.now() on every render.
   const [dubaiToday] = useState(() => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10));
-  const [sourceDate, setSourceDate] = useState('');
+  const [sourceFrom, setSourceFrom] = useState('');
+  const [sourceTo, setSourceTo] = useState('');
   const [sourcesData, setSourcesData] = useState(null);
   const [sourcesLoading, setSourcesLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     setSourcesLoading(true);
-    getContactSourcesBreakdown(sourceDate || undefined)
+    getContactSourcesBreakdown(sourceFrom || undefined, sourceTo || undefined)
       .then(r => { if (!cancelled) setSourcesData(r.data || null); })
       .catch(() => { if (!cancelled) setSourcesData(null); })
       .finally(() => { if (!cancelled) setSourcesLoading(false); });
     return () => { cancelled = true; };
-  }, [sourceDate]);
+  }, [sourceFrom, sourceTo]);
 
   // ── email schedule summary ─────────────────────────────────────────
   const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null, conversations: null });
@@ -414,16 +415,24 @@ export default function Dashboard() {
           date shows how many contacts were ADDED to unified_contacts that day, by source. */}
       <motion.div variants={fadeInUp}>
         <div className="card mb-24">
-          <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <h3>Contacts by Source</h3>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Contacts by Source</h3>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}>
+              <span style={{ fontSize: 12.5, color: 'var(--text-tertiary)' }}>From</span>
               <input
-                type="date" value={sourceDate} max={dubaiToday}
-                onChange={e => setSourceDate(e.target.value)}
-                title="Show contacts added on this day (Dubai time). Future dates are disabled."
-                style={{ padding: '6px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--card, #fff)', color: 'var(--text-primary)' }}
+                type="date" value={sourceFrom} max={sourceTo || dubaiToday}
+                onChange={e => setSourceFrom(e.target.value)}
+                title="Range start — contacts added on/after this day (Dubai time). Future dates disabled."
+                style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--card, #fff)', color: 'var(--text-primary)' }}
               />
-              {sourceDate && <button onClick={() => setSourceDate('')} className="btn btn-sm btn-ghost">Clear</button>}
+              <span style={{ fontSize: 12.5, color: 'var(--text-tertiary)' }}>to</span>
+              <input
+                type="date" value={sourceTo} min={sourceFrom || undefined} max={dubaiToday}
+                onChange={e => setSourceTo(e.target.value)}
+                title="Range end — contacts added on/before this day (Dubai time). Future dates disabled."
+                style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--card, #fff)', color: 'var(--text-primary)' }}
+              />
+              {(sourceFrom || sourceTo) && <button onClick={() => { setSourceFrom(''); setSourceTo(''); }} className="btn btn-sm btn-ghost" style={{ flexShrink: 0 }}>Clear</button>}
             </div>
           </div>
 
@@ -438,12 +447,12 @@ export default function Dashboard() {
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 16, padding: '0 4px' }}>
                 <span style={{ fontSize: 28, fontWeight: 700, color: '#3b82f6' }}>{fmt(sourcesData.total)}</span>
                 <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
-                  {sourceDate ? `contacts added on ${sourceDate}` : 'total contacts'} · {sourcesData.sources.length} source{sourcesData.sources.length !== 1 ? 's' : ''}
+                  {sourceFrom && sourceTo ? `contacts added ${sourceFrom} → ${sourceTo}` : sourceFrom ? `contacts added on/after ${sourceFrom}` : sourceTo ? `contacts added on/before ${sourceTo}` : 'total contacts'} · {sourcesData.sources.length} source{sourcesData.sources.length !== 1 ? 's' : ''}
                 </span>
               </div>
               {sourcesData.sources.length === 0 ? (
                 <div style={{ padding: '12px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>
-                  No contacts were added on {sourceDate}.
+                  No contacts were added in the selected range.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 4px', maxHeight: 380, overflowY: 'auto' }}>

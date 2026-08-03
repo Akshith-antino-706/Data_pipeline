@@ -20,6 +20,30 @@ router.post('/login', async (req, res, next) => {
 });
 
 /**
+ * POST /api/auth/refresh
+ * Body: { refreshToken }
+ * Returns: { success: true, data: { token, refreshToken, user } }
+ * Exchanges a valid (rotating) refresh token for a fresh 1-day access token.
+ */
+router.post('/refresh', async (req, res, next) => {
+  try {
+    const result = await AuthService.refresh(req.body?.refreshToken);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/auth/logout
+ * Body: { refreshToken } — revokes it so it can't be used again.
+ */
+router.post('/logout', async (req, res) => {
+  await AuthService.logout(req.body?.refreshToken);
+  res.json({ success: true });
+});
+
+/**
  * GET /api/auth/me
  * Headers: Authorization: Bearer <token>
  * Returns: { success: true, data: { id, email, name, role } }
