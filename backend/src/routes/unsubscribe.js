@@ -177,10 +177,32 @@ router.post('/change-email', express.urlencoded({ extended: false }), async (req
       return res.status(409).send(shell(`<h1>Email already in use</h1><p><span class="email">${escapeHtml(newEmail)}</span> is already linked to another account. Please contact <a href="mailto:info@raynatours.com">info@raynatours.com</a>.</p>`));
     }
 
-    const { rowCount } = await db.query(
-      'UPDATE unified_contacts SET email = $1, updated_at = NOW() WHERE id = $2', [newEmail, c.uid]
-    );
-    if (!rowCount) return res.status(400).send(shell(`<h1>Something went wrong</h1><p>We couldn't update your email. Please try again later.</p>`));
+    // Update the current email (both columns) AND append to the email-change audit trail
+    // atomically. email_send_log rows are left untouched — their per-send email is an
+    // immutable snapshot, so historical sends keep showing the address they went to.
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const { rowCount } = await client.query(
+        'UPDATE unified_contacts SET email = $1, actual_email = $1, updated_at = NOW() WHERE id = $2',
+        [newEmail, c.uid]
+      );
+      if (!rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(400).send(shell(`<h1>Something went wrong</h1><p>We couldn't update your email. Please try again later.</p>`));
+      }
+      await client.query(
+        `INSERT INTO contact_email_history (unified_id, old_email, new_email, source)
+         VALUES ($1, $2, $3, 'unsubscribe_page')`,
+        [c.uid, c.email, newEmail]
+      );
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     console.log(`[Unsubscribe] uid=${c.uid} changed email ${c.email} -> ${newEmail}`);
     return res.send(shell(`
