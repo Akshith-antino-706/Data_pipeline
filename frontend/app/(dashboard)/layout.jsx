@@ -22,7 +22,7 @@ const NAV = [
   { href: '/content', icon: FileText, label: 'Content' },
   { href: '/log', icon: ClipboardList, label: 'Send Log' },
   { href: '/utm', icon: Link2, label: 'UTM Tracking' },
-  { href: '/gtm-bigquery', icon: Code, label: 'GTM & BigQuery' },
+  { href: '/tag-manager', icon: Code, label: 'GTM & BigQuery' },
   { href: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
   { href: '/daily-report', icon: Download, label: 'Daily Report' },
   { href: '/system', icon: FileText, label: 'System Docs' },
