@@ -667,7 +667,7 @@ export default function SystemArchitecture() {
           ['Campaigns', '/campaigns', 'Campaign list with metrics per channel + segment', 'getCampaigns, createCampaign, executeCampaign'],
           ['Content', '/content', '65 templates with preview, AI generation, Gupshup approval workflow for WA/SMS', 'getTemplates, createTemplate, submitTemplateForApproval, checkGupshupStatus'],
           ['UTM Tracking', '/utm', 'Campaign UTM links + per-user token generation + click stats', 'getUTMLinks, generateUserLinks'],
-          ['GTM & BigQuery', '/gtm', 'GTM tag setup, event log, GA4 sync status', 'getGTMEvents, getGA4Status'],
+          ['GTM & BigQuery', '/gtm-bigquery', 'GTM tag setup, event log, GA4 sync status', 'getGTMEvents, getGA4Status'],
           ['Data Pipeline', '/data-pipeline', 'All sync statuses, row counts, manual sync triggers', 'getSyncStatus, triggerSync'],
           ['Daily Report', '/daily-report', 'Daily data reports with table downloads', 'getDailyReport, downloadReport'],
           ['System Docs', '/system', 'This page — complete project documentation', 'None (static)'],
