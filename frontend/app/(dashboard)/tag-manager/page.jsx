@@ -9,7 +9,69 @@ import { Code, Calendar, Download, Activity, Layers, Copy, Mail, MousePointer, U
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
+/* ── Skeleton primitives ─────────────────────────────── */
+const shimmer = {
+  background: 'linear-gradient(90deg, var(--bg-secondary) 25%, var(--border-color) 50%, var(--bg-secondary) 75%)',
+  backgroundSize: '200% 100%',
+  animation: 'shimmer 1.5s infinite',
+};
+
+function SkeletonBox({ width, height = 20, borderRadius = 8, style = {} }) {
+  return <div style={{ width, height, borderRadius, ...shimmer, ...style }} />;
+}
+
+function SkeletonHeader() {
+  return (
+    <div className="card-header" style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <SkeletonBox width={220} height={30} style={{ marginBottom: 8 }} />
+        <SkeletonBox width={380} height={13} />
+      </div>
+      <SkeletonBox width={170} height={38} borderRadius={10} />
+    </div>
+  );
+}
+
+function SkeletonTabs() {
+  return (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+      {[110, 130, 140, 130, 120].map((w, i) => (
+        <SkeletonBox key={i} width={w} height={34} borderRadius={10} />
+      ))}
+    </div>
+  );
+}
+
+function SkeletonKPICards() {
+  return (
+    <div className="kpi-strip" style={{ marginBottom: 24, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="card" style={{ padding: '16px 18px' }}>
+          <SkeletonBox width={90} height={11} style={{ marginBottom: 10 }} />
+          <SkeletonBox width={110} height={28} style={{ marginBottom: 8 }} />
+          <SkeletonBox width={80} height={11} style={{ marginBottom: 6 }} />
+          <SkeletonBox width={70} height={10} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SkeletonChartCard() {
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <SkeletonBox width={180} height={18} style={{ marginBottom: 20 }} />
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 260 }}>
+        {Array.from({ length: 20 }).map((_, i) => (
+          <div key={i} style={{ flex: 1, ...shimmer, borderRadius: '6px 6px 0 0', height: `${30 + (i * 37) % 65}%` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function GTMIntegration() {
+  const [loading, setLoading] = useState(true);
   const [snippet, setSnippet] = useState(null);
   const [scripts, setScripts] = useState({});
   const [analytics, setAnalytics] = useState({ daily: [], top_events: [] });
@@ -44,6 +106,7 @@ export default function GTMIntegration() {
       setAnalytics(ana?.data || ana || { daily: [], top_events: [] });
       setOccasions(Array.isArray(occ) ? occ : (occ?.data || []));
     } catch (err) { console.error(err); }
+    finally { setLoading(false); }
   }
 
   async function loadEventDetail(eventName) {
@@ -102,6 +165,17 @@ export default function GTMIntegration() {
   ];
 
   const occasionColors = { festival: 'var(--yellow)', holiday: 'var(--red)', season: 'var(--green)', event: 'var(--red)', custom: 'var(--yellow)' };
+
+  if (loading) {
+    return (
+      <div style={{ padding: 24 }}>
+        <SkeletonHeader />
+        <SkeletonTabs />
+        <SkeletonKPICards />
+        <SkeletonChartCard />
+      </div>
+    );
+  }
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
