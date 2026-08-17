@@ -1,6 +1,7 @@
 import db from '../config/database.js';
 import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
+import ChatHeadV1Service from './ChatHeadV1Service.js';
 
 /**
  * CONTINUOUS journey engine — the "conveyor belt".
@@ -65,11 +66,37 @@ class ContinuousJourneyService {
        RETURNING e.id, e.journey_id, e.unified_id, e.item_id, e.current_node_id, e.last_event_id`,
       [this._batch]
     );
-    if (!rows.length) return { due: 0, enqueued: 0, exited: 0 };
+    if (!rows.length) return { due: 0, enqueued: 0, exited: 0, waBroadcasts: 0, waSent: 0 };
 
-    // Rows are already claimed (last_enqueued_at stamped atomically above). Now exit-check + enqueue.
-    let enqueued = 0, exited = 0;
+    // ── Split the claimed rows by channel of their CURRENT node ──────────────
+    // WhatsApp action nodes are BATCHED: all due recipients of the same (journey,
+    // node, ChatHead channel, template) go into ONE .data-file broadcast — not one
+    // broadcast per recipient. Everything else (email, etc.) keeps the per-entry
+    // BullMQ worker path (each email is rendered per user).
+    const journeyIds = [...new Set(rows.map(r => r.journey_id))];
+    const { rows: flows } = await db.query(
+      'SELECT journey_id, nodes FROM journey_flows WHERE journey_id = ANY($1::int[])', [journeyIds]
+    );
+    const nodeMapOf = {};
+    for (const f of flows) nodeMapOf[f.journey_id] = Object.fromEntries((f.nodes || []).map(n => [n.id, n]));
+
+    const waGroups = new Map(); // journeyId|nodeId|waCh|waTpl → { node, waCh, waTpl, entries[] }
+    const others = [];
     for (const e of rows) {
+      const node = nodeMapOf[e.journey_id]?.[e.current_node_id];
+      if (node?.type === 'action' && String(node.data?.channel || '').toLowerCase() === 'whatsapp') {
+        const waCh = node.data?.waChannelId, waTpl = node.data?.waTemplateId;
+        const key = `${e.journey_id}|${e.current_node_id}|${waCh}|${waTpl}`;
+        if (!waGroups.has(key)) waGroups.set(key, { node, waCh, waTpl, entries: [] });
+        waGroups.get(key).entries.push(e);
+      } else {
+        others.push(e);
+      }
+    }
+
+    // Non-WhatsApp: exit-check + enqueue per entry (unchanged behaviour).
+    let enqueued = 0, exited = 0;
+    for (const e of others) {
       const exit = await this._exitReason(e.unified_id, e.item_id);
       if (exit) {
         await db.query(`UPDATE gtm_journey_entries SET status='exited', exit_reason=$2, next_fire_at=NULL, updated_at=NOW() WHERE id=$1`, [e.id, exit]);
@@ -81,8 +108,95 @@ class ContinuousJourneyService {
       }, 0);
       enqueued++;
     }
-    if (enqueued || exited) console.log(`[Continuous] processDue: due=${rows.length} enqueued=${enqueued} exited=${exited}`);
-    return { due: rows.length, enqueued, exited };
+
+    // WhatsApp: ONE broadcast per group (all recipients in a single .data file).
+    let waBroadcasts = 0, waSent = 0;
+    for (const grp of waGroups.values()) {
+      const r = await this._sendWhatsAppGroup(grp);
+      waBroadcasts += r.broadcasts; waSent += r.sent; exited += r.exited;
+    }
+
+    if (enqueued || exited || waSent) console.log(`[Continuous] processDue: due=${rows.length} enqueued=${enqueued} waSent=${waSent} (${waBroadcasts} broadcast${waBroadcasts === 1 ? '' : 's'}) exited=${exited}`);
+    return { due: rows.length, enqueued, exited, waBroadcasts, waSent };
+  }
+
+  /**
+   * Send ONE ChatHead broadcast for a group of due entries all sitting on the SAME
+   * WhatsApp node (same channel + template) — the whole group goes into a single
+   * .data file, then each entry is logged (whatsapp_send_log, source=gtm_journey)
+   * and advanced. This is the continuous-engine analogue of the fixed engine's
+   * _sendWhatsAppBatch; it's what stops the "one broadcast per recipient" storm.
+   */
+  static async _sendWhatsAppGroup({ node, waCh, waTpl, entries }) {
+    const journeyId = entries[0].journey_id, nodeId = node.id;
+    let exited = 0;
+    const logEvent = (entryId, type, details) => db.query(
+      `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1,$2,$3,'whatsapp',$4)`,
+      [entryId, nodeId, type, JSON.stringify(details || {})]
+    ).catch(() => {});
+
+    // Batch-fetch contacts once; then exit-check + opt-out + validity per entry.
+    const uids = [...new Set(entries.map(e => e.unified_id))];
+    const { rows: cs } = await db.query(
+      'SELECT id, name, mobile, wa_unsubscribe FROM unified_contacts WHERE id = ANY($1::bigint[])', [uids]
+    );
+    const cMap = Object.fromEntries(cs.map(c => [c.id, c]));
+
+    const valid = [];
+    for (const e of entries) {
+      const exit = await this._exitReason(e.unified_id, e.item_id);
+      if (exit) {
+        await db.query(`UPDATE gtm_journey_entries SET status='exited', exit_reason=$2, next_fire_at=NULL, updated_at=NOW() WHERE id=$1`, [e.id, exit]);
+        exited++; continue;
+      }
+      const c = cMap[e.unified_id] || {};
+      if (String(c.wa_unsubscribe || '').toLowerCase() === 'yes') { await this.advance(e.id, journeyId, nodeId); continue; }
+      const phone = String(c.mobile || '').replace(/\D/g, '');
+      if (phone.length < 10 || !waCh || !waTpl) {
+        await logEvent(e.id, 'action_blocked', { reason: phone.length < 10 ? 'no_mobile' : 'missing_chathead_config' });
+        await this.advance(e.id, journeyId, nodeId);
+        continue;
+      }
+      valid.push({ e, c, phone });
+    }
+    if (!valid.length) return { broadcasts: 0, sent: 0, exited };
+
+    // ── ONE ChatHead broadcast for the whole group ──
+    let result;
+    try {
+      result = await ChatHeadV1Service.sendBroadcast({
+        contacts:     valid.map(v => ({ phone: v.phone, name: v.c.name || '' })),
+        channelId:    parseInt(waCh),
+        channelName:  node.data?.waChannelName || null,
+        templateId:   parseInt(waTpl),
+        templateName: node.data?.waTemplateName || null,
+        name:         `gtm journey ${journeyId} ${nodeId} (${valid.length})`,
+        sendTime:     new Date(Date.now() + 60 * 1000),
+      });
+    } catch (err) { result = { success: false, error: err.message }; }
+
+    const ok      = !!result?.success;
+    const bcastId = result?.broadcast?.id ?? null;
+    const extId   = result?.broadcast?.chatheadBroadcastId != null ? String(result.broadcast.chatheadBroadcastId) : null;
+
+    // Per-recipient log + advance (each entry independent). Advance on failure too —
+    // retrying would re-broadcast (dup sends); the failure is recorded instead.
+    for (const v of valid) {
+      await db.query(
+        `INSERT INTO whatsapp_send_log
+           (unified_id, phone, contact_name, channel_id, template_id, template_name,
+            journey_id, node_id, broadcast_id, external_id, status, source, error, sent_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'gtm_journey',$12,
+                 CASE WHEN $11='sent' THEN NOW() ELSE NULL END)`,
+        [v.c.id, v.phone, v.c.name || null, parseInt(waCh), parseInt(waTpl),
+         node.data?.waTemplateName || null, journeyId, nodeId, bcastId, extId,
+         ok ? 'sent' : 'failed', ok ? null : String(result?.error || 'broadcast failed').slice(0, 500)]
+      ).catch(() => {});
+      await logEvent(v.e.id, ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', bulk: true, broadcastId: extId, recipients: valid.length });
+      await this.advance(v.e.id, journeyId, nodeId);
+    }
+    console.log(`[Continuous] WhatsApp BULK broadcast journey=${journeyId} node=${nodeId} recipients=${valid.length} status=${ok ? 'sent' : 'FAILED'} chId=${extId || '-'}`);
+    return { broadcasts: 1, sent: valid.length, exited };
   }
 
   /**
