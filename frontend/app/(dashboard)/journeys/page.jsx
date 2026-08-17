@@ -53,6 +53,7 @@ const GTM_EVENT_OPTIONS = [
   { value: 'click_email',              label: 'Click Email' },
   { value: 'click_call',               label: 'Click Call' },
   { value: 'on_trip_started',          label: 'On Trip Started (synthetic)' },
+  { value: 'exit_intent_lead',          label: 'Exist Intent Lead' },
 ];
 
 // Collapsed multi-select dropdown for the Trigger GTM Event(s) picker.
