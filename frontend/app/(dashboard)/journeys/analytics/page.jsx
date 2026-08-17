@@ -16,11 +16,12 @@
 
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import {
-  BarChart3, RefreshCw, ChevronRight, ChevronDown, Download, Loader2, Info, Search, X, Calendar,
+  BarChart3, RefreshCw, ChevronRight, ChevronDown, Download, Loader2, Info, Search, X, Calendar, Eye, Sparkles,
 } from 'lucide-react';
 import {
-  getJourneyAnalyticsTable, getJourneyAnalyticsNodes, refreshJourneyAnalytics,
+  getJourneyAnalyticsTable, getJourneyAnalyticsNodes, refreshJourneyAnalytics, regenerateJourneyQaReports,
 } from '@/lib/api';
+import EmailQaReportModal from '../EmailQaReportModal';
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('en-US');
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
@@ -96,6 +97,21 @@ export default function JourneyAnalyticsPage() {
   const [sortDir, setSortDir] = useState('desc');
   const [expanded, setExpanded] = useState({});
   const [refreshingId, setRefreshingId] = useState(null);
+  const [qaModal, setQaModal] = useState(null); // { templateId, templateName }
+  const [regen, setRegen] = useState({ loading: false });
+
+  const regenReports = async () => {
+    setRegen({ loading: true });
+    try {
+      const res = await regenerateJourneyQaReports();
+      const d = res?.data || {};
+      alert(`QA reports regenerated — ${d.ok || 0} updated, ${d.failed || 0} failed, ${d.skipped || 0} skipped (of ${d.total || 0} templates).`);
+    } catch (e) {
+      alert(`Regenerate failed: ${e.message}`);
+    } finally {
+      setRegen({ loading: false });
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -260,6 +276,9 @@ export default function JourneyAnalyticsPage() {
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)', flex: '0 0 auto' }}>{visible.length} of {rows.length}</span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flex: '0 0 auto' }}>
+          <button onClick={regenReports} disabled={regen.loading} title="Re-run the AI QA report for every journey template now (also runs daily at 3:30 AM)" style={btn}>
+            {regen.loading ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />} {regen.loading ? 'Generating…' : 'Regenerate reports'}
+          </button>
           <button onClick={exportCsv} style={btn}><Download size={14} /> CSV</button>
           <button onClick={load} style={btn}><RefreshCw size={14} /> Reload</button>
         </div>
@@ -284,13 +303,14 @@ export default function JourneyAnalyticsPage() {
                 <th style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-secondary)', width: 32, borderBottom: '1px solid var(--border)' }} />
                 <HeadCell label="Journey" sortField="name" align="left" />
                 <HeadCell label="Status" sortField={null} align="left" />
+                <HeadCell label="Report" sortField={null} align="center" tip="AI email QA report for this node's template" />
                 {COLS.map(c => <HeadCell key={c.key} label={c.label} sortField={c.key} tip={c.tip} />)}
                 <th style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-secondary)', width: 40, borderBottom: '1px solid var(--border)' }} />
               </tr>
             </thead>
             <tbody>
               {visible.length === 0 && (
-                <tr><td colSpan={COLS.length + 4} style={{ padding: 28, textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                <tr><td colSpan={COLS.length + 5} style={{ padding: 28, textAlign: 'center', color: 'var(--text-tertiary)' }}>
                   {rows.length === 0
                     ? 'No journeys in the rollup yet — the background job populates it every 30 min (or hit refresh on a journey).'
                     : 'No journeys match the current filters.'}
@@ -316,6 +336,7 @@ export default function JourneyAnalyticsPage() {
                           {r.journey_status}
                         </span>
                       </td>
+                      <td />
                       {dataCells(r)}
                       <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                         <button onClick={(e) => refreshOne(r.journey_id, e)} title="Recompute this journey now"
@@ -327,15 +348,15 @@ export default function JourneyAnalyticsPage() {
 
                     {/* Node rows — same columns as the parent so everything aligns */}
                     {exp && exp.loading && (
-                      <tr><td colSpan={COLS.length + 4} style={{ padding: 12, background: 'var(--bg-secondary)', color: 'var(--text-tertiary)' }}>
+                      <tr><td colSpan={COLS.length + 5} style={{ padding: 12, background: 'var(--bg-secondary)', color: 'var(--text-tertiary)' }}>
                         <Loader2 size={13} className="spin" style={{ verticalAlign: -2, marginRight: 6 }} /> Loading nodes…
                       </td></tr>
                     )}
                     {exp && exp.error && (
-                      <tr><td colSpan={COLS.length + 4} style={{ padding: 12, background: 'var(--bg-secondary)', color: '#ef4444' }}>{exp.error}</td></tr>
+                      <tr><td colSpan={COLS.length + 5} style={{ padding: 12, background: 'var(--bg-secondary)', color: '#ef4444' }}>{exp.error}</td></tr>
                     )}
                     {exp && exp.nodes && exp.nodes.length === 0 && (
-                      <tr><td colSpan={COLS.length + 4} style={{ padding: 12, background: 'var(--bg-secondary)', color: 'var(--text-tertiary)' }}>
+                      <tr><td colSpan={COLS.length + 5} style={{ padding: 12, background: 'var(--bg-secondary)', color: 'var(--text-tertiary)' }}>
                         {dateFilter ? `No node fired on ${dateFilter}.` : 'No node-level rows.'}
                       </td></tr>
                     )}
@@ -346,6 +367,16 @@ export default function JourneyAnalyticsPage() {
                           ↳ {n.node_label} <span style={{ color: 'var(--text-tertiary)' }}>({n.node_type})</span>
                         </td>
                         <td />
+                        <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                          {n.template_id ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setQaModal({ templateId: n.template_id, templateName: n.node_label }); }}
+                              title="View AI email QA report for this template"
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text-tertiary)', cursor: 'pointer' }}>
+                              <Eye size={14} />
+                            </button>
+                          ) : null}
+                        </td>
                         {dataCells(n)}
                         <td />
                       </tr>
@@ -356,6 +387,14 @@ export default function JourneyAnalyticsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {qaModal && (
+        <EmailQaReportModal
+          templateId={qaModal.templateId}
+          templateName={qaModal.templateName}
+          onClose={() => setQaModal(null)}
+        />
       )}
 
       <style jsx>{`

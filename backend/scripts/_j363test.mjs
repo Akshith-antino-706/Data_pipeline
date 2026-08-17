@@ -1,0 +1,18 @@
+import db from '../src/config/database.js';
+import JourneyService from '../src/services/JourneyService.js';
+await db.query(`SET statement_timeout=120000`);
+const J=363;
+const r = await db.query(`UPDATE journey_entries SET current_node_id='node_1', status='active', next_fire_at=NOW(), last_run_id=NULL, last_enqueued_at=NULL, bullmq_job_id=NULL WHERE journey_id=$1`,[J]);
+console.log(`reset ${r.rowCount} entries to node_1`);
+await db.query(`DELETE FROM whatsapp_send_log WHERE journey_id=$1`,[J]);
+const t0=Date.now();
+const res = await JourneyService.processJourney(J).catch(e=>({error:e.message}));
+console.log(`processJourney: ${Date.now()-t0}ms →`, JSON.stringify(res));
+const ist=(t)=>t?new Date(new Date(t).getTime()+5.5*3600e3).toISOString().slice(0,19).replace('T',' '):null;
+const b=await db.query(`SELECT id, chathead_broadcast_id, channel_id, template_id, status FROM chathead_broadcasts WHERE journey_id=$1 ORDER BY id DESC LIMIT 5`,[J]);
+console.log('chathead_broadcasts:'); console.table(b.rows);
+const w=await db.query(`SELECT node_id, unified_id, phone, status, broadcast_id, external_id, sent_at FROM whatsapp_send_log WHERE journey_id=$1 ORDER BY id`,[J]);
+console.log('whatsapp_send_log:'); console.table(w.rows.map(x=>({node:x.node_id, uid:x.unified_id, phone:x.phone, status:x.status, bcast:x.broadcast_id, chId:x.external_id, sent_IST:ist(x.sent_at)})));
+const e=await db.query(`SELECT current_node_id, status, COUNT(*) c FROM journey_entries WHERE journey_id=$1 GROUP BY 1,2 ORDER BY 1`,[J]);
+console.log('entries after run:', JSON.stringify(e.rows));
+process.exit(0);

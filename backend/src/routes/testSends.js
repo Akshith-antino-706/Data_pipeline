@@ -107,7 +107,7 @@ async function loadEmailChannel() {
  *     so {{placeholders}} fill (matches the real email a journey would send).
  * Returns null when no HTML can be resolved.
  */
-async function resolveTemplateHtml(templateId, ctx) {
+export async function resolveTemplateHtml(templateId, ctx) {
   const tid = parseInt(templateId);
   const { getDailyAITemplate } = await import('../services/JourneyService.js');
   const dyn = await getDailyAITemplate(tid).catch(() => null);

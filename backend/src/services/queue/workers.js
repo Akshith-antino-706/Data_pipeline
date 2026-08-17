@@ -22,6 +22,7 @@ import { getConnection } from './index.js';
 import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
+import ChatHeadV1Service from '../ChatHeadV1Service.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
 import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
@@ -540,16 +541,62 @@ async function processWA(job) {
   let approvalBlocked = false;
   let sendResult;
   try {
-    await GupshupService.assertApproved(parseInt(d.templateId));
-    const firstName = d.name ? d.name.split(' ')[0] : 'there';
-    sendResult = await GupshupService.sendWhatsApp({
-      to: d.phone,
-      templateId: parseInt(d.templateId),
-      params: [firstName],
-    });
+    if (d.waChannelId && d.waTemplateId) {
+      // ── ChatHead send ── the node carries a ChatHead channel + template. We fire a
+      // single-recipient broadcast so each entry stays an independent, retriable unit
+      // (matches the email per-message model). Targets unified_contacts.mobile (d.phone).
+      // NOTE: at very high volume this is the per-message path; the batched collector
+      // (one broadcast per due-cohort chunk) is the throughput-optimized variant.
+      const r = await ChatHeadV1Service.sendBroadcast({
+        contacts:     [{ phone: d.phone, name: d.name || '' }],
+        channelId:    parseInt(d.waChannelId),
+        channelName:  d.waChannelName || null,
+        templateId:   parseInt(d.waTemplateId),
+        templateName: d.waTemplateName || null,
+        name:         `journey ${d.journeyId} ${d.nodeId} ${d.phone}`,
+        sendTime:     new Date(Date.now() + 60 * 1000),
+      });
+      sendResult = {
+        success:    !!r.success,
+        provider:   'chathead',
+        externalId: r.broadcast?.chatheadBroadcastId != null ? String(r.broadcast.chatheadBroadcastId) : null,
+        error:      r.success ? null : (r.error || r.broadcast?.status || 'chathead send failed'),
+      };
+    } else {
+      // ── Fallback: Gupshup (per-message API; simulated when unconfigured) ──
+      await GupshupService.assertApproved(parseInt(d.templateId));
+      const firstName = d.name ? d.name.split(' ')[0] : 'there';
+      sendResult = await GupshupService.sendWhatsApp({
+        to: d.phone,
+        templateId: parseInt(d.templateId),
+        params: [firstName],
+      });
+    }
   } catch (err) {
     approvalBlocked = /not approved/i.test(err.message);
     sendResult = { success: false, error: err.message, blocked: approvalBlocked };
+  }
+
+  // Per-message WhatsApp send log (journey-attributed). Isolated try/catch — a logging
+  // failure must never fail the send or the entry advance. Each row is independent.
+  try {
+    const waStatus = sendResult.success ? 'sent' : (approvalBlocked ? 'blocked' : 'failed');
+    await db.query(
+      `INSERT INTO whatsapp_send_log
+         (unified_id, phone, contact_name, template_id, journey_id, node_id,
+          external_id, status, source, error, sent_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'journey',$9, CASE WHEN $8 = 'sent' THEN NOW() ELSE NULL END)`,
+      [
+        d.customerId || null, d.phone, d.name || null,
+        d.templateId ? parseInt(d.templateId) : null,
+        d.journeyId ? parseInt(d.journeyId) : null, d.nodeId,
+        sendResult.externalId || null,
+        waStatus,
+        sendResult.success ? null : String(sendResult.error || '').slice(0, 500),
+      ]
+    );
+  } catch (logErr) {
+    console.warn(`[Worker:wa] whatsapp_send_log write failed entry=${d.entryId}: ${logErr.message}`);
   }
 
   await _logAndAdvance(d,
