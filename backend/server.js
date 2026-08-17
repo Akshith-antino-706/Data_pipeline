@@ -44,6 +44,7 @@ import unifiedContactsRouter from './src/routes/unifiedContacts.js';
 import testE2ERouter from './src/routes/testE2E.js';
 import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
+import chatheadV1Router from './src/routes/chatheadV1.js';
 import authRouter from './src/routes/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
@@ -143,6 +144,7 @@ app.use('/api/v3/unified-contacts', unifiedContactsRouter);
 app.use('/api/v3/test', testE2ERouter);
 app.use('/api/v3/gupshup', gupshupRouter);
 app.use('/api/v3/test-sends', testSendsRouter);
+app.use('/api/v3/chathead', chatheadV1Router);
 app.use('/api/v3/custom-segments', customSegmentsRouter);
 
 // ── Health check ────────────────────────────────────────────
@@ -341,7 +343,8 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('086_journey_node_synced.sql');
     await runMigrationFile('087_journey_type.sql');
     await runMigrationFile('088_journey_trigger_event.sql');
-    res.json({ success: true, message: 'Journey migrations (071-088) completed' });
+    await runMigrationFile('103_sms_send_log.sql');
+    res.json({ success: true, message: 'Journey migrations (071-088, 103) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -694,6 +697,21 @@ cron.schedule('0 3 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily AI templates scheduled at 3:00 AM Dubai time (7 Claude calls)');
+
+// ── Daily Email QA reports — re-run the QA scan for every template attached to a
+//    journey node, at 3:30 AM Dubai (AFTER the 3 AM daily-AI-template render so it
+//    analyzes the fresh content). Powers the eye/report button on the journey
+//    analytics screen; one email_qa_reports row per template, updated daily. ──
+cron.schedule('30 3 * * *', async () => {
+  try {
+    const { regenerateJourneyTemplateReports } = await import('./src/services/JourneyTemplateQAService.js');
+    const r = await regenerateJourneyTemplateReports();
+    console.log('[Cron:TemplateQA] Regenerated journey template QA reports:', JSON.stringify(r));
+  } catch (err) {
+    console.error('[Cron:TemplateQA] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Journey template QA reports scheduled at 3:30 AM Dubai time');
 
 // ── Unsubscribe Sync — MySQL → RDS daily at 2 AM Dubai ──────────────
 cron.schedule('0 2 * * *', async () => {

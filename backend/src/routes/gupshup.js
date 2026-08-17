@@ -122,4 +122,73 @@ router.post('/webhook/sms', async (req, res) => {
   }
 });
 
+// ── SMS (Gupshup) — Phase 1: config, template list, single test-send ──────────
+// Mirrors the WhatsApp Test Send. Calls GupshupService.sendSMS DIRECTLY (does NOT
+// use the JOURNEY_SMS_ENABLED worker gate), so it's fully isolated from live journeys.
+
+router.get('/sms/config', (_req, res) => {
+  const c = GupshupService.smsConfig;
+  res.json({ success: true, data: { configured: GupshupService.isSMSConfigured(), senderId: c.senderId || null } });
+});
+
+// SMS templates come from content_templates (channel='sms'); external_status shows DLT approval.
+router.get('/sms/templates', async (_req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, name, body, external_status, external_template_id
+         FROM content_templates WHERE channel = 'sms' ORDER BY id DESC`
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /sms/test-send — send ONE SMS to a test number. Body: { phone, templateId, name? }.
+router.post('/sms/test-send', async (req, res) => {
+  const { phone, templateId, name } = req.body || {};
+  const digits = String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
+  if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ success: false, error: 'valid phone required (10-15 digits, no +)' });
+  if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+
+  // Best-effort contact identity (stays null for ad-hoc numbers).
+  let unifiedId = null;
+  try {
+    const { rows: [u] } = await db.query(
+      `SELECT id FROM unified_contacts WHERE regexp_replace(COALESCE(mobile,''),'\\D','','g') = $1 LIMIT 1`, [digits]);
+    unifiedId = u?.id ?? null;
+  } catch { /* identity is optional */ }
+
+  // Render {{first_name}} the same way the SMS worker does, so the preview matches the send.
+  let messageBody = null;
+  try {
+    const { rows: [tpl] } = await db.query('SELECT body FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+    const firstName = name ? String(name).split(' ')[0] : 'there';
+    messageBody = (tpl?.body || '').replace(/\{\{first_name\}\}/g, firstName) || null;
+  } catch { /* sendSMS falls back to tpl.body */ }
+
+  let result;
+  try {
+    result = await GupshupService.sendSMS({ to: digits, templateId: parseInt(templateId), messageBody });
+  } catch (err) {
+    result = { success: false, error: err.message, blocked: /not approved/i.test(err.message) };
+  }
+
+  // Independent per-message log — a logging failure must never fail the send.
+  try {
+    const c = GupshupService.smsConfig;
+    const status = result?.blocked ? 'blocked' : result?.simulated ? 'simulated' : (result?.success ? 'sent' : 'failed');
+    await db.query(
+      `INSERT INTO sms_send_log
+         (unified_id, phone, contact_name, template_id, sender_mask, provider, external_id,
+          status, source, error, message_body, sent_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'test-send',$9,$10,
+               CASE WHEN $8 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+      [unifiedId, digits, name || null, parseInt(templateId), c.senderId || null,
+       result?.provider || 'gupshup-sms', result?.externalId || null, status,
+       result?.success ? null : String(result?.error || 'send failed').slice(0, 500), messageBody]
+    );
+  } catch (logErr) { console.warn('[gupshup/sms/test-send] log write failed:', logErr.message); }
+
+  res.json({ success: !!result?.success, data: { phone: digits, unifiedId, result } });
+});
+
 export default router;

@@ -6,6 +6,7 @@ import PopularityService from './PopularityService.js';
 import { enqueueBatch, queueCounts } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
+import ChatHeadV1Service from './ChatHeadV1Service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -1743,11 +1744,11 @@ class JourneyService {
         let channel = rawChannel;
         let templateId = rawTemplateId;
         let autoPaired = false;
-        if (rawChannel === 'whatsapp' && entryTrack === 'rest') {
-          channel = (currentNode.data?.restChannel || 'email').toLowerCase();
-          templateId = currentNode.data?.restTemplateId || rawTemplateId;
-          autoPaired = true;
-        }
+        // WhatsApp is sent to EVERYONE — no is_indian / track gating and no rest→email
+        // auto-pair. Every contact on a WhatsApp node receives the WhatsApp broadcast
+        // regardless of track. (Email/SMS nodes are unaffected.) The previous behaviour
+        // diverted rest-track contacts to an email fallback (restChannel/restTemplateId);
+        // that diversion is intentionally removed per product requirement.
 
         // Pre-resolve the html_template_id once per templateId per run (cached
         // on this in-memory map) so the worker doesn't have to do another lookup.
@@ -1783,6 +1784,12 @@ class JourneyService {
           channel,
           templateId,
           htmlTemplateId,
+          // WhatsApp (ChatHead) node config — the ChatHead channel + template the node sends
+          // through. Present only on whatsapp nodes; used by processWA to fire the send.
+          waChannelId:       currentNode.data?.waChannelId ?? null,
+          waChannelName:     currentNode.data?.waChannelName ?? null,
+          waTemplateId:      currentNode.data?.waTemplateId ?? null,
+          waTemplateName:    currentNode.data?.waTemplateName ?? null,
           name:              entry.name,
           email:             recipientEmail,
           phone:             entry.phone,
@@ -1915,9 +1922,10 @@ class JourneyService {
 
       // ── Advance to next node ──
       // Track-aware: prefer edges whose target node's track matches the entry's track.
-      // Shared nodes (track='all') match any entry. For WhatsApp nodes, Rest users
-      // receive the auto-pair (Email or SMS using restChannel + restTemplateId) — they
-      // do NOT skip the step. The actual channel swap happens in the action-send block.
+      // Shared nodes (track='all') match any entry. NOTE: WhatsApp nodes are no longer
+      // track-gated — every entry (indian or rest) receives the WhatsApp broadcast; there
+      // is no rest→email auto-pair. This edge routing only affects journeys that were
+      // authored with explicit per-track branches.
       const matchesTrack = (nodeId) => {
         const n = nodeMap[nodeId];
         if (!n) return false;
@@ -1972,6 +1980,27 @@ class JourneyService {
     const BATCH_SIZE = 1000;
     for (const [channel, jobs] of Object.entries(enqueueByChannel)) {
       if (!jobs || jobs.length === 0) continue;
+
+      // WhatsApp → ChatHead BULK broadcast: one broadcast for the whole cohort (per
+      // channel+template), NOT one per recipient. Each broadcast is an independent unit;
+      // entries are advanced directly after. Email/SMS keep the per-message BullMQ path.
+      if (channel === 'whatsapp') {
+        try {
+          await this._sendWhatsAppBatch(journeyId, jobs, edges, nodeMap);
+          enqueued += jobs.length;
+        } catch (err) {
+          console.error(`[Journey ${journeyId}] WhatsApp batch failed: ${err.message}`);
+          const entryIds = jobs.map(j => j.data.entryId);
+          await db.query(
+            `UPDATE journey_entries SET last_run_id = NULL, last_enqueued_at = NULL
+               WHERE entry_id = ANY($1::bigint[]) AND last_run_id = $2`,
+            [entryIds, runId]
+          ).catch(() => {});
+        }
+        enqueueByChannel[channel] = [];
+        continue;
+      }
+
       for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
         const slice = jobs.slice(i, i + BATCH_SIZE);
         try {
@@ -2259,6 +2288,95 @@ class JourneyService {
 
   /** Track-aware entry advance — same logic the worker uses, but available to the producer
    *  for the misconfigured-action-node fallback so we don't enqueue garbage jobs. */
+  /**
+   * BULK WhatsApp send for a page of due entries at WhatsApp node(s). Groups by
+   * (node, ChatHead channel, template) and fires ONE ChatHead broadcast per group/chunk
+   * (not per recipient). Logs each recipient to whatsapp_send_log + journey_events, then
+   * advances every entry. Each broadcast is an independent unit — a failure in one group
+   * doesn't affect the others or any email send.
+   */
+  static async _sendWhatsAppBatch(journeyId, jobs, edges, nodeMap) {
+    const CHUNK = parseInt(process.env.WA_BROADCAST_CHUNK || '20000', 10); // recipients per broadcast
+
+    // Group jobs by node + ChatHead channel + template.
+    const groups = new Map();
+    for (const { data: d } of jobs) {
+      const key = `${d.nodeId}|${d.waChannelId ?? ''}|${d.waTemplateId ?? ''}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(d);
+    }
+
+    for (const [key, list] of groups) {
+      const [nodeId, waChannelId, waTemplateId] = key.split('|');
+
+      // Misconfigured (no ChatHead channel/template) → don't wedge the journey: log + advance.
+      if (!waChannelId || !waTemplateId) {
+        for (const d of list) {
+          await db.query(
+            `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+             VALUES ($1,$2,'action_blocked','whatsapp',$3)`,
+            [d.entryId, nodeId, JSON.stringify({ reason: 'missing_chathead_config' })]
+          ).catch(() => {});
+          await this._advanceEntry(d.entryId, nodeId, edges, nodeMap, d.track).catch(() => {});
+        }
+        continue;
+      }
+
+      for (let i = 0; i < list.length; i += CHUNK) {
+        const chunk = list.slice(i, i + CHUNK);
+        const contacts = chunk
+          .filter(d => d.phone && String(d.phone).replace(/\D/g, '').length >= 10)
+          .map(d => ({ phone: d.phone, name: d.name || '' }));
+
+        let result;
+        try {
+          result = await ChatHeadV1Service.sendBroadcast({
+            contacts,
+            channelId:    parseInt(waChannelId),
+            channelName:  chunk[0].waChannelName || null,
+            templateId:   parseInt(waTemplateId),
+            templateName: chunk[0].waTemplateName || null,
+            name:         `journey ${journeyId} ${nodeId} (${contacts.length})`,
+            sendTime:     new Date(Date.now() + 60 * 1000),
+          });
+        } catch (err) {
+          result = { success: false, error: err.message };
+        }
+
+        const ok     = !!result?.success;
+        const bcastId = result?.broadcast?.id ?? null;
+        const extId   = result?.broadcast?.chatheadBroadcastId != null ? String(result.broadcast.chatheadBroadcastId) : null;
+        const status  = ok ? 'sent' : 'failed';
+
+        // Per-recipient log + event + advance (each entry independent).
+        for (const d of chunk) {
+          await db.query(
+            `INSERT INTO whatsapp_send_log
+               (unified_id, phone, contact_name, channel_id, template_id, template_name,
+                journey_id, node_id, broadcast_id, external_id, status, source, error, sent_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'journey',$12,
+                     CASE WHEN $11='sent' THEN NOW() ELSE NULL END)`,
+            [
+              d.customerId || null, d.phone, d.name || null,
+              parseInt(waChannelId), parseInt(waTemplateId), chunk[0].waTemplateName || null,
+              journeyId, nodeId, bcastId, extId, status,
+              ok ? null : String(result?.error || 'broadcast failed').slice(0, 500),
+            ]
+          ).catch(() => {});
+          await db.query(
+            `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
+             VALUES ($1,$2,$3,'whatsapp',$4)`,
+            [d.entryId, nodeId, ok ? 'action_sent' : 'action_failed',
+             JSON.stringify({ channel: 'whatsapp', bulk: true, broadcastId: extId, templateId: waTemplateId, recipients: contacts.length })]
+          ).catch(() => {});
+          await this._advanceEntry(d.entryId, nodeId, edges, nodeMap, d.track).catch(() => {});
+        }
+
+        console.log(`[Journey ${journeyId}] WhatsApp bulk broadcast node=${nodeId} recipients=${contacts.length} status=${status} chId=${extId || '-'}`);
+      }
+    }
+  }
+
   static async _advanceEntry(entryId, currentNodeId, edges, nodeMap, entryTrack) {
     const matchesTrack = (nodeId) => {
       const n = nodeMap[nodeId];

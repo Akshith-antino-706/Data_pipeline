@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import db from '../config/database.js';
 import { getConnection, enqueueGtmJourney } from './queue/index.js';
 import WelcomeEmailService from './WelcomeEmailService.js';
+import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 import { renderTemplate, buildLiquidVars } from '../utils/placeholderResolver.js';
@@ -168,7 +169,7 @@ class GtmJourneyService {
     // Full contact row — feeds the USER_*, RID, BOOKING_STATUS, PRODUCT_TIER, etc. keys.
     const { rows: [c] } = await db.query(
       `SELECT id, email, name, mobile, city, country, is_indian, booking_status,
-              product_tier, segments, geography, email_unsubscribe
+              product_tier, segments, geography, email_unsubscribe, wa_unsubscribe
        FROM unified_contacts WHERE id = $1`, [unifiedId]
     );
     if (!c?.email) { console.warn(`[GtmJourney ${journeyId}] uid=${unifiedId} no email — skip`); return; }
@@ -216,6 +217,72 @@ class GtmJourneyService {
     const actionNode = (jobNodeId ? nodes.find(n => n.id === jobNodeId && n.type === 'action') : null)
       || nodes.find(n => n.type === 'action');
     const nodeId = actionNode?.id || null;
+
+    // ── WhatsApp action node (channel parity with the fixed engine) ──────────────
+    // GTM/continuous journeys can mix channels (email + whatsapp). A WhatsApp node
+    // sends via ChatHead — the SAME transport + whatsapp_send_log shape the fixed
+    // engine's _sendWhatsAppBatch uses — then advances the per-user state row. It
+    // must NEVER fall through to the email block below (that was the bug where a
+    // WhatsApp node with no email template silently sent the default welcome email).
+    if (actionNode?.data?.channel === 'whatsapp') {
+      const advance = async () => {
+        if (!entryId) return;
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+      };
+      const logEvent = (type, details) => (entryId ? db.query(
+        `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1,$2,$3,'whatsapp',$4)`,
+        [entryId, nodeId, type, JSON.stringify(details || {})]
+      ).catch(() => {}) : Promise.resolve());
+
+      // WhatsApp opt-out — mirror the email_unsubscribe exit.
+      if (String(c.wa_unsubscribe || '').toLowerCase() === 'yes') { await _exit('wa_unsubscribed'); return; }
+
+      const phone = String(c.mobile || '').replace(/\D/g, '');
+      const waChannelId  = actionNode.data?.waChannelId;
+      const waTemplateId = actionNode.data?.waTemplateId;
+      // No mobile or missing ChatHead config → block + advance (never wedge, never email).
+      if (phone.length < 10 || !waChannelId || !waTemplateId) {
+        await logEvent('action_blocked', { reason: phone.length < 10 ? 'no_mobile' : 'missing_chathead_config' });
+        await advance();
+        return;
+      }
+
+      let result;
+      try {
+        result = await ChatHeadV1Service.sendBroadcast({
+          contacts:     [{ phone, name: c.name || '' }],
+          channelId:    parseInt(waChannelId),
+          channelName:  actionNode.data?.waChannelName || null,
+          templateId:   parseInt(waTemplateId),
+          templateName: actionNode.data?.waTemplateName || null,
+          name:         `gtm journey ${journeyId} ${nodeId}`,
+          sendTime:     new Date(Date.now() + 60 * 1000),
+        });
+      } catch (err) { result = { success: false, error: err.message }; }
+
+      const ok    = !!result?.success;
+      const extId = result?.broadcast?.chatheadBroadcastId != null ? String(result.broadcast.chatheadBroadcastId) : null;
+      await db.query(
+        `INSERT INTO whatsapp_send_log
+           (unified_id, phone, contact_name, channel_id, template_id, template_name,
+            journey_id, node_id, broadcast_id, external_id, status, source, error, sent_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'gtm_journey',$12,
+                 CASE WHEN $11='sent' THEN NOW() ELSE NULL END)`,
+        [c.id, phone, c.name || null, parseInt(waChannelId), parseInt(waTemplateId),
+         actionNode.data?.waTemplateName || null, journeyId, nodeId,
+         result?.broadcast?.id ?? null, extId, ok ? 'sent' : 'failed',
+         ok ? null : String(result?.error || 'broadcast failed').slice(0, 500)]
+      ).catch(() => {});
+      await logEvent(ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', broadcastId: extId, templateId: waTemplateId });
+      console.log(`[GtmJourney ${journeyId}] WhatsApp ${ok ? 'sent' : 'FAILED'} to=${phone} node=${nodeId} chId=${extId || '-'}`);
+
+      // Always advance — on failure too. Retrying a ChatHead broadcast risks a
+      // duplicate WhatsApp send (same reason the fixed engine advances on WA failure
+      // instead of throwing). The failure is recorded in whatsapp_send_log + journey_events.
+      await advance();
+      return;
+    }
 
     // WELCOME_EMAILS allow-list gate (validate the real user). Off-list → skip the send
     // and advance the entry so the continuous journey progresses (no send, no retry storm).

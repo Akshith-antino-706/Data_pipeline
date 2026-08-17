@@ -13,8 +13,10 @@ import {
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
-  getJourneyNodeConversions, previewJourneyNodeEmail
+  getJourneyNodeConversions, previewJourneyNodeEmail,
+  getWhatsAppChannels, getWhatsAppTemplates
 } from '@/lib/api';
+import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
   ChevronRight, RefreshCw, AlertCircle, Plus, Search, BarChart3,
@@ -615,7 +617,7 @@ export default function Journeys() {
   const [editForm, setEditForm] = useState({});
   const [flowEditMode, setFlowEditMode] = useState(false);
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
-  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, templateVariables: {} });
+  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, templateVariables: {} });
   const [showNodeModal, setShowNodeModal] = useState(false);
   const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
   const [editNodeId, setEditNodeId] = useState(null);
@@ -674,7 +676,7 @@ export default function Journeys() {
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
-  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
+  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, sendHour: null, templateVariables: {} };
   const [createNodeForm, setCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
   const [editCreateNodeIdx, setEditCreateNodeIdx] = useState(null);
   const [editCreateNodeForm, setEditCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
@@ -883,7 +885,7 @@ export default function Journeys() {
     setDetailLoading(false);
   };
 
-  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, sendHour: null, templateVariables: {} };
+  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, sendHour: null, templateVariables: {} };
 
   // Variables that are auto-populated from contact data — don't show inputs for these
   // Only filter vars that are purely auto-filled internals — never shown as user inputs.
@@ -911,14 +913,27 @@ export default function Journeys() {
     try {
       const res = await getTemplates({ limit: 200 });
       const all = res.data || [];
+      // WhatsApp templates are loaded PER-CHANNEL on demand by <WhatsAppTemplatePicker>
+      // (ChatHead templates need a channel), so we don't eagerly fetch them all here.
       setAllTemplates({
         email:     all.filter(t => t.channel === 'email'),
-        whatsapp:  all.filter(t => t.channel === 'whatsapp'),
+        whatsapp:  [],
         sms:       all.filter(t => t.channel === 'sms'),
       });
       setTemplatesLoaded(true);
     } catch { /* ignore */ }
   };
+
+  // ChatHead channel/template metadata for a selected WhatsApp template id — persisted on
+  // the node so processWA can fire the ChatHead broadcast (waChannelId + waTemplateId).
+  // <WhatsAppTemplatePicker> writes waChannelId/waChannelName/waTemplateId/waTemplateName
+  // directly onto the form, so here we just read them back off the form object.
+  const waMetaFor = (form) => ({
+    waChannelId:    form?.waChannelId    ?? null,
+    waChannelName:  form?.waChannelName  ?? null,
+    waTemplateId:   form?.waTemplateId   ?? form?.whatsappTemplateId ?? null,
+    waTemplateName: form?.waTemplateName ?? null,
+  });
 
   // Find template for a given action node
   const getNodeTemplate = (node) => {
@@ -926,6 +941,11 @@ export default function Journeys() {
     const ch = (node.data.channel || '').toLowerCase();
     const tplId = ch === 'email' ? node.data.emailTemplateId : ch === 'whatsapp' ? node.data.whatsappTemplateId : ch === 'sms' ? node.data.smsTemplateId : null;
     if (!tplId) return null;
+    // WhatsApp templates aren't preloaded (fetched per-channel by the picker), so the
+    // name is read from what was saved on the node itself.
+    if (ch === 'whatsapp') {
+      return { id: tplId, name: node.data.waTemplateName || node.data.templateName || `Template ${tplId}` };
+    }
     const list = allTemplates[ch] || [];
     return list.find(t => String(t.id) === String(tplId)) || null;
   };
@@ -957,6 +977,11 @@ export default function Journeys() {
       smsTemplateId: ch === 'sms' ? (d.templateId || d.smsTemplateId || null) : (d.smsTemplateId || null),
       restChannel: d.restChannel || 'email',
       restTemplateId: d.restTemplateId || null,
+      // ChatHead WhatsApp metadata (so the picker re-selects the saved channel + template)
+      waChannelId: d.waChannelId ?? null,
+      waChannelName: d.waChannelName ?? null,
+      waTemplateId: d.waTemplateId ?? (ch === 'whatsapp' ? (d.templateId || d.whatsappTemplateId || null) : null),
+      waTemplateName: d.waTemplateName ?? null,
       templateVariables: d.templateVariables || {},
     });
     setShowNodeModal(true);
@@ -986,7 +1011,7 @@ export default function Journeys() {
             templateId: resolvedTemplateId,
             sendHour: nodeForm.sendHour ?? null,
             templateVariables: nodeForm.templateVariables || {},
-            ...(nodeForm.channel === 'whatsapp' && { restChannel: nodeForm.restChannel || 'email', restTemplateId: nodeForm.restTemplateId || null }),
+            ...(nodeForm.channel === 'whatsapp' && { restChannel: nodeForm.restChannel || 'email', restTemplateId: nodeForm.restTemplateId || null, ...waMetaFor(nodeForm) }),
           }),
           ...(nodeForm.type === 'wait'      && { waitDays: nodeForm.waitDays }),
           ...(nodeForm.type === 'condition' && { condition: nodeForm.condition }),
@@ -1080,6 +1105,8 @@ export default function Journeys() {
           smsTemplateId: n.smsTemplateId || undefined,
           restChannel: n.restChannel || undefined,
           restTemplateId: n.restTemplateId || undefined,
+          // ChatHead channel + template for WhatsApp nodes (so processWA can send).
+          ...(n.channel === 'whatsapp' ? waMetaFor(n) : {}),
           templateVariables: n.templateVariables && Object.keys(n.templateVariables).length > 0 ? n.templateVariables : undefined,
         },
         position: { x: 300, y: 50 + (i + 1) * 120 }
@@ -1244,6 +1271,7 @@ export default function Journeys() {
           ...(nodeForm.channel === 'whatsapp' && {
             restChannel: nodeForm.restChannel || 'email',
             restTemplateId: nodeForm.restTemplateId || null,
+            ...waMetaFor(nodeForm),
           }),
         }),
         ...(nodeForm.type === 'wait'      && { waitDays:  nodeForm.waitDays }),
@@ -3256,16 +3284,10 @@ export default function Journeys() {
                     {/* WhatsApp template */}
                     {nodeForm.channel === 'whatsapp' && (
                       <div>
-                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
-                          WhatsApp Template
-                        </label>
-                        <SearchableTemplateSelect
-                          templates={allTemplates.whatsapp}
-                          channel="whatsapp"
-                          value={nodeForm.whatsappTemplateId}
-                          onChange={val => setNodeForm(f => ({ ...f, whatsappTemplateId: val, templateVariables: {} }))}
+                        <WhatsAppTemplatePicker
+                          value={{ waChannelId: nodeForm.waChannelId, waTemplateId: nodeForm.whatsappTemplateId }}
+                          onChange={m => setNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName, templateVariables: {} }))}
                         />
-                        {allTemplates.whatsapp.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No WhatsApp templates found</div>}
 
                         {/* Rest-of-world auto-pair */}
                         <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
@@ -3881,12 +3903,9 @@ export default function Journeys() {
                                 )}
                                 {editCreateNodeForm.channel === 'whatsapp' && (
                                   <div style={{ marginBottom: 10 }}>
-                                    <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 5, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                    <SearchableTemplateSelect
-                                      templates={allTemplates.whatsapp}
-                                      channel="whatsapp"
-                                      value={editCreateNodeForm.whatsappTemplateId}
-                                      onChange={val => setEditCreateNodeForm(f => ({ ...f, whatsappTemplateId: val, templateVariables: {} }))}
+                                    <WhatsAppTemplatePicker
+                                      value={{ waChannelId: editCreateNodeForm.waChannelId, waTemplateId: editCreateNodeForm.whatsappTemplateId }}
+                                      onChange={m => setEditCreateNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName, templateVariables: {} }))}
                                     />
                                   </div>
                                 )}
@@ -4072,12 +4091,9 @@ export default function Journeys() {
                           {createNodeForm.channel === 'whatsapp' && (
                             <>
                               <div style={{ marginBottom: 12 }}>
-                                <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>WhatsApp Template</label>
-                                <SearchableTemplateSelect
-                                  templates={allTemplates.whatsapp}
-                                  channel="whatsapp"
-                                  value={createNodeForm.whatsappTemplateId}
-                                  onChange={val => setCreateNodeForm(f => ({ ...f, whatsappTemplateId: val }))}
+                                <WhatsAppTemplatePicker
+                                  value={{ waChannelId: createNodeForm.waChannelId, waTemplateId: createNodeForm.whatsappTemplateId }}
+                                  onChange={m => setCreateNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName }))}
                                 />
                               </div>
                               <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>

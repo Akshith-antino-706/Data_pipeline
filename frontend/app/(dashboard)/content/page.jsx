@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
+import WhatsAppTestSend from './WhatsAppTestSend';
+import SmsTestSend from './SmsTestSend';
 import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet, LayoutGrid, List } from 'lucide-react';
 import hotToast from 'react-hot-toast';
 
@@ -607,6 +609,10 @@ export default function Content() {
           </div>
         </div>
       </motion.div>
+
+      {/* ── WhatsApp Test Send (ChatHead) ── */}
+      <motion.div variants={fadeInUp}><WhatsAppTestSend /></motion.div>
+      <motion.div variants={fadeInUp}><SmsTestSend /></motion.div>
 
       {/* ── Recipients (for Test Send) ── */}
       <motion.div variants={fadeInUp} style={{ marginBottom: 16, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>

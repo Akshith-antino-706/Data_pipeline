@@ -155,6 +155,7 @@ export const getJourneyOpsDashboard = () => request('/api/v3/journeys/dashboard'
 export const getJourneyAnalyticsTable = (status) => request(`/api/v3/journeys/analytics/table${status ? `?status=${encodeURIComponent(status)}` : ''}`);
 export const getJourneyAnalyticsNodes = (id, date) => request(`/api/v3/journeys/analytics/${id}/nodes${date ? `?date=${date}` : ''}`);
 export const refreshJourneyAnalytics  = (id) => request(`/api/v3/journeys/analytics/${id}/refresh`, { method: 'POST' });
+export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analytics/regenerate-qa', { method: 'POST' });
 export const getJourney = (id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
 export const updateJourney = (id, data) => request(`/api/v3/journeys/${id}`, { method: 'PUT', body: JSON.stringify(data) });
@@ -431,6 +432,21 @@ export const sendTestDay = (day, emails) =>
 // Pulls the stored body HTML as-is (no Day-specific dynamic data assembly).
 export const sendTemplate = (templateId, emails) =>
   request(`/api/v3/test-sends/send-template`, { method: 'POST', body: JSON.stringify({ templateId, emails }) });
+
+// ── WhatsApp (ChatHead) ──────────────────────────────────────────────
+export const getWhatsAppChannels  = () => request('/api/v3/chathead/channels');
+export const getWhatsAppTemplates = (channel) => request(`/api/v3/chathead/templates?channel=${encodeURIComponent(channel)}`);
+export const previewWhatsAppTemplate = (id) => request(`/api/v3/chathead/templates/${encodeURIComponent(id)}/preview`);
+// ── SMS (Gupshup) test send ──
+export const getSmsConfig    = () => request('/api/v3/gupshup/sms/config');
+export const getSmsTemplates = () => request('/api/v3/gupshup/sms/templates');
+export const smsTestSend = ({ phone, name, templateId }) =>
+  request('/api/v3/gupshup/sms/test-send', { method: 'POST', body: JSON.stringify({ phone, name, templateId }) });
+export const whatsAppTestSend = ({ phone, name, channelId, channelName, templateId, templateName }) =>
+  request('/api/v3/chathead/test-send', {
+    method: 'POST',
+    body: JSON.stringify({ phone, name, channelId, channelName, templateId, templateName }),
+  });
 // Post-send QA report for a template's email (grammar, content, URLs, spam-risk, errors)
 export const analyzeTestEmail = (templateId) =>
   request(`/api/v3/test-sends/analyze-email`, { method: 'POST', body: JSON.stringify({ templateId }) });

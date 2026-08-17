@@ -176,21 +176,39 @@ router.get('/analytics/table', async (req, res, next) => {
 // Node-level rows for one journey. Default = cumulative rollup rows. With ?date=YYYY-MM-DD,
 // returns per-node metrics scoped to that Dubai date (all columns, computed on demand, cached
 // 5 min) — only nodes that actually sent that day.
+// Map node_id → email template id from the journey's flow, so the analytics UI
+// can offer a QA-report (eye) button per action node. Reads journey_flows.nodes.
+async function nodeTemplateMap(jid) {
+  const { rows: [jf] } = await db.query('SELECT nodes FROM journey_flows WHERE journey_id = $1', [jid]);
+  const map = {};
+  for (const n of (jf?.nodes || [])) {
+    if (n.type !== 'action') continue;
+    const tid = parseInt(n.data?.emailTemplateId || n.data?.templateId);
+    if (tid) map[n.id] = tid;
+  }
+  return map;
+}
+
 router.get('/analytics/:id/nodes', async (req, res, next) => {
   try {
     const jid = parseInt(req.params.id);
+    let data;
     if (/^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '')) {
       const { computeNodesForDate } = await import('../services/JourneyStatsService.js');
-      const data = req.query.fresh
+      data = req.query.fresh
         ? await computeNodesForDate(jid, req.query.date)
         : await cached(`journey:analytics-nodes:${jid}:${req.query.date}`, () => computeNodesForDate(jid, req.query.date), 300);
-      return res.json({ success: true, data });
+    } else {
+      const { rows } = await db.query(
+        `SELECT * FROM journey_node_stats WHERE journey_id = $1 ORDER BY (node_id = '__ALL__') DESC, node_id`,
+        [jid]
+      );
+      data = rows;
     }
-    const { rows } = await db.query(
-      `SELECT * FROM journey_node_stats WHERE journey_id = $1 ORDER BY (node_id = '__ALL__') DESC, node_id`,
-      [jid]
-    );
-    res.json({ success: true, data: rows });
+    // Attach template_id per node so the UI can show the QA-report button.
+    const tmap = await nodeTemplateMap(jid);
+    data = (data || []).map(r => ({ ...r, template_id: tmap[r.node_id] || null }));
+    res.json({ success: true, data });
   } catch (err) { next(err); }
 });
 
@@ -200,6 +218,17 @@ router.post('/analytics/:id/refresh', async (req, res, next) => {
   try {
     const { refreshJourney } = await import('../services/JourneyStatsService.js');
     const r = await refreshJourney(parseInt(req.params.id));
+    res.json({ success: true, data: r });
+  } catch (err) { next(err); }
+});
+
+// Manually regenerate the AI QA report for every template attached to a journey
+// node (same work the 3:30 AM cron does). Powers the "Regenerate reports" button.
+// Makes one Claude call per distinct template — can take a while for many templates.
+router.post('/analytics/regenerate-qa', async (_req, res, next) => {
+  try {
+    const { regenerateJourneyTemplateReports } = await import('../services/JourneyTemplateQAService.js');
+    const r = await regenerateJourneyTemplateReports();
     res.json({ success: true, data: r });
   } catch (err) { next(err); }
 });
