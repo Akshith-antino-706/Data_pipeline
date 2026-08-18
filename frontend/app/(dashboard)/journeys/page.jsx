@@ -1511,13 +1511,18 @@ export default function Journeys() {
     // Build node analytics for charts — opens/clicks from email_send_log (via campaignData)
     const nodeChartData = nodes
       .filter(n => n.type === 'action')
-      .map(n => ({
-        name: n.data?.label || n.data?.channel || n.id,
-        sent: nodeAnalyticsMap[n.id]?.action_sent || nodeCampaignMap[n.id]?.sent || 0,
-        delivered: campaignData?.delivered_by_node?.[n.id] ?? nodeAnalyticsMap[n.id]?.action_delivered ?? nodeCampaignMap[n.id]?.delivered ?? 0,
-        opened: campaignData?.opens?.[n.id] ?? nodeCampaignMap[n.id]?.read ?? 0,
-        clicked: campaignData?.gtm_clicks?.[n.id] ?? nodeCampaignMap[n.id]?.clicked ?? 0,
-      }));
+      .map(n => {
+        // WhatsApp nodes read from whatsapp_by_node; email/SMS keep the email-based maps.
+        const isWa = (n.data?.channel || '').toLowerCase() === 'whatsapp';
+        const wa = isWa ? (campaignData?.whatsapp_by_node?.[n.id] || {}) : null;
+        return {
+          name: n.data?.label || n.data?.channel || n.id,
+          sent: wa ? (wa.sent || 0) : (nodeAnalyticsMap[n.id]?.action_sent || nodeCampaignMap[n.id]?.sent || 0),
+          delivered: wa ? (wa.delivered || 0) : (campaignData?.delivered_by_node?.[n.id] ?? nodeAnalyticsMap[n.id]?.action_delivered ?? nodeCampaignMap[n.id]?.delivered ?? 0),
+          opened: wa ? (wa.opened || 0) : (campaignData?.opens?.[n.id] ?? nodeCampaignMap[n.id]?.read ?? 0),
+          clicked: wa ? (wa.clicked || 0) : (campaignData?.gtm_clicks?.[n.id] ?? nodeCampaignMap[n.id]?.clicked ?? 0),
+        };
+      });
 
     const channelDistribution = channels.map(ch => ({
       name: CHANNEL_CONFIG[ch]?.label || ch,
@@ -2412,16 +2417,21 @@ export default function Journeys() {
                                 {node.type === 'action' && (() => {
                                   const camp = nodeCampaignMap?.[node.id];
                                   const nc        = nodeEntryCountsMap[node.id];
-                                  const sent      = campaignData?.sent_by_node?.[node.id] ?? camp?.sent ?? parseInt(nodeStats?.action_sent) ?? 0;
-                                  const read      = campaignData?.opens?.[node.id] ?? camp?.read ?? (parseInt(nodeStats?.action_read) || 0);
-                                  const clicked   = campaignData?.clicks?.[node.id] ?? campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked) || 0);
+                                  // WhatsApp nodes log to whatsapp_send_log (sent/failed) + synced ChatHead
+                                  // broadcast counters (delivered/opened/clicked) — NOT email_send_log. So a
+                                  // WhatsApp node reads from whatsapp_by_node instead of the email maps below.
+                                  const isWa      = (node.data?.channel || '').toLowerCase() === 'whatsapp';
+                                  const wa        = isWa ? (campaignData?.whatsapp_by_node?.[node.id] || {}) : null;
+                                  const sent      = wa ? (wa.sent || 0)      : (campaignData?.sent_by_node?.[node.id] ?? camp?.sent ?? parseInt(nodeStats?.action_sent) ?? 0);
+                                  const read      = wa ? (wa.opened || 0)    : (campaignData?.opens?.[node.id] ?? camp?.read ?? (parseInt(nodeStats?.action_read) || 0));
+                                  const clicked   = wa ? (wa.clicked || 0)   : (campaignData?.clicks?.[node.id] ?? campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked) || 0));
                                   // Bot-filtered (Phase 1): human_* = ≥bot_window_sec after send; landed = real GTM website hit
-                                  const humanRead   = campaignData?.human_opens?.[node.id];
-                                  const humanClick  = campaignData?.human_clicks?.[node.id];
-                                  const landedClick = campaignData?.landed_clicks?.[node.id];
-                                  const bounced   = campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? (parseInt(nodeStats?.action_bounced) || 0);
-                                  const delivered = campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? (parseInt(nodeStats?.action_delivered) || 0);
-                                  const failed    = parseInt(nodeStats?.action_failed) || camp?.failed || 0;
+                                  const humanRead   = isWa ? undefined : campaignData?.human_opens?.[node.id];
+                                  const humanClick  = isWa ? undefined : campaignData?.human_clicks?.[node.id];
+                                  const landedClick = isWa ? undefined : campaignData?.landed_clicks?.[node.id];
+                                  const bounced   = wa ? 0 : (campaignData?.bounced_by_node?.[node.id] ?? camp?.bounced ?? (parseInt(nodeStats?.action_bounced) || 0));
+                                  const delivered = wa ? (wa.delivered || 0) : (campaignData?.delivered_by_node?.[node.id] ?? camp?.delivered ?? (parseInt(nodeStats?.action_delivered) || 0));
+                                  const failed    = wa ? (wa.failed || 0)    : (parseInt(nodeStats?.action_failed) || camp?.failed || 0);
                                   const blocked   = parseInt(nodeStats?.action_blocked) || 0;
                                   // Per-node active entries count (from journey_entries, already in detail)
                                   const qWaiting = detail?.node_stats?.[node.id]?.active || 0;
