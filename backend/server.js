@@ -344,7 +344,8 @@ app.post('/api/v3/migrate-journey', async (_, res) => {
     await runMigrationFile('087_journey_type.sql');
     await runMigrationFile('088_journey_trigger_event.sql');
     await runMigrationFile('103_sms_send_log.sql');
-    res.json({ success: true, message: 'Journey migrations (071-088, 103) completed' });
+    await runMigrationFile('104_whatsapp_delivery_stats.sql');
+    res.json({ success: true, message: 'Journey migrations (071-088, 103, 104) completed' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -884,12 +885,25 @@ cron.schedule('* * * * *', async () => {
   try {
     const { default: ContinuousJourneyService } = await import('./src/services/ContinuousJourneyService.js');
     const r = await ContinuousJourneyService.processDue();
-    if (r.enqueued > 0 || r.exited > 0) console.log(`[Cron:Continuous] due=${r.due} enqueued=${r.enqueued} exited=${r.exited}`);
+    if (r.enqueued > 0 || r.exited > 0 || r.waSent > 0) console.log(`[Cron:Continuous] due=${r.due} enqueued=${r.enqueued} waSent=${r.waSent || 0} exited=${r.exited}`);
   } catch (err) {
     console.error('[Cron:Continuous] Error:', err.message);
   }
 });
 console.log('[Cron] Continuous GTM engine scheduled: every 1 min');
+
+// ── WhatsApp delivery sync — every 15 min, pull ChatHead delivery counters for
+//    recent broadcasts into chathead_broadcasts + whatsapp_send_log. Polling
+//    (ChatHead has no webhooks); only touches broadcasts not yet 'finished'. ──
+cron.schedule('*/15 * * * *', async () => {
+  try {
+    const { syncPending } = await import('./src/services/WhatsAppDeliverySync.js');
+    await syncPending();
+  } catch (err) {
+    console.error('[Cron:WADelivery] Error:', err.message);
+  }
+});
+console.log('[Cron] WhatsApp delivery sync scheduled: every 15 min');
 
 // ── CONTINUOUS (gtm) PER-USER re-enrollment — once a day ──
 // Re-scans each ACTIVE per-user (non-event) continuous journey's segment and boards

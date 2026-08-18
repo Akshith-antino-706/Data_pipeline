@@ -296,4 +296,23 @@ router.post('/test-send', async (req, res) => {
   res.json({ success: !!result?.success, data: { phone: digits, unifiedId, result } });
 });
 
+// ── WhatsApp delivery sync — pull ChatHead delivery stats into our tables ──
+// POST /broadcasts/:id/sync-delivery  → sync one broadcast now (on-demand refresh)
+router.post('/broadcasts/:id/sync-delivery', async (req, res) => {
+  try {
+    const { syncBroadcast } = await import('../services/WhatsAppDeliverySync.js');
+    const r = await syncBroadcast(req.params.id);
+    res.json({ success: true, data: r });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /broadcasts/sync-delivery  → sync all not-yet-finished broadcasts (same as the cron)
+router.post('/broadcasts/sync-delivery', async (_req, res) => {
+  try {
+    const { syncPending } = await import('../services/WhatsAppDeliverySync.js');
+    const r = await syncPending();
+    res.json({ success: true, data: r });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
 export default router;
