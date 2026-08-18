@@ -2645,6 +2645,43 @@ class JourneyService {
       bouncedByNodeMap   = Object.fromEntries(bounceRows.map(r => [r.node_id, parseInt(r.bounce_count) || 0]));
     }
 
+    // ── WhatsApp per-node stats — WhatsApp nodes log to whatsapp_send_log (sent/failed),
+    //    and delivery/open/click come from the synced ChatHead broadcast counters
+    //    (chathead_broadcasts, filled by the delivery-sync cron). Email node maps above
+    //    stay untouched; this is a separate overlay keyed by node_id. ──
+    let whatsappByNode = {};
+    try {
+      const { rows: waRows } = await db.query(`
+        WITH wsl AS (
+          SELECT node_id, external_id, status
+            FROM whatsapp_send_log
+           WHERE journey_id = $1 AND node_id IS NOT NULL
+        ),
+        counts AS (
+          SELECT node_id, COUNT(*) AS sent, COUNT(*) FILTER (WHERE status = 'failed') AS failed
+            FROM wsl GROUP BY node_id
+        ),
+        delivery AS (
+          SELECT b.node_id,
+                 COALESCE(SUM(cb.delivered_count), 0) AS delivered,
+                 COALESCE(SUM(cb.opened_count), 0)    AS opened,
+                 COALESCE(SUM(cb.clicked_count), 0)   AS clicked
+            FROM (SELECT DISTINCT node_id, external_id FROM wsl WHERE external_id IS NOT NULL) b
+            JOIN chathead_broadcasts cb ON cb.chathead_broadcast_id::text = b.external_id
+           GROUP BY b.node_id
+        )
+        SELECT c.node_id, c.sent, c.failed,
+               COALESCE(d.delivered, 0) AS delivered,
+               COALESCE(d.opened, 0)    AS opened,
+               COALESCE(d.clicked, 0)   AS clicked
+          FROM counts c LEFT JOIN delivery d ON d.node_id = c.node_id
+      `, [journeyId]);
+      whatsappByNode = Object.fromEntries(waRows.map(r => [r.node_id, {
+        sent: parseInt(r.sent) || 0, failed: parseInt(r.failed) || 0,
+        delivered: parseInt(r.delivered) || 0, opened: parseInt(r.opened) || 0, clicked: parseInt(r.clicked) || 0,
+      }]));
+    } catch (e) { console.warn(`[Journey ${journeyId}] whatsapp node stats failed: ${e.message}`); }
+
     // Prefer the rollup's target_count (already computed); else the live guarded promise.
     const targetCount = rollupTargetCount != null ? rollupTargetCount : await targetCountPromise;
 
@@ -2685,6 +2722,7 @@ class JourneyService {
       bot_window_sec: BOT_WINDOW_SEC,
       delivered_by_node: deliveredByNodeMap,
       bounced_by_node: bouncedByNodeMap,
+      whatsapp_by_node: whatsappByNode,
       // When the engagement numbers came from the rollup, this is that rollup's compute time
       // (null = computed live just now). The UI can show "as of …" + a refresh affordance.
       stats_as_of: statsAsOf,
