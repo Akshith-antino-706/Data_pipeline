@@ -11,7 +11,7 @@ const router = Router();
 // journey_entries / journey_events rows. The dashboard polls them every ~30s
 // (often from several tabs at once), so we cache the computed result briefly
 // and invalidate on any successful mutation to /:id*.
-const JOURNEY_DETAIL_TTL = 30; // seconds
+const JOURNEY_DETAIL_TTL = 1800; // seconds (30 min) — large-journey mitigation; getById runs a 90s+ CTE on 1M+ entry journeys, so a longer cache window is required to keep the detail page responsive. Cache is invalidated on any /:id mutation so numbers stay fresh when it matters.
 const detailKey   = id => `journey:detail:${id}`;
 const timelineKey = id => `journey:timeline:${id}`;
 function invalidateJourney(id) {
