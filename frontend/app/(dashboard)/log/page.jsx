@@ -36,6 +36,7 @@ const STATUS_META = {
   clicked:  { label: 'Clicked',   color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)', icon: MousePointerClick },
   failed:   { label: 'Failed',    color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  icon: XCircle },
   delivered:{ label: 'Delivered', color: '#06b6d4', bg: 'rgba(6,182,212,0.1)',  icon: CheckCircle2 },
+  read:     { label: 'Read',      color: '#22c55e', bg: 'rgba(34,197,94,0.1)',  icon: Eye },
 };
 
 const fmt = (n) => n == null ? '—' : Number(n).toLocaleString();
@@ -107,7 +108,10 @@ export default function LogPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      if (channel !== 'all' && channel !== 'email') {
+      // SMS + Push have no send-log source yet — keep them empty. Email, All and
+      // WhatsApp all hit the same endpoint; WhatsApp passes channel so the API
+      // reads whatsapp_send_log instead of email_send_log.
+      if (channel === 'sms' || channel === 'push') {
         setData({ rows: [], total: 0 });
         setLoading(false);
         return;
@@ -115,6 +119,7 @@ export default function LogPage() {
       const params = {
         page,
         limit,
+        ...(channel === 'whatsapp' ? { channel: 'whatsapp' }      : {}),
         ...(search        ? { email: search }                     : {}),
         ...(statusFilter  ? { status: statusFilter }              : {}),
         ...(journeyId     ? { journeyId }                         : {}),
