@@ -161,7 +161,16 @@ export class SendTrackService {
    * @param {string}  [opts.dateFrom]    - ISO date
    * @param {string}  [opts.dateTo]      - ISO date
    */
-  static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId } = {}) {
+  static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId, channel } = {}) {
+    // WhatsApp sends live in whatsapp_send_log, not email_send_log. When the
+    // Send Log page's WhatsApp tab is active it passes channel='whatsapp' — read
+    // from the WhatsApp table and shape the rows to the same columns the page
+    // renders (contact / email / subject-template / status / journey-node /
+    // sent-at / opened-clicked). Email + SMS + "all" keep the email path below.
+    if (channel === 'whatsapp') {
+      return SendTrackService.getWhatsAppLog({ page, limit, status, email, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId });
+    }
+
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -206,6 +215,77 @@ export class SendTrackService {
         SELECT COUNT(*) AS total
         FROM email_send_log esl
         LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id
+        ${where}
+      `, params),
+    ]);
+
+    return { rows, total: parseInt(countRows[0].total), page, limit };
+  }
+
+  /**
+   * Paginated WhatsApp send log, shaped to match the email row schema the
+   * Send Log page renders. Sources from whatsapp_send_log; phone is surfaced in
+   * the `email` slot (that column + the "search by email" box), template_name in
+   * `template_label`, and read_at in `opened_at` (WhatsApp has no click event).
+   */
+  static async getWhatsAppLog({ page = 1, limit = 50, status, email, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId } = {}) {
+    const conditions = [];
+    const params = [];
+    let idx = 1;
+
+    if (status === 'opened')        { conditions.push(`wsl.read_at IS NOT NULL`); }
+    else if (status === 'clicked')  { conditions.push(`1 = 0`); } // no click concept for WhatsApp
+    else if (status)                { conditions.push(`wsl.status = $${idx++}`); params.push(status); }
+    if (email)     { conditions.push(`(wsl.phone ILIKE $${idx} OR wsl.contact_name ILIKE $${idx})`); params.push(`%${email}%`); idx++; }
+    if (source)    { conditions.push(`wsl.source = $${idx++}`);      params.push(source); }
+    if (dateFrom)  { conditions.push(`wsl.created_at >= $${idx++}`); params.push(dateFrom); }
+    if (dateTo)    { conditions.push(`wsl.created_at <= $${idx++}`); params.push(dateTo); }
+    if (journeyId) { conditions.push(`wsl.journey_id = $${idx++}`);  params.push(Number(journeyId)); }
+    if (nodeId)    { conditions.push(`wsl.node_id = $${idx++}`);     params.push(nodeId); }
+    if (subscriptionStatus === 'unsubscribed') {
+      conditions.push(`uc.wa_unsubscribe = 'Yes'`);
+    } else if (subscriptionStatus === 'active') {
+      conditions.push(`(uc.wa_unsubscribe IS NULL OR uc.wa_unsubscribe != 'Yes')`);
+    }
+
+    const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const offset = (page - 1) * limit;
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(`
+        SELECT
+          wsl.id,
+          wsl.unified_id,
+          wsl.phone                       AS email,
+          wsl.contact_name,
+          NULL                            AS subject,
+          wsl.template_name               AS template_label,
+          NULL::int                       AS day_number,
+          wsl.source,
+          wsl.journey_id,
+          wsl.node_id,
+          wsl.external_id,
+          'whatsapp'                      AS provider,
+          wsl.status,
+          wsl.error                       AS error_message,
+          wsl.sent_at,
+          wsl.read_at                     AS opened_at,
+          NULL::timestamptz               AS clicked_at,
+          wsl.delivered_at,
+          wsl.created_at,
+          uc.name                         AS uc_name,
+          uc.wa_unsubscribe               AS email_unsubscribed
+        FROM whatsapp_send_log wsl
+        LEFT JOIN unified_contacts uc ON uc.id = wsl.unified_id
+        ${where}
+        ORDER BY wsl.created_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}
+      `, [...params, limit, offset]),
+
+      db.query(`
+        SELECT COUNT(*) AS total
+        FROM whatsapp_send_log wsl
+        LEFT JOIN unified_contacts uc ON uc.id = wsl.unified_id
         ${where}
       `, params),
     ]);
