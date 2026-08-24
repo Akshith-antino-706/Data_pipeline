@@ -36,8 +36,13 @@ export async function cached(key, computeFn, ttl = DEFAULT_TTL) {
 
   const result = await computeFn();
 
+  // ttl may be a number OR a function(result) → number, so callers can pick the
+  // window based on how expensive the result was to compute (e.g. short TTL when a
+  // fast precomputed path was used, long TTL when it fell back to a slow live scan).
+  const effTtl = typeof ttl === 'function' ? ttl(result) : ttl;
+
   try {
-    await redis.set(fullKey, JSON.stringify(result), 'EX', ttl);
+    await redis.set(fullKey, JSON.stringify(result), 'EX', effTtl);
   } catch { /* ignore write errors */ }
 
   return result;
