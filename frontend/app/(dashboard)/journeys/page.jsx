@@ -643,19 +643,33 @@ export default function Journeys() {
   const selectedRef = useRef(selected); // always-fresh selected journey id for async callbacks
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  // Auto-poll journey detail every 30s when active — picks up node_statuses + journey completion
+  // Auto-poll journey detail when active — picks up node_statuses + journey completion.
+  // Continuous (GTM) journeys are event-driven and enroll/send in real time, so poll
+  // them faster (10s) for near-real-time reflection; fixed journeys move on a slow cron,
+  // so 30s is plenty. (Backend caches GTM detail 10s / fixed 30s to match — no wasted DB.)
   useEffect(() => {
     if (detail?.status !== 'active') return;
+    const isContinuous = detail?.journey_type === 'gtm';
+    const pollMs = isContinuous ? 10_000 : 30_000;
     const t = setInterval(async () => {
       const id = selectedRef.current;
       if (!id) return;
       try {
-        const [d] = await Promise.all([getJourney(id), refreshQueueStats()]);
+        // Refetch detail (node status + where entries sit) AND campaign-analytics
+        // (per-node sent/opens/WhatsApp counts) so the whole node card reflects live
+        // movement — entries entering, sending, and moving node→node. Without the
+        // campaign-analytics refetch, WhatsApp/opens counts stayed frozen at page load.
+        const [d, cd] = await Promise.all([
+          getJourney(id),
+          getJourneyCampaignAnalytics(id).catch(() => null),
+          refreshQueueStats(),
+        ]);
         setDetail(d.data);
+        if (cd?.data !== undefined) setCampaignData(cd.data);
       } catch { /* silent */ }
-    }, 30_000);
+    }, pollMs);
     return () => clearInterval(t);
-  }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [detail?.status, detail?.journey_type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh queue stats once when journey transitions to completed/paused
   const prevStatusRef = useRef(null);
@@ -2069,9 +2083,18 @@ export default function Journeys() {
                                     {NODE_LABELS[node.type] || node.type}
                                   </span>
                                   {nodeLifecycle && (() => {
+                                    // Continuous (GTM) journeys are always-on: their nodes never reach
+                                    // 'completed' — they stay 'running' forever, waiting for the next
+                                    // event to trigger. A neutral pulsing "RUNNING" reads as "pending/
+                                    // stuck" even after every message has been sent, so for continuous
+                                    // journeys we relabel 'running' as a green "LIVE" (active + delivered,
+                                    // always listening). The per-node sent/opened stats show below it.
+                                    const isContinuous = detail?.journey_type === 'gtm';
                                     const lcConfig = {
                                       PENDING:    { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af',  dot: false, label: 'PENDING'     },
-                                      RUNNING:    { bg: color + '20',             color,             dot: true,  label: 'RUNNING'     },
+                                      RUNNING:    isContinuous
+                                        ? { bg: 'rgba(34,197,94,0.14)', color: '#22c55e', dot: true, label: 'LIVE' }
+                                        : { bg: color + '20',           color,            dot: true, label: 'RUNNING' },
                                       SENDING:    { bg: 'rgba(59,130,246,0.15)',  color: '#3b82f6',  dot: true,  label: 'SENDING'     },
                                       WAITING:    { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c',  dot: false, label: 'WAITING'     },
                                       MONITORING: { bg: 'rgba(139,92,246,0.15)', color: '#8b5cf6',  dot: true,  label: 'MONITORING'  },

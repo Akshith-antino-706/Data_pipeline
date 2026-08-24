@@ -13,6 +13,7 @@ const router = Router();
 // and invalidate on any successful mutation to /:id*.
 const JOURNEY_DETAIL_TTL = 1800;      // seconds (30 min) — SLOW fallback window. Used for the timeline, and for journey-detail responses computed via the live-scan fallback (getById._fast === false), where a 90s+ CTE must NOT rerun often. Invalidated on any /:id mutation.
 const JOURNEY_DETAIL_TTL_FAST = 30;   // seconds — journey-detail responses served from the precomputed rollup (getById._fast === true) are cheap to recompute, so a short window keeps numbers fresh without risking the DB.
+const JOURNEY_DETAIL_TTL_LIVE = 10;   // seconds — continuous (GTM) journeys are always-on and event-driven (entries enter + send in real time); their getById is cheap, so a very short window keeps the detail page near-real-time.
 const detailKey   = id => `journey:detail:${id}`;
 const timelineKey = id => `journey:timeline:${id}`;
 function invalidateJourney(id) {
@@ -380,10 +381,19 @@ router.get('/:id', async (req, res, next) => {
     const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
     const data = fresh
       ? await JourneyService.getById(id, { fresh: true })
-      // Adaptive TTL: 30s when getById used the precomputed rollup (cheap to refresh),
-      // 30 min when it fell back to a live scan (protects the DB from repeated heavy computes).
+      // Adaptive TTL:
+      //   • 30s when getById used the precomputed rollup (cheap to refresh), OR
+      //   • 30s for continuous (GTM) journeys — they're always-on and their live
+      //     state (entries entering, sending, moving node→node) changes constantly,
+      //     so a 30-min cache would leave the detail page stale. Their getById is
+      //     cheap anyway (the heavy journey_events/journey_entries queries hit empty
+      //     sets for GTM; real data is the small per-journey gtm_journey_entries).
+      //   • 30 min only for a fixed journey that fell back to a live scan (protects
+      //     the DB from repeated heavy computes).
       : await cached(detailKey(id), () => JourneyService.getById(id),
-          (d) => d?._fast ? JOURNEY_DETAIL_TTL_FAST : JOURNEY_DETAIL_TTL);
+          (d) => d?.journey_type === 'gtm' ? JOURNEY_DETAIL_TTL_LIVE
+               : d?._fast              ? JOURNEY_DETAIL_TTL_FAST
+               :                         JOURNEY_DETAIL_TTL);
     if (!data) return res.status(404).json({ error: 'Journey not found' });
     res.json({ data });
   } catch (err) { next(err); }
