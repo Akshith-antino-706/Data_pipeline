@@ -21,6 +21,7 @@ router.get('/config', (_req, res) => {
   res.json({
     whatsapp: { configured: GupshupService.isWhatsAppConfigured() },
     sms:      { configured: GupshupService.isSMSConfigured() },
+    rcs:      { configured: GupshupService.isRCSConfigured() },
   });
 });
 
@@ -187,6 +188,57 @@ router.post('/sms/test-send', async (req, res) => {
        result?.success ? null : String(result?.error || 'send failed').slice(0, 500), messageBody]
     );
   } catch (logErr) { console.warn('[gupshup/sms/test-send] log write failed:', logErr.message); }
+
+  res.json({ success: !!result?.success, data: { phone: digits, unifiedId, result } });
+});
+
+// ── RCS Test Send ──────────────────────────────────────────────
+// Mirrors the SMS Test Send. Calls GupshupService.sendRCS directly against the
+// mediaapi (RBM) host. RCS templates are NOT in content_templates — the caller
+// passes the Gupshup-issued templateCode + optional customParams. Simulates when
+// RCS creds aren't set, so the card is usable before RCS provisioning completes.
+
+router.get('/rcs/config', (_req, res) => {
+  res.json({ success: true, data: { configured: GupshupService.isRCSConfigured() } });
+});
+
+// POST /rcs/test-send — Body: { phone, templateCode, name?, customParams?, smsFallback? }
+router.post('/rcs/test-send', async (req, res) => {
+  const { phone, templateCode, name, customParams, smsFallback } = req.body || {};
+  const digits = String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
+  if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ success: false, error: 'valid phone required (10-15 digits, no +)' });
+  if (!templateCode) return res.status(400).json({ success: false, error: 'templateCode required (issued by Gupshup after RCS template approval)' });
+
+  // Best-effort contact identity (stays null for ad-hoc numbers).
+  let unifiedId = null;
+  try {
+    const { rows: [u] } = await db.query(
+      `SELECT id FROM unified_contacts WHERE regexp_replace(COALESCE(mobile,''),'\\D','','g') = $1 LIMIT 1`, [digits]);
+    unifiedId = u?.id ?? null;
+  } catch { /* identity is optional */ }
+
+  let result;
+  try {
+    result = await GupshupService.sendRCS({ to: digits, templateCode, customParams: customParams || null, smsFallback: smsFallback || null });
+  } catch (err) {
+    result = { success: false, error: err.message };
+  }
+
+  // Log into sms_send_log (shared channel log) tagged provider='gupshup-rcs';
+  // templateCode is stored in message_body since RCS has no numeric template_id.
+  try {
+    const status = result?.simulated ? 'simulated' : (result?.success ? 'sent' : 'failed');
+    await db.query(
+      `INSERT INTO sms_send_log
+         (unified_id, phone, contact_name, template_id, provider, external_id,
+          status, source, error, message_body, sent_at)
+       VALUES ($1,$2,$3,NULL,$4,$5,$6,'test-send',$7,$8,
+               CASE WHEN $6 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+      [unifiedId, digits, name || null, result?.provider || 'gupshup-rcs', result?.externalId || null,
+       status, result?.success ? null : String(result?.error || 'send failed').slice(0, 500),
+       `RCS templateCode=${templateCode}${customParams ? ` params=${JSON.stringify(customParams)}` : ''}`]
+    );
+  } catch (logErr) { console.warn('[gupshup/rcs/test-send] log write failed:', logErr.message); }
 
   res.json({ success: !!result?.success, data: { phone: digits, unifiedId, result } });
 });

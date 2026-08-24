@@ -338,7 +338,7 @@ class JourneyService {
     return { data: rows, total: parseInt(count), page, limit };
   }
 
-  static async getById(journeyId) {
+  static async getById(journeyId, { fresh = false } = {}) {
     const { rows: [journey] } = await db.query(`
       SELECT jf.*,
         sd.segment_name, sd.segment_number, sd.priority, sd.customer_type,
@@ -357,19 +357,44 @@ class JourneyService {
       journey.segment_name = journey.custom_segment_name;
     }
 
+    // ── Fast-path rollup fetch (Phase 1b) ──
+    // Read the whole precomputed journey_node_stats rollup ONCE. When it's present
+    // (and not ?fresh), getById derives ALL per-node analytics + journey-level
+    // entryStats from it — with ZERO live scans of journey_events / journey_entries.
+    // That's what makes the detail page independent of event/snapshot size (the live
+    // journey_events GROUP BY was ~62s on J369). GTM journeys skip this — their live
+    // state is rebuilt from gtm_journey_entries in the gtm branch below. Any journey
+    // not yet in the rollup (distribution_computed_at NULL) falls back to live.
+    let rollupByNode = {};   // node_id → full rollup row (excludes __ALL__)
+    let rollupAll = null;    // the __ALL__ summary row
+    let usedRollup = false;
+    if (!fresh && journey.journey_type !== 'gtm') {
+      const { rows } = await db.query(
+        `SELECT * FROM journey_node_stats WHERE journey_id = $1 AND distribution_computed_at IS NOT NULL`,
+        [journeyId]
+      );
+      if (rows.length) {
+        usedRollup = true;
+        for (const r of rows) {
+          if (r.node_id === '__ALL__') rollupAll = r;
+          else rollupByNode[r.node_id] = r;
+        }
+      }
+    }
+
     // Get entry stats.
     // exited_unsubscribed = all exits with exit_reason='unsubscribed' (includes pre-existing).
     // unsubscribed_from_journey = distinct users who explicitly clicked the unsubscribe link
     //   in an email from THIS journey (sourced from unsubscribe_log, campaign='email_link').
     // pre_existing_unsub = exited as unsubscribed but never received any send from this journey
     //   (bulk-exited on first cron tick because already unsubscribed at enrollment time).
+    // FAST PATH: entryStats comes verbatim from the rollup's __ALL__.entry_stats JSON
+    // (JourneyStatsService ran the identical CTE off-request) — exact semantics, no
+    // journey_events scan. The two unsubscribe_log queries stay live (small table).
     const [entryStatsRes, unsubLogRes, nodeUnsubLogRes] = await Promise.all([
-      // pre_existing_unsub needs to know which entries ever received a send
-      // (had an 'action_sent' event). The old version ran a correlated EXISTS
-      // per entry (~1.3M sub-lookups on big journeys). Instead, gather the set of
-      // sent entry_ids once (CTE, uses idx_jev_entry_type) and LEFT JOIN — a single
-      // semi-join instead of a million correlated probes.
-      db.query(`
+      usedRollup
+        ? Promise.resolve({ rows: [ rollupAll?.entry_stats || {} ] })
+        : db.query(`
         WITH je AS (
           SELECT entry_id, status, exit_reason
           FROM journey_entries
@@ -420,14 +445,32 @@ class JourneyService {
       nodeUnsubCounts[row.node_id] = parseInt(row.unsub_count) || 0;
     }
 
-    // Get per-node analytics
-    const { rows: nodeAnalytics } = await db.query(`
-      SELECT node_id, event_type, channel, COUNT(*) AS event_count
-      FROM journey_events je
-      WHERE je.journey_id = $1
-      GROUP BY node_id, event_type, channel
-      ORDER BY node_id
-    `, [journeyId]);
+    // Get per-node analytics. FAST PATH: rebuild the ENGINE events from the rollup
+    // (the live GROUP BY over journey_events was ~62s on J369). journey_events only
+    // ever carries engine events — action_sent / action_failed / action_blocked /
+    // condition_evaluated / converted; opens/clicks/delivered/bounced are NOT here
+    // (they live in email_send_log and reach the UI via campaignData). The rollup can
+    // faithfully reproduce action_sent (sent) + action_failed (failed); action_blocked
+    // and converted aren't stored, so they're only visible via ?fresh=1. Live query
+    // otherwise.
+    let nodeAnalytics;
+    if (usedRollup) {
+      nodeAnalytics = [];
+      for (const [nid, r] of Object.entries(rollupByNode)) {
+        for (const [et, v] of [
+          ['action_sent',   +r.sent || 0],
+          ['action_failed', +r.failed || 0],
+        ]) if (v > 0) nodeAnalytics.push({ node_id: nid, event_type: et, channel: r.channel || 'email', event_count: v });
+      }
+    } else {
+      ({ rows: nodeAnalytics } = await db.query(`
+        SELECT node_id, event_type, channel, COUNT(*) AS event_count
+        FROM journey_events je
+        WHERE je.journey_id = $1
+        GROUP BY node_id, event_type, channel
+        ORDER BY node_id
+      `, [journeyId]));
+    }
 
     // Compute per-node lifecycle status from live journey_entries.
     // 6 possible statuses:
@@ -439,42 +482,68 @@ class JourneyService {
     //   completed – all entries have passed through, none remain active here
     let node_statuses = {};
     const nodes = journey.nodes || [];
+
+    // ── Per-node entry distribution (active/waiting/completed/exited) ──
+    // FAST PATH: derive from the rollup rows already fetched above — no query at all.
+    // This replaces the two live journey_entries GROUP BYs that made this handler
+    // scale with entry count (~1.36M for J369). Falls back to a live scan when
+    // ?fresh=1 or the journey isn't in the rollup yet. GTM journeys skip this — their
+    // live state is rebuilt from gtm_journey_entries in the gtm branch below.
+    let distMap = {}; // node_id → { snapshot, active, waiting, completed, exited_booked, exited_unsub }
+    if (usedRollup) {
+      for (const [nid, r] of Object.entries(rollupByNode)) distMap[nid] = {
+        snapshot: +r.dist_snapshot || 0, active: +r.dist_active || 0, waiting: +r.dist_waiting || 0,
+        completed: +r.dist_completed || 0, exited_booked: +r.dist_exited_booked || 0, exited_unsub: +r.dist_exited_unsub || 0,
+      };
+    } else if (journey.journey_type !== 'gtm') {
+      const { rows } = await db.query(`
+        SELECT current_node_id AS node_id,
+          COUNT(*) FILTER (WHERE status='snapshot')::int                                                          AS snapshot,
+          COUNT(*) FILTER (WHERE status='active')::int                                                            AS active,
+          COUNT(*) FILTER (WHERE status='active' AND next_fire_at > NOW())::int                                   AS waiting,
+          COUNT(*) FILTER (WHERE status='completed')::int                                                         AS completed,
+          COUNT(*) FILTER (WHERE status IN ('exited','converted') AND exit_reason='unsubscribed')::int            AS exited_unsub,
+          COUNT(*) FILTER (WHERE status IN ('exited','converted') AND exit_reason IS DISTINCT FROM 'unsubscribed')::int AS exited_booked
+        FROM journey_entries WHERE journey_id = $1 GROUP BY current_node_id
+      `, [journeyId]);
+      for (const r of rows) distMap[r.node_id] = {
+        snapshot: r.snapshot, active: r.active, waiting: r.waiting, completed: r.completed,
+        exited_booked: r.exited_booked, exited_unsub: r.exited_unsub,
+      };
+    }
     if (journey.status === 'draft') {
       nodes.forEach(n => { node_statuses[n.id] = 'pending'; });
     } else if (journey.status === 'completed') {
       nodes.forEach(n => { node_statuses[n.id] = 'completed'; });
     } else {
-      // active / paused — derive from entries
-      // Richer query: per-node entry breakdown
-      //   enqueued = stamped with last_enqueued_at in last 2 hours (in BullMQ queue)
-      //   in_wait  = next_fire_at is in the future (wait node time-guard active)
-      const { rows: activeOnNode } = await db.query(`
-        SELECT
-          current_node_id,
-          COUNT(*)                                                                          AS total,
-          COUNT(*) FILTER (WHERE next_fire_at IS NULL OR next_fire_at <= NOW())             AS due_now,
-          COUNT(*) FILTER (WHERE last_enqueued_at IS NOT NULL
-            AND last_enqueued_at > NOW() - INTERVAL '2 hours'
-            AND (next_fire_at IS NULL OR next_fire_at <= NOW()))                           AS enqueued,
-          COUNT(*) FILTER (WHERE next_fire_at > NOW())                                     AS in_wait
-        FROM journey_entries
-        WHERE journey_id = $1 AND status = 'active'
-        GROUP BY current_node_id
-      `, [journeyId]);
+      // active / paused — derive per-node lifecycle from distMap (rollup/live) above:
+      //   active entries at node = distMap.active; waiting = parked in a future
+      //   send-hour window (distMap.waiting); due_now = active − waiting.
+      // processedSet = nodes an entry has ever reached. FAST PATH: derive from the
+      //   rollup (a node with sends OR any distribution has been processed) — no
+      //   journey_events scan. Live DISTINCT query otherwise.
+      let processedSet;
+      if (usedRollup) {
+        processedSet = new Set(Object.keys(rollupByNode).filter(nid => {
+          const r = rollupByNode[nid];
+          return (+r.sent || 0) > 0 || (+r.dist_active || 0) > 0 || (+r.dist_waiting || 0) > 0
+            || (+r.dist_completed || 0) > 0 || (+r.dist_exited_booked || 0) > 0 || (+r.dist_exited_unsub || 0) > 0;
+        }));
+      } else {
+        const { rows: processedNodes } = await db.query(
+          `SELECT DISTINCT je.node_id
+           FROM journey_events je
+           WHERE je.journey_id = $1
+             AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
+          [journeyId]
+        );
+        processedSet = new Set(processedNodes.map(r => r.node_id));
+      }
 
-      const { rows: processedNodes } = await db.query(
-        `SELECT DISTINCT je.node_id
-         FROM journey_events je
-         WHERE je.journey_id = $1
-           AND je.event_type IN ('action_sent','action_blocked','action_failed','condition_evaluated','converted')`,
-        [journeyId]
-      );
-
-      // Build lookup maps
-      const activeSet    = new Set(activeOnNode.map(r => r.current_node_id));
-      const processedSet = new Set(processedNodes.map(r => r.node_id));
-      const inWaitMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.in_wait)  || 0]));
-      const dueNowMap    = Object.fromEntries(activeOnNode.map(r => [r.current_node_id, parseInt(r.due_now)  || 0]));
+      // Build lookup maps (sourced from the precomputed distribution, not a live scan)
+      const activeSet    = new Set(Object.keys(distMap).filter(nid => (distMap[nid].active || 0) > 0));
+      const inWaitMap    = Object.fromEntries(Object.entries(distMap).map(([nid, d]) => [nid, d.waiting || 0]));
+      const dueNowMap    = Object.fromEntries(Object.entries(distMap).map(([nid, d]) => [nid, Math.max(0, (d.active || 0) - (d.waiting || 0))]));
       const isPaused     = journey.status === 'paused';
 
       // Lowest sequential index among nodes currently holding active entries (used for paused boundary)
@@ -527,37 +596,43 @@ class JourneyService {
       ).catch(err => console.warn(`[getById] node_statuses persist failed for ${journeyId}: ${err.message}`));
     }
 
-    // Per-node triggered (unique entries) and exited (converted at that node) counts
-    const { rows: nodeEntryCounts } = await db.query(`
-      SELECT node_id,
-        COUNT(DISTINCT je.entry_id) AS triggered,
-        COUNT(DISTINCT je.entry_id) FILTER (WHERE je.event_type = 'converted') AS exited
-      FROM journey_events je
-      WHERE je.journey_id = $1
-      GROUP BY node_id
-    `, [journeyId]);
+    // Per-node triggered (unique entries) and exited (converted at that node) counts.
+    // FAST PATH: derive from the rollup — triggered ≈ distinct recipients that reached
+    // the node (rollup `entries`), exited ≈ per-node exits. The frontend only displays
+    // `triggered` ("N contacts reached this step"). Live query otherwise.
+    let nodeEntryCounts;
+    if (usedRollup) {
+      nodeEntryCounts = Object.entries(rollupByNode).map(([nid, r]) => ({
+        node_id: nid,
+        triggered: +r.entries || 0,
+        exited: (+r.dist_exited_booked || 0) + (+r.dist_exited_unsub || 0),
+      }));
+    } else {
+      ({ rows: nodeEntryCounts } = await db.query(`
+        SELECT node_id,
+          COUNT(DISTINCT je.entry_id) AS triggered,
+          COUNT(DISTINCT je.entry_id) FILTER (WHERE je.event_type = 'converted') AS exited
+        FROM journey_events je
+        WHERE je.journey_id = $1
+        GROUP BY node_id
+      `, [journeyId]));
+    }
 
     // ── Per-node user stats (active, exited by reason, completed at each node) ──
-    const { rows: nodeUserStats } = await db.query(`
-      SELECT current_node_id, status, exit_reason, COUNT(*)::int AS cnt
-      FROM journey_entries WHERE journey_id = $1
-      GROUP BY current_node_id, status, exit_reason
-    `, [journeyId]);
-
+    // Built from distMap (rollup fast-path, or the live fallback populated above) —
+    // no separate journey_entries scan. Shape is identical to the old query's output.
     const node_stats = {};
-    for (const row of nodeUserStats) {
-      const nid = row.current_node_id;
-      if (!node_stats[nid]) node_stats[nid] = { snapshot: 0, active: 0, exited_booked: 0, exited_unsubscribed: 0, completed: 0, total: 0 };
-      const s = node_stats[nid];
-      s.total += row.cnt;
-      if (row.status === 'snapshot') s.snapshot += row.cnt;
-      else if (row.status === 'active') s.active += row.cnt;
-      else if (row.status === 'completed') s.completed += row.cnt;
-      else if (row.status === 'exited' || row.status === 'converted') {
-        if (row.exit_reason === 'booked') s.exited_booked += row.cnt;
-        else if (row.exit_reason === 'unsubscribed') s.exited_unsubscribed += row.cnt;
-        else s.exited_booked += row.cnt; // fallback
-      }
+    for (const [nid, d] of Object.entries(distMap)) {
+      const total = (d.snapshot || 0) + (d.active || 0) + (d.completed || 0) + (d.exited_booked || 0) + (d.exited_unsub || 0);
+      if (total === 0) continue; // match the live query, which omits nodes holding no entries
+      node_stats[nid] = {
+        snapshot:            d.snapshot || 0,
+        active:              d.active || 0,
+        exited_booked:       d.exited_booked || 0,
+        exited_unsubscribed: d.exited_unsub || 0,
+        completed:           d.completed || 0,
+        total,
+      };
     }
 
     // Per-node ranking source ('claude' | 'fallback' | 'fallback_no_api_key')
@@ -671,7 +746,10 @@ class JourneyService {
       };
     }
 
-    return { ...journey, entryStats: entryStatsOut, nodeAnalytics: nodeAnalyticsOut, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats, node_ranking_sources };
+    // _fast tells the route which cache TTL to use: the rollup fast path is cheap to
+    // recompute (short TTL for fresh numbers); a live-scan fallback is expensive (long
+    // TTL to protect the DB from repeated heavy computes).
+    return { ...journey, entryStats: entryStatsOut, nodeAnalytics: nodeAnalyticsOut, nodeEntryCounts, nodeUnsubCounts, node_statuses, node_stats, node_ranking_sources, _fast: usedRollup };
   }
 
   /**

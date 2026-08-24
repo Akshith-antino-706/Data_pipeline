@@ -11,7 +11,8 @@ const router = Router();
 // journey_entries / journey_events rows. The dashboard polls them every ~30s
 // (often from several tabs at once), so we cache the computed result briefly
 // and invalidate on any successful mutation to /:id*.
-const JOURNEY_DETAIL_TTL = 1800; // seconds (30 min) — large-journey mitigation; getById runs a 90s+ CTE on 1M+ entry journeys, so a longer cache window is required to keep the detail page responsive. Cache is invalidated on any /:id mutation so numbers stay fresh when it matters.
+const JOURNEY_DETAIL_TTL = 1800;      // seconds (30 min) — SLOW fallback window. Used for the timeline, and for journey-detail responses computed via the live-scan fallback (getById._fast === false), where a 90s+ CTE must NOT rerun often. Invalidated on any /:id mutation.
+const JOURNEY_DETAIL_TTL_FAST = 30;   // seconds — journey-detail responses served from the precomputed rollup (getById._fast === true) are cheap to recompute, so a short window keeps numbers fresh without risking the DB.
 const detailKey   = id => `journey:detail:${id}`;
 const timelineKey = id => `journey:timeline:${id}`;
 function invalidateJourney(id) {
@@ -374,7 +375,15 @@ router.post('/:id/reset-fire-times', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const id = parseInt(req.params.id);
-    const data = await cached(detailKey(id), () => JourneyService.getById(id), JOURNEY_DETAIL_TTL);
+    // ?fresh=1 bypasses both the Redis cache AND the precomputed rollup, forcing a
+    // live journey_entries scan (slow — for verification/debugging only).
+    const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
+    const data = fresh
+      ? await JourneyService.getById(id, { fresh: true })
+      // Adaptive TTL: 30s when getById used the precomputed rollup (cheap to refresh),
+      // 30 min when it fell back to a live scan (protects the DB from repeated heavy computes).
+      : await cached(detailKey(id), () => JourneyService.getById(id),
+          (d) => d?._fast ? JOURNEY_DETAIL_TTL_FAST : JOURNEY_DETAIL_TTL);
     if (!data) return res.status(404).json({ error: 'Journey not found' });
     res.json({ data });
   } catch (err) { next(err); }

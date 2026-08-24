@@ -281,6 +281,26 @@ app.post('/api/v2/migrate-channels', async (_, res) => {
   }
 });
 
+// Phase 1 fast-journey: per-node distribution columns on journey_node_stats.
+app.post('/api/v3/migrate-node-distribution', async (_, res) => {
+  try {
+    await runMigrationFile('105_journey_node_distribution.sql');
+    res.json({ success: true, message: 'journey_node_stats distribution columns migration (105) succeeded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Phase 1b fast-journey: entry_stats JSONB column on journey_node_stats (__ALL__ row).
+app.post('/api/v3/migrate-node-entry-stats', async (_, res) => {
+  try {
+    await runMigrationFile('106_journey_node_entry_stats.sql');
+    res.json({ success: true, message: 'journey_node_stats entry_stats column migration (106) succeeded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/v3/migrate-schema', async (_, res) => {
   try {
     await runMigrationFile('003_complete_data_schema.sql');

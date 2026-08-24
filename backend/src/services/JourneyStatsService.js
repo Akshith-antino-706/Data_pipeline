@@ -123,6 +123,60 @@ export async function refreshJourney(journeyId) {
     GROUP BY node_id
   `, [journeyId]);
 
+  // ── Per-node CURRENT entry distribution (active / waiting / completed / exited) ──
+  // This is the GROUP BY getById() used to run LIVE over journey_entries on every
+  // detail-page load (scales with snapshot size). Precomputing it here — off the
+  // request path — is the core of Phase 1. Normal journeys only: GTM/continuous
+  // entries live in gtm_journey_entries and are still read live in getById's gtm
+  // branch. Uses idx_je_journey_status_node (no new index). exited/converted split
+  // by reason to match getById's node_stats semantics (unsubscribed vs else=booked).
+  let distRows = [];
+  if ((jf.journey_type || 'normal') !== 'gtm') {
+    ({ rows: distRows } = await db.query(`
+      SELECT current_node_id AS node_id,
+        COUNT(*) FILTER (WHERE status='snapshot')::int                                                          AS dist_snapshot,
+        COUNT(*) FILTER (WHERE status='active')::int                                                            AS dist_active,
+        COUNT(*) FILTER (WHERE status='active' AND next_fire_at > NOW())::int                                   AS dist_waiting,
+        COUNT(*) FILTER (WHERE status='completed')::int                                                         AS dist_completed,
+        COUNT(*) FILTER (WHERE status IN ('exited','converted') AND exit_reason='unsubscribed')::int            AS dist_exited_unsub,
+        COUNT(*) FILTER (WHERE status IN ('exited','converted') AND exit_reason IS DISTINCT FROM 'unsubscribed')::int AS dist_exited_booked
+      FROM journey_entries
+      WHERE journey_id = $1
+      GROUP BY current_node_id
+    `, [journeyId]));
+  }
+
+  // ── Journey-level entryStats (stored as JSON on the __ALL__ row) ──
+  // This is the exact query getById used to run live on every detail load (~10.5s
+  // on J369). Running it here — off the request path — and storing the result lets
+  // getById read it verbatim, preserving fields it can't otherwise derive from the
+  // rollup (converted, pre_existing_unsub). Normal journeys only (GTM computes its
+  // own entryStats live from gtm_journey_entries).
+  let entryStatsObj = null;
+  if ((jf.journey_type || 'normal') !== 'gtm') {
+    const { rows: [es] } = await db.query(`
+      WITH je AS (
+        SELECT entry_id, status, exit_reason FROM journey_entries WHERE journey_id = $1
+      ),
+      sent AS (
+        SELECT DISTINCT jev.entry_id FROM journey_events jev
+        WHERE jev.journey_id = $1 AND jev.event_type = 'action_sent'
+      )
+      SELECT
+        COUNT(*)                                                                                  AS total_entries,
+        COUNT(*) FILTER (WHERE status = 'snapshot')                                               AS snapshot,
+        COUNT(*) FILTER (WHERE status = 'active')                                                 AS active,
+        COUNT(*) FILTER (WHERE status = 'completed')                                              AS completed,
+        COUNT(*) FILTER (WHERE status = 'converted')                                              AS converted,
+        COUNT(*) FILTER (WHERE status = 'exited')                                                 AS exited,
+        COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'booked')                      AS exited_booked,
+        COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'unsubscribed')                AS exited_unsubscribed,
+        COUNT(*) FILTER (WHERE status = 'exited' AND exit_reason = 'unsubscribed' AND s.entry_id IS NULL) AS pre_existing_unsub
+      FROM je LEFT JOIN sent s ON s.entry_id = je.entry_id
+    `, [journeyId]);
+    entryStatsObj = es || null;
+  }
+
   // ── Lifecycle: entries / booked / exits. Normal journeys use journey_entries;
   //    continuous/GTM journeys use gtm_journey_entries. Pull journey-level totals from
   //    whichever has rows (per-node lifecycle isn't cumulative, so we keep it journey-level).
@@ -134,6 +188,7 @@ export async function refreshJourney(journeyId) {
     if (!map.has(id)) map.set(id, {
       node_id: id, sent: 0, entries: 0, failed: 0, sends_today: 0, delivered: 0, bounced: 0,
       opened: 0, human_opened: 0, clicked: 0, human_clicked: 0, landed: 0, gtm_events: 0, unsubscribed: 0,
+      dist_snapshot: 0, dist_active: 0, dist_waiting: 0, dist_completed: 0, dist_exited_booked: 0, dist_exited_unsub: 0,
     });
     return map.get(id);
   };
@@ -144,6 +199,12 @@ export async function refreshJourney(journeyId) {
   for (const r of sesRows)    { const n = ensure(r.node_id); n.delivered = +r.delivered||0; n.bounced = +r.bounced||0; }
   for (const r of gtmRows)    { ensure(r.node_id).gtm_events = +r.gtm_events||0; }
   for (const r of unsubRows)  { ensure(r.node_id).unsubscribed = +r.unsubscribed||0; }
+  for (const r of distRows)   {
+    if (!r.node_id) continue;
+    const n = ensure(r.node_id);
+    n.dist_snapshot = +r.dist_snapshot||0; n.dist_active = +r.dist_active||0; n.dist_waiting = +r.dist_waiting||0;
+    n.dist_completed = +r.dist_completed||0; n.dist_exited_booked = +r.dist_exited_booked||0; n.dist_exited_unsub = +r.dist_exited_unsub||0;
+  }
 
   // Rollup row (__ALL__) = sum of node metrics + journey-level lifecycle
   const sum = (k) => [...map.values()].reduce((s, n) => s + (n[k] || 0), 0);
@@ -154,6 +215,8 @@ export async function refreshJourney(journeyId) {
     opened: sum('opened'), human_opened: sum('human_opened'),
     clicked: sum('clicked'), human_clicked: sum('human_clicked'),
     landed: sum('landed'), gtm_events: sum('gtm_events'), unsubscribed: sum('unsubscribed'),
+    dist_snapshot: sum('dist_snapshot'), dist_active: sum('dist_active'), dist_waiting: sum('dist_waiting'),
+    dist_completed: sum('dist_completed'), dist_exited_booked: sum('dist_exited_booked'), dist_exited_unsub: sum('dist_exited_unsub'),
   };
 
   // ── Persist: replace all rows for this journey in one transaction ──
@@ -166,19 +229,29 @@ export async function refreshJourney(journeyId) {
     for (const n of rows) {
       const isRollup = n.node_id === ROLLUP_KEY;
       const meta = nodeMeta.get(n.node_id) || {};
+      // final = node has been reached but no entries remain active/waiting there
+      // (a hint for a future skip-recompute optimization; not yet used to gate work).
+      const reached = (n.dist_active + n.dist_waiting + n.dist_completed + n.dist_exited_booked + n.dist_exited_unsub + n.sent) > 0;
+      const finalFlag = !isRollup && reached && n.dist_active === 0 && n.dist_waiting === 0;
       await client.query(`
         INSERT INTO journey_node_stats (
           journey_id, node_id, journey_name, journey_status, node_label, node_type, channel,
           target_count, entries, booked, exited_booked, exited_unsub,
           sent, sends_today, delivered, bounced,
           opened, human_opened, clicked, human_clicked, landed, gtm_events, unsubscribed, failed,
-          bot_window_sec, computed_at
+          bot_window_sec,
+          dist_snapshot, dist_active, dist_waiting, dist_completed, dist_exited_booked, dist_exited_unsub, final,
+          entry_stats,
+          computed_at, distribution_computed_at
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,
           $8,$9,$10,$11,$12,
           $13,$14,$15,$16,
           $17,$18,$19,$20,$21,$22,$23,$24,
-          $25, NOW()
+          $25,
+          $26,$27,$28,$29,$30,$31,$32,
+          $33,
+          NOW(), NOW()
         )
       `, [
         journeyId, n.node_id, jf.name, jf.status,
@@ -194,6 +267,9 @@ export async function refreshJourney(journeyId) {
         n.sent, n.sends_today, n.delivered, n.bounced,
         n.opened, n.human_opened, n.clicked, n.human_clicked, n.landed, n.gtm_events, n.unsubscribed, n.failed,
         botWindowSec(),
+        n.dist_snapshot, n.dist_active, n.dist_waiting, n.dist_completed, n.dist_exited_booked, n.dist_exited_unsub, finalFlag,
+        // entryStats JSON lives only on the __ALL__ rollup row (journey-level).
+        isRollup && entryStatsObj ? JSON.stringify(entryStatsObj) : null,
       ]);
     }
     await client.query('COMMIT');

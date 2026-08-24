@@ -17,6 +17,10 @@ import db from '../config/database.js';
 const WA_API_BASE = 'https://api.gupshup.io/wa/api/v1';
 const WA_TEMPLATE_BASE = 'https://api.gupshup.io/wa/app';
 const SMS_API_BASE = 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
+// RCS (RBM) lives on a DIFFERENT host than SMS — per Gupshup RCS API guide the
+// app resides at mediaapi.smsgupshup.com. Hitting SendMessage on the enterprise
+// SMS host returns error 106 "unsupported method".
+const RCS_API_BASE = 'https://mediaapi.smsgupshup.com/GatewayAPI/rest';
 
 export class GupshupService {
 
@@ -44,6 +48,17 @@ export class GupshupService {
     };
   }
 
+  static get rcsConfig() {
+    return {
+      // Falls back to the SMS creds if a dedicated RCS login isn't provisioned yet,
+      // but isRCSConfigured() only returns true when the RCS-specific vars are set —
+      // so we never accidentally send RCS with SMS-only creds against the wrong host.
+      userId:      process.env.GUPSHUP_RCS_USER_ID   || process.env.GUPSHUP_SMS_USER_ID,
+      password:    process.env.GUPSHUP_RCS_PASSWORD  || process.env.GUPSHUP_SMS_PASSWORD,
+      smsSenderId: process.env.GUPSHUP_SMS_SENDER_ID,            // used for RCS→SMS failover
+    };
+  }
+
   static isWhatsAppConfigured() {
     const c = this.waConfig;
     return Boolean(c.apiKey && c.appName && c.appId);
@@ -52,6 +67,10 @@ export class GupshupService {
   static isSMSConfigured() {
     const c = this.smsConfig;
     return Boolean(c.userId && c.password && c.senderId);
+  }
+
+  static isRCSConfigured() {
+    return Boolean(process.env.GUPSHUP_RCS_USER_ID && process.env.GUPSHUP_RCS_PASSWORD);
   }
 
   // ── Template submission ────────────────────────────────────────
@@ -330,6 +349,76 @@ export class GupshupService {
       };
     } catch (err) {
       return { success: false, error: err.message, provider: 'gupshup-sms' };
+    }
+  }
+
+  /**
+   * Send an approved RCS (RBM) template via Gupshup's mediaapi host.
+   *
+   * Unlike SMS, the `msg` field is a URL-encoded JSON payload carrying the
+   * templateCode (+ optional customParams for {{VAR}} personalization). RCS
+   * templates are NOT in content_templates — the templateCode is issued by
+   * Gupshup on the RBM portal after approval, so callers pass it directly.
+   *
+   * Simulation mode (no RCS creds): logs and returns success without sending,
+   * so the test-send UI works before the account is RCS-provisioned.
+   *
+   * @param {object}  opts
+   * @param {string}  opts.to            destination MSISDN (country code, no +)
+   * @param {string}  opts.templateCode  approved RCS template code/name
+   * @param {object}  [opts.customParams] { VAR: value } → replaces {{VAR}} in template
+   * @param {string}  [opts.smsFallback] SMS text to deliver if RCS can't (needs RCS+SMS accounts)
+   */
+  static async sendRCS({ to, templateCode, customParams = null, smsFallback = null }) {
+    if (!templateCode) throw new Error('templateCode is required for RCS send');
+
+    if (!this.isRCSConfigured()) {
+      console.log(`[Gupshup/RCS] Simulated send to ${to} | templateCode=${templateCode} | params=${JSON.stringify(customParams)}`);
+      return { success: true, simulated: true, provider: 'gupshup-rcs', externalId: `sim_rcs_${Date.now()}` };
+    }
+
+    const c = this.rcsConfig;
+    const templateMessage = { templateCode };
+    if (customParams && Object.keys(customParams).length) {
+      templateMessage.customParams = JSON.stringify(customParams);
+    }
+    const messageJson = { contentMessage: { templateMessage } };
+
+    const form = new URLSearchParams();
+    form.append('method', 'SendMessage');
+    form.append('send_to', to.replace(/^\+/, ''));
+    form.append('msg', JSON.stringify(messageJson));
+    form.append('msg_type', 'UNICODE_TEXT');
+    form.append('userid', c.userId);
+    form.append('auth_scheme', 'plain');
+    form.append('password', c.password);
+    form.append('v', '1.1');
+    form.append('format', 'json');
+    // RCS→SMS failover: platform sends SMS if RCS delivery fails (needs an SMS account too).
+    if (smsFallback && c.smsSenderId) {
+      form.set('msg', JSON.stringify({
+        version: 2.0,
+        RCS: { template: { templateCode }, ...(customParams ? { customParams: JSON.stringify(customParams) } : {}) },
+        SMS: { mask: c.smsSenderId, msg: smsFallback },
+      }));
+    }
+
+    try {
+      const res = await fetch(RCS_API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      const data = await res.json().catch(() => ({}));
+      const success = data?.response?.status === 'success';
+      return {
+        success, provider: 'gupshup-rcs',
+        externalId: data?.response?.id || null,
+        raw: data,
+        ...(success ? {} : { error: data?.response?.details || `send failed (code ${data?.response?.id || '?'})` }),
+      };
+    } catch (err) {
+      return { success: false, error: err.message, provider: 'gupshup-rcs' };
     }
   }
 
