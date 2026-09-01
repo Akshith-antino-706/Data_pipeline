@@ -27,6 +27,11 @@ const ALIASES = {
   customer_name: 'USER_FIRST_NAME',
   first_name:    'USER_FIRST_NAME',
   user_name:     'USER_NAME',
+  // WhatsApp node payload keys (ChatHead .data record: {id, d, name, img}) → canonical.
+  name:          'USER_NAME',
+  d:             'USER_PHONE',
+  img:           'USER_IMAGE',
+  id:            'RID',
   item_name:     'ITEM_NAME',
   product_name:  'ITEM_NAME',
   service_type:  'ITEM_CATEGORY',
@@ -83,7 +88,11 @@ function buildValues(ctx = {}) {
     USER_NAME:        c.name ?? p.name,
     USER_FIRST_NAME:  firstName,
     USER_EMAIL:       c.email ?? p.email,
-    USER_PHONE:       c.mobile ?? p.contact_number,
+    // WhatsApp node payload carries the phone as `d` and a per-contact image as `img`
+    // (ChatHead .data record shape: {id, d, name, img}). Read those alongside the
+    // email sources so the same resolver serves both channels.
+    USER_PHONE:       c.mobile ?? c.d ?? p.contact_number ?? p.d,
+    USER_IMAGE:       c.img ?? p.img,
     USER_CITY:        c.city ?? p.city,
     USER_COUNTRY:     c.country ?? p.country,
     IS_INDIAN_USER:   c.is_indian === true || c.is_indian === 'true' ? 'Yes' : (c.is_indian === false || c.is_indian === 'false' ? 'No' : ''),
@@ -91,7 +100,7 @@ function buildValues(ctx = {}) {
     BOOKING_STATUS:   c.booking_status,
     PRODUCT_TIER:     c.product_tier,
     CUSTOMER_SEGMENT: segs,
-    RID:              c.id,
+    RID:              c.id ?? p.id,
 
     // ── gtm_events ──
     PAGE_URL:        pageUrl,
@@ -106,7 +115,7 @@ function buildValues(ctx = {}) {
     // ── raw_payload ──
     ITEM_NAME:       p.itemName ?? ecom.item_name,
     ITEM_ID:         p.itemId ?? ecom.item_id,
-    ITEM_IMAGE_URL:  p.imageUrl ?? ecom.image_url,
+    ITEM_IMAGE_URL:  p.imageUrl ?? ecom.image_url ?? p.img,
     ITEM_CATEGORY:   p.itemCategory,
     ITEM_REFERRER:   p.referrer,
     CURRENCY:        p.currency ?? ecomRoot.currency ?? ecom.currency,
