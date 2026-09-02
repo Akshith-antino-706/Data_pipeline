@@ -41,11 +41,18 @@ export class ChatHeadV1Service {
     if (!Array.isArray(contacts) || !contacts.length) {
       throw new Error('buildAndSaveDataFile: contacts must be a non-empty array');
     }
-    const cleaned = contacts.map((c, i) => ({
-      id:   String(i + 1),
-      d:    String(c.phone || '').replace(/^\+/, '').replace(/\s+/g, ''),
-      name: c.name || '',
-    }));
+    const cleaned = contacts.map((c, i) => {
+      // Extra per-recipient template variables (item_name, item_image, cta_url, img, …)
+      // resolved upstream via placeholderResolver so ChatHead can bind them to the
+      // template's {{key}} placeholders. id/d/name always win over any same-named var.
+      const vars = (c.vars && typeof c.vars === 'object') ? c.vars : {};
+      return {
+        ...vars,
+        id:   String(i + 1),
+        d:    String(c.phone || '').replace(/^\+/, '').replace(/\s+/g, ''),
+        name: c.name || '',
+      };
+    });
     if (cleaned.some(r => !/^\d{10,15}$/.test(r.d))) {
       throw new Error('buildAndSaveDataFile: every contact needs a valid phone (10-15 digits, no +)');
     }

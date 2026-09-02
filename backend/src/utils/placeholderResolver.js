@@ -207,4 +207,30 @@ export function buildLiquidVars(ctx = {}) {
   return { ...buildValues(ctx), items };
 }
 
-export default { renderTemplate, buildLiquidVars };
+/**
+ * Default lowercase `.data` columns a ChatHead WhatsApp template can bind to. All are
+ * existing ALIASES keys → canonical values (nothing invented). Used by EVERY WhatsApp
+ * send path (fixed, continuous, GTM) so a WhatsApp broadcast carries the same dynamic
+ * product/contact keys the email does.
+ */
+export const WA_DATA_KEYS = ['item_name', 'item_image', 'cta_url', 'item_price', 'destination_city'];
+
+/**
+ * Resolve the WhatsApp `.data` variables for one (contact, event) context using the SAME
+ * placeholder keys the email templates use. Builds the values map once, then maps each
+ * requested lowercase key → its canonical value; empty values are dropped (never a literal
+ * {{key}}). Returns e.g. { item_name, item_image, cta_url }. Safe when there's no event
+ * (fixed journeys) — item keys just resolve blank and are omitted.
+ */
+export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
+  const values = buildValues(ctx);
+  const out = {};
+  for (const rawKey of keys) {
+    const canon = ALIASES[rawKey] || ALIASES[rawKey.toLowerCase()] || rawKey.toUpperCase();
+    const v = values[canon];
+    if (v != null && String(v).trim() !== '') out[rawKey] = String(v).trim();
+  }
+  return out;
+}
+
+export default { renderTemplate, buildLiquidVars, buildWaVars, WA_DATA_KEYS };

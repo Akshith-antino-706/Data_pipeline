@@ -199,7 +199,65 @@ router.post('/sms/test-send', async (req, res) => {
 // RCS creds aren't set, so the card is usable before RCS provisioning completes.
 
 router.get('/rcs/config', (_req, res) => {
-  res.json({ success: true, data: { configured: GupshupService.isRCSConfigured() } });
+  res.json({
+    success: true,
+    data: {
+      configured: GupshupService.isRCSConfigured(),
+      ctmConfigured: Boolean(process.env.GUPSHUP_CTM_TOKEN && process.env.GUPSHUP_CTM_SERVICE_ID),
+    },
+  });
+});
+
+// ── RCS template listing + preview (from the Gupshup console CTM API) ──
+// The enterprise send API has no template-list endpoint, so we read the console
+// backend (ctm-api.gupshup.io) the dashboard itself uses. Auth is a short-lived
+// console session JWT (GUPSHUP_CTM_TOKEN) — paste a fresh one when it expires.
+// Each template's `elementName` IS the templateCode used in the RCS send.
+function parseRcsTemplate(t) {
+  // Recursively walk the component tree to pull out the body text, buttons and image.
+  const texts = [], buttons = []; let image = null;
+  const walk = (node) => {
+    if (!node) return;
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (typeof node !== 'object') return;
+    if (node.type === 'text' && node.text?.body) texts.push(node.text.body);
+    if (node.type === 'image' && node.image?.url && !image) image = node.image.url;
+    if (node.type === 'button' && node.button) {
+      buttons.push({ text: node.button.text || '', action: node.button.action?.type || node.button.action?.value || '' });
+    }
+    for (const v of Object.values(node)) if (v && typeof v === 'object') walk(v);
+  };
+  walk(t.components || []);
+  return {
+    code:   t.channelParams?.elementName || t.gsTemplateId || t.id,   // ← templateCode for send
+    status: t.status,
+    type:   t.channelParams?.templateType || null,
+    body:   texts.join('\n\n'),
+    buttons,
+    image,
+    createdOn: t.createdOn || null,
+  };
+}
+
+router.get('/rcs/templates', async (_req, res) => {
+  const base = process.env.GUPSHUP_CTM_BASE || 'https://ctm-api.gupshup.io';
+  const svc  = process.env.GUPSHUP_CTM_SERVICE_ID;
+  const token = process.env.GUPSHUP_CTM_TOKEN;
+  if (!svc || !token) {
+    return res.json({ success: true, data: [], note: 'CTM token/service not configured — set GUPSHUP_CTM_TOKEN + GUPSHUP_CTM_SERVICE_ID (console session token, expires ~30 min).' });
+  }
+  try {
+    const url = `${base}/ctm/service/${svc}/template?channel=rcs&orderBy=createdOn&order=desc&pageNo=1&pageSize=100`;
+    const r = await fetch(url, { headers: { accept: 'application/json', authorization: `Bearer ${token}`, origin: 'https://console.gupshup.io' } });
+    if (r.status === 401 || r.status === 403) {
+      return res.status(200).json({ success: false, error: 'CTM token expired/invalid — paste a fresh console token into GUPSHUP_CTM_TOKEN.', data: [] });
+    }
+    const j = await r.json().catch(() => ({}));
+    const templates = (j.templates || []).map(parseRcsTemplate);
+    res.json({ success: true, data: templates });
+  } catch (err) {
+    res.status(200).json({ success: false, error: err.message, data: [] });
+  }
 });
 
 // POST /rcs/test-send — Body: { phone, templateCode, name?, customParams?, smsFallback? }

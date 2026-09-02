@@ -7,7 +7,7 @@ import WelcomeEmailService from './WelcomeEmailService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, buildLiquidVars } from '../utils/placeholderResolver.js';
+import { renderTemplate, buildLiquidVars, buildWaVars } from '../utils/placeholderResolver.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
@@ -248,10 +248,16 @@ class GtmJourneyService {
         return;
       }
 
+      // Personalise the WhatsApp .data record with the SAME dynamic keys the email uses —
+      // resolved via placeholderResolver (contact + this triggering event + raw_payload).
+      // ChatHead binds these lowercase .data columns to the template's {{item_name}} etc.,
+      // so a view_item WhatsApp actually says "which product you viewed", like the email.
+      const waVars = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
+
       let result;
       try {
         result = await ChatHeadV1Service.sendBroadcast({
-          contacts:     [{ phone, name: c.name || '' }],
+          contacts:     [{ phone, name: c.name || '', vars: waVars }],
           channelId:    parseInt(waChannelId),
           channelName:  actionNode.data?.waChannelName || null,
           templateId:   parseInt(waTemplateId),

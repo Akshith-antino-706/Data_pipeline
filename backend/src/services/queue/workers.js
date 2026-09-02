@@ -23,6 +23,7 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import ChatHeadV1Service from '../ChatHeadV1Service.js';
+import { buildWaVars } from '../../utils/placeholderResolver.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
 import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
@@ -548,7 +549,8 @@ async function processWA(job) {
       // NOTE: at very high volume this is the per-message path; the batched collector
       // (one broadcast per due-cohort chunk) is the throughput-optimized variant.
       const r = await ChatHeadV1Service.sendBroadcast({
-        contacts:     [{ phone: d.phone, name: d.name || '' }],
+        contacts:     [{ phone: d.phone, name: d.name || '',
+                         vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} }) }],
         channelId:    parseInt(d.waChannelId),
         channelName:  d.waChannelName || null,
         templateId:   parseInt(d.waTemplateId),
