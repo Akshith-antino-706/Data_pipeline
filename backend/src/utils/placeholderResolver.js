@@ -230,6 +230,9 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
     const v = values[canon];
     if (v != null && String(v).trim() !== '') out[rawKey] = String(v).trim();
   }
+  // WhatsApp templates use `img` for the header image → use the ITEM image for now.
+  // (The `img` alias itself resolves to USER_IMAGE, so we mirror item_image explicitly.)
+  if (!out.img && out.item_image) out.img = out.item_image;
   return out;
 }
 
