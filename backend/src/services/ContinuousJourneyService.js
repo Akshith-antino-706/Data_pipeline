@@ -2,6 +2,7 @@ import db from '../config/database.js';
 import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
+import { buildWaVars } from '../utils/placeholderResolver.js';
 
 /**
  * CONTINUOUS journey engine — the "conveyor belt".
@@ -161,11 +162,27 @@ class ContinuousJourneyService {
     }
     if (!valid.length) return { broadcasts: 0, sent: 0, exited };
 
+    // Batch-fetch the triggering events so each recipient's .data record can carry the
+    // SAME dynamic keys the email uses (item_name, item_image, …) — resolved per entry
+    // via placeholderResolver. No event → item keys resolve blank and are omitted.
+    const evIds = [...new Set(valid.map(v => v.e.last_event_id).filter(Boolean))];
+    const evMap = {};
+    if (evIds.length) {
+      const { rows: evs } = await db.query(
+        `SELECT event_id, event_name, page_url, page_title, raw_payload, created_at
+         FROM gtm_events WHERE event_id = ANY($1::bigint[])`, [evIds]
+      );
+      for (const ev of evs) evMap[ev.event_id] = ev;
+    }
+
     // ── ONE ChatHead broadcast for the whole group ──
     let result;
     try {
       result = await ChatHeadV1Service.sendBroadcast({
-        contacts:     valid.map(v => ({ phone: v.phone, name: v.c.name || '' })),
+        contacts:     valid.map(v => {
+          const ev = evMap[v.e.last_event_id] || { raw_payload: {} };
+          return { phone: v.phone, name: v.c.name || '', vars: buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload }) };
+        }),
         channelId:    parseInt(waCh),
         channelName:  node.data?.waChannelName || null,
         templateId:   parseInt(waTpl),

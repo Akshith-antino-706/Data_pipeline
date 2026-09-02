@@ -445,6 +445,7 @@ export const smsTestSend = ({ phone, name, templateId }) =>
 
 // ── RCS (Gupshup RBM) test send ──
 export const getRcsConfig = () => request('/api/v3/gupshup/rcs/config');
+export const getRcsTemplates = () => request('/api/v3/gupshup/rcs/templates');
 export const rcsTestSend = ({ phone, name, templateCode, customParams, smsFallback }) =>
   request('/api/v3/gupshup/rcs/test-send', { method: 'POST', body: JSON.stringify({ phone, name, templateCode, customParams, smsFallback }) });
 export const whatsAppTestSend = ({ phone, name, channelId, channelName, templateId, templateName }) =>

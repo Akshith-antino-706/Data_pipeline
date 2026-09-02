@@ -20,7 +20,11 @@ const SMS_API_BASE = 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
 // RCS (RBM) lives on a DIFFERENT host than SMS — per Gupshup RCS API guide the
 // app resides at mediaapi.smsgupshup.com. Hitting SendMessage on the enterprise
 // SMS host returns error 106 "unsupported method".
-const RCS_API_BASE = 'https://mediaapi.smsgupshup.com/GatewayAPI/rest';
+// Per Gupshup's current "Send RCS Message" doc, RCS on the enterprise account uses
+// the SAME GatewayAPI host as SMS (userid/password auth) — NOT mediaapi. The msg is
+// the RCS JSON (templateCode); msg_type is TEXT. (An older enterprise PDF showed
+// mediaapi + UNICODE_TEXT; the live docs + our working account use the enterprise host.)
+const RCS_API_BASE = process.env.GUPSHUP_RCS_API_URL || 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
 
 export class GupshupService {
 
@@ -66,7 +70,9 @@ export class GupshupService {
 
   static isSMSConfigured() {
     const c = this.smsConfig;
-    return Boolean(c.userId && c.password && c.senderId);
+    // senderId (mask) is optional — some enterprise accounts have a default sender and
+    // reject an unregistered mask. Only userid + password are required to send.
+    return Boolean(c.userId && c.password);
   }
 
   static isRCSConfigured() {
@@ -332,7 +338,9 @@ export class GupshupService {
     form.append('password', c.password);
     form.append('v', '1.1');
     form.append('format', 'json');
-    form.append('mask', c.senderId);
+    // Only send a mask if one is configured — an unregistered mask makes the account
+    // reject the send; accounts with a default sender work with no mask (verified).
+    if (c.senderId) form.append('mask', c.senderId);
     // DLT headers
     if (c.dltEntityId) form.append('principalEntityId', c.dltEntityId);
     if (tpl.external_template_id) form.append('dltTemplateId', tpl.external_template_id);
@@ -388,7 +396,7 @@ export class GupshupService {
     form.append('method', 'SendMessage');
     form.append('send_to', to.replace(/^\+/, ''));
     form.append('msg', JSON.stringify(messageJson));
-    form.append('msg_type', 'UNICODE_TEXT');
+    form.append('msg_type', 'TEXT');
     form.append('userid', c.userId);
     form.append('auth_scheme', 'plain');
     form.append('password', c.password);

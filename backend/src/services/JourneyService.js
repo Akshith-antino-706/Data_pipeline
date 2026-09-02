@@ -7,6 +7,7 @@ import { enqueueBatch, queueCounts } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
+import { buildWaVars } from '../utils/placeholderResolver.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -2404,7 +2405,11 @@ class JourneyService {
         const chunk = list.slice(i, i + CHUNK);
         const contacts = chunk
           .filter(d => d.phone && String(d.phone).replace(/\D/g, '').length >= 10)
-          .map(d => ({ phone: d.phone, name: d.name || '' }));
+          // Carry the same dynamic keys the email uses into the .data record. Fixed
+          // journeys have no per-entry event, so item_* keys resolve blank (omitted);
+          // any node-level templateVariables still flow through the resolver.
+          .map(d => ({ phone: d.phone, name: d.name || '',
+                       vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} }) }));
 
         let result;
         try {
