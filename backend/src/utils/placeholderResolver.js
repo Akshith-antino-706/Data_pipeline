@@ -208,31 +208,50 @@ export function buildLiquidVars(ctx = {}) {
 }
 
 /**
- * Default lowercase `.data` columns a ChatHead WhatsApp template can bind to. All are
- * existing ALIASES keys → canonical values (nothing invented). Used by EVERY WhatsApp
- * send path (fixed, continuous, GTM) so a WhatsApp broadcast carries the same dynamic
- * product/contact keys the email does.
+ * Which `.data` columns to emit. '*' = EVERY resolved key (template-agnostic — we don't
+ * know which ChatHead template needs which key; extra columns are ignored by ChatHead).
+ * Can also be set to an explicit lowercase array (e.g. for million-recipient broadcasts
+ * where a lean file matters). Nothing here is ever a literal {{key}} — empties are dropped.
  */
-export const WA_DATA_KEYS = ['item_name', 'item_image', 'cta_url', 'item_price', 'destination_city'];
+export const WA_DATA_KEYS = '*';
+
+// Never worth putting in the .data file (a huge JSON dump — not a template variable).
+const WA_DATA_EXCLUDE = new Set(['RAW_PAYLOAD']);
 
 /**
- * Resolve the WhatsApp `.data` variables for one (contact, event) context using the SAME
- * placeholder keys the email templates use. Builds the values map once, then maps each
- * requested lowercase key → its canonical value; empty values are dropped (never a literal
- * {{key}}). Returns e.g. { item_name, item_image, cta_url }. Safe when there's no event
- * (fixed journeys) — item keys just resolve blank and are omitted.
+ * Resolve the WhatsApp/RCS `.data` variables for one (contact, event) context using the
+ * SAME placeholder keys the email templates use. Builds the values map once.
+ *   keys = '*'  → emit EVERY resolved value: each canonical key lowercased, PLUS every
+ *                 lowercase alias (cta_url, img, product_name, rec1_name …), minus
+ *                 RAW_PAYLOAD and minus empties.
+ *   keys = []   → emit only those specific lowercase keys (lean mode).
+ * `name` is always USER_NAME, falling back to USER_FIRST_NAME (matches the email templates).
  */
 export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
   const values = buildValues(ctx);
   const out = {};
-  for (const rawKey of keys) {
-    const canon = ALIASES[rawKey] || ALIASES[rawKey.toLowerCase()] || rawKey.toUpperCase();
-    const v = values[canon];
-    if (v != null && String(v).trim() !== '') out[rawKey] = String(v).trim();
+  const put = (k, v) => { if (v != null && String(v).trim() !== '') out[k] = String(v).trim(); };
+
+  if (keys === '*' || keys === 'all') {
+    for (const [canon, v] of Object.entries(values)) {
+      if (WA_DATA_EXCLUDE.has(canon)) continue;
+      put(canon.toLowerCase(), v);            // e.g. ITEM_NAME → item_name, USER_CITY → user_city
+    }
+    for (const [alias, canon] of Object.entries(ALIASES)) {
+      if (WA_DATA_EXCLUDE.has(canon)) continue;
+      put(alias, values[canon]);              // e.g. cta_url, product_name, rec1_name → same value
+    }
+  } else {
+    for (const rawKey of keys) {
+      const canon = ALIASES[rawKey] || ALIASES[rawKey.toLowerCase()] || rawKey.toUpperCase();
+      put(rawKey, values[canon]);
+    }
   }
-  // WhatsApp templates use `img` for the header image → use the ITEM image for now.
-  // (The `img` alias itself resolves to USER_IMAGE, so we mirror item_image explicitly.)
+
+  // `img` header image → the item image (the `img` alias itself resolves to USER_IMAGE).
   if (!out.img && out.item_image) out.img = out.item_image;
+  // `name` = USER_NAME || USER_FIRST_NAME (default 'there'), just like the email templates.
+  put('name', values.USER_NAME || values.USER_FIRST_NAME);
   return out;
 }
 
