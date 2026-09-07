@@ -25,6 +25,10 @@ const SMS_API_BASE = 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
 // the RCS JSON (templateCode); msg_type is TEXT. (An older enterprise PDF showed
 // mediaapi + UNICODE_TEXT; the live docs + our working account use the enterprise host.)
 const RCS_API_BASE = process.env.GUPSHUP_RCS_API_URL || 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
+// Official RCS Template APIs (V2.0) — stable app-key auth, unlike the CTM console
+// session token. Base: https://api.gupshup.io/rcs/api ; List/Get/Create under
+// /v2/app/{RCS_APP_ID}/template. Header: Authorization: {RCS_APP_KEY}.
+const RCS_TEMPLATE_API_BASE = process.env.GUPSHUP_RCS_TEMPLATE_API_URL || 'https://api.gupshup.io/rcs/api';
 
 export class GupshupService {
 
@@ -77,6 +81,103 @@ export class GupshupService {
 
   static isRCSConfigured() {
     return Boolean(process.env.GUPSHUP_RCS_USER_ID && process.env.GUPSHUP_RCS_PASSWORD);
+  }
+
+  // ── RCS Template APIs (V2.0) — listing/preview via the official app-key API ──
+
+  static get rcsTemplateApiConfig() {
+    return {
+      appId:  process.env.GUPSHUP_RCS_APP_ID,
+      appKey: process.env.GUPSHUP_RCS_APP_KEY,
+    };
+  }
+
+  static isRcsTemplateApiConfigured() {
+    const c = this.rcsTemplateApiConfig;
+    return Boolean(c.appId && c.appKey);
+  }
+
+  /**
+   * List RCS templates from the official Gupshup RCS Template API (V2.0):
+   *   GET {base}/v2/app/{RCS_APP_ID}/template?pageNo=&size=
+   * Walks every page and returns a normalized shape the content screen + journey
+   * modal share: { code, name, gsTemplateId, templateId, status, type, lastUpdate }.
+   * `code` is the template name — the identifier used in the RCS send.
+   */
+  static async listRcsTemplates({ pageSize = 100, maxPages = 20 } = {}) {
+    const c = this.rcsTemplateApiConfig;
+    if (!c.appId || !c.appKey) {
+      return { configured: false, templates: [], note: 'Set GUPSHUP_RCS_APP_ID + GUPSHUP_RCS_APP_KEY to list RCS templates from the official API.' };
+    }
+    const out = [];
+    for (let pageNo = 1; pageNo <= maxPages; pageNo++) {
+      const url = `${RCS_TEMPLATE_API_BASE}/v2/app/${encodeURIComponent(c.appId)}/template?pageNo=${pageNo}&size=${pageSize}`;
+      const r = await fetch(url, { headers: { accept: 'application/json', authorization: c.appKey } });
+      if (r.status === 401 || r.status === 403) {
+        const e = new Error('RCS_APP_KEY unauthorized — check GUPSHUP_RCS_APP_KEY / GUPSHUP_RCS_APP_ID.');
+        e.unauthorized = true; throw e;
+      }
+      const j = await r.json().catch(() => ({}));
+      // Surface API errors (e.g. 400 "Invalid App ID") instead of silently returning
+      // 0 templates — otherwise a wrong GUPSHUP_RCS_APP_ID looks like an empty account.
+      if (!r.ok || (j.status && Number(j.status) >= 400)) {
+        throw new Error(`RCS template API ${j.status || r.status}: ${j.message || 'request failed'} (app id: ${c.appId})`);
+      }
+      const rows = Array.isArray(j.data) ? j.data : [];
+      for (const t of rows) {
+        out.push({
+          code:       t.name,                       // ← templateCode used in the RCS send
+          name:       t.name,
+          gsTemplateId: t.gsTemplateId || null,
+          templateId: t.templateId || null,
+          status:     t.status || null,
+          type:       t.templateType || null,
+          lastUpdate: t.lastUpdate || null,
+        });
+      }
+      const totalPages = Number(j.totalPages) || 1;
+      if (pageNo >= totalPages || !rows.length) break;
+    }
+    return { configured: true, templates: out };
+  }
+
+  /**
+   * Get ONE RCS template's full content via the official Get Template API:
+   *   GET {base}/v2/app/{RCS_APP_ID}/template/{base64(name)}
+   * Parses the templateDetails + carouselDetails into { code, status, type, body,
+   * buttons[], image } for the preview panel.
+   */
+  static async getRcsTemplate(name) {
+    const c = this.rcsTemplateApiConfig;
+    if (!c.appId || !c.appKey) throw new Error('RCS Template API not configured (GUPSHUP_RCS_APP_ID / GUPSHUP_RCS_APP_KEY).');
+    if (!name) throw new Error('template name is required');
+    const enc = Buffer.from(String(name), 'utf8').toString('base64');
+    const url = `${RCS_TEMPLATE_API_BASE}/v2/app/${encodeURIComponent(c.appId)}/template/${enc}`;
+    const r = await fetch(url, { headers: { accept: 'application/json', authorization: c.appKey } });
+    if (r.status === 401 || r.status === 403) { const e = new Error('RCS_APP_KEY unauthorized'); e.unauthorized = true; throw e; }
+    const j = await r.json().catch(() => ({}));
+    const td = j.templateDetails || {};
+    const cards = Array.isArray(j.carouselDetails) ? j.carouselDetails : [];
+    const texts = [], buttons = []; let image = null;
+    for (const card of cards) {
+      if (card.textMessageContent) texts.push(card.textMessageContent);
+      if (card.cardTitle) texts.push(card.cardTitle);
+      if (card.cardDescription) texts.push(card.cardDescription);
+      if (!image && card.mediaUrl) image = card.mediaUrl;
+      for (const s of (card.suggestions || [])) {
+        buttons.push({ text: s.displayText || '', action: s.url || s.postback || s.suggestionType || '' });
+      }
+    }
+    return {
+      code:   td.name || name,
+      name:   td.name || name,
+      status: td.status || null,
+      type:   td.templateType || null,
+      gsTemplateId: td.gsTemplateId || null,
+      body:   texts.join('\n\n'),
+      buttons,
+      image,
+    };
   }
 
   // ── Template submission ────────────────────────────────────────
