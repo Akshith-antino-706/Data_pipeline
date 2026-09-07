@@ -17,11 +17,12 @@ import {
   getWhatsAppChannels, getWhatsAppTemplates
 } from '@/lib/api';
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
+import RcsTemplatePicker from './RcsTemplatePicker';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
   ChevronRight, RefreshCw, AlertCircle, Plus, Search, BarChart3,
   Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
-  Send, Mail, Smartphone, Bell, Globe, MessageCircle,
+  Send, Mail, Smartphone, Bell, Globe, MessageCircle, Radio,
   TrendingUp, Pause, MoreVertical, Layers, ArrowRight,
   ChevronDown, ChevronUp, Sparkles, LayoutGrid, List, AlertTriangle
 } from 'lucide-react';
@@ -618,7 +619,7 @@ export default function Journeys() {
   const [editForm, setEditForm] = useState({});
   const [flowEditMode, setFlowEditMode] = useState(false);
   const [addNodeAfter, setAddNodeAfter] = useState(null); // insert position
-  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, templateVariables: {} });
+  const [nodeForm, setNodeForm] = useState({ type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, templateVariables: {} });
   const [showNodeModal, setShowNodeModal] = useState(false);
   const [nodeModalAfterIdx, setNodeModalAfterIdx] = useState(null);
   const [editNodeId, setEditNodeId] = useState(null);
@@ -691,7 +692,7 @@ export default function Journeys() {
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
-  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, sendHour: null, templateVariables: {} };
+  const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
   const [createNodeForm, setCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
   const [editCreateNodeIdx, setEditCreateNodeIdx] = useState(null);
   const [editCreateNodeForm, setEditCreateNodeForm] = useState({ ...BLANK_CREATE_NODE });
@@ -900,7 +901,7 @@ export default function Journeys() {
     setDetailLoading(false);
   };
 
-  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, sendHour: null, templateVariables: {} };
+  const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
 
   // Variables that are auto-populated from contact data — don't show inputs for these
   // Only filter vars that are purely auto-filled internals — never shown as user inputs.
@@ -954,6 +955,11 @@ export default function Journeys() {
   const getNodeTemplate = (node) => {
     if (!node?.data) return null;
     const ch = (node.data.channel || '').toLowerCase();
+    // RCS templates aren't preloaded (fetched by the picker); read the saved code/name.
+    if (ch === 'rcs') {
+      const code = node.data.rcsTemplateCode || node.data.templateId;
+      return code ? { id: code, name: node.data.rcsTemplateName || code } : null;
+    }
     const tplId = ch === 'email' ? node.data.emailTemplateId : ch === 'whatsapp' ? node.data.whatsappTemplateId : ch === 'sms' ? node.data.smsTemplateId : null;
     if (!tplId) return null;
     // WhatsApp templates aren't preloaded (fetched per-channel by the picker), so the
@@ -997,6 +1003,10 @@ export default function Journeys() {
       waChannelName: d.waChannelName ?? null,
       waTemplateId: d.waTemplateId ?? (ch === 'whatsapp' ? (d.templateId || d.whatsappTemplateId || null) : null),
       waTemplateName: d.waTemplateName ?? null,
+      // RCS metadata (so the picker re-selects the saved templateCode)
+      rcsTemplateCode: d.rcsTemplateCode ?? (ch === 'rcs' ? (d.templateId || null) : null),
+      rcsTemplateName: d.rcsTemplateName ?? null,
+      rcsTemplateType: d.rcsTemplateType ?? null,
       templateVariables: d.templateVariables || {},
     });
     setShowNodeModal(true);
@@ -1009,7 +1019,8 @@ export default function Journeys() {
     const resolvedTemplateId =
       nodeForm.channel === 'email'    ? (nodeForm.emailTemplateId    || null) :
       nodeForm.channel === 'whatsapp' ? (nodeForm.whatsappTemplateId || null) :
-      nodeForm.channel === 'sms'      ? (nodeForm.smsTemplateId      || null) : null;
+      nodeForm.channel === 'sms'      ? (nodeForm.smsTemplateId      || null) :
+      nodeForm.channel === 'rcs'      ? (nodeForm.rcsTemplateCode    || null) : null;
     if (nodeForm.type === 'action' && !resolvedTemplateId) {
       return showToast('Template is required for action nodes', 'error');
     }
@@ -1027,6 +1038,7 @@ export default function Journeys() {
             sendHour: nodeForm.sendHour ?? null,
             templateVariables: nodeForm.templateVariables || {},
             ...(nodeForm.channel === 'whatsapp' && { restChannel: nodeForm.restChannel || 'email', restTemplateId: nodeForm.restTemplateId || null, ...waMetaFor(nodeForm) }),
+            ...(nodeForm.channel === 'rcs' && { rcsTemplateCode: nodeForm.rcsTemplateCode || null, rcsTemplateName: nodeForm.rcsTemplateName || null, rcsTemplateType: nodeForm.rcsTemplateType || null }),
           }),
           ...(nodeForm.type === 'wait'      && { waitDays: nodeForm.waitDays }),
           ...(nodeForm.type === 'condition' && { condition: nodeForm.condition }),
@@ -1122,6 +1134,8 @@ export default function Journeys() {
           restTemplateId: n.restTemplateId || undefined,
           // ChatHead channel + template for WhatsApp nodes (so processWA can send).
           ...(n.channel === 'whatsapp' ? waMetaFor(n) : {}),
+          // RCS (Gupshup RBM) templateCode + metadata for RCS nodes (so processRCS can send).
+          ...(n.channel === 'rcs' ? { rcsTemplateCode: n.rcsTemplateCode || undefined, rcsTemplateName: n.rcsTemplateName || undefined, rcsTemplateType: n.rcsTemplateType || undefined } : {}),
           templateVariables: n.templateVariables && Object.keys(n.templateVariables).length > 0 ? n.templateVariables : undefined,
         },
         position: { x: 300, y: 50 + (i + 1) * 120 }
@@ -1265,7 +1279,8 @@ export default function Journeys() {
     const resolvedTemplateId =
       nodeForm.channel === 'email'     ? (nodeForm.emailTemplateId     || null) :
       nodeForm.channel === 'whatsapp'  ? (nodeForm.whatsappTemplateId  || null) :
-      nodeForm.channel === 'sms'       ? (nodeForm.smsTemplateId       || null) : null;
+      nodeForm.channel === 'sms'       ? (nodeForm.smsTemplateId       || null) :
+      nodeForm.channel === 'rcs'       ? (nodeForm.rcsTemplateCode     || null) : null;
 
     // Validation
     if (nodeForm.type === 'action' && !resolvedTemplateId) {
@@ -1287,6 +1302,11 @@ export default function Journeys() {
             restChannel: nodeForm.restChannel || 'email',
             restTemplateId: nodeForm.restTemplateId || null,
             ...waMetaFor(nodeForm),
+          }),
+          ...(nodeForm.channel === 'rcs' && {
+            rcsTemplateCode: nodeForm.rcsTemplateCode || null,
+            rcsTemplateName: nodeForm.rcsTemplateName || null,
+            rcsTemplateType: nodeForm.rcsTemplateType || null,
           }),
         }),
         ...(nodeForm.type === 'wait'      && { waitDays:  nodeForm.waitDays }),
@@ -3244,6 +3264,7 @@ export default function Journeys() {
                           { v: 'email',     label: 'Email',     color: 'var(--red)',    Icon: Mail },
                           { v: 'whatsapp',  label: 'WhatsApp',  color: '#25d366',       Icon: MessageCircle },
                           { v: 'sms',       label: 'SMS',       color: 'var(--orange)', Icon: Smartphone },
+                          { v: 'rcs',       label: 'RCS',       color: '#0ea5e9',       Icon: Radio },
                         ].map(ch => (
                           <button key={ch.v} onClick={() => setNodeForm(f => ({ ...f, channel: ch.v }))}
                             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: nodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: nodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: nodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
@@ -3352,6 +3373,14 @@ export default function Journeys() {
                         />
                         {allTemplates.sms.length === 0 && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>No SMS templates found</div>}
                       </div>
+                    )}
+
+                    {/* RCS template (Gupshup RBM — templateCode from the official RCS Template API) */}
+                    {nodeForm.channel === 'rcs' && (
+                      <RcsTemplatePicker
+                        value={{ rcsTemplateCode: nodeForm.rcsTemplateCode }}
+                        onChange={m => setNodeForm(f => ({ ...f, rcsTemplateCode: m.rcsTemplateCode, rcsTemplateName: m.rcsTemplateName, rcsTemplateType: m.rcsTemplateType, templateVariables: {} }))}
+                      />
                     )}
                   {/* ── Dynamic Template Variables ── */}
                   {(() => {
@@ -3916,7 +3945,7 @@ export default function Journeys() {
                                 <div style={{ marginBottom: 10 }}>
                                   <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Channel</label>
                                   <div style={{ display: 'flex', gap: 6 }}>
-                                    {[{ v: 'email', label: 'Email', c: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', c: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', c: 'var(--orange)', Icon: Smartphone }].map(ch => (
+                                    {[{ v: 'email', label: 'Email', c: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', c: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', c: 'var(--orange)', Icon: Smartphone }, { v: 'rcs', label: 'RCS', c: '#0ea5e9', Icon: Radio }].map(ch => (
                                       <button key={ch.v} onClick={() => setEditCreateNodeForm(f => ({ ...f, channel: ch.v }))}
                                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: editCreateNodeForm.channel === ch.v ? `1.5px solid ${ch.c}` : '1.5px solid var(--border-color)', background: editCreateNodeForm.channel === ch.v ? ch.c + '14' : 'transparent', color: editCreateNodeForm.channel === ch.v ? ch.c : 'var(--text-secondary)' }}>
                                         <ch.Icon size={11} /> {ch.label}
@@ -3951,6 +3980,14 @@ export default function Journeys() {
                                       channel="sms"
                                       value={editCreateNodeForm.smsTemplateId}
                                       onChange={val => setEditCreateNodeForm(f => ({ ...f, smsTemplateId: val, templateVariables: {} }))}
+                                    />
+                                  </div>
+                                )}
+                                {editCreateNodeForm.channel === 'rcs' && (
+                                  <div style={{ marginBottom: 10 }}>
+                                    <RcsTemplatePicker
+                                      value={{ rcsTemplateCode: editCreateNodeForm.rcsTemplateCode }}
+                                      onChange={m => setEditCreateNodeForm(f => ({ ...f, rcsTemplateCode: m.rcsTemplateCode, rcsTemplateName: m.rcsTemplateName, rcsTemplateType: m.rcsTemplateType, templateVariables: {} }))}
                                     />
                                   </div>
                                 )}
@@ -4088,7 +4125,7 @@ export default function Journeys() {
                           <div style={{ marginBottom: 12 }}>
                             <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 7, textTransform: 'uppercase' }}>Channel</label>
                             <div style={{ display: 'flex', gap: 6 }}>
-                              {[{ v: 'email', label: 'Email', color: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', color: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', color: 'var(--orange)', Icon: Smartphone }].map(ch => (
+                              {[{ v: 'email', label: 'Email', color: 'var(--red)', Icon: Mail }, { v: 'whatsapp', label: 'WhatsApp', color: '#25d366', Icon: MessageCircle }, { v: 'sms', label: 'SMS', color: 'var(--orange)', Icon: Smartphone }, { v: 'rcs', label: 'RCS', color: '#0ea5e9', Icon: Radio }].map(ch => (
                                 <button key={ch.v} onClick={() => setCreateNodeForm(f => ({ ...f, channel: ch.v }))}
                                   style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: createNodeForm.channel === ch.v ? `1.5px solid ${ch.color}` : '1.5px solid var(--border)', background: createNodeForm.channel === ch.v ? ch.color + '14' : 'transparent', color: createNodeForm.channel === ch.v ? ch.color : 'var(--text-secondary)' }}>
                                   <ch.Icon size={12} /> {ch.label}
@@ -4152,6 +4189,14 @@ export default function Journeys() {
                                 channel="sms"
                                 value={createNodeForm.smsTemplateId}
                                 onChange={val => setCreateNodeForm(f => ({ ...f, smsTemplateId: val }))}
+                              />
+                            </div>
+                          )}
+                          {createNodeForm.channel === 'rcs' && (
+                            <div style={{ marginBottom: 12 }}>
+                              <RcsTemplatePicker
+                                value={{ rcsTemplateCode: createNodeForm.rcsTemplateCode }}
+                                onChange={m => setCreateNodeForm(f => ({ ...f, rcsTemplateCode: m.rcsTemplateCode, rcsTemplateName: m.rcsTemplateName, rcsTemplateType: m.rcsTemplateType }))}
                               />
                             </div>
                           )}
@@ -4229,14 +4274,14 @@ export default function Journeys() {
                         </div>
                       )}
                       {/* Validation */}
-                      {createNodeForm.type === 'action' && ((createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) || (createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) || (createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)) && (
+                      {createNodeForm.type === 'action' && ((createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) || (createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) || (createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId) || (createNodeForm.channel === 'rcs' && !createNodeForm.rcsTemplateCode)) && (
                         <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10, padding: '6px 10px', background: 'rgba(239,68,68,0.06)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)' }}>
                           ⚠ {createNodeForm.channel.charAt(0).toUpperCase() + createNodeForm.channel.slice(1)} template is required
                         </div>
                       )}
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button className="btn btn-sm btn-primary"
-                          disabled={!createNodeForm.label.trim() || (createNodeForm.type === 'action' && createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId)}
+                          disabled={!createNodeForm.label.trim() || (createNodeForm.type === 'action' && createNodeForm.channel === 'email' && !createNodeForm.emailTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'whatsapp' && !createNodeForm.whatsappTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'sms' && !createNodeForm.smsTemplateId) || (createNodeForm.type === 'action' && createNodeForm.channel === 'rcs' && !createNodeForm.rcsTemplateCode)}
                           onClick={() => { setCreateNodes(ns => [...ns, { ...createNodeForm }]); setCreateNodeForm({ ...BLANK_CREATE_NODE }); setShowCreateNodeForm(false); }}>
                           <Plus size={11} /> Add Node
                         </button>

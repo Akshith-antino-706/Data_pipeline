@@ -71,6 +71,7 @@ const WA_RATE_MAX       = parseInt(process.env.JOURNEY_WA_RATE_MAX       || '20'
 const WA_RATE_WINDOW    = parseInt(process.env.JOURNEY_WA_RATE_WINDOW    || '1000');
 
 const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
+const RCS_ENABLED       = process.env.JOURNEY_RCS_ENABLED === 'true';
 
 // Throttle auto-processJourney calls: one trigger per journey per 20 seconds max
 const _processThrottle = new Map(); // journeyId → lastTriggerMs
@@ -108,6 +109,12 @@ export function startWorkers() {
   });
 
   const sms = new Worker('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled, {
+    connection,
+    concurrency: 5,
+    limiter: { max: 10, duration: 1000 },
+  });
+
+  const rcs = new Worker('journey-rcs', RCS_ENABLED ? processRCS : processRCSDisabled, {
     connection,
     concurrency: 5,
     limiter: { max: 10, duration: 1000 },
@@ -175,26 +182,27 @@ export function startWorkers() {
   email.on('failed', _onExhausted('email'));
   wa.on('failed',    _onExhausted('whatsapp'));
   sms.on('failed',   _onExhausted('sms'));
+  rcs.on('failed',   _onExhausted('rcs'));
 
   welcome.on('error', (err) => console.error(`[Worker:welcome] worker error: ${err.message}`));
   welcome.on('failed', (job, err) => console.error(`[Worker:welcome] job ${job?.id} failed: ${err.message}`));
   gtmJourney.on('error', (err) => console.error(`[Worker:gtmJourney] worker error: ${err.message}`));
   gtmJourney.on('failed', (job, err) => console.error(`[Worker:gtmJourney] job ${job?.id} failed: ${err.message}`));
 
-  for (const w of [email, wa, sms]) {
+  for (const w of [email, wa, sms, rcs]) {
     w.on('error', (err) => {
       console.error(`[Worker:${w.name}] worker error: ${err.message}`);
     });
   }
 
-  _workers = { email, wa, sms, welcome, gtmJourney };
-  console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'})`);
+  _workers = { email, wa, sms, rcs, welcome, gtmJourney };
+  console.log(`[Workers] Started — email(c=${EMAIL_CONCURRENCY},r=${EMAIL_RATE_MAX}/${EMAIL_RATE_WINDOW}ms) wa(c=${WA_CONCURRENCY},r=${WA_RATE_MAX}/${WA_RATE_WINDOW}ms) sms(${SMS_ENABLED ? 'enabled' : 'disabled'}) rcs(${RCS_ENABLED ? 'enabled' : 'disabled'})`);
   return _workers;
 }
 
 export async function stopWorkers() {
   if (!_workers) return;
-  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
+  await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.rcs.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
   // Flush any buffered send-log rows so a graceful restart doesn't lose them.
   await SendTrackService.flushLogs().catch(() => {});
   _workers = null;
@@ -661,6 +669,75 @@ async function processSMS(job) {
 
 async function processSMSDisabled(job) {
   await _logAndAdvance(job.data, 'action_blocked', { reason: 'sms_channel_disabled' }, false);
+}
+
+// ── RCS (Gupshup RBM) — fixed-engine per-message send (mirrors processSMS) ──
+// The node carries an RCS templateCode (not a numeric content_templates id). We fire
+// one RCS message per entry via GupshupService.sendRCS, targeting unified_contacts.mobile
+// (d.phone), with per-recipient customParams resolved from placeholderResolver. Each
+// entry stays an independent, retriable unit. Also writes sms_send_log (provider
+// gupshup-rcs) for observability, mirroring the WhatsApp per-message log.
+async function processRCS(job) {
+  const d = job.data;
+  if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
+
+  if (_isDayCrossed(d)) {
+    return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
+  }
+
+  const { rows: [contact] } = await db.query(
+    'SELECT wa_unsubscribe, email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
+  );
+  if (String(contact?.wa_unsubscribe || '').toLowerCase() === 'yes') {
+    return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
+  }
+
+  const templateCode = d.rcsTemplateCode || d.templateId;
+  if (!templateCode) return _logAndAdvance(d, 'action_blocked', { reason: 'missing_rcs_template' }, false);
+
+  const customParams = d.rcsCustomParams
+    || buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} });
+
+  let sendResult;
+  try {
+    sendResult = await GupshupService.sendRCS({
+      to: d.phone, templateCode, customParams: Object.keys(customParams || {}).length ? customParams : null,
+    });
+  } catch (err) {
+    sendResult = { success: false, error: err.message };
+  }
+
+  const ok = !!sendResult?.success;
+  // Independent per-message log — a logging failure must never fail the send.
+  try {
+    const status = sendResult?.simulated ? 'simulated' : (ok ? 'sent' : 'failed');
+    await db.query(
+      `INSERT INTO sms_send_log
+         (unified_id, phone, contact_name, template_id, provider, external_id,
+          status, source, error, message_body, sent_at)
+       VALUES ($1,$2,$3,NULL,$4,$5,$6,'journey',$7,$8,
+               CASE WHEN $6 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+      [d.customerId || null, d.phone, d.name || null, sendResult?.provider || 'gupshup-rcs',
+       sendResult?.externalId || null, status,
+       ok ? null : String(sendResult?.error || 'send failed').slice(0, 500),
+       `RCS templateCode=${templateCode}`]
+    );
+  } catch (logErr) { console.warn('[Worker:rcs] log write failed:', logErr.message); }
+
+  await _logAndAdvance(d,
+    ok ? 'action_sent' : 'action_failed',
+    { templateCode, channel: 'rcs', track: d.track,
+      sendResult: { success: ok, simulated: sendResult?.simulated, error: sendResult?.error } },
+    ok
+  );
+
+  if (!ok && !sendResult?.simulated) {
+    throw new Error(`gupshup rcs send failed: ${sendResult?.error || 'unknown'}`);
+  }
+}
+
+async function processRCSDisabled(job) {
+  await _logAndAdvance(job.data, 'action_blocked', { reason: 'rcs_channel_disabled' }, false);
 }
 
 // ── helpers ───────────────────────────────────────────────────

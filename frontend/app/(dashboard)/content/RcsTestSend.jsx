@@ -11,7 +11,7 @@
  */
 import { useState, useEffect } from 'react';
 import { Radio, Send, Loader2, CheckCircle2, XCircle, Eye, X } from 'lucide-react';
-import { getRcsConfig, getRcsTemplates, rcsTestSend } from '@/lib/api';
+import { getRcsConfig, getRcsTemplates, getRcsTemplatePreview, rcsTestSend } from '@/lib/api';
 
 const DEFAULT_CODE = 'test_raynatrans';
 
@@ -100,7 +100,19 @@ export default function RcsTestSend() {
             ) : (
               <input value={templateCode} onChange={e => setTemplateCode(e.target.value)} placeholder="e.g. test_raynatrans" style={{ ...ctrl, flex: 1 }} />
             )}
-            <button type="button" onClick={() => setPreview(selectedTpl || { code: templateCode, body: '(no preview — template not in the loaded list)', buttons: [] })}
+            <button type="button" onClick={async () => {
+                // Show list metadata immediately, then enrich with full body/buttons/image
+                // from the official Get Template API (the list endpoint returns metadata only).
+                const base = selectedTpl || { code: templateCode, buttons: [] };
+                setPreview({ ...base, _loading: true });
+                try {
+                  const r = await getRcsTemplatePreview(base.code || templateCode);
+                  setPreview(r?.success && r.data ? { ...base, ...r.data, _loading: false }
+                                                  : { ...base, body: base.body || '(no preview available)', _loading: false });
+                } catch {
+                  setPreview({ ...base, body: base.body || '(preview unavailable)', _loading: false });
+                }
+              }}
               title="Preview template"
               style={{ padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <Eye size={15} />

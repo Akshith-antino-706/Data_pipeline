@@ -48,6 +48,7 @@ function _initQueues() {
     email:    new Queue('journey-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     wa:       new Queue('journey-wa',        { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     sms:      new Queue('journey-sms',       { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
+    rcs:      new Queue('journey-rcs',       { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     welcome:  new Queue('welcome-email',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
     gtmJourney: new Queue('gtm-journey',     { connection: conn, defaultJobOptions: QUEUE_DEFAULTS }),
   };
@@ -59,6 +60,7 @@ export function getQueue(channel) {
   if (channel === 'email')      return q.email;
   if (channel === 'whatsapp')   return q.wa;
   if (channel === 'sms')        return q.sms;
+  if (channel === 'rcs')        return q.rcs;
   if (channel === 'welcome')    return q.welcome;
   if (channel === 'gtmJourney') return q.gtmJourney;
   throw new Error(`Unknown channel for queue: ${channel}`);
@@ -105,6 +107,7 @@ export async function closeQueues() {
     _queues.email.close(),
     _queues.wa.close(),
     _queues.sms.close(),
+    _queues.rcs.close(),
     _queues.welcome.close(),
     _queues.gtmJourney.close(),
   ]);
@@ -121,5 +124,6 @@ export function getQueueEvents(channel) {
   if (channel === 'email')    return new QueueEvents('journey-email', { connection: conn });
   if (channel === 'whatsapp') return new QueueEvents('journey-wa',    { connection: conn });
   if (channel === 'sms')      return new QueueEvents('journey-sms',   { connection: conn });
+  if (channel === 'rcs')      return new QueueEvents('journey-rcs',   { connection: conn });
   throw new Error(`Unknown channel for queue events: ${channel}`);
 }

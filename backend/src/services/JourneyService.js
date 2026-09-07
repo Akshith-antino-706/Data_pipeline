@@ -1819,7 +1819,8 @@ class JourneyService {
         const rawTemplateId = currentNode.data?.templateId
           || (rawChannel === 'email' ? currentNode.data?.emailTemplateId : null)
           || (rawChannel === 'whatsapp' ? currentNode.data?.whatsappTemplateId : null)
-          || (rawChannel === 'sms' ? currentNode.data?.smsTemplateId : null);
+          || (rawChannel === 'sms' ? currentNode.data?.smsTemplateId : null)
+          || (rawChannel === 'rcs' ? currentNode.data?.rcsTemplateCode : null);
         let channel = rawChannel;
         let templateId = rawTemplateId;
         let autoPaired = false;
@@ -1869,6 +1870,13 @@ class JourneyService {
           waChannelName:     currentNode.data?.waChannelName ?? null,
           waTemplateId:      currentNode.data?.waTemplateId ?? null,
           waTemplateName:    currentNode.data?.waTemplateName ?? null,
+          // RCS (Gupshup RBM) node config — templateCode + resolved per-recipient params.
+          // Present only on rcs nodes; used by processRCS to fire GupshupService.sendRCS.
+          rcsTemplateCode:   currentNode.data?.rcsTemplateCode ?? null,
+          rcsTemplateName:   currentNode.data?.rcsTemplateName ?? null,
+          rcsCustomParams:   rawChannel === 'rcs'
+            ? buildWaVars({ contact: { id: entry.customer_id, name: entry.name, email: entry.email, mobile: entry.phone }, payload: currentNode.data?.templateVariables || {} })
+            : null,
           name:              entry.name,
           email:             recipientEmail,
           phone:             entry.phone,

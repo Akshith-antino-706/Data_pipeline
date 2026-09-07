@@ -5,6 +5,7 @@ import db from '../config/database.js';
 import { getConnection, enqueueGtmJourney } from './queue/index.js';
 import WelcomeEmailService from './WelcomeEmailService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
+import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 import { renderTemplate, buildLiquidVars, buildWaVars } from '../utils/placeholderResolver.js';
@@ -287,6 +288,58 @@ class GtmJourneyService {
       // duplicate WhatsApp send (same reason the fixed engine advances on WA failure
       // instead of throwing). The failure is recorded in whatsapp_send_log + journey_events.
       await advance();
+      return;
+    }
+
+    // ── RCS (Gupshup RBM) action node — per-message send, channel parity with the
+    //    fixed engine's processRCS. Targets unified_contacts.mobile, personalized with
+    //    the SAME dynamic keys the email/WhatsApp use (item_name, item_image, cta_url …)
+    //    as RCS customParams. Never falls through to the email block below. ──
+    if (actionNode?.data?.channel === 'rcs') {
+      const advanceRcs = async () => {
+        if (!entryId) return;
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+      };
+      const logRcs = (type, details) => (entryId ? db.query(
+        `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1,$2,$3,'rcs',$4)`,
+        [entryId, nodeId, type, JSON.stringify(details || {})]
+      ).catch(() => {}) : Promise.resolve());
+
+      if (String(c.wa_unsubscribe || '').toLowerCase() === 'yes') { await _exit('wa_unsubscribed'); return; }
+
+      const phone = String(c.mobile || '').replace(/\D/g, '');
+      const templateCode = actionNode.data?.rcsTemplateCode;
+      if (phone.length < 10 || !templateCode) {
+        await logRcs('action_blocked', { reason: phone.length < 10 ? 'no_mobile' : 'missing_rcs_template' });
+        await advanceRcs();
+        return;
+      }
+
+      const rcsParams = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
+      let result;
+      try {
+        result = await GupshupService.sendRCS({
+          to: phone, templateCode,
+          customParams: Object.keys(rcsParams).length ? rcsParams : null,
+        });
+      } catch (err) { result = { success: false, error: err.message }; }
+
+      const ok = !!result?.success;
+      await db.query(
+        `INSERT INTO sms_send_log
+           (unified_id, phone, contact_name, template_id, provider, external_id,
+            status, source, error, message_body, sent_at)
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,'gtm_journey',$7,$8,
+                 CASE WHEN $6 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+        [c.id, phone, c.name || null, result?.provider || 'gupshup-rcs', result?.externalId || null,
+         result?.simulated ? 'simulated' : (ok ? 'sent' : 'failed'),
+         ok ? null : String(result?.error || 'send failed').slice(0, 500),
+         `RCS templateCode=${templateCode}`]
+      ).catch(() => {});
+      await logRcs(ok ? 'action_sent' : 'action_failed', { channel: 'rcs', templateCode, simulated: result?.simulated });
+      console.log(`[GtmJourney ${journeyId}] RCS ${ok ? 'sent' : 'FAILED'} to=${phone} node=${nodeId} tpl=${templateCode}`);
+      await advanceRcs();
       return;
     }
 

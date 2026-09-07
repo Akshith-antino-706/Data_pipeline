@@ -239,12 +239,25 @@ function parseRcsTemplate(t) {
   };
 }
 
+// Primary path: the official RCS Template API (V2.0) — stable app-key auth
+// (GUPSHUP_RCS_APP_ID + GUPSHUP_RCS_APP_KEY). Falls back to the CTM console API
+// (short-lived session token) only when the official app creds aren't set.
 router.get('/rcs/templates', async (_req, res) => {
+  // 1. Official API (preferred — no expiring token).
+  if (GupshupService.isRcsTemplateApiConfigured()) {
+    try {
+      const { templates } = await GupshupService.listRcsTemplates();
+      return res.json({ success: true, data: templates, source: 'official' });
+    } catch (err) {
+      return res.status(200).json({ success: false, error: err.message, data: [] });
+    }
+  }
+  // 2. Fallback: CTM console API (legacy — GUPSHUP_CTM_* session token, ~30 min).
   const base = process.env.GUPSHUP_CTM_BASE || 'https://ctm-api.gupshup.io';
   const svc  = process.env.GUPSHUP_CTM_SERVICE_ID;
   const token = process.env.GUPSHUP_CTM_TOKEN;
   if (!svc || !token) {
-    return res.json({ success: true, data: [], note: 'CTM token/service not configured — set GUPSHUP_CTM_TOKEN + GUPSHUP_CTM_SERVICE_ID (console session token, expires ~30 min).' });
+    return res.json({ success: true, data: [], note: 'RCS templates unavailable — set GUPSHUP_RCS_APP_ID + GUPSHUP_RCS_APP_KEY (official API), or GUPSHUP_CTM_TOKEN + GUPSHUP_CTM_SERVICE_ID (console).' });
   }
   try {
     const url = `${base}/ctm/service/${svc}/template?channel=rcs&orderBy=createdOn&order=desc&pageNo=1&pageSize=100`;
@@ -254,9 +267,20 @@ router.get('/rcs/templates', async (_req, res) => {
     }
     const j = await r.json().catch(() => ({}));
     const templates = (j.templates || []).map(parseRcsTemplate);
-    res.json({ success: true, data: templates });
+    res.json({ success: true, data: templates, source: 'ctm' });
   } catch (err) {
     res.status(200).json({ success: false, error: err.message, data: [] });
+  }
+});
+
+// GET /rcs/templates/:code/preview — full template content (body/buttons/image) via
+// the official Get Template API. Used by the content-screen eye preview.
+router.get('/rcs/templates/:code/preview', async (req, res) => {
+  try {
+    const tpl = await GupshupService.getRcsTemplate(req.params.code);
+    res.json({ success: true, data: tpl });
+  } catch (err) {
+    res.status(200).json({ success: false, error: err.message, data: null });
   }
 });
 
