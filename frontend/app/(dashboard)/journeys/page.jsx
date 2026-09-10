@@ -690,6 +690,7 @@ export default function Journeys() {
 
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
+  const [creating, setCreating] = useState(false); // create-journey API in flight — keeps the modal open + shows a button loader
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
   const BLANK_CREATE_NODE = { label: 'Send Email', type: 'action', channel: 'email', waitDays: 1, condition: 'booked', goalType: 'booking', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
@@ -1112,7 +1113,11 @@ export default function Journeys() {
   const handleCreate = async () => {
     if (!createForm.name.trim()) return showToast('Journey name is required', 'error');
     if (!createForm.segmentId) return showToast('Segment is required', 'error');
-    setShowCreate(false);
+    // A journey needs at least the trigger (node_0, auto-created) + one action node (node_1).
+    if (!createNodes.length) return showToast('Add at least one node — a journey needs a step after the entry trigger', 'error');
+    // Keep the modal OPEN while the create API runs (loader on the button); only close +
+    // navigate on success. Prevents the "closes immediately then works in the background" jump.
+    setCreating(true);
     try {
       const trigger = {
         id: 'node_0', type: 'trigger',
@@ -1176,8 +1181,10 @@ export default function Journeys() {
       setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
+      setShowCreate(false);       // ← close/navigate only AFTER the API succeeds
       await loadData();
-    } catch (err) { showToast(err.message, 'error'); }
+    } catch (err) { showToast(err.message, 'error'); }  // on error the modal stays open so the user can retry
+    finally { setCreating(false); }
   };
 
   const handleEnroll = async () => {
@@ -3681,11 +3688,15 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}>
+            <button className="btn btn-ghost" disabled={creating} onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}>
               Cancel
             </button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={!createForm.name.trim()}>
-              <Plus size={14} /> Create Journey
+            <button className="btn btn-primary" onClick={handleCreate}
+              disabled={!createForm.name.trim() || !createForm.segmentId || createNodes.length === 0 || creating}
+              title={createNodes.length === 0 ? 'Add at least one node after the entry trigger' : undefined}>
+              {creating
+                ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Creating…</>
+                : <><Plus size={14} /> Create Journey</>}
             </button>
           </div>
         </div>

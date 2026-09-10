@@ -23,7 +23,7 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import ChatHeadV1Service from '../ChatHeadV1Service.js';
-import { buildWaVars } from '../../utils/placeholderResolver.js';
+import { buildWaVars, RCS_DATA_KEYS } from '../../utils/placeholderResolver.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
 import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
@@ -695,8 +695,9 @@ async function processRCS(job) {
   const templateCode = d.rcsTemplateCode || d.templateId;
   if (!templateCode) return _logAndAdvance(d, 'action_blocked', { reason: 'missing_rcs_template' }, false);
 
+  // RCS uses a SMALL curated key set (Gupshup caps the message payload length) — never '*'.
   const customParams = d.rcsCustomParams
-    || buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} });
+    || buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} }, RCS_DATA_KEYS);
 
   let sendResult;
   try {
@@ -713,12 +714,12 @@ async function processRCS(job) {
     const status = sendResult?.simulated ? 'simulated' : (ok ? 'sent' : 'failed');
     await db.query(
       `INSERT INTO sms_send_log
-         (unified_id, phone, contact_name, template_id, provider, external_id,
+         (unified_id, phone, contact_name, template_id, journey_id, node_id, provider, external_id,
           status, source, error, message_body, sent_at)
-       VALUES ($1,$2,$3,NULL,$4,$5,$6,'journey',$7,$8,
-               CASE WHEN $6 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
-      [d.customerId || null, d.phone, d.name || null, sendResult?.provider || 'gupshup-rcs',
-       sendResult?.externalId || null, status,
+       VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,'journey',$9,$10,
+               CASE WHEN $8 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+      [d.customerId || null, d.phone, d.name || null, d.journeyId || null, d.nodeId || null,
+       sendResult?.provider || 'gupshup-rcs', sendResult?.externalId || null, status,
        ok ? null : String(sendResult?.error || 'send failed').slice(0, 500),
        `RCS templateCode=${templateCode}`]
     );

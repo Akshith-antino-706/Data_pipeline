@@ -7,7 +7,7 @@ import { enqueueBatch, queueCounts } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
-import { buildWaVars } from '../utils/placeholderResolver.js';
+import { buildWaVars, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -1875,7 +1875,7 @@ class JourneyService {
           rcsTemplateCode:   currentNode.data?.rcsTemplateCode ?? null,
           rcsTemplateName:   currentNode.data?.rcsTemplateName ?? null,
           rcsCustomParams:   rawChannel === 'rcs'
-            ? buildWaVars({ contact: { id: entry.customer_id, name: entry.name, email: entry.email, mobile: entry.phone }, payload: currentNode.data?.templateVariables || {} })
+            ? buildWaVars({ contact: { id: entry.customer_id, name: entry.name, email: entry.email, mobile: entry.phone }, payload: currentNode.data?.templateVariables || {} }, RCS_DATA_KEYS)
             : null,
           name:              entry.name,
           email:             recipientEmail,
