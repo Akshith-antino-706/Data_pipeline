@@ -20,7 +20,7 @@ import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
-  ChevronRight, RefreshCw, AlertCircle, Plus, Search, BarChart3,
+  ChevronRight, ChevronLeft, RefreshCw, AlertCircle, Plus, Search, BarChart3,
   Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
   Send, Mail, Smartphone, Bell, Globe, MessageCircle, Radio,
   TrendingUp, Pause, MoreVertical, Layers, ArrowRight,
@@ -612,6 +612,8 @@ export default function Journeys() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState('cards');
+  const [journeyPage, setJourneyPage] = useState(1);   // client-side pagination for the journey list
+  const JOURNEYS_PER_PAGE = 24;
   const [expandedNode, setExpandedNode] = useState(null);
   const [techExpanded, setTechExpanded] = useState({});
   const [showActions, setShowActions] = useState(null);
@@ -795,7 +797,9 @@ export default function Journeys() {
     setLoading(true);
     try {
       const [j, s] = await Promise.all([
-        getJourneys().catch(() => ({ data: [] })),
+        // Load all journeys (backend default page size is 20) so client-side search /
+        // status filter / pagination below work across the full list, not just page 1.
+        getJourneys({ limit: 1000 }).catch(() => ({ data: [] })),
         getStrategies().catch(() => ({ data: [] }))
       ]);
       setJourneys(j.data || []);
@@ -1383,6 +1387,17 @@ export default function Journeys() {
     }
     return filtered;
   }, [journeys, statusFilter, searchQuery, businessType]);
+
+  // ── Client-side pagination over the filtered list ─────────────
+  const journeyPageCount = Math.max(1, Math.ceil(filteredJourneys.length / JOURNEYS_PER_PAGE));
+  // Reset to page 1 whenever the filters change (so we never sit on an out-of-range page).
+  useEffect(() => { setJourneyPage(1); }, [statusFilter, searchQuery, businessType, viewMode]);
+  // Clamp if the list shrank (e.g. after a delete) below the current page.
+  useEffect(() => { if (journeyPage > journeyPageCount) setJourneyPage(journeyPageCount); }, [journeyPage, journeyPageCount]);
+  const pagedJourneys = useMemo(
+    () => filteredJourneys.slice((journeyPage - 1) * JOURNEYS_PER_PAGE, journeyPage * JOURNEYS_PER_PAGE),
+    [filteredJourneys, journeyPage]
+  );
 
   // ── Summary Stats ─────────────────────────────────────────────
   const summaryStats = useMemo(() => {
@@ -4476,7 +4491,7 @@ export default function Journeys() {
       ) : viewMode === 'cards' ? (
         /* ── Card View ──────────────────────────────────────── */
         <div className="card-grid card-grid-2">
-          {filteredJourneys.map(j => {
+          {pagedJourneys.map(j => {
             const statusConf = STATUS_CONFIG[j.status] || STATUS_CONFIG.draft;
             const channels = getJourneyChannels(j.nodes);
             const convRate = parseFloat(j.conversion_rate) || 0;
@@ -4609,7 +4624,7 @@ export default function Journeys() {
                 </tr>
               </thead>
               <tbody>
-                {filteredJourneys.map(j => {
+                {pagedJourneys.map(j => {
                   const statusConf = STATUS_CONFIG[j.status] || STATUS_CONFIG.draft;
                   const channels = getJourneyChannels(j.nodes);
 
@@ -4680,6 +4695,30 @@ export default function Journeys() {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Pagination ─────────────────────────────────────────── */}
+      {filteredJourneys.length > JOURNEYS_PER_PAGE && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+            Showing <strong>{(journeyPage - 1) * JOURNEYS_PER_PAGE + 1}</strong>–<strong>{Math.min(journeyPage * JOURNEYS_PER_PAGE, filteredJourneys.length)}</strong> of <strong>{filteredJourneys.length}</strong> journeys
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className="btn btn-secondary btn-sm" disabled={journeyPage <= 1}
+              onClick={() => setJourneyPage(p => Math.max(1, p - 1))}
+              style={{ opacity: journeyPage <= 1 ? 0.5 : 1, cursor: journeyPage <= 1 ? 'not-allowed' : 'pointer' }}>
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', minWidth: 90, textAlign: 'center' }}>
+              Page <strong>{journeyPage}</strong> of <strong>{journeyPageCount}</strong>
+            </span>
+            <button className="btn btn-secondary btn-sm" disabled={journeyPage >= journeyPageCount}
+              onClick={() => setJourneyPage(p => Math.min(journeyPageCount, p + 1))}
+              style={{ opacity: journeyPage >= journeyPageCount ? 0.5 : 1, cursor: journeyPage >= journeyPageCount ? 'not-allowed' : 'pointer' }}>
+              Next <ChevronRight size={14} />
+            </button>
           </div>
         </div>
       )}
