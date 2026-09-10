@@ -8,7 +8,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, buildLiquidVars, buildWaVars } from '../utils/placeholderResolver.js';
+import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
@@ -316,7 +316,8 @@ class GtmJourneyService {
         return;
       }
 
-      const rcsParams = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
+      // RCS: SMALL curated key set (never '*') — Gupshup caps the message payload length.
+      const rcsParams = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload }, RCS_DATA_KEYS);
       let result;
       try {
         result = await GupshupService.sendRCS({
@@ -328,11 +329,11 @@ class GtmJourneyService {
       const ok = !!result?.success;
       await db.query(
         `INSERT INTO sms_send_log
-           (unified_id, phone, contact_name, template_id, provider, external_id,
+           (unified_id, phone, contact_name, template_id, journey_id, node_id, provider, external_id,
             status, source, error, message_body, sent_at)
-         VALUES ($1,$2,$3,NULL,$4,$5,$6,'gtm_journey',$7,$8,
-                 CASE WHEN $6 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
-        [c.id, phone, c.name || null, result?.provider || 'gupshup-rcs', result?.externalId || null,
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,'gtm_journey',$9,$10,
+                 CASE WHEN $8 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+        [c.id, phone, c.name || null, journeyId, nodeId, result?.provider || 'gupshup-rcs', result?.externalId || null,
          result?.simulated ? 'simulated' : (ok ? 'sent' : 'failed'),
          ok ? null : String(result?.error || 'send failed').slice(0, 500),
          `RCS templateCode=${templateCode}`]

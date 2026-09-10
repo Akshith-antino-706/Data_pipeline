@@ -586,6 +586,83 @@ export class GupshupService {
     }
     return { submitted: results.length, results };
   }
+
+  /**
+   * BULK RCS send via Gupshup GatewayAPI `method=xlsUpload` — ONE call for many recipients
+   * (the RCS analogue of a WhatsApp broadcast). Builds a CSV audience (col1 = phone, then
+   * one column per variable) and maps the template's variables to %VAR1..%VARn. Gupshup
+   * processes the file async and returns a transaction id; per-recipient status lands in
+   * the account's upload history (no length-cap problem — values live in CSV columns).
+   *
+   * @param {object}   opts
+   * @param {Array<{phone:string, vars?:object}>} opts.contacts  vars = { <templateVar>: value }
+   * @param {string}   opts.templateCode
+   * @param {string[]} [opts.varKeys]   ordered variable names → %VAR1..%VARn (CSV col order)
+   * @param {string}   [opts.msgId]
+   * @returns {{success, transactionId, count, provider, raw, error?}}
+   */
+  static async sendRcsBulk({ contacts, templateCode, varKeys = [], msgId = null }) {
+    if (!templateCode) throw new Error('templateCode is required for bulk RCS');
+    if (!Array.isArray(contacts) || !contacts.length) throw new Error('contacts must be a non-empty array');
+
+    // Simulation when RCS creds aren't set — lets the pipeline run before provisioning.
+    if (!this.isRCSConfigured()) {
+      console.log(`[Gupshup/RCS] Simulated BULK xlsUpload | template=${templateCode} | recipients=${contacts.length}`);
+      return { success: true, simulated: true, provider: 'gupshup-rcs', transactionId: `sim_${Date.now()}`, count: contacts.length };
+    }
+    const c = this.rcsConfig;
+
+    // customParams: { <templateVar>: "%VARn" } — keys are the RCS template's variable names.
+    const customParams = {};
+    varKeys.forEach((k, i) => { customParams[k] = `%VAR${i + 1}`; });
+
+    // CSV — MUST start with the header row `PHONE,%VAR1,%VAR2,…` (per Gupshup RCS bulk
+    // xlsUpload spec); without it Gupshup consumes the first recipient as the header and/or
+    // fails to map variables. Data rows: phone,var1,var2,…  (values sanitised so commas/
+    // newlines can't break columns).
+    const clean = (v) => String(v ?? '').replace(/[\r\n,]+/g, ' ').trim();
+    const header = ['PHONE', ...varKeys.map((_, i) => `%VAR${i + 1}`)].join(',');
+    const lines = contacts
+      .filter(ct => String(ct.phone || '').replace(/\D/g, '').length >= 10)
+      .map(ct => [String(ct.phone).replace(/\D/g, ''), ...varKeys.map(k => clean(ct.vars?.[k]))].join(','));
+    if (!lines.length) return { success: false, error: 'no valid recipients (10-15 digit phone)', provider: 'gupshup-rcs' };
+    const csv = [header, ...lines].join('\r\n') + '\r\n';
+
+    const msg = JSON.stringify({
+      contentMessage: {
+        templateMessage: {
+          templateCode,
+          ...(varKeys.length ? { customParams: JSON.stringify(customParams) } : {}),
+        },
+      },
+    });
+
+    const form = new FormData();
+    form.append('msg', msg);
+    form.append('method', 'xlsUpload');
+    form.append('userid', c.userId);
+    form.append('auth_scheme', 'plain');
+    form.append('password', c.password);
+    form.append('v', '1.1');
+    form.append('format', 'json');
+    form.append('msg_id', msgId || `rcs_${Date.now()}`);
+    form.append('msg_type', 'UNICODE_TEXT');
+    form.append('xlsFile', new Blob([csv], { type: 'text/csv' }), 'audience.csv');
+
+    try {
+      const res = await fetch(RCS_API_BASE, { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      const success = data?.response?.status === 'success';
+      return {
+        success, provider: 'gupshup-rcs',
+        transactionId: data?.data?.causeId ?? null,
+        count: lines.length, raw: data,
+        ...(success ? {} : { error: data?.response?.details || data?.response?.id || 'bulk rcs failed' }),
+      };
+    } catch (err) {
+      return { success: false, error: err.message, provider: 'gupshup-rcs' };
+    }
+  }
 }
 
 export default GupshupService;

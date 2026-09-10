@@ -215,6 +215,14 @@ export function buildLiquidVars(ctx = {}) {
  */
 export const WA_DATA_KEYS = '*';
 
+/**
+ * RCS (Gupshup RBM) is DIFFERENT from WhatsApp: customParams are JSON-stringified INTO the
+ * message payload, which Gupshup enforces a hard length cap on ("The message length cannot
+ * exceed …"). So RCS must send a SMALL curated set — never '*' (all 62 keys = over limit).
+ * Keep to the few short variables an RCS template actually uses.
+ */
+export const RCS_DATA_KEYS = ['item_name', 'item_price', 'destination_city', 'cta_url', 'user_first_name'];
+
 // Never worth putting in the .data file (a huge JSON dump — not a template variable).
 const WA_DATA_EXCLUDE = new Set(['RAW_PAYLOAD']);
 
@@ -255,4 +263,4 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
   return out;
 }
 
-export default { renderTemplate, buildLiquidVars, buildWaVars, WA_DATA_KEYS };
+export default { renderTemplate, buildLiquidVars, buildWaVars, WA_DATA_KEYS, RCS_DATA_KEYS };
