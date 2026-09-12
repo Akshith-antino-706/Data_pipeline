@@ -45,6 +45,8 @@ import testE2ERouter from './src/routes/testE2E.js';
 import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
 import chatheadV1Router from './src/routes/chatheadV1.js';
+import giveawaysRouter from './src/routes/giveaways.js';
+import { startGiveawayWorker } from './src/services/giveaway/giveawayWorker.js';
 import authRouter from './src/routes/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
@@ -145,6 +147,7 @@ app.use('/api/v3/test', testE2ERouter);
 app.use('/api/v3/gupshup', gupshupRouter);
 app.use('/api/v3/test-sends', testSendsRouter);
 app.use('/api/v3/chathead', chatheadV1Router);
+app.use('/api/v3/giveaways', giveawaysRouter);
 app.use('/api/v3/custom-segments', customSegmentsRouter);
 
 // ── Health check ────────────────────────────────────────────
@@ -1005,6 +1008,7 @@ try {
   const { startWorkers } = await import('./src/services/queue/workers.js');
   startWorkers();
   console.log('[Workers] Journey send workers started inline');
+  startGiveawayWorker();   // giveaway email consumer (log-only, no send)
 } catch (err) {
   console.error(`[Workers] Failed to start: ${err.message}`);
 }

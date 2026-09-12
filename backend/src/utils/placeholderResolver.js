@@ -37,6 +37,7 @@ const ALIASES = {
   service_type:  'ITEM_CATEGORY',
   item_image:    'ITEM_IMAGE_URL',
   cta_url:       'ITEM_URL',
+  o_url:         'O_URL',
   event_name:    'EVENT_NAME',
   event_id:      'EVENT_ID',
   event_time:    'EVENT_TIMESTAMP',
@@ -105,6 +106,13 @@ function buildValues(ctx = {}) {
     // ── gtm_events ──
     PAGE_URL:        pageUrl,
     ITEM_URL:        pageUrl,
+    // O_URL — first available URL across ALL sources (page → raw-payload url fields →
+    // ecommerce → order/booking → site root). Never blank; used by the WhatsApp `o_url` var.
+    O_URL:           pageUrl || p.itemUrl || p.item_url || p.url || p.ctaUrl || p.cta_url
+                       || p.productUrl || p.product_url || p.pageUrl
+                       || ecom.item_url || ecom.url
+                       || (orderId ? `${SITE}/booking/${encodeURIComponent(orderId)}` : '')
+                       || `${SITE}`,
     PAGE_TITLE:      p.pageTitle ?? ev.page_title,
     EVENT_TIMESTAMP: ts,
     EVENT_NAME:      ev.event_name ?? p.eventName,
