@@ -449,6 +449,11 @@ export const getRcsTemplates = () => request('/api/v3/gupshup/rcs/templates');
 export const getRcsTemplatePreview = (code) => request(`/api/v3/gupshup/rcs/templates/${encodeURIComponent(code)}/preview`);
 export const rcsTestSend = ({ phone, name, templateCode, customParams, smsFallback }) =>
   request('/api/v3/gupshup/rcs/test-send', { method: 'POST', body: JSON.stringify({ phone, name, templateCode, customParams, smsFallback }) });
+
+// ── Giveaway email events (BullMQ, log-only) ──
+export const getGiveawayLog = (limit = 50) => request(`/api/v3/giveaways/log?limit=${limit}`);
+export const giveawayTestSend = (body = {}) =>
+  request('/api/v3/giveaways/email/test', { method: 'POST', body: JSON.stringify(body) });
 export const whatsAppTestSend = ({ phone, name, channelId, channelName, templateId, templateName }) =>
   request('/api/v3/chathead/test-send', {
     method: 'POST',

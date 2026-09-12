@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!--
+  RAYNA GIVEAWAYS - MASTER TEMPLATE 1 of 4: PARTICIPATION ("welcome, you're entered")
+  Conditional logic shown in Liquid syntax ({% if %}) - adapt to your ESP (Klaviyo/Mailchimp/etc.).
+  MERGE FIELDS: name, giveaway, mechanic ('random' | 'leaderboard')
+-->
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>You're entered - keep earning points</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0 auto !important;padding:0 !important;width:100% !important}
+  *{-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}
+  table,td{mso-table-lspace:0pt !important;mso-table-rspace:0pt !important;border-collapse:collapse !important;border-spacing:0 !important}
+  img{-ms-interpolation-mode:bicubic;border:0;height:auto;line-height:100%;outline:none;text-decoration:none;display:block}
+  a{text-decoration:none}
+  a[x-apple-data-detectors]{color:inherit !important;text-decoration:none !important}
+  body{background-color:#F0F0F0}
+  .ff-d{font-family:'Montserrat','Helvetica Neue',Helvetica,Arial,sans-serif}
+  .ff-b{font-family:'Montserrat','Helvetica Neue',Helvetica,Arial,sans-serif}
+  .email-container{max-width:600px;margin:0 auto}
+  .px{padding-left:38px;padding-right:38px}
+  .col{width:100%;max-width:250px}
+  @media screen and (min-width:600px){.h1{font-size:34px !important;line-height:42px !important}}
+  @media screen and (max-width:599px){
+    .col{max-width:100% !important}
+    .card-img{height:auto !important}
+    .px{padding-left:28px !important;padding-right:28px !important}
+  }
+  @media (prefers-color-scheme:dark){
+    .dm-out{background-color:#000 !important}.dm-card{background-color:#0B0B0B !important}.dm-foot{background-color:#000000 !important}.px{background-color:#0B0B0B !important}
+    .dm-h{color:#FAFAFA !important}.dm-sub{color:#A6A6A6 !important}.dm-strong{color:#FAFAFA !important}
+    .dm-rule{border-color:#262626 !important}.dm-faint{color:#6E6E6E !important}.dm-label{color:#8A8A8A !important}.dm-footrule{border-color:#1C1C1C !important}
+    .dm-box{background-color:#111 !important;border-color:#2A2A2A !important}
+    .dm-chip{background:#1A1A1A !important;color:#BDBDBD !important;border-color:#2A2A2A !important}
+    .dm-cardbg{background-color:#0B0B0B !important}
+  }
+</style>
+</head>
+<body id="body" width="100%" style="margin:0;padding:0;background-color:#F0F0F0;" class="dm-out">
+<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:#F0F0F0;opacity:0;">{% if mechanic == 'leaderboard' %}You're on the {{giveaway}} leaderboard - climb the ranks to win.{% else %}You're in the {{giveaway}} draw - keep earning points to become eligible.{% endif %}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+<center role="article" aria-roledescription="email" lang="en" style="width:100%;background-color:#F0F0F0;">
+<!--[if mso]><table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" width="600"><tr><td><![endif]-->
+<div class="email-container" style="max-width:600px;margin:0 auto;">
+<table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color:#FFFFFF;" class="dm-card">
+  <tr><td class="px dm-cardbg" style="padding:30px 38px 20px 38px;background-color:#FFFFFF;text-align:center;">
+    <img border="0" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png" width="122" height="auto" alt="Rayna Tours" style="width:122px;max-width:122px;height:auto;display:block;margin:0 auto;">
+  </td></tr>
+  <tr><td class="px dm-cardbg" style="padding:20px 38px 6px 38px;background-color:#FFFFFF;text-align:center;">
+    <p class="ff-b dm-label" style="margin:0 0 12px 0;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:#9A9A9A;">Giveaway &middot; {% if mechanic == 'leaderboard' %}You're on the board{% else %}You're in{% endif %}</p>
+    <h1 class="ff-d dm-h h1" style="margin:0 0 15px 0;font-size:29px;line-height:37px;font-weight:600;color:#000;">{% if mechanic == 'leaderboard' %}You're on the leaderboard.{% else %}You're in the draw.{% endif %}</h1>
+    <p class="ff-b dm-sub" style="margin:0 auto;max-width:440px;font-size:14px;line-height:23px;font-weight:300;color:#6B6B6B;">Thanks for joining <span class="dm-strong" style="color:#000;font-weight:500;">{{giveaway}}</span>, {{name}}. You've earned your first points - {% if mechanic == 'leaderboard' %}now climb the ranks. The higher you finish, the better your prize.{% else %}keep earning to become eligible to win.{% endif %}</p>
+  </td></tr>
+
+  {% if mechanic == 'leaderboard' %}
+  <tr><td class="px dm-cardbg" style="padding:22px 38px 2px 38px;background-color:#FFFFFF;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#FBF6EA;border:1px solid #E4CE93;border-radius:10px;" class="dm-box"><tr><td style="padding:16px 24px;text-align:center;">
+      <p class="ff-d dm-strong" style="margin:0 0 3px;font-size:15px;line-height:21px;font-weight:700;color:#000;">Top 3 win when the giveaway closes</p>
+      <p class="ff-b dm-sub" style="margin:0;font-size:12.5px;line-height:18px;color:#6B6B6B;">1st, 2nd &amp; 3rd on the leaderboard each take a prize.</p>
+    </td></tr></table>
+  </td></tr>
+  {% endif %}
+
+  <tr><td class="px dm-cardbg" style="padding:38px 38px 0 38px;background-color:#FFFFFF;text-align:center;">
+    <p class="ff-d dm-strong" style="margin:0 0 10px 0;font-size:21px;line-height:26px;font-weight:700;letter-spacing:.01em;color:#000;">Earn more points</p>
+    <table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0"><tr><td style="width:44px;border-top:3px solid #C99A3A;font-size:0;line-height:0;">&nbsp;</td></tr></table>
+    <p class="ff-b dm-sub" style="margin:12px auto 0;max-width:380px;font-size:12.5px;line-height:18px;color:#8A7A6E;">{% if mechanic == 'leaderboard' %}Every point moves you up the leaderboard{% else %}The more you do, the sooner you're in the draw{% endif %}</p>
+  </td></tr>
+  <tr><td class="px dm-cardbg" style="padding:20px 38px 6px 38px;background-color:#FFFFFF;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#FFFFFF;border:1px solid #ECECEC;border-radius:10px;" class="dm-box">
+      <tr><td style="padding:14px 18px;border-bottom:1px solid #ECECEC;" class="dm-rule">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td valign="middle"><p class="ff-d dm-strong" style="margin:0 0 2px;font-size:14px;font-weight:600;color:#000;">Refer a friend</p><p class="ff-b dm-sub" style="margin:0;font-size:11.5px;line-height:16px;color:#7A7A7A;">Unlimited - every friend who joins with your link</p></td>
+          <td valign="middle" align="right" style="white-space:nowrap;"><span class="ff-b dm-chip" style="display:inline-block;background:#FEF6E0;border:1px solid #F0D88A;color:#8B6800;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;">+3 each</span></td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:14px 18px;border-bottom:1px solid #ECECEC;" class="dm-rule">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td valign="middle"><p class="ff-d dm-strong" style="margin:0 0 2px;font-size:14px;font-weight:600;color:#000;">Complete your profile</p><p class="ff-b dm-sub" style="margin:0;font-size:11.5px;line-height:16px;color:#7A7A7A;">Add your details on your Rayna profile</p></td>
+          <td valign="middle" align="right" style="white-space:nowrap;"><span class="ff-b dm-chip" style="display:inline-block;background:#FEF6E0;border:1px solid #F0D88A;color:#8B6800;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;">+3</span></td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:14px 18px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td valign="middle"><p class="ff-d dm-strong" style="margin:0 0 2px;font-size:14px;font-weight:600;color:#000;">Follow us on Instagram</p><p class="ff-b dm-sub" style="margin:0;font-size:11.5px;line-height:16px;color:#7A7A7A;">Follow &amp; DM your email to @raynatours_ - auto-verified</p></td>
+          <td valign="middle" align="right" style="white-space:nowrap;"><span class="ff-b dm-chip" style="display:inline-block;background:#FEF6E0;border:1px solid #F0D88A;color:#8B6800;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;">+2</span></td>
+        </tr></table>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <tr><td class="px dm-cardbg" style="padding:24px 38px 6px 38px;background-color:#FFFFFF;">
+    <!--[if mso]>
+    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://www.raynatours.com/giveaways" style="height:54px;v-text-anchor:middle;width:524px;" arcsize="11%" strokecolor="#000000" fillcolor="#000000">
+      <w:anchorlock/>
+      <center style="color:#FFFFFF;font-family:Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:2px;text-transform:uppercase;">{% if mechanic == 'leaderboard' %}Climb The Leaderboard{% else %}Earn More Points{% endif %}</center>
+    </v:roundrect>
+    <![endif]-->
+    <!--[if !mso]><!--><a href="https://www.raynatours.com/giveaways" style="display:block;width:100%;box-sizing:border-box;text-align:center;background-color:#000;color:#FFF;padding:19px 0;font-family:'Montserrat',Helvetica,Arial,sans-serif;font-size:12px;line-height:16px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;border-radius:6px;">{% if mechanic == 'leaderboard' %}Climb The Leaderboard{% else %}Earn More Points{% endif %}</a><!--<![endif]-->
+  </td></tr>
+  <tr><td class="px dm-cardbg" style="padding:14px 38px 34px 38px;text-align:center;background-color:#FFFFFF;"><p class="ff-b dm-faint" style="margin:0;font-size:11.5px;line-height:18px;color:#9A9A9A;">Free to enter &middot; open worldwide, 18+ &middot; {% if mechanic == 'leaderboard' %}highest-ranked entrants win when the giveaway closes{% else %}winner drawn at random among all eligible entrants{% endif %}</p></td></tr>
+
+  <tr><td style="background-color:#FFFFFF;padding:4px 24px 36px 24px;text-align:center;" class="dm-card">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E9E2D6;font-size:0;line-height:0;height:1px;" class="dm-rule">&nbsp;</td></tr></table>
+    <p class="ff-b dm-label" style="margin:28px 0 7px 0;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:#000;">Verified by the platforms you already trust</p>
+    <p class="ff-b dm-sub" style="margin:0 0 24px 0;font-size:12.5px;line-height:19px;color:#8A8076;">Our ratings are earned - not curated.</p>
+    <p style="text-align:center;margin:0 0 20px 0;">
+      <a href="https://www.trustpilot.com/review/raynatours.com?utm_medium=Trustbox&amp;utm_source=EmailNewsletter1" style="text-decoration:none;"><img border="0" src="https://emailsignature.trustpilot.com/newsletter/en-US/1/55bb84880000ff000581a327/text1@2x.png" height="18" alt="Excellent" style="max-height:18px;display:inline-block;vertical-align:middle;"></a>
+      &nbsp;&nbsp;
+      <a href="https://www.trustpilot.com/review/raynatours.com?utm_medium=Trustbox&amp;utm_source=EmailNewsletter1" style="text-decoration:none;"><img border="0" src="https://emailsignature.trustpilot.com/newsletter/en-US/1/55bb84880000ff000581a327/stars@2x.png" height="20" alt="Trustpilot Stars" style="max-height:20px;display:inline-block;vertical-align:middle;"></a>
+      &nbsp;&nbsp;
+      <a href="https://www.trustpilot.com/review/raynatours.com?utm_medium=Trustbox&amp;utm_source=EmailNewsletter1" style="text-decoration:none;"><img border="0" src="https://emailsignature.trustpilot.com/newsletter/en-US/1/55bb84880000ff000581a327/text2@2x.png" height="18" alt="Based on reviews" style="max-height:18px;display:inline-block;vertical-align:middle;"></a>
+      &nbsp;&nbsp;
+      <a href="https://www.trustpilot.com/review/raynatours.com?utm_medium=Trustbox&amp;utm_source=EmailNewsletter1" style="text-decoration:none;"><img border="0" src="https://emailsignature.trustpilot.com/brand/n/1/logo.png" height="20" alt="Trustpilot" style="max-height:20px;display:inline-block;vertical-align:middle;"></a>
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:20px;"><tr><td style="border-top:1px solid #EEE8DC;font-size:0;line-height:0;" class="dm-rule">&nbsp;</td></tr></table>
+    <table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr>
+        <td valign="middle" style="padding-right:12px;"><a href="https://www.tripadvisor.in/Attraction_Review-g295424-d3437013-Reviews-Rayna_Tours-Dubai_Emirate_of_Dubai.html" target="_blank" style="text-decoration:none;"><img border="0" src="https://static.tacdn.com/img2/brand_refresh/Tripadvisor_lockup_horizontal_secondary_registered.png" height="22" alt="Tripadvisor" style="height:22px;display:block;border:0;"></a></td>
+        <td valign="middle"><a href="https://www.tripadvisor.in/Attraction_Review-g295424-d3437013-Reviews-Rayna_Tours-Dubai_Emirate_of_Dubai.html" target="_blank" style="text-decoration:none;"><img border="0" src="https://www.tripadvisor.com/img/cdsi/img2/ratings/traveler/4.5-MCID-5.png" height="20" alt="4.5 of 5 bubbles" style="height:20px;display:block;border:0;"></a></td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td class="px dm-foot" style="padding:31px 38px;background-color:#000000;text-align:center;">
+    <p class="ff-b" style="margin:0 0 9px;font-size:16px;line-height:22px;font-weight:bold;color:#FFFFFF;">Your experience, Our Responsibility</p>
+    <p class="ff-b" style="margin:0 0 7px;font-size:13px;line-height:20px;color:#D8DEE5;">A Rayna Group Company</p>
+    <p class="ff-b" style="margin:0 0 18px;font-size:10.5px;line-height:17px;"><a href="https://www.raynatours.com/about-us" style="color:#E7BB5C;text-decoration:underline;">About Rayna Tours</a></p>
+    <p class="ff-b" style="margin:0 0 20px;font-size:10px;line-height:18px;letter-spacing:.14em;text-transform:uppercase;color:#8996A5;">Since 2006 &middot; DTCM Licensed &middot; IATA Accredited &middot; 24/7 Support</p>
+    <table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto 21px;">
+      <tr>
+        <td width="42" height="42" align="center" valign="middle" bgcolor="#FFFFFF" style="width:42px;height:42px;background-color:#FFFFFF;border-radius:21px;"><a href="https://www.instagram.com/raynatours_" target="_blank" aria-label="Instagram"><img border="0" src="https://res.cloudinary.com/dzsl8v8yw/image/upload/v1778153460/raynatours.com/Vector_2_tkzb25.png" width="24" height="24" alt="Instagram" style="width:24px;height:24px;margin:0 auto;"></a></td>
+        <td width="12" style="width:12px;font-size:0;line-height:0;">&nbsp;</td>
+        <td width="42" height="42" align="center" valign="middle" bgcolor="#FFFFFF" style="width:42px;height:42px;background-color:#FFFFFF;border-radius:21px;"><a href="https://www.facebook.com/raynagroup" target="_blank" aria-label="Facebook"><img border="0" src="https://res.cloudinary.com/dzsl8v8yw/image/upload/v1778153462/raynatours.com/Vector_yhzatu.png" width="12" height="24" alt="Facebook" style="width:12px;height:24px;margin:0 auto;"></a></td>
+        <td width="12" style="width:12px;font-size:0;line-height:0;">&nbsp;</td>
+        <td width="42" height="42" align="center" valign="middle" bgcolor="#FFFFFF" style="width:42px;height:42px;background-color:#FFFFFF;border-radius:21px;"><a href="https://ae.linkedin.com/company/raynatours" target="_blank" aria-label="LinkedIn"><img border="0" src="https://res.cloudinary.com/dzsl8v8yw/image/upload/v1778153460/raynatours.com/Vector_3_ywdxsc.png" width="25" height="24" alt="LinkedIn" style="width:25px;height:24px;margin:0 auto;"></a></td>
+        <td width="12" style="width:12px;font-size:0;line-height:0;">&nbsp;</td>
+        <td width="42" height="42" align="center" valign="middle" bgcolor="#FFFFFF" style="width:42px;height:42px;background-color:#FFFFFF;border-radius:21px;"><a href="https://x.com/raynagroup" target="_blank" aria-label="X / Twitter"><img border="0" src="https://res.cloudinary.com/dzsl8v8yw/image/upload/v1784612437/raynatours.com/x_fj8ryk.png" width="24" height="24" alt="X / Twitter" style="width:24px;height:24px;margin:0 auto;"></a></td>
+      </tr>
+    </table>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #263442;font-size:0;line-height:0;height:1px;" class="dm-rule">&nbsp;</td></tr></table>
+    <p class="ff-b" style="margin:18px 0 13px;font-size:10px;line-height:17px;color:#8996A5;">Licensed &amp; regulated in 35+ countries<br>UAE &middot; India &middot; Singapore &middot; Thailand &middot; Vietnam &middot; Switzerland &middot; and more</p>
+    <p class="ff-b" style="margin:0 0 12px;font-size:10px;line-height:17px;"><a href="https://www.raynatours.com/about-us" style="color:#AEB8C3;text-decoration:underline;">About Us</a> &middot; <a href="https://promotions.raynatours.com/unsubscribe" style="color:#AEB8C3;text-decoration:underline;">Unsubscribe</a> &middot; <a href="https://www.raynatours.com/privacy-policy" style="color:#AEB8C3;text-decoration:underline;">Privacy Policy</a></p>
+    <p class="ff-b" style="margin:0;font-size:9.5px;line-height:15px;color:#647181;">&copy; 2026 Rayna Group &middot; Dubai, UAE &middot; raynatours.com</p>
+  </td></tr>
+</table>
+</div>
+<!--[if mso]></td></tr></table><![endif]-->
+</center>
+</body>
+</html>
