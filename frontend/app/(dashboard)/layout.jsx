@@ -96,7 +96,7 @@ export default function DashboardLayout({ children }) {
 
   return (
     <RequireAuth>
-      {/* <GiveawayToaster /> */}
+      <GiveawayToaster />
       <div className="app" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
         <button
           className="mobile-menu-btn btn btn-ghost btn-icon"
