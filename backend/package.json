@@ -4,12 +4,14 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "giveaway:consumer": "node src/giveaway-consumer.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
     "@emailcheck/email-validator-js": "^5.1.0",
     "@google-cloud/bigquery": "^8.1.1",
+    "amqplib": "^2.0.1",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.76.6",
