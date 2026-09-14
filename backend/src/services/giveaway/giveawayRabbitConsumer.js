@@ -68,27 +68,54 @@ function bodyToHtml(body) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Recent captured events → a capped Redis list, so the web API (a different process) can
+// read them and the frontend can toast them. Recording must NEVER break the consumer.
+const EVENTS_KEY = 'giveaway:mq:events';
+async function record(evt) {
+  try {
+    await getConnection().multi()
+      .lpush(EVENTS_KEY, JSON.stringify({ ...evt, ts: Date.now() }))
+      .ltrim(EVENTS_KEY, 0, 199)
+      .expire(EVENTS_KEY, 604800)
+      .exec();
+  } catch { /* ignore */ }
+}
+
 // ── message handler ──
 async function handle(msg) {
   const raw = msg.content.toString();
   let p;
   try { p = JSON.parse(raw); }
-  catch { console.warn('[GiveawayMQ] ⛔ malformed JSON — ack+drop'); return _ch.ack(msg); }
+  catch {
+    console.warn('[GiveawayMQ] ⛔ malformed JSON — ack+drop');
+    await record({ outcome: 'poison', reason: 'malformed_json' });
+    return _ch.ack(msg);
+  }
 
   const tag = `[GiveawayMQ] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
+  const meta = { id: p?.id ?? null, type: p?.type ?? null, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null };
 
   // 1. contract validation → poison acked + logged, NEVER requeued
   const v = validate(p);
-  if (!v.ok) { console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`); return _ch.ack(msg); }
+  if (!v.ok) {
+    console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`);
+    await record({ ...meta, outcome: 'poison', reason: v.reason });
+    return _ch.ack(msg);
+  }
 
   // 2. idempotency — claim BEFORE sending; duplicate redelivery is a no-op
   const redis = getConnection();
   const claimed = await redis.set(`giveaway:email:${p.id}`, '1', 'NX', 'EX', DEDUPE_TTL);
-  if (claimed === null) { console.log(`${tag} 🔁 DUPLICATE — ack`); return _ch.ack(msg); }
+  if (claimed === null) {
+    console.log(`${tag} 🔁 DUPLICATE — ack`);
+    await record({ ...meta, outcome: 'duplicate' });
+    return _ch.ack(msg);
+  }
 
   // 3. send (or log-only), with transient-failure retries → DLQ
   if (!SEND_ENABLED) {
     console.log(`${tag} ✅ RECEIVED (GIVEAWAY_SEND_ENABLED!=true → log-only) <${p.to.email}> subject="${p.subject}"`);
+    await record({ ...meta, outcome: 'received' });
     return _ch.ack(msg);
   }
 
@@ -104,6 +131,7 @@ async function handle(msg) {
         headers: { 'X-Giveaway-Email-Id': String(p.id) },  // for bounce reconciliation
       });
       console.log(`${tag} ✅ SENT <${p.to.email}> msgId=${info.messageId}`);
+      await record({ ...meta, outcome: 'sent', msgId: info.messageId });
       return _ch.ack(msg);
     } catch (err) {
       lastErr = err;
@@ -113,6 +141,7 @@ async function handle(msg) {
   // all retries failed → release the claim so a DLQ replay can retry, then DLQ (no requeue)
   await redis.del(`giveaway:email:${p.id}`).catch(() => {});
   console.error(`${tag} ❌ SEND FAILED after ${MAX_RETRIES} tries: ${lastErr?.message} — nack→DLQ`);
+  await record({ ...meta, outcome: 'failed', reason: lastErr?.message });
   return _ch.nack(msg, false, false);
 }
 

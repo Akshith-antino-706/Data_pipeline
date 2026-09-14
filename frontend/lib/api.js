@@ -452,6 +452,8 @@ export const rcsTestSend = ({ phone, name, templateCode, customParams, smsFallba
 
 // ── Giveaway email events (BullMQ, log-only) ──
 export const getGiveawayLog = (limit = 50) => request(`/api/v3/giveaways/log?limit=${limit}`);
+// ── Giveaway events captured by the RabbitMQ consumer ──
+export const getGiveawayMqLog = (limit = 50) => request(`/api/v3/giveaways/mq-log?limit=${limit}`);
 export const giveawayTestSend = (body = {}) =>
   request('/api/v3/giveaways/email/test', { method: 'POST', body: JSON.stringify(body) });
 export const whatsAppTestSend = ({ phone, name, channelId, channelName, templateId, templateName }) =>
