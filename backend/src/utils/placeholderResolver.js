@@ -268,10 +268,14 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
   // ── COMPULSORY keys: img + 0_url are ALWAYS emitted (WhatsApp templates require them) ──
   // `img` header image: USER_IMAGE (the `img` alias) → item image → default. Never empty/missing.
   out.img = out.img || out.item_image || out.item_image_url || values.ITEM_IMAGE_URL || WA_DEFAULT_IMG;
-  // Button URL: 0_url (zero) AND o_url (letter O) — O_URL always has a site-root fallback, so never blank.
+  // Button URL: 0_url (zero) AND o_url (letter O). The WhatsApp template's button ALREADY
+  // prepends the site base (https://www.raynatours.com/), so these must be the RELATIVE PATH
+  // only — otherwise the URL doubles (…/https://…). Strip the scheme+host (+leading slash).
+  // Full absolute URLs stay available in item_url / cta_url / page_url for full-url buttons.
   const btnUrl = out['0_url'] || out.o_url || values.O_URL || SITE;
-  out['0_url'] = btnUrl;
-  out.o_url    = btnUrl;
+  const relUrl = String(btnUrl).replace(/^https?:\/\/[^/]+\/?/i, '');
+  out['0_url'] = relUrl;
+  out.o_url    = relUrl;
   // `name` = USER_NAME || USER_FIRST_NAME (default 'there'), just like the email templates.
   put('name', values.USER_NAME || values.USER_FIRST_NAME);
   return out;
