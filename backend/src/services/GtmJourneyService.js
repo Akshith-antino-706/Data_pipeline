@@ -198,13 +198,27 @@ class GtmJourneyService {
       if (bought) { await _exit('purchased'); return; }
     }
 
+    // Giveaway journeys: the trigger is a giveaway_events row (PK = a UUID), not a GTM event.
+    // Load it so its data can fill the email ({{ giveaway }}, {{ prize }}, {{ rank }}, {{ code }}, …).
+    let gvRow = null;
+    const gvId = String(itemId || eventId || '');
+    if (gvId) {
+      const { rows: [gv] } = await db.query(
+        `SELECT name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
+                rank, code, offer, offer_code, expiry
+           FROM giveaway_events WHERE id = $1`, [gvId]
+      ).catch(() => ({ rows: [] }));
+      if (gv) gvRow = gv;
+    }
+
     // Full triggering event — feeds PAGE_URL, EVENT_*, JOURNEY_ID, NODE_ID + raw_payload.
+    // GTM journeys only: a giveaway eventId is a UUID and would break the bigint lookup, so skip it.
     let eventRow = { event_id: eventId, event_name: null, page_url: null, page_title: null, raw_payload: {}, created_at: null, journey_id: journeyId, node_id: null };
-    if (eventId) {
+    if (eventId && !gvRow) {
       const { rows: [ev] } = await db.query(
         `SELECT event_id, event_name, page_url, page_title, raw_payload, created_at, journey_id, node_id
          FROM gtm_events WHERE event_id = $1`, [eventId]
-      );
+      ).catch(() => ({ rows: [] }));
       if (ev) eventRow = ev;
     }
 
@@ -374,13 +388,25 @@ class GtmJourneyService {
 
     // Universal placeholder fill — body AND subject (subjects may contain keys too).
     const ctx = { contact: c, event: eventRow, payload: eventRow.raw_payload || {} };
+
+    // Giveaway journeys: expose the giveaway_events row as lowercase template vars so
+    // {{ giveaway }}, {{ prize }}, {{ rank }}, {{ mechanic }}, {{ code }}, {{ value }}, etc. resolve.
+    const gvVars = gvRow ? {
+      name: gvRow.name || c.name || '', giveaway: gvRow.giveaway || '', giveaway_image: gvRow.giveaway_image || '',
+      mechanic: gvRow.mechanic || '', prize: gvRow.prize || '', prize_image: gvRow.prize_image || '',
+      prize_type: gvRow.prize_type || '', value: gvRow.value || '', rank: gvRow.rank ?? '',
+      code: gvRow.code || '', offer: gvRow.offer || '', offer_code: gvRow.offer_code || '', expiry: gvRow.expiry || '',
+    } : null;
+    // Fill {{ key }} from gvVars for the regex/subject paths (Liquid gets them via the vars object).
+    const fillGv = (s) => gvVars ? String(s).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => (k in gvVars) ? String(gvVars[k] ?? '') : m) : s;
+
     // Liquid templates (contain {% … %}) render via LiquidRenderer with the full items[]
     // array so {% for item in items %} shows every cart product; plain {{KEY}}-only
     // templates keep the regex resolver (items[0] scalars only).
     let html = /\{%/.test(tplBody)
-      ? await LiquidRenderer.render(tplBody, buildLiquidVars(ctx))
-      : renderTemplate(tplBody, ctx);
-    let subject = renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx);
+      ? await LiquidRenderer.render(tplBody, { ...buildLiquidVars(ctx), ...(gvVars || {}) })
+      : fillGv(renderTemplate(tplBody, ctx));
+    let subject = fillGv(renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx));
 
     // Per-recipient review link (post-trip templates carry the %%REVIEW_URL%% sentinel).
     // placeholderResolver leaves it untouched, so swap it here for a feedback link

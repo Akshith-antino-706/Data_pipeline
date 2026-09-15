@@ -17,6 +17,12 @@
 
 const SITE = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
 
+// Fallback header image for WhatsApp templates that REQUIRE an `img` (header media) but the
+// send has no item/contact image (e.g. a manual/no-event broadcast). Set WA_DEFAULT_IMG to a
+// real, publicly-fetchable image URL — WhatsApp rejects a template whose header image is empty
+// or unreachable. This default is only used when nothing better resolves.
+const WA_DEFAULT_IMG = process.env.WA_DEFAULT_IMG || `${SITE}/rayna-og.jpg`;
+
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
 // Legacy / template-specific lowercase keys → canonical UPPER_SNAKE key.
@@ -38,6 +44,7 @@ const ALIASES = {
   item_image:    'ITEM_IMAGE_URL',
   cta_url:       'ITEM_URL',
   o_url:         'O_URL',
+  '0_url':       'O_URL',   // zero-form alias — some WhatsApp templates use 0_url (zero), not o_url (letter O)
   event_name:    'EVENT_NAME',
   event_id:      'EVENT_ID',
   event_time:    'EVENT_TIMESTAMP',
@@ -223,12 +230,6 @@ export function buildLiquidVars(ctx = {}) {
  */
 export const WA_DATA_KEYS = '*';
 
-/**
- * RCS (Gupshup RBM) is DIFFERENT from WhatsApp: customParams are JSON-stringified INTO the
- * message payload, which Gupshup enforces a hard length cap on ("The message length cannot
- * exceed …"). So RCS must send a SMALL curated set — never '*' (all 62 keys = over limit).
- * Keep to the few short variables an RCS template actually uses.
- */
 export const RCS_DATA_KEYS = ['item_name', 'item_price', 'destination_city', 'cta_url', 'user_first_name'];
 
 // Never worth putting in the .data file (a huge JSON dump — not a template variable).
@@ -264,8 +265,13 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
     }
   }
 
-  // `img` header image → the item image (the `img` alias itself resolves to USER_IMAGE).
-  if (!out.img && out.item_image) out.img = out.item_image;
+  // ── COMPULSORY keys: img + 0_url are ALWAYS emitted (WhatsApp templates require them) ──
+  // `img` header image: USER_IMAGE (the `img` alias) → item image → default. Never empty/missing.
+  out.img = out.img || out.item_image || out.item_image_url || values.ITEM_IMAGE_URL || WA_DEFAULT_IMG;
+  // Button URL: 0_url (zero) AND o_url (letter O) — O_URL always has a site-root fallback, so never blank.
+  const btnUrl = out['0_url'] || out.o_url || values.O_URL || SITE;
+  out['0_url'] = btnUrl;
+  out.o_url    = btnUrl;
   // `name` = USER_NAME || USER_FIRST_NAME (default 'there'), just like the email templates.
   put('name', values.USER_NAME || values.USER_FIRST_NAME);
   return out;
