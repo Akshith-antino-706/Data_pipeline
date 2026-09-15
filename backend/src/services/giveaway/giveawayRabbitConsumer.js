@@ -18,6 +18,7 @@
 import amqp from 'amqplib';
 import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
+import { ingestGiveawayEvent } from './giveawayIngest.js';
 
 const EXCHANGE = 'giveaways';
 const QUEUE    = 'giveaways.email.send';
@@ -93,7 +94,8 @@ async function handle(msg) {
   }
 
   const tag = `[GiveawayMQ] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
-  const meta = { id: p?.id ?? null, type: p?.type ?? null, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null };
+  // meta = light fields the toast uses; payload = parsed §3 message; raw = exact wire string.
+  const meta = { id: p?.id ?? null, type: p?.type ?? null, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
 
   // 1. contract validation → poison acked + logged, NEVER requeued
   const v = validate(p);
@@ -101,6 +103,20 @@ async function handle(msg) {
     console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`);
     await record({ ...meta, outcome: 'poison', reason: v.reason });
     return _ch.ack(msg);
+  }
+
+  // 1b. PERSIST — upsert contact (no duplicates) + store the event (idempotent on id),
+  // then real-time enrol into any matching giveaway journey (segment-gated, like GTM).
+  // Runs for EVERY valid message, independent of send-enabled, and safe on redelivery
+  // (contact upsert + event insert + journey entry are all idempotent).
+  try {
+    const { unifiedId } = await ingestGiveawayEvent(p);
+    if (unifiedId) {
+      const { default: GiveawayJourneyService } = await import('../GiveawayJourneyService.js');
+      await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id });
+    }
+  } catch (e) {
+    console.error(`${tag} ⚠️ ingest/journey failed (continuing): ${e.message}`);
   }
 
   // 2. idempotency — claim BEFORE sending; duplicate redelivery is a no-op

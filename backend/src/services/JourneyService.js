@@ -1113,7 +1113,7 @@ class JourneyService {
     await this._refreshStamp(jid, { _exit: new Date().toISOString() });
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate, recommendationType }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate, recommendationType, emailCredential, triggerSource }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
     let customSegmentId = null;
@@ -1142,11 +1142,16 @@ class JourneyService {
     const recType = (recommendationType && ['on_trip','future_trip','past_trip'].includes(recommendationType))
       ? recommendationType : null;
 
+    // Email-only sender selection ('default' AWS API | 'giveaway' SMTP). Does not affect wa/sms/rcs.
+    const emailCred = emailCredential === 'giveaway' ? 'giveaway' : 'default';
+    // Continuous-journey trigger source ('gtm' GTM events | 'giveaway' giveaway events).
+    const trigSource = triggerSource === 'giveaway' ? 'giveaway' : 'gtm';
+
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *
-    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null), recType]);
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null), recType, emailCred, trigSource]);
 
     // ── Snapshot segment users at creation time (NORMAL journeys only) ──────
     // GTM journeys are event-triggered (no snapshot) — users enter when they fire
@@ -1172,7 +1177,7 @@ class JourneyService {
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date', recommendation_type: 'recommendation_type' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date', recommendation_type: 'recommendation_type', email_credential: 'email_credential', trigger_source: 'trigger_source' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {
@@ -1877,6 +1882,9 @@ class JourneyService {
           rcsCustomParams:   rawChannel === 'rcs'
             ? buildWaVars({ contact: { id: entry.customer_id, name: entry.name, email: entry.email, mobile: entry.phone }, payload: currentNode.data?.templateVariables || {} }, RCS_DATA_KEYS)
             : null,
+          // Email-only: which SMTP sender this journey uses ('default' AWS API | 'giveaway' SMTP).
+          // Ignored by whatsapp/sms/rcs sends — those use their own channels.
+          emailCredential:   journey.email_credential || 'default',
           name:              entry.name,
           email:             recipientEmail,
           phone:             entry.phone,
