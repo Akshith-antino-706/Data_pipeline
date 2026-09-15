@@ -474,6 +474,12 @@ const RECOMMENDATION_TYPE_OPTIONS = [
   { value: 'past_trip',   label: 'Past Trip',   description: 'Recs based on their previous booking' },
 ];
 
+// Email sender for a journey's EMAIL nodes (email-only — wa/sms/rcs/push unaffected).
+const EMAIL_CREDENTIAL_OPTIONS = [
+  { value: 'default',  label: 'Default — Marketing',  description: 'AWS Email API · explore@promotions.raynatours.com' },
+  { value: 'giveaway', label: 'Giveaway SMTP',         description: 'Giveaway mailbox · giveaways@promotions.raynatours.com' },
+];
+
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
 // Keyed by content_template id (the Day1-7 dynamic templates).
 const DYNAMIC_SECTIONS = {
@@ -691,7 +697,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
   const [creating, setCreating] = useState(false); // create-journey API in flight — keeps the modal open + shows a button loader
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
@@ -1154,6 +1160,8 @@ export default function Journeys() {
         description: createForm.description,
         segmentId: createForm.segmentId || null,
         journeyType: createForm.journeyType,
+        // Continuous journeys trigger on GTM events OR giveaway types — trigger_event holds both.
+        triggerSource: createForm.journeyType === 'continuous' ? createForm.triggerSource : 'gtm',
         triggerEvent: createForm.journeyType === 'continuous' ? createForm.triggerEvent : null,
         // Continuous only: only enroll GTM events fired on/after this date (Dubai midnight).
         // Blank → backend defaults to journey creation time (no historical backfill).
@@ -1172,6 +1180,7 @@ export default function Journeys() {
         // recs injected at send time. 'on_trip' / 'future_trip' / 'past_trip'
         // pulls per-user precomputed picks from user_product_recommendations.
         recommendationType: createForm.recommendationType || null,
+        emailCredential: createForm.emailCredential || 'default',
         nodes: [trigger, ...extraNodes],
         edges: [trigger, ...extraNodes].slice(1).map((n, i) => ({
           id: `e_${[trigger, ...extraNodes][i].id}_${n.id}`,
@@ -3783,18 +3792,69 @@ export default function Journeys() {
                   </div>
                   {createForm.journeyType === 'continuous' && (
                     <div style={{ marginTop: 10 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
-                        Trigger GTM Event(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional · select one or more)</span>
-                      </label>
-                      <TriggerEventMultiSelect
-                        value={createForm.triggerEvent}
-                        onChange={v => setCreateForm(f => ({ ...f, triggerEvent: v }))}
-                      />
-                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                        {createForm.triggerEvent
-                          ? <>Fans out one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on. Selecting multiple events combines their items.</>
-                          : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick one or more events to fan out per distinct item instead.</>}
+                      {/* Trigger source: GTM analytics events OR giveaway events (email-website feed) */}
+                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Trigger Source</label>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        {[{ k: 'gtm', label: 'GTM Event', c: '#3b82f6' }, { k: 'giveaway', label: 'Giveaway', c: '#f59e0b' }].map(o => {
+                          const active = (createForm.triggerSource || 'gtm') === o.k;
+                          return (
+                            <button key={o.k} type="button"
+                              onClick={() => setCreateForm(f => ({ ...f, triggerSource: o.k, triggerEvent: '' }))}
+                              style={{ flex: 1, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                                borderRadius: 8, textAlign: 'center', transition: 'all 0.15s',
+                                border: `1px solid ${active ? o.c : 'var(--border)'}`,
+                                background: active ? `${o.c}1a` : 'var(--card)', color: active ? o.c : 'var(--text-secondary)' }}>
+                              {o.label}
+                            </button>
+                          );
+                        })}
                       </div>
+
+                      {createForm.triggerSource === 'giveaway' ? (
+                        <>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                            Giveaway Type(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(select one or more)</span>
+                          </label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {['participation', 'eligible', 'winner', 'loser'].map(t => {
+                              const list = (createForm.triggerEvent || '').split(',').map(s => s.trim()).filter(Boolean);
+                              const on = list.includes(t);
+                              return (
+                                <button key={t} type="button"
+                                  onClick={() => {
+                                    const next = on ? list.filter(x => x !== t) : [...list, t];
+                                    setCreateForm(f => ({ ...f, triggerEvent: next.join(',') }));
+                                  }}
+                                  style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', borderRadius: 20, textTransform: 'capitalize',
+                                    border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
+                                    background: on ? 'rgba(245,158,11,0.12)' : 'var(--card)', color: on ? '#f59e0b' : 'var(--text-secondary)' }}>
+                                  {on ? '✓ ' : ''}{t}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
+                            {createForm.triggerEvent
+                              ? <>A <strong>segment</strong> user who fires <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on the giveaway site enters — one entry per event (fires N times → N sends).</>
+                              : <>Pick one or more giveaway types. Only <strong>segment members</strong> who fire the selected type enter the journey.</>}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                            Trigger GTM Event(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional · select one or more)</span>
+                          </label>
+                          <TriggerEventMultiSelect
+                            value={createForm.triggerEvent}
+                            onChange={v => setCreateForm(f => ({ ...f, triggerEvent: v }))}
+                          />
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                            {createForm.triggerEvent
+                              ? <>Fans out one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on. Selecting multiple events combines their items.</>
+                              : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick one or more events to fan out per distinct item instead.</>}
+                          </div>
+                        </>
+                      )}
                       <div style={{ marginTop: 12 }}>
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
                           Trigger only for events on or after <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>
@@ -3823,6 +3883,21 @@ export default function Journeys() {
                   />
                   <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
                     Pick a context → templates in this journey with a <code>{'{{#products}}'}...{'{{/products}}'}</code> block will be filled with 5 personalized AI-picked products at send time. Precomputed nightly at 3:35 AM Dubai.
+                  </div>
+                </div>
+                {/* Email sender — which SMTP credential this journey's EMAIL nodes send from.
+                    Email-only: WhatsApp / SMS / RCS / push are unaffected. */}
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>Email Sender</label>
+                  <SearchableSelect
+                    options={EMAIL_CREDENTIAL_OPTIONS}
+                    value={createForm.emailCredential || 'default'}
+                    onChange={val => setCreateForm(f => ({ ...f, emailCredential: val || 'default' }))}
+                    placeholder="Default — Marketing (explore@…)"
+                    searchPlaceholder="Search senders…"
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
+                    Which mailbox <strong>email</strong> nodes send from. WhatsApp, SMS, RCS &amp; push are unaffected.
                   </div>
                 </div>
                 {/* Exit on Conversion */}

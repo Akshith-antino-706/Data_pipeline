@@ -25,6 +25,7 @@ import GupshupService from '../GupshupService.js';
 import ChatHeadV1Service from '../ChatHeadV1Service.js';
 import { buildWaVars, RCS_DATA_KEYS } from '../../utils/placeholderResolver.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
+import { sendJourneyEmail } from '../channels/JourneyEmailSender.js';
 import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
 import { SendTrackService } from '../SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.js';
@@ -463,8 +464,9 @@ async function processEmail(job) {
   });
   trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
 
-  // Send via ChatheadEmailChannel (AWS Email API)
-  const sendResult = await ChatheadEmailChannel.send({
+  // Send via the journey's chosen transport: 'default' → AWS Email API, 'giveaway' → giveaway SMTP.
+  const sendResult = await sendJourneyEmail({
+    emailCredential: d.emailCredential || 'default',
     to: recipientEmail,
     subject,
     html: trackedHtml,

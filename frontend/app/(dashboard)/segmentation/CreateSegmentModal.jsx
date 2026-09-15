@@ -396,9 +396,17 @@ function isConditionValid(cond) {
     const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
     return !!cond.gtmEvent || hasCount;   // valid with a specific event OR a count (any event)
   }
+  if (cond.type === 'giveaway') {
+    const cv = cond.countValue;
+    const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
+    return !!cond.giveawayType || !!cond.giveawayName || hasCount;  // valid with a type/name OR a count
+  }
   if (cond.type === 'contact') return isFieldValid(cond);
   return false;
 }
+
+// Giveaway event types (from the RabbitMQ giveaway feed).
+const GIVEAWAY_TYPES = ['participation', 'eligible', 'winner', 'loser'];
 
 const emptyCondition = () => ({
   type: '',
@@ -406,6 +414,8 @@ const emptyCondition = () => ({
   operator: '',
   value: null,
   gtmEvent: '',
+  giveawayType: '',
+  giveawayName: '',
   exclude: false,
   joinOp: 'AND',
 });
@@ -417,11 +427,13 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   const [conditions, setConditions] = useState(() => {
     if (segment?.conditions?.length > 0) {
       return segment.conditions.map(c => ({
-        type: c.type || (c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
+        type: c.type || (c.giveawayType || c.giveawayName ? 'giveaway' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
         field: c.field || '',
         operator: c.operator || '',
         value: c.value ?? null,
         gtmEvent: c.gtmEvent || '',
+        giveawayType: c.giveawayType || '',
+        giveawayName: c.giveawayName || '',
         countOp: c.countOp || 'gte',
         countValue: c.countValue ?? '',
         windowDays: c.windowDays ?? '',
@@ -655,6 +667,16 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                             <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>GTM / Analytics Event</div>
                             <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by tracked events</div>
                           </button>
+                          <button type="button" onClick={() => changeType(idx, 'giveaway')}
+                            style={{
+                              flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
+                              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                              cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
+                              transition: 'all 0.15s', textAlign: 'left',
+                            }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Giveaway</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by giveaway activity</div>
+                          </button>
                         </div>
                       </div>
                     )}
@@ -785,6 +807,111 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                                 border: '1px solid rgba(59,130,246,0.3)',
                               }}>
                                 {`${cnt || 'fired'} ${evt} event${win}`}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* ── Giveaway ── */}
+                    {cond.type === 'giveaway' && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Giveaway</span>
+                          <button type="button" onClick={() => changeType(idx, '')}
+                            title="Change type"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
+                            ✕
+                          </button>
+                        </div>
+                        {(() => {
+                          const setCond = (patch) => updateCondition(idx, { ...cond, ...patch });
+                          const countOp = cond.countOp || 'gte';
+                          return (
+                            <>
+                              {/* Event type */}
+                              <select value={cond.giveawayType || ''}
+                                onChange={e => setCond({ giveawayType: e.target.value })}
+                                style={selectStyle}>
+                                <option value="">— Any type (all giveaway activity) —</option>
+                                {GIVEAWAY_TYPES.map(t => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+
+                              {/* Giveaway name (optional) */}
+                              <input type="text" placeholder="Giveaway name (optional, exact match)"
+                                value={cond.giveawayName || ''}
+                                onChange={e => setCond({ giveawayName: e.target.value })}
+                                style={{ ...inputStyle, marginTop: 8 }} />
+
+                              {/* Count + time-window — e.g. "≥ 3 winner events in the last 30 days" */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Count</span>
+                                <select value={countOp}
+                                  onChange={e => { const op = e.target.value; setCond({ countOp: op, countValue: op === 'between' ? ['', ''] : '' }); }}
+                                  style={{ ...selectStyle, maxWidth: 130 }}>
+                                  <option value="gte">at least (≥)</option>
+                                  <option value="lte">at most (≤)</option>
+                                  <option value="between">between</option>
+                                </select>
+                                {countOp === 'between' ? (
+                                  <>
+                                    <input type="number" min="0" placeholder="min" value={cond.countValue?.[0] ?? ''}
+                                      onChange={e => setCond({ countValue: [e.target.value, cond.countValue?.[1] ?? ''] })}
+                                      style={{ ...inputStyle, maxWidth: 78 }} />
+                                    <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>–</span>
+                                    <input type="number" min="0" placeholder="max" value={cond.countValue?.[1] ?? ''}
+                                      onChange={e => setCond({ countValue: [cond.countValue?.[0] ?? '', e.target.value] })}
+                                      style={{ ...inputStyle, maxWidth: 78 }} />
+                                  </>
+                                ) : (
+                                  <input type="number" min="0" placeholder="e.g. 3"
+                                    value={typeof cond.countValue === 'object' ? '' : (cond.countValue ?? '')}
+                                    onChange={e => setCond({ countValue: e.target.value })}
+                                    style={{ ...inputStyle, maxWidth: 100 }} />
+                                )}
+                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>events</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Within</span>
+                                <select value={cond.windowDays ?? ''}
+                                  onChange={e => setCond({ windowDays: e.target.value })}
+                                  style={{ ...selectStyle, maxWidth: 150 }}>
+                                  <option value="">All time</option>
+                                  <option value="7">Last 7 days</option>
+                                  <option value="30">Last 30 days</option>
+                                  <option value="90">Last 90 days</option>
+                                  <option value="180">Last 180 days</option>
+                                </select>
+                              </div>
+                            </>
+                          );
+                        })()}
+
+                        {/* Summary chip */}
+                        {(() => {
+                          const op = cond.countOp || 'gte';
+                          let cnt = '';
+                          if (Array.isArray(cond.countValue)) {
+                            if (cond.countValue.some(v => v !== '' && v != null)) cnt = `${cond.countValue[0] || '0'}–${cond.countValue[1] || '∞'}`;
+                          } else if (cond.countValue !== '' && cond.countValue != null) {
+                            cnt = `${op === 'lte' ? '≤' : '≥'} ${cond.countValue}`;
+                          }
+                          if (!cnt && !cond.giveawayType && !cond.giveawayName) return null;
+                          const t = cond.giveawayType || 'any';
+                          const nm = cond.giveawayName ? ` · "${cond.giveawayName}"` : '';
+                          const win = cond.windowDays ? ` · last ${cond.windowDays}d` : '';
+                          return (
+                            <div style={{ marginTop: 8 }}>
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '3px 9px', fontSize: 11, borderRadius: 20,
+                                background: 'rgba(245,158,11,0.1)', color: '#f59e0b',
+                                border: '1px solid rgba(245,158,11,0.3)',
+                              }}>
+                                {`${cnt || 'has'} ${t} giveaway${nm}${win}`}
                               </span>
                             </div>
                           );
