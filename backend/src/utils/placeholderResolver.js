@@ -276,6 +276,9 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
   const relUrl = String(btnUrl).replace(/^https?:\/\/[^/]+\/?/i, '');
   out['0_url'] = relUrl;
   out.o_url    = relUrl;
+  // `item_price` — ALWAYS emit the price key so the template binding never misses it (else "NA").
+  // Falls through the price aliases; empty only when the source event carried no price at all.
+  out.item_price = out.item_price || out.cart_value || out.order_total || out.rec1_price || values.ITEM_PRICE || '';
   // `name` = USER_NAME || USER_FIRST_NAME (default 'there'), just like the email templates.
   put('name', values.USER_NAME || values.USER_FIRST_NAME);
   return out;
