@@ -383,18 +383,47 @@ router.post('/send-template', async (req, res) => {
     if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
 
     const { rows: [tpl] } = await db.query(
-      `SELECT id, name, channel, subject, body, status FROM content_templates WHERE id = $1`,
+      `SELECT id, name, channel, subject, body, status, html_template_id FROM content_templates WHERE id = $1`,
       [templateId]
     );
     if (!tpl)               return res.status(404).json({ success: false, error: `Template ${templateId} not found` });
     if (tpl.channel !== 'email') return res.status(400).json({ success: false, error: `Template ${templateId} is not an email template (channel=${tpl.channel})` });
-    if (!tpl.body)          return res.status(400).json({ success: false, error: `Template ${templateId} has no body` });
+
+    // Body may live on content_templates.body OR the linked email_html_templates.html_body
+    // (most HTML templates keep content_templates.body empty). Fall back before failing.
+    let bodyHtml = tpl.body, subject = tpl.subject || tpl.name;
+    if (!bodyHtml && tpl.html_template_id) {
+      const { rows: [h] } = await db.query('SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [tpl.html_template_id]);
+      bodyHtml = h?.html_body; subject = tpl.subject || h?.subject_line || tpl.name;
+    }
+    if (!bodyHtml)          return res.status(400).json({ success: false, error: `Template ${templateId} has no body` });
+
+    // Render placeholders so the test send matches a real send. Liquid templates ({% … %}) —
+    // e.g. the giveaway templates — render via LiquidRenderer with sample data (incl. giveaway
+    // vars) so {% if %} branches and {{ vars }} resolve instead of shipping raw Liquid.
+    const { renderTemplate, buildLiquidVars } = await import('../utils/placeholderResolver.js');
+    const sampleCtx = { contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE' }, event: {}, payload: {} };
+    const giveawaySample = {
+      name: 'Vaibhav', giveaway: 'Win a luxury Cruise', mechanic: 'leaderboard',
+      giveaway_image: 'https://d2ywmeahnmq7k6.cloudfront.net/Tour-Images/false-36/red-dune-safari.jpg',
+      prize: 'Cruise Trip', prize_image: 'https://d2ywmeahnmq7k6.cloudfront.net/Tour-Images/false-36/red-dune-safari.jpg',
+      prize_type: 'voucher', value: 'AED 1,000', rank: '2', code: 'ESCAPE',
+      offer: '10% off your next Rayna Tours booking', offer_code: 'ESCAPE', expiry: '31 Dec 2026',
+    };
+    if (/\{%/.test(bodyHtml)) {
+      const { default: LiquidRenderer } = await import('../services/LiquidRenderer.js');
+      const vars = { ...buildLiquidVars(sampleCtx), ...giveawaySample };
+      bodyHtml = await LiquidRenderer.render(bodyHtml, vars);
+      subject  = await LiquidRenderer.render(subject || '', vars);
+    } else {
+      bodyHtml = renderTemplate(bodyHtml, sampleCtx);
+      subject  = renderTemplate(subject || '', sampleCtx);
+    }
 
     const EmailChannel = await loadEmailChannel();
-    const subject = tpl.subject || tpl.name;
 
     const sendOne = (r) => sendAndLog({
-      EmailChannel, recipient: r, subject, html: tpl.body,
+      EmailChannel, recipient: r, subject, html: bodyHtml,
       templateLabel: tpl.name, dayNumber: templateId, source: req.body?.source || 'test-send',
     });
 
