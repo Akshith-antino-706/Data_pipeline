@@ -94,7 +94,9 @@ function buildValues(ctx = {}) {
   return {
     // ── unified_contacts ──
     USER_NAME:        c.name ?? p.name,
-    USER_FIRST_NAME:  firstName,
+    // Full name (not just the first word) — imported names often lead with a title
+    // ("Mr. Vaibhav Gupta"), so first-word extraction would greet "Hi Mr.". Send the full name.
+    USER_FIRST_NAME:  c.name ?? p.name ?? firstName,
     USER_EMAIL:       c.email ?? p.email,
     // WhatsApp node payload carries the phone as `d` and a per-contact image as `img`
     // (ChatHead .data record shape: {id, d, name, img}). Read those alongside the
