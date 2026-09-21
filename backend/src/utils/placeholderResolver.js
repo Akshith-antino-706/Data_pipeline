@@ -281,6 +281,8 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
   out.item_price = out.item_price || out.cart_value || out.order_total || out.rec1_price || values.ITEM_PRICE || '';
   // `name` = USER_NAME || USER_FIRST_NAME (default 'there'), just like the email templates.
   put('name', values.USER_NAME || values.USER_FIRST_NAME);
+  // `user_first_name` = FIRST NAME ONLY — always emitted alongside `name` and all other keys.
+  put('user_first_name', values.USER_FIRST_NAME || values.USER_NAME);
   return out;
 }
 
