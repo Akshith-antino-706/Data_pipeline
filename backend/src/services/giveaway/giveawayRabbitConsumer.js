@@ -20,11 +20,20 @@ import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
 import { ingestGiveawayEvent } from './giveawayIngest.js';
 
+// The producer publishes `giveaway.email.<env>.<type>` (4 segments). All environments share
+// ONE CloudAMQP vhost, so the <env> segment is what keeps dev draws out of prod mailboxes.
+// A topic `*` matches exactly one segment — the old `giveaway.email.*` matched nothing the
+// producer sends, so the exchange silently discarded every message.
+// GIVEAWAY_ENV must equal the producer's ENVIRONMENT, normalised the same way (lowercase,
+// non-alphanumerics → '-'). Unset → consumer stays idle: never bind to every env's mail.
+const ENV = (process.env.GIVEAWAY_ENV || '').trim().toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
 const EXCHANGE = 'giveaways';
-const QUEUE    = 'giveaways.email.send';
-const BINDING  = 'giveaway.email.*';
-const DLX      = 'giveaways.dlx';
-const DLQ      = 'giveaways.email.dlq';
+const QUEUE    = `giveaways.email.send.${ENV}`;
+const BINDING  = `giveaway.email.${ENV}.*`;
+const DLX      = `giveaways.dlx.${ENV}`;       // per env: a shared fanout DLX would copy dead letters into every env's DLQ
+const DLQ      = `giveaways.email.dlq.${ENV}`;
 
 const PREFETCH     = parseInt(process.env.GIVEAWAY_PREFETCH || '10', 10);
 const DEDUPE_TTL   = parseInt(process.env.GIVEAWAY_DEDUPE_TTL_SEC || '604800', 10); // 7 days
@@ -175,6 +184,7 @@ async function connect() {
   if (_stopped) return;
   const url = process.env.GIVEAWAY_RABBITMQ_URL;
   if (!url) { console.warn('[GiveawayMQ] GIVEAWAY_RABBITMQ_URL not set — consumer idle (set it to connect).'); return; }
+  if (!ENV) { console.warn('[GiveawayMQ] GIVEAWAY_ENV not set — consumer idle (set it to the producer\'s ENVIRONMENT, e.g. prod).'); return; }
 
   try {
     _conn = await amqp.connect(url, { heartbeat: 30, clientProperties: { connection_name: CONN_NAME } });
@@ -187,7 +197,7 @@ async function connect() {
     await _ch.consume(QUEUE, (msg) => { if (msg) handle(msg).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { _ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     scheduleReconnect(`connect failed: ${err.message}`);
   }
