@@ -8,8 +8,6 @@
  *   npm run giveaway:consumer
  *
  * Requires GIVEAWAY_RABBITMQ_URL (CloudAMQP). Without it the consumer stays idle (logs a notice).
- * Requires GIVEAWAY_ENV = the producer's ENVIRONMENT (e.g. prod / dev) — it scopes the binding
- *   `giveaway.email.<env>.*` and the queue names. Without it the consumer stays idle.
  * Sending is gated by GIVEAWAY_SEND_ENABLED=true (default OFF → log-only).
  */
 import 'dotenv/config';
