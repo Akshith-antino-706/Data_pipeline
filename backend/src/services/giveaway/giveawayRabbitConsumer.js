@@ -20,9 +20,13 @@ import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
 import { ingestGiveawayEvent } from './giveawayIngest.js';
 
+// The producer publishes `giveaway.email.<env>.<type>` (4 segments). A topic `*` matches exactly
+// ONE segment, so the old `giveaway.email.*` matched nothing and the exchange silently dropped
+// every message. Only prod exists today, so the env is hard-coded; bind `giveaway.email.<env>.*`
+// per env (with env-suffixed queues) if a second environment ever shares this vhost.
 const EXCHANGE = 'giveaways';
 const QUEUE    = 'giveaways.email.send';
-const BINDING  = 'giveaway.email.*';
+const BINDING  = 'giveaway.email.prod.*';
 const DLX      = 'giveaways.dlx';
 const DLQ      = 'giveaways.email.dlq';
 
@@ -187,7 +191,7 @@ async function connect() {
     await _ch.consume(QUEUE, (msg) => { if (msg) handle(msg).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { _ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     scheduleReconnect(`connect failed: ${err.message}`);
   }
