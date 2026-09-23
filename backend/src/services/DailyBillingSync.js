@@ -269,6 +269,10 @@ class DailyBillingSync {
     const affectedIds = affected.map(r => r.unified_id);
     console.log(`[DailySync]   Affected contacts for segmentation: ${affectedIds.length}`);
 
+    // 3D2: Refresh name to the latest booking for existing contacts touched today
+    const namesUpdated = await this.updateLatestNames(affectedIds);
+    console.log(`[DailySync]   Names updated: ${namesUpdated}`);
+
     // 3E: Recompute segmentation for ALL contacts (not just affected)
     // because time-sensitive statuses (ON_TRIP, FUTURE_TRAVEL) expire daily
     await this.recomputeSegmentation(null);
@@ -276,6 +280,34 @@ class DailyBillingSync {
     const total = newEmails + newPhones;
     console.log(`[DailySync]   New contacts: ${total} (${newEmails} email, ${newPhones} phone)`);
     return total;
+  }
+
+  // ─── 3D2. Refresh name to whichever booking has the latest booking_date ──
+  static async updateLatestNames(affectedIds) {
+    if (!affectedIds || affectedIds.length === 0) return 0;
+
+    const bookingTables = ['rayna_tours', 'rayna_hotels', 'rayna_visas', 'rayna_packages', 'rayna_others', 'rayna_flights'];
+    const unionSql = bookingTables.map(t => `
+      SELECT unified_id, guest_name, created_at,
+        CASE WHEN booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' THEN TO_DATE(booking_date, 'DD/MM/YYYY') END AS bd
+      FROM ${t}
+      WHERE unified_id = ANY($1) AND TRIM(COALESCE(guest_name,'')) <> ''
+    `).join(' UNION ALL ');
+
+    const result = await query(`
+      WITH latest_booking AS (
+        SELECT DISTINCT ON (unified_id) unified_id, guest_name
+        FROM (${unionSql}) x
+        ORDER BY unified_id, bd DESC NULLS LAST, created_at DESC
+      )
+      UPDATE unified_contacts uc
+      SET name = lb.guest_name, updated_at = NOW()
+      FROM latest_booking lb
+      WHERE uc.id = lb.unified_id
+        AND uc.name IS DISTINCT FROM lb.guest_name
+    `, [affectedIds]);
+
+    return result.rowCount || 0;
   }
 
   // ─── Recompute segmentation for affected contacts only ──

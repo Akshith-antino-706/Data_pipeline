@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
 import WhatsAppTestSend from './WhatsAppTestSend';
+import CreateWhatsAppTemplate from './CreateWhatsAppTemplate';
 import SmsTestSend from './SmsTestSend';
 import RcsTestSend from './RcsTestSend';
 import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet, LayoutGrid, List } from 'lucide-react';
@@ -610,6 +611,9 @@ export default function Content() {
           </div>
         </div>
       </motion.div>
+
+      {/* ── Create WhatsApp Template (ChatHead → Meta review) ── */}
+      <motion.div variants={fadeInUp}><CreateWhatsAppTemplate /></motion.div>
 
       {/* ── WhatsApp Test Send (ChatHead) ── */}
       <motion.div variants={fadeInUp}><WhatsAppTestSend /></motion.div>

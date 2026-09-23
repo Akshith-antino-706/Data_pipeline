@@ -50,7 +50,7 @@ export default class EmailRenderer {
     const siteBaseGeneral = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
     const unsubscribeUrlGeneral = `${siteBaseGeneral}/unsubscribe?uid=${unifiedId || ''}`;
     const vars = {
-      first_name: user.name?.split(' ')[0] || 'there',
+      first_name: user.name || 'there',   // full name (per requirement: send whole name everywhere)
       full_name: user.name || 'Valued Customer',
       email: user.email || '',
       phone: user.mobile || user.actual_mobile || '',
@@ -277,7 +277,7 @@ export default class EmailRenderer {
     const siteBase = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
     const unsubscribeUrl = `${siteBase}/unsubscribe?uid=${unifiedId || ''}`;
     const vars = {
-      first_name:       user.name?.split(' ')[0] || 'there',
+      first_name:       user.name || 'there',   // full name (per requirement: send whole name everywhere)
       full_name:        user.name || 'Valued Traveller',
       email:            user.email || '',
       phone:            user.mobile || user.actual_mobile || '',

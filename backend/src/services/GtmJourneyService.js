@@ -205,7 +205,7 @@ class GtmJourneyService {
     if (gvId) {
       const { rows: [gv] } = await db.query(
         `SELECT name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
-                rank, code, offer, offer_code, expiry
+                rank, code, offer, offer_code, expiry, position, points
            FROM giveaway_events WHERE id = $1`, [gvId]
       ).catch(() => ({ rows: [] }));
       if (gv) gvRow = gv;
@@ -396,6 +396,7 @@ class GtmJourneyService {
       mechanic: gvRow.mechanic || '', prize: gvRow.prize || '', prize_image: gvRow.prize_image || '',
       prize_type: gvRow.prize_type || '', value: gvRow.value || '', rank: gvRow.rank ?? '',
       code: gvRow.code || '', offer: gvRow.offer || '', offer_code: gvRow.offer_code || '', expiry: gvRow.expiry || '',
+      position: gvRow.position ?? '', points: gvRow.points ?? '',
     } : null;
     // Fill {{ key }} from gvVars for the regex/subject paths (Liquid gets them via the vars object).
     const fillGv = (s) => gvVars ? String(s).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => (k in gvVars) ? String(gvVars[k] ?? '') : m) : s;
