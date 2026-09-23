@@ -435,6 +435,11 @@ export const sendTemplate = (templateId, emails) =>
 
 // ── WhatsApp (ChatHead) ──────────────────────────────────────────────
 export const getWhatsAppChannels  = () => request('/api/v3/chathead/channels');
+// Create / check a WhatsApp template on ChatHead (→ Meta review)
+export const createWhatsAppTemplate = (payload) =>
+  request('/api/v3/chathead/templates/create', { method: 'POST', body: JSON.stringify(payload) });
+export const getWhatsAppTemplateStatus = (templateId) =>
+  request('/api/v3/chathead/templates/status', { method: 'POST', body: JSON.stringify({ template_id: templateId }) });
 export const getWhatsAppTemplates = (channel) => request(`/api/v3/chathead/templates?channel=${encodeURIComponent(channel)}`);
 export const previewWhatsAppTemplate = (id) => request(`/api/v3/chathead/templates/${encodeURIComponent(id)}/preview`);
 // ── SMS (Gupshup) test send ──

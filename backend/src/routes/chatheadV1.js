@@ -315,4 +315,123 @@ router.post('/broadcasts/sync-delivery', async (_req, res) => {
   } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
+// POST /api/v3/chathead/templates/create — submit a NEW WhatsApp template to ChatHead → Meta.
+// Body accepts the full template shape (see ChatHead docs). We validate the enums, forward to
+// account/templates/add with c=rayna + app_key (session-less), and return ChatHead's response
+// ({ template_id, meta_id, meta_status } on success, or { status:'error', msg } on failure).
+// ChatHead's PHP sometimes prepends deprecation warnings/notices to the JSON body
+// (e.g. "Deprecated: mysqli_real_escape_string()... {"status":"error",...}"). Extract the
+// JSON object even when noise precedes it, so we surface the real status/msg.
+function parseChatHeadJson(raw) {
+  if (!raw) return { status: 'error', msg: 'empty response from ChatHead' };
+  try { return JSON.parse(raw); } catch { /* fall through */ }
+  const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(raw.slice(start, end + 1)); } catch { /* fall through */ }
+  }
+  return { status: 'error', msg: `ChatHead returned a non-JSON response (${raw.slice(0, 200)})` };
+}
+
+const TPL_CATEGORIES = ['utility', 'marketing', 'authentication'];
+const TPL_FORMATS    = ['text', 'media_image', 'media_document', 'media_video'];
+const BTN_TYPES      = ['quick_reply', 'call_to_action', 'url_dynamic', 'OTP'];
+
+router.post('/templates/create', async (req, res) => {
+  try {
+    const b = req.body || {};
+    // ── validation of every type/enum ──
+    if (!b.channel)                                return res.status(400).json({ success: false, error: 'channel is required' });
+    if (!b.name || !/^[a-z0-9_]+$/.test(b.name))   return res.status(400).json({ success: false, error: 'name is required (lowercase letters, digits, underscores only)' });
+    if (!TPL_CATEGORIES.includes(b.category))      return res.status(400).json({ success: false, error: `category must be one of: ${TPL_CATEGORIES.join(', ')}` });
+
+    const isAuth = b.category === 'authentication';
+    if (!isAuth) {
+      if (!TPL_FORMATS.includes(b.formate))        return res.status(400).json({ success: false, error: `formate must be one of: ${TPL_FORMATS.join(', ')}` });
+      if (!b.body || !String(b.body).trim())       return res.status(400).json({ success: false, error: 'body is required' });
+      if (b.formate !== 'text' && !b.media_file)   return res.status(400).json({ success: false, error: `media_file (URL) is required for formate=${b.formate}` });
+    }
+
+    // buttons — validate each by its type/sub_type/otp_type; trim stray whitespace in value/text
+    const buttons = (Array.isArray(b.buttons) ? b.buttons : []).map(btn => ({
+      ...btn,
+      value: typeof btn.value === 'string' ? btn.value.trim() : btn.value,
+      text:  typeof btn.text  === 'string' ? btn.text.trim()  : btn.text,
+      example: typeof btn.example === 'string' ? btn.example.trim() : btn.example,
+    }));
+    for (const btn of buttons) {
+      if (!BTN_TYPES.includes(btn.type))           return res.status(400).json({ success: false, error: `button.type must be one of: ${BTN_TYPES.join(', ')}` });
+      if (btn.type === 'OTP') {
+        if (btn.otp_type && btn.otp_type !== 'COPY_CODE') return res.status(400).json({ success: false, error: 'OTP button otp_type must be COPY_CODE' });
+      } else if (btn.type === 'quick_reply') {
+        if (!btn.value)                            return res.status(400).json({ success: false, error: 'quick_reply button needs a value (label)' });
+      } else { // call_to_action | url_dynamic
+        if (!['url', 'phone'].includes(btn.sub_type)) return res.status(400).json({ success: false, error: `button.sub_type must be url or phone (got ${btn.sub_type})` });
+        if (!btn.value || !btn.text)               return res.status(400).json({ success: false, error: `${btn.type} button needs value + text` });
+        if (btn.type === 'url_dynamic') {
+          if (!/\{\{\s*1\s*\}\}/.test(btn.value))  return res.status(400).json({ success: false, error: 'url_dynamic value must contain the {{1}} placeholder' });
+          if (!btn.example)                        return res.status(400).json({ success: false, error: 'url_dynamic button needs a non-empty example value for {{1}} (e.g. booking/123)' });
+        }
+      }
+    }
+
+    // ChatHead's `content` column is utf8 (3-byte) and can't store 4-byte emoji — MySQL rejects
+    // them ("Incorrect string value: '\xF0\x9F...'"). Strip astral-plane chars (emoji) from the
+    // text fields before sending, and collapse the leftover double-spaces. Flag if we removed any.
+    let emojiRemoved = false;
+    const stripEmoji = (s) => {
+      if (typeof s !== 'string') return s;
+      const out = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{1F1E6}-\u{1F1FF}\u{200D}]/gu, '');
+      if (out !== s) emojiRemoved = true;
+      return out.replace(/[ \t]{2,}/g, ' ').replace(/ +\n/g, '\n').replace(/\n +/g, '\n').trim();
+    };
+
+    // ── build the exact payload ChatHead expects ──
+    const payload = { c: CLIENT, app_key: APP_KEY, channel: parseInt(b.channel), name: b.name, category: b.category };
+    if (isAuth) {
+      payload.add_security_recommendation = b.add_security_recommendation === true;
+      if (b.code_expiration_minutes != null) payload.code_expiration_minutes = parseInt(b.code_expiration_minutes);
+      payload.buttons = buttons.length ? buttons : [{ type: 'OTP', otp_type: 'COPY_CODE' }];
+    } else {
+      payload.formate = b.formate;
+      payload.body = stripEmoji(b.body);
+      if (b.body_examples && typeof b.body_examples === 'object') payload.body_examples = b.body_examples;
+      if (b.footer_text) payload.footer_text = stripEmoji(b.footer_text);
+      if (b.formate !== 'text') payload.media_file = b.media_file;
+      if (buttons.length) payload.buttons = buttons.map(bt => ({ ...bt, ...(bt.text ? { text: stripEmoji(bt.text) } : {}) }));
+    }
+
+    // URL MUST end in /index.php — otherwise ChatHead 200s with an empty body (silent drop).
+    const r = await fetch(`${CH_BASE}/account/templates/add/index.php?c=${CLIENT}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const raw = await r.text();
+    const j = parseChatHeadJson(raw);
+    if (j?.status === 'success') return res.json({ success: true, data: j.data, msg: j.msg, emojiRemoved });
+    return res.status(400).json({ success: false, error: j?.msg || 'template submission failed', raw: j });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v3/chathead/templates/status — { template_id } → Meta review status
+router.post('/templates/status', async (req, res) => {
+  const templateId = req.body?.template_id;
+  if (!templateId) return res.status(400).json({ success: false, error: 'template_id is required' });
+  try {
+    const r = await fetch(`${CH_BASE}/account/templates/status/index.php?c=${CLIENT}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ c: CLIENT, app_key: APP_KEY, template_id: templateId }),
+    });
+    const raw = await r.text();
+    const j = parseChatHeadJson(raw);
+    if (j?.status === 'success') return res.json({ success: true, data: j.data });
+    return res.status(404).json({ success: false, error: j?.msg || 'status unavailable' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

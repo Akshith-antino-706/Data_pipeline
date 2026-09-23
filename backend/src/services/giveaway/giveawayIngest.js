@@ -46,9 +46,9 @@ async function upsertContact(client, { email, name }) {
  */
 export async function ingestGiveawayEvent(p) {
   // Nested data: { user{name}, giveaway{title,image,mechanic}, prize{name,image,type,value},
-  //               winner{rank,code}, offer{name,code,expiry} }.
+  //               winner{rank,code}, offer{name,code,expiry}, participant{position,points} }.
   const d = p.data || {};
-  const u = d.user || {}, g = d.giveaway || {}, pr = d.prize || {}, w = d.winner || {}, of = d.offer || {};
+  const u = d.user || {}, g = d.giveaway || {}, pr = d.prize || {}, w = d.winner || {}, of = d.offer || {}, pa = d.participant || {};
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -58,9 +58,9 @@ export async function ingestGiveawayEvent(p) {
       `INSERT INTO giveaway_events
          (id, version, type, tenant_id, giveaway_id, unified_id, email, name,
           giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
-          rank, code, offer, offer_code, expiry,
+          rank, code, offer, offer_code, expiry, position, points,
           subject, body, body_format, created_at, raw_payload)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
        ON CONFLICT (id) DO NOTHING`,
       [
         p.id, p.version ?? 1, p.type, String(p.tenantId ?? ''), p.giveawayId || null, unifiedId,
@@ -68,6 +68,7 @@ export async function ingestGiveawayEvent(p) {
         str(g.title), str(g.image), str(g.mechanic),
         str(pr.name), str(pr.image), str(pr.type), str(pr.value),
         int(w.rank), str(w.code), str(of.name), str(of.code), str(of.expiry),
+        str(pa.position), str(pa.points),
         p.subject || null, p.body || null, p.bodyFormat || null, p.createdAt || null,
         JSON.stringify(p),
       ]
