@@ -13,6 +13,7 @@ import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../utils/reviewUrl.js';
+import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
@@ -226,8 +227,10 @@ class GtmJourneyService {
     // Each GTM event can have its own template using ANY of the 60 master placeholder
     // keys; the universal resolver fills them all from contact + event + raw_payload +
     // ecommerce + generated URLs. Falls back to the bundled gtm-welcome.html if none.
-    const { rows: [jf] } = await db.query('SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    const { rows: [jf] } = await db.query('SELECT nodes, edges, email_credential FROM journey_flows WHERE journey_id = $1', [journeyId]);
     const nodes = jf?.nodes || [];
+    // Per-journey email sender: 'giveaway' → the giveaway SMTP mailbox; anything else → default AWS.
+    const emailCredential = jf?.email_credential || 'default';
     // Send the SPECIFIC node this job is for (multi-step); fall back to the first action node.
     const actionNode = (jobNodeId ? nodes.find(n => n.id === jobNodeId && n.type === 'action') : null)
       || nodes.find(n => n.type === 'action');
@@ -490,9 +493,11 @@ class GtmJourneyService {
     html = injectClickTracking(html, { logId, baseUrl, campaign: `gtm_${journeyId}`, content: 'gtm_journey', unifiedId: c.id, journeyId, nodeId });
     html = injectOpenPixel(html, logId, baseUrl);
 
-    const EmailChannel = await WelcomeEmailService._loadEmailChannel();
+    // Sender selection honours the journey's email_credential — the SAME helper the fixed
+    // engine (workers.js) uses: 'giveaway' → giveaway SMTP, else default AWS Email API.
     const start = Date.now();
-    const res = await EmailChannel.send({ to: recipientEmail, subject, html });
+    const res = await sendJourneyEmail({ emailCredential, to: recipientEmail, subject, html });
+    if (emailCredential === 'giveaway') console.log(`[GtmJourney ${journeyId}] sender=${res.provider} (email_credential=giveaway)`);
     const ms = Date.now() - start;
 
     if (res?.success) {
