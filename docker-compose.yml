@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
@@ -23,6 +21,24 @@ services:
       # growing unbounded while enqueuing large broadcasts (prevents host OOM-kill).
       - NODE_OPTIONS=--max-old-space-size=2560
     mem_limit: 3072m
+    depends_on:
+      - redis
+    volumes:
+      - ./backend/service-account.json:/app/service-account.json:ro
+      - ./mail_templates:/mail_templates:ro
+
+  giveaway-consumer:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      # MUST share the backend's Redis so idempotency, per-node dedup, the frequency
+      # cap and the BullMQ journey queue stay consistent with the backend workers.
+      - REDIS_URL=redis://redis:6379
+    # Run the STANDALONE consumer, not the API server. Keep exactly ONE replica:
+    # CloudAMQP Little Lemur caps connections and a 2nd consumer would split the queue.
+    command: ["node", "src/giveaway-consumer.js"]
+    mem_limit: 512m
     depends_on:
       - redis
     volumes:
