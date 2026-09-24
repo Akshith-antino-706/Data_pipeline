@@ -9,7 +9,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { RequireAuth } from './require-auth';
-import GiveawayToaster from '@/components/GiveawayToaster';
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -96,7 +95,6 @@ export default function DashboardLayout({ children }) {
 
   return (
     <RequireAuth>
-      <GiveawayToaster />
       <div className="app" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
         <button
           className="mobile-menu-btn btn btn-ghost btn-icon"
