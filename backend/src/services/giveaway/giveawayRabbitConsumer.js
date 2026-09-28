@@ -27,6 +27,9 @@ import { ingestGiveawayEvent } from './giveawayIngest.js';
 const EXCHANGE = 'giveaways';
 const QUEUE    = 'giveaways.email.send';
 const BINDING  = 'giveaway.email.prod.*';
+// The storefront's exit-intent coupon emails (`exit_intent.email.<env>.coupon`) share this queue.
+const EXIT_INTENT_BINDING = 'exit_intent.email.prod.*';
+const EXIT_INTENT_TYPE    = 'exit_intent_coupon';
 const DLX      = 'giveaways.dlx';
 const DLQ      = 'giveaways.email.dlq';
 
@@ -38,6 +41,7 @@ const CONN_NAME    = process.env.GIVEAWAY_CONNECTION_NAME || 'rayna-giveaway-con
 
 const VALID_TYPES = new Set(['participation', 'eligible', 'winner', 'loser']);
 const EMAIL_RE    = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const HOST_RE     = /^[a-z0-9.-]+$/i;
 
 let _conn = null, _ch = null, _transporter = null, _stopped = false, _reconnectMs = 1000;
 
@@ -63,6 +67,32 @@ function validate(p) {
   if (!p.subject)                                  return { ok: false, reason: 'missing_subject' };
   if (typeof p.body !== 'string')                  return { ok: false, reason: 'missing_body' };
   return { ok: true };
+}
+
+// exit-intent coupon contract — carries data, not a rendered email (we render it below)
+function validateExitIntent(p) {
+  if (p.version !== 1)                             return { ok: false, reason: `unknown_version:${p.version}` };
+  if (!p.id)                                       return { ok: false, reason: 'missing_id' };
+  if (!p.to?.email || !EMAIL_RE.test(p.to.email))  return { ok: false, reason: 'invalid_email' };
+  if (!p.coupon?.code)                             return { ok: false, reason: 'missing_coupon_code' };
+  if (!p.coupon?.discountLabel)                    return { ok: false, reason: 'missing_discount_label' };
+  if (!p.domainName || !HOST_RE.test(p.domainName)) return { ok: false, reason: 'invalid_domain' };
+  if (p.leadPage != null && !String(p.leadPage).startsWith('/')) return { ok: false, reason: 'invalid_lead_page' };
+  return { ok: true };
+}
+
+const escHtml = (s) => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+export function renderExitIntent(p) {
+  const { code, discountLabel } = p.coupon;
+  const url = `https://${p.domainName}${p.leadPage || '/'}`;
+  const subject = `Your ${discountLabel} off code: ${code}`;
+  const text = `Here's ${discountLabel} off your booking.\n\nYour code: ${code}\n\nApply it at checkout: ${url}`;
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222">`
+    + `<p>Here's ${escHtml(discountLabel)} off your booking.</p>`
+    + `<p style="margin:24px 0"><span style="display:inline-block;padding:12px 24px;border:2px dashed #222;font-size:24px;font-weight:bold;letter-spacing:2px">${escHtml(code)}</span></p>`
+    + `<p>Apply it at checkout: <a href="${escHtml(url)}">${escHtml(url)}</a></p></div>`;
+  return { subject, text, html };
 }
 
 // plain body → HTML part (escape, then newlines → <br>). body is admin-authored → treat as untrusted.
@@ -102,18 +132,21 @@ async function handle(msg) {
   const meta = { id: p?.id ?? null, type: p?.type ?? null, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
 
   // 1. contract validation → poison acked + logged, NEVER requeued
-  const v = validate(p);
+  const isExit = p?.type === EXIT_INTENT_TYPE;
+  const v = isExit ? validateExitIntent(p) : validate(p);
   if (!v.ok) {
     console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`);
     await record({ ...meta, outcome: 'poison', reason: v.reason });
     return _ch.ack(msg);
   }
+  const mail = isExit ? renderExitIntent(p) : { subject: p.subject, text: p.body, html: bodyToHtml(p.body) };
+  meta.subject = mail.subject;
 
   // 1b. PERSIST — upsert contact (no duplicates) + store the event (idempotent on id),
   // then real-time enrol into any matching giveaway journey (segment-gated, like GTM).
   // Runs for EVERY valid message, independent of send-enabled, and safe on redelivery
-  // (contact upsert + event insert + journey entry are all idempotent).
-  try {
+  // (contact upsert + event insert + journey entry are all idempotent). Giveaway messages only.
+  if (!isExit) try {
     const { unifiedId } = await ingestGiveawayEvent(p);
     if (unifiedId) {
       const { default: GiveawayJourneyService } = await import('../GiveawayJourneyService.js');
@@ -125,7 +158,8 @@ async function handle(msg) {
 
   // 2. idempotency — claim BEFORE sending; duplicate redelivery is a no-op
   const redis = getConnection();
-  const claimed = await redis.set(`giveaway:email:${p.id}`, '1', 'NX', 'EX', DEDUPE_TTL);
+  const dedupeKey = `${isExit ? 'exit_intent' : 'giveaway'}:email:${p.id}`;
+  const claimed = await redis.set(dedupeKey, '1', 'NX', 'EX', DEDUPE_TTL);
   if (claimed === null) {
     console.log(`${tag} 🔁 DUPLICATE — ack`);
     await record({ ...meta, outcome: 'duplicate' });
@@ -134,7 +168,7 @@ async function handle(msg) {
 
   // 3. send (or log-only), with transient-failure retries → DLQ
   if (!SEND_ENABLED) {
-    console.log(`${tag} ✅ RECEIVED (GIVEAWAY_SEND_ENABLED!=true → log-only) <${p.to.email}> subject="${p.subject}"`);
+    console.log(`${tag} ✅ RECEIVED (GIVEAWAY_SEND_ENABLED!=true → log-only) <${p.to.email}> subject="${mail.subject}"`);
     await record({ ...meta, outcome: 'received' });
     return _ch.ack(msg);
   }
@@ -145,9 +179,9 @@ async function handle(msg) {
       const info = await smtp().sendMail({
         from: process.env.GIVEAWAY_FROM,
         to: p.to.name ? `${p.to.name} <${p.to.email}>` : p.to.email,
-        subject: p.subject,
-        text: p.body,                       // verbatim
-        html: bodyToHtml(p.body),           // escaped + nl2br
+        subject: mail.subject,
+        text: mail.text,                    // giveaway: body verbatim
+        html: mail.html,                    // giveaway: escaped + nl2br
         headers: { 'X-Giveaway-Email-Id': String(p.id) },  // for bounce reconciliation
       });
       console.log(`${tag} ✅ SENT <${p.to.email}> msgId=${info.messageId}`);
@@ -159,7 +193,7 @@ async function handle(msg) {
     }
   }
   // all retries failed → release the claim so a DLQ replay can retry, then DLQ (no requeue)
-  await redis.del(`giveaway:email:${p.id}`).catch(() => {});
+  await redis.del(dedupeKey).catch(() => {});
   console.error(`${tag} ❌ SEND FAILED after ${MAX_RETRIES} tries: ${lastErr?.message} — nack→DLQ`);
   await record({ ...meta, outcome: 'failed', reason: lastErr?.message });
   return _ch.nack(msg, false, false);
@@ -173,6 +207,7 @@ async function assertTopology(ch) {
   await ch.bindQueue(DLQ, DLX, '');
   await ch.assertQueue(QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX } });
   await ch.bindQueue(QUEUE, EXCHANGE, BINDING);
+  await ch.bindQueue(QUEUE, EXCHANGE, EXIT_INTENT_BINDING);
 }
 
 async function connect() {
@@ -191,7 +226,7 @@ async function connect() {
     await _ch.consume(QUEUE, (msg) => { if (msg) handle(msg).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { _ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}, ${EXIT_INTENT_BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     scheduleReconnect(`connect failed: ${err.message}`);
   }
