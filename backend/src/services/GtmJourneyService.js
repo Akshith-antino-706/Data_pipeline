@@ -392,6 +392,29 @@ class GtmJourneyService {
     // Universal placeholder fill — body AND subject (subjects may contain keys too).
     const ctx = { contact: c, event: eventRow, payload: eventRow.raw_payload || {} };
 
+    // ── Guard: cart/product templates must have item data ──
+    // Some add_to_cart / begin_checkout events arrive with NO product context (no itemName,
+    // ecommerceData or imageUrl). Rendering a cart template from those produces an EMPTY
+    // product card (blank image, no name, "AED" with no price). If the template depends on
+    // item fields and none resolve, skip the send and advance the entry (an empty
+    // "here's your cart item" email is worse than no email). Giveaway journeys (gvRow) are
+    // exempt — they don't use the cart item fields.
+    const templateUsesItem = /item_name|item_price|item_image|ITEM_NAME|ITEM_PRICE|ITEM_IMAGE/.test(tplBody);
+    if (templateUsesItem && !gvRow) {
+      const _iv = buildLiquidVars(ctx);
+      const hasItem = !!(String(_iv.ITEM_NAME || '').trim()
+        || String(_iv.ITEM_PRICE || '').trim()
+        || String(_iv.ITEM_IMAGE_URL || '').trim());
+      if (!hasItem) {
+        console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — no item data (empty product card) — send skipped`);
+        if (entryId) {
+          const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+          await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+        }
+        return;
+      }
+    }
+
     // Giveaway journeys: expose the giveaway_events row as lowercase template vars so
     // {{ giveaway }}, {{ prize }}, {{ rank }}, {{ mechanic }}, {{ code }}, {{ value }}, etc. resolve.
     const gvVars = gvRow ? {

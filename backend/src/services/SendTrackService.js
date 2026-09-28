@@ -194,8 +194,10 @@ export class SendTrackService {
     const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const offset = (page - 1) * limit;
 
-    const [{ rows }, { rows: countRows }] = await Promise.all([
-      db.query(`
+    // ORDER BY sent_at (idx_esl_sent_at) — created_at has NO index, so ordering by it forces
+    // a full seq-scan of all ~63M rows (~53s → timeout). sent_at DESC NULLS LAST matches the
+    // index exactly; rows not yet sent (null sent_at) sort last.
+    const listQ = db.query(`
         SELECT
           esl.id, esl.unified_id, esl.email, esl.contact_name,
           esl.subject, esl.template_label, esl.day_number, esl.source,
@@ -207,19 +209,25 @@ export class SendTrackService {
         FROM email_send_log esl
         LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id
         ${where}
-        ORDER BY esl.created_at DESC
+        ORDER BY esl.sent_at DESC NULLS LAST, esl.id DESC
         LIMIT $${idx} OFFSET $${idx + 1}
-      `, [...params, limit, offset]),
+      `, [...params, limit, offset]);
 
-      db.query(`
-        SELECT COUNT(*) AS total
-        FROM email_send_log esl
-        LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id
-        ${where}
-      `, params),
-    ]);
+    // Total: an exact COUNT(*) over 63M rows is itself multi-second. With NO filters, use the
+    // planner's row estimate (instant); with filters, count the (indexed) subset and only JOIN
+    // unified_contacts when a subscription-status filter actually needs it.
+    const needsUc = subscriptionStatus === 'unsubscribed' || subscriptionStatus === 'active';
+    const countQ = conditions.length === 0
+      ? db.query(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'email_send_log'`)
+      : db.query(`
+          SELECT COUNT(*) AS total
+          FROM email_send_log esl
+          ${needsUc ? 'LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id' : ''}
+          ${where}
+        `, params);
 
-    return { rows, total: parseInt(countRows[0].total), page, limit };
+    const [{ rows }, { rows: countRows }] = await Promise.all([listQ, countQ]);
+    return { rows, total: parseInt(countRows[0].total), page, limit, estimated: conditions.length === 0 };
   }
 
   /**
