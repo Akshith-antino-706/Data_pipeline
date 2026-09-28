@@ -234,6 +234,16 @@ export const WA_DATA_KEYS = '*';
 
 export const RCS_DATA_KEYS = ['item_name', 'item_price', 'destination_city', 'cta_url', 'user_first_name'];
 
+// Events that carry a product context. Used to decide whether the item-completeness gate
+// applies — SAME condition for email + WhatsApp so both channels skip/send consistently.
+const ITEM_EVENTS = new Set(['view_item', 'add_to_cart', 'begin_checkout', 'add_to_wishlist', 'add_payment_info', 'purchase']);
+
+/** Is this send product/item-based? (a real itemId OR a product event). */
+export function isItemBased(eventName, itemId) {
+  const hasItem = itemId != null && String(itemId).trim() !== '' && String(itemId) !== '_noitem';
+  return hasItem || ITEM_EVENTS.has(eventName);
+}
+
 /**
  * Item-completeness gate for product emails/WhatsApp. A product message must have ALL of:
  *   item_name, item_price, item_image, currency, destination_city, and a URL (item_url OR page_url).

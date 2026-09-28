@@ -8,7 +8,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields } from '../utils/placeholderResolver.js';
+import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
@@ -275,9 +275,7 @@ class GtmJourneyService {
       // Item completeness — for a product/item WhatsApp, skip if ANY item field is empty
       // (item_name / item_price / item_image / currency). Never send a card with a blank
       // name, price or image. Non-item WhatsApp sends (no item context) are unaffected.
-      const _waItemBased = (itemId && itemId !== '_noitem') ||
-        ['view_item','add_to_cart','begin_checkout','add_to_wishlist','add_payment_info','purchase'].includes(eventRow.event_name);
-      if (_waItemBased) {
+      if (isItemBased(eventRow.event_name, itemId)) {
         const _iv = buildLiquidVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
         const _missing = missingItemFields(_iv);
         if (_missing.length) {
@@ -415,11 +413,11 @@ class GtmJourneyService {
     // item fields and none resolve, skip the send and advance the entry (an empty
     // "here's your cart item" email is worse than no email). Giveaway journeys (gvRow) are
     // exempt — they don't use the cart item fields.
-    const templateUsesItem = /item_name|item_price|item_image|ITEM_NAME|ITEM_PRICE|ITEM_IMAGE/.test(tplBody);
-    if (templateUsesItem && !gvRow) {
+    // Item-completeness gate — SAME condition as the WhatsApp node (isItemBased) so email and
+    // WhatsApp always agree: for an item/product send, skip if ANY item field is empty
+    // (name / price / image / currency / destination_city / url, or "NA"). Giveaway journeys exempt.
+    if (isItemBased(eventRow.event_name, itemId) && !gvRow) {
       const _iv = buildLiquidVars(ctx);
-      // Skip if ANY item field is empty (name / price / image / currency / destination_city / url)
-      // — never email a product card with a blank field.
       const _missing = missingItemFields(_iv);
       if (_missing.length) {
         console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — missing item field(s): ${_missing.join(',')} — email skipped`);

@@ -2,7 +2,7 @@ import db from '../config/database.js';
 import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
-import { buildWaVars, buildLiquidVars, missingItemFields } from '../utils/placeholderResolver.js';
+import { buildWaVars, buildLiquidVars, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 
 /**
  * CONTINUOUS journey engine — the "conveyor belt".
@@ -181,9 +181,7 @@ class ContinuousJourneyService {
     const complete = [];
     for (const v of valid) {
       const ev = evMap[v.e.last_event_id] || { raw_payload: {} };
-      const itemBased = (v.e.item_id && v.e.item_id !== '_noitem') ||
-        ['view_item','add_to_cart','begin_checkout','add_to_wishlist','add_payment_info','purchase'].includes(ev.event_name);
-      if (itemBased) {
+      if (isItemBased(ev.event_name, v.e.item_id)) {
         const miss = missingItemFields(buildLiquidVars({ contact: v.c, event: ev, payload: ev.raw_payload }));
         if (miss.length) {
           await logEvent(v.e.id, 'action_blocked', { reason: 'missing_item_fields', missing: miss });
