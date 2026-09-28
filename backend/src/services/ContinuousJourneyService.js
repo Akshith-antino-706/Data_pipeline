@@ -2,7 +2,7 @@ import db from '../config/database.js';
 import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
-import { buildWaVars } from '../utils/placeholderResolver.js';
+import { buildWaVars, buildLiquidVars, missingItemFields } from '../utils/placeholderResolver.js';
 
 /**
  * CONTINUOUS journey engine — the "conveyor belt".
@@ -175,11 +175,31 @@ class ContinuousJourneyService {
       for (const ev of evs) evMap[ev.event_id] = ev;
     }
 
+    // Item completeness — drop entries whose product fields are incomplete (parity with the
+    // email guard): never send a WhatsApp card with a blank name/price/image/currency/city/url
+    // (or placeholder junk like "NA"). Non-item sends (no item context) are unaffected.
+    const complete = [];
+    for (const v of valid) {
+      const ev = evMap[v.e.last_event_id] || { raw_payload: {} };
+      const itemBased = (v.e.item_id && v.e.item_id !== '_noitem') ||
+        ['view_item','add_to_cart','begin_checkout','add_to_wishlist','add_payment_info','purchase'].includes(ev.event_name);
+      if (itemBased) {
+        const miss = missingItemFields(buildLiquidVars({ contact: v.c, event: ev, payload: ev.raw_payload }));
+        if (miss.length) {
+          await logEvent(v.e.id, 'action_blocked', { reason: 'missing_item_fields', missing: miss });
+          await this.advance(v.e.id, journeyId, nodeId);
+          continue;
+        }
+      }
+      complete.push(v);
+    }
+    if (!complete.length) return { broadcasts: 0, sent: 0, exited };
+
     // ── ONE ChatHead broadcast for the whole group ──
     let result;
     try {
       result = await ChatHeadV1Service.sendBroadcast({
-        contacts:     valid.map(v => {
+        contacts:     complete.map(v => {
           const ev = evMap[v.e.last_event_id] || { raw_payload: {} };
           return { phone: v.phone, name: v.c.name || '', vars: buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload }) };
         }),
@@ -187,7 +207,7 @@ class ContinuousJourneyService {
         channelName:  node.data?.waChannelName || null,
         templateId:   parseInt(waTpl),
         templateName: node.data?.waTemplateName || null,
-        name:         `gtm journey ${journeyId} ${nodeId} (${valid.length})`,
+        name:         `gtm journey ${journeyId} ${nodeId} (${complete.length})`,
         sendTime:     new Date(Date.now() + 60 * 1000),
       });
     } catch (err) { result = { success: false, error: err.message }; }
@@ -198,7 +218,7 @@ class ContinuousJourneyService {
 
     // Per-recipient log + advance (each entry independent). Advance on failure too —
     // retrying would re-broadcast (dup sends); the failure is recorded instead.
-    for (const v of valid) {
+    for (const v of complete) {
       await db.query(
         `INSERT INTO whatsapp_send_log
            (unified_id, phone, contact_name, channel_id, template_id, template_name,
@@ -209,11 +229,11 @@ class ContinuousJourneyService {
          node.data?.waTemplateName || null, journeyId, nodeId, bcastId, extId,
          ok ? 'sent' : 'failed', ok ? null : String(result?.error || 'broadcast failed').slice(0, 500)]
       ).catch(() => {});
-      await logEvent(v.e.id, ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', bulk: true, broadcastId: extId, recipients: valid.length });
+      await logEvent(v.e.id, ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', bulk: true, broadcastId: extId, recipients: complete.length });
       await this.advance(v.e.id, journeyId, nodeId);
     }
-    console.log(`[Continuous] WhatsApp BULK broadcast journey=${journeyId} node=${nodeId} recipients=${valid.length} status=${ok ? 'sent' : 'FAILED'} chId=${extId || '-'}`);
-    return { broadcasts: 1, sent: valid.length, exited };
+    console.log(`[Continuous] WhatsApp BULK broadcast journey=${journeyId} node=${nodeId} recipients=${complete.length} status=${ok ? 'sent' : 'FAILED'} chId=${extId || '-'}`);
+    return { broadcasts: 1, sent: complete.length, exited };
   }
 
   /**

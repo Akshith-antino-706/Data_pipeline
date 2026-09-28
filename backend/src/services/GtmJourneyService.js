@@ -8,7 +8,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
+import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields } from '../utils/placeholderResolver.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
@@ -279,7 +279,7 @@ class GtmJourneyService {
         ['view_item','add_to_cart','begin_checkout','add_to_wishlist','add_payment_info','purchase'].includes(eventRow.event_name);
       if (_waItemBased) {
         const _iv = buildLiquidVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
-        const _missing = ['ITEM_NAME','ITEM_PRICE','ITEM_IMAGE_URL','CURRENCY'].filter(k => !String(_iv[k] ?? '').trim());
+        const _missing = missingItemFields(_iv);
         if (_missing.length) {
           await logEvent('action_blocked', { reason: 'missing_item_fields', missing: _missing });
           console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp missing item field(s): ${_missing.join(',')} — skipped`);
@@ -418,10 +418,9 @@ class GtmJourneyService {
     const templateUsesItem = /item_name|item_price|item_image|ITEM_NAME|ITEM_PRICE|ITEM_IMAGE/.test(tplBody);
     if (templateUsesItem && !gvRow) {
       const _iv = buildLiquidVars(ctx);
-      // Skip if ANY item field is empty (item_name / item_price / item_image / currency) —
-      // never email a product card with a blank name, price or image.
-      const _missing = ['ITEM_NAME', 'ITEM_PRICE', 'ITEM_IMAGE_URL', 'CURRENCY']
-        .filter(k => !String(_iv[k] ?? '').trim());
+      // Skip if ANY item field is empty (name / price / image / currency / destination_city / url)
+      // — never email a product card with a blank field.
+      const _missing = missingItemFields(_iv);
       if (_missing.length) {
         console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — missing item field(s): ${_missing.join(',')} — email skipped`);
         if (entryId) {

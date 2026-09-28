@@ -234,6 +234,23 @@ export const WA_DATA_KEYS = '*';
 
 export const RCS_DATA_KEYS = ['item_name', 'item_price', 'destination_city', 'cta_url', 'user_first_name'];
 
+/**
+ * Item-completeness gate for product emails/WhatsApp. A product message must have ALL of:
+ *   item_name, item_price, item_image, currency, destination_city, and a URL (item_url OR page_url).
+ * Placeholder junk (NA, N/A, null, undefined, none, -) counts as EMPTY. Returns the list of
+ * missing field labels ([] = complete). Pass the vars from buildLiquidVars(ctx).
+ */
+export function missingItemFields(iv = {}) {
+  const blank = (v) => {
+    const s = String(v ?? '').trim();
+    return s === '' || /^(na|n\/a|null|undefined|none|-)$/i.test(s);
+  };
+  const missing = ['ITEM_NAME', 'ITEM_PRICE', 'ITEM_IMAGE_URL', 'CURRENCY', 'DESTINATION_CITY']
+    .filter(k => blank(iv[k]));
+  if (blank(iv.ITEM_URL) && blank(iv.PAGE_URL)) missing.push('URL');
+  return missing;
+}
+
 // Never worth putting in the .data file (a huge JSON dump — not a template variable).
 const WA_DATA_EXCLUDE = new Set(['RAW_PAYLOAD']);
 
