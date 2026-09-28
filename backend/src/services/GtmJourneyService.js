@@ -272,6 +272,22 @@ class GtmJourneyService {
       // so a view_item WhatsApp actually says "which product you viewed", like the email.
       const waVars = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
 
+      // Item completeness — for a product/item WhatsApp, skip if ANY item field is empty
+      // (item_name / item_price / item_image / currency). Never send a card with a blank
+      // name, price or image. Non-item WhatsApp sends (no item context) are unaffected.
+      const _waItemBased = (itemId && itemId !== '_noitem') ||
+        ['view_item','add_to_cart','begin_checkout','add_to_wishlist','add_payment_info','purchase'].includes(eventRow.event_name);
+      if (_waItemBased) {
+        const _iv = buildLiquidVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
+        const _missing = ['ITEM_NAME','ITEM_PRICE','ITEM_IMAGE_URL','CURRENCY'].filter(k => !String(_iv[k] ?? '').trim());
+        if (_missing.length) {
+          await logEvent('action_blocked', { reason: 'missing_item_fields', missing: _missing });
+          console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp missing item field(s): ${_missing.join(',')} — skipped`);
+          await advance();
+          return;
+        }
+      }
+
       let result;
       try {
         result = await ChatHeadV1Service.sendBroadcast({
@@ -402,11 +418,12 @@ class GtmJourneyService {
     const templateUsesItem = /item_name|item_price|item_image|ITEM_NAME|ITEM_PRICE|ITEM_IMAGE/.test(tplBody);
     if (templateUsesItem && !gvRow) {
       const _iv = buildLiquidVars(ctx);
-      const hasItem = !!(String(_iv.ITEM_NAME || '').trim()
-        || String(_iv.ITEM_PRICE || '').trim()
-        || String(_iv.ITEM_IMAGE_URL || '').trim());
-      if (!hasItem) {
-        console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — no item data (empty product card) — send skipped`);
+      // Skip if ANY item field is empty (item_name / item_price / item_image / currency) —
+      // never email a product card with a blank name, price or image.
+      const _missing = ['ITEM_NAME', 'ITEM_PRICE', 'ITEM_IMAGE_URL', 'CURRENCY']
+        .filter(k => !String(_iv[k] ?? '').trim());
+      if (_missing.length) {
+        console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — missing item field(s): ${_missing.join(',')} — email skipped`);
         if (entryId) {
           const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
           await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
