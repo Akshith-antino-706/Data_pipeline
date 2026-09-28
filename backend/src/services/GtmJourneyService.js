@@ -272,12 +272,11 @@ class GtmJourneyService {
       // so a view_item WhatsApp actually says "which product you viewed", like the email.
       const waVars = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
 
-      // Item completeness — for a product/item WhatsApp, skip if ANY item field is empty
-      // (item_name / item_price / item_image / currency). Never send a card with a blank
-      // name, price or image. Non-item WhatsApp sends (no item context) are unaffected.
+      // Item completeness — checked against the ACTUAL .data values we send (waVars), not the
+      // email resolver, so WhatsApp is judged by exactly what its template will show. Skip if
+      // ANY item field is empty. Non-item WhatsApp sends (no item context) are unaffected.
       if (isItemBased(eventRow.event_name, itemId)) {
-        const _iv = buildLiquidVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
-        const _missing = missingItemFields(_iv);
+        const _missing = missingItemFields(waVars);
         if (_missing.length) {
           await logEvent('action_blocked', { reason: 'missing_item_fields', missing: _missing });
           console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp missing item field(s): ${_missing.join(',')} — skipped`);
