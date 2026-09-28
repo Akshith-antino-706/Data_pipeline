@@ -245,19 +245,28 @@ export function isItemBased(eventName, itemId) {
 }
 
 /**
- * Item-completeness gate for product emails/WhatsApp. A product message must have ALL of:
- *   item_name, item_price, item_image, currency, destination_city, and a URL (item_url OR page_url).
- * Placeholder junk (NA, N/A, null, undefined, none, -) counts as EMPTY. Returns the list of
- * missing field labels ([] = complete). Pass the vars from buildLiquidVars(ctx).
+ * Item-completeness gate for product emails/WhatsApp. Checks the FINAL mapped values that a
+ * channel actually sends — pass buildLiquidVars(ctx) for EMAIL or buildWaVars(ctx) for WhatsApp.
+ * It is casing-agnostic (UPPER_SNAKE email keys OR lowercase .data keys), so each channel is
+ * judged by the exact values it will render. A product message must have ALL of:
+ *   item_name, item_price, item_image, currency, destination_city, and a URL.
+ * Placeholder junk (NA, N/A, null, undefined, none, -) counts as EMPTY. Returns the missing
+ * field labels ([] = complete). NOTE: the image is checked via item_image_url / ITEM_IMAGE_URL —
+ * NOT the WhatsApp `img` key, which carries a default placeholder and would mask a missing image.
  */
-export function missingItemFields(iv = {}) {
-  const blank = (v) => {
-    const s = String(v ?? '').trim();
+export function missingItemFields(v = {}) {
+  const blank = (x) => {
+    const s = String(x ?? '').trim();
     return s === '' || /^(na|n\/a|null|undefined|none|-)$/i.test(s);
   };
-  const missing = ['ITEM_NAME', 'ITEM_PRICE', 'ITEM_IMAGE_URL', 'CURRENCY', 'DESTINATION_CITY']
-    .filter(k => blank(iv[k]));
-  if (blank(iv.ITEM_URL) && blank(iv.PAGE_URL)) missing.push('URL');
+  const pick = (...keys) => { for (const k of keys) { if (!blank(v[k])) return v[k]; } return ''; };
+  const missing = [];
+  if (blank(pick('ITEM_NAME', 'item_name')))                      missing.push('ITEM_NAME');
+  if (blank(pick('ITEM_PRICE', 'item_price')))                    missing.push('ITEM_PRICE');
+  if (blank(pick('ITEM_IMAGE_URL', 'item_image_url', 'item_image'))) missing.push('ITEM_IMAGE_URL');
+  if (blank(pick('CURRENCY', 'currency')))                        missing.push('CURRENCY');
+  if (blank(pick('DESTINATION_CITY', 'destination_city')))        missing.push('DESTINATION_CITY');
+  if (blank(pick('ITEM_URL', 'item_url', 'PAGE_URL', 'page_url', 'cta_url'))) missing.push('URL');
   return missing;
 }
 
