@@ -13,6 +13,7 @@ import {
   Plus, Pencil, Trash2, Layers,
 } from 'lucide-react';
 import GroupDepartmentModal from './GroupDepartmentModal';
+import { useAuth } from '@/context/AuthContext';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -103,6 +104,7 @@ export default function Leads() {
   const [deptGroupFilter, setDeptGroupFilter] = useState(''); // '' = all; else group id → show only that group's depts
 
   const cfg = CHANNELS[channel];
+  const { isAuthenticated } = useAuth();  // group management is hidden for the public (logged-out) view
 
   // Rows shown in Leads-by-Department, filtered to the selected group's departments (if any).
   const groupReceivers = deptGroupFilter
@@ -409,7 +411,9 @@ export default function Leads() {
         </>
       )}
 
-      {/* Department Groups — group multiple departments under one name (one dept → one group) */}
+      {/* Department Groups — group multiple departments under one name (one dept → one group).
+          Management is hidden for the public (logged-out) view. */}
+      {isAuthenticated && (
       <motion.div variants={fadeInUp} className="card" style={{ padding: 20, marginBottom: 24 }}>
         <div className="card-header" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Layers size={18} style={{ color: 'var(--text-secondary)' }} />
@@ -450,6 +454,7 @@ export default function Leads() {
           </div>
         )}
       </motion.div>
+      )}
 
       {/* Department Breakdown — independent filter, independent data */}
       {deptError && (
