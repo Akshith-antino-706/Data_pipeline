@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = ['/', '/login', '/landing', '/rayna-logo.webp', '/favicon.ico', '/icon.svg', '/apple-icon.png'];
+const PUBLIC_PATHS = ['/', '/login', '/landing', '/leads', '/rayna-logo.webp', '/favicon.ico', '/icon.svg', '/apple-icon.png'];
 
 export function middleware(request) {
   const { pathname } = request.nextUrl;
