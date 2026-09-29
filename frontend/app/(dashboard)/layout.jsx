@@ -89,10 +89,31 @@ class ErrorBoundary extends Component {
   }
 }
 
+// Public paths render WITHOUT the sidebar/chrome when the visitor isn't logged in
+// (kept in sync with middleware.js + require-auth.jsx).
+const PUBLIC_PATHS = ['/leads'];
+
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const { isAuthenticated } = useAuth();
+
+  // Chromeless = public page viewed while logged out → no sidebar, full-width content.
+  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+  const chromeless = isPublic && !isAuthenticated;
+
+  if (chromeless) {
+    return (
+      <RequireAuth>
+        <div className="app">
+          <main className="main" style={{ marginLeft: 0, width: '100vw' }}>
+            <ErrorBoundary>{children}</ErrorBoundary>
+          </main>
+        </div>
+      </RequireAuth>
+    );
+  }
 
   return (
     <RequireAuth>
