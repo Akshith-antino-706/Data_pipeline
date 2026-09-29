@@ -118,11 +118,13 @@ export default class ProductAffinityService {
         'holiday_hotels','holiday_tours','holiday_categories',
         'yacht_type','yacht_min_guests','yacht_max_guests',
         'all_image_links','image_count','first_seen_date',
+        // Per-market rate-plan prices {default,SA,IN,AE} in AED — country-based email pricing
+        'market_prices',
       ];
 
       // Everything EXCEPT product_id is overwritten on conflict.
       const UPDATE_COLS = COLUMN_LIST.slice(1).map(c => `${c} = EXCLUDED.${c}`).join(', ');
-      const COLS_PER_ROW = COLUMN_LIST.length;   // = 74 total (15 existing + 59 enriched)
+      const COLS_PER_ROW = COLUMN_LIST.length;   // = 75 total (15 existing + 59 enriched + market_prices)
 
       for (let i = 0; i < uniqueProducts.length; i += BATCH) {
         const batch = uniqueProducts.slice(i, i + BATCH);
@@ -173,6 +175,8 @@ export default class ProductAffinityService {
             _txt(p.yacht_type), _int(p.yacht_minGuests), _int(p.yacht_maxGuests),
             // Media / lifecycle
             _jsn(p.all_image_links), _int(p.image_count), _ts(p.first_seen_date),
+            // Per-market prices (jsonb) — raw feed market_prices {default,SA,IN,AE}
+            _jsn(p.market_prices),
           );
           const params = Array.from({ length: COLS_PER_ROW }, (_, k) => `$${base + k + 1}`).join(',');
           return `(${params})`;
