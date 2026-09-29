@@ -46,6 +46,7 @@ import gupshupRouter from './src/routes/gupshup.js';
 import testSendsRouter from './src/routes/testSends.js';
 import chatheadV1Router from './src/routes/chatheadV1.js';
 import giveawaysRouter from './src/routes/giveaways.js';
+import chatLeadsRouter from './src/routes/chatLeads.js';
 import { startGiveawayWorker } from './src/services/giveaway/giveawayWorker.js';
 import authRouter from './src/routes/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
@@ -148,6 +149,7 @@ app.use('/api/v3/gupshup', gupshupRouter);
 app.use('/api/v3/test-sends', testSendsRouter);
 app.use('/api/v3/chathead', chatheadV1Router);
 app.use('/api/v3/giveaways', giveawaysRouter);
+app.use('/api/v3/chat-leads', chatLeadsRouter);
 app.use('/api/v3/custom-segments', customSegmentsRouter);
 
 // ── Health check ────────────────────────────────────────────
@@ -308,6 +310,26 @@ app.post('/api/v3/migrate-schema', async (_, res) => {
   try {
     await runMigrationFile('003_complete_data_schema.sql');
     res.json({ success: true, message: 'Complete data schema migration (003) succeeded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Phase 1 local pricing: products.market_prices column + fx_rates table (seeded live rates).
+app.post('/api/v3/migrate-market-prices', async (_, res) => {
+  try {
+    await runMigrationFile('113_market_prices_and_fx.sql');
+    res.json({ success: true, message: 'market_prices column + fx_rates table migration (113) succeeded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Department groups (Leads screen): department_groups + department_group_members tables.
+app.post('/api/v3/migrate-department-groups', async (_, res) => {
+  try {
+    await runMigrationFile('114_department_groups.sql');
+    res.json({ success: true, message: 'department_groups tables migration (114) succeeded' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -798,6 +820,19 @@ cron.schedule('30 2 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily journey re-snapshot scheduled at 2:30 AM Dubai time');
+
+// ── Daily FX rates refresh — 5:30 AM Dubai ──
+// Refreshes AED→INR/SAR/USD in fx_rates for country-based email pricing (utils/currency.js).
+// Small no-key fetch; on failure last-good rates stay. Runs before the day's sends.
+cron.schedule('30 5 * * *', async () => {
+  try {
+    const { runFxRatesSync } = await import('./src/crons/fxRatesSync.js');
+    await runFxRatesSync();
+  } catch (err) {
+    console.error('[Cron:FxRates] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Daily FX rates refresh scheduled at 5:30 AM Dubai time');
 
 // ── Daily category picks — 3:45 AM Dubai ──
 // Computes top-5 products per journey-level category (activities / holidays /

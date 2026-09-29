@@ -25,40 +25,69 @@
  */
 
 import db from '../config/database.js';
+import { getRates } from '../utils/currency.js';
 
 /**
- * Load full product rows for a list of ordered product_ids and return them
- * in the SAME order as the input array. Missing ids are dropped silently.
+ * Load full product rows for ordered product_ids, in input order (missing ids dropped).
+ *
+ * `market` = { plan, currency } from utils/marketPlan.resolveMarket(contact):
+ *   - LEGACY fields (product_price / product_strike_price) stay in DEFAULT-plan AED, so
+ *     templates still saying "AED {{product_price}}" render exactly as before.
+ *   - NEW fields (product_currency / product_price_local / product_strike_price_local) use the
+ *     recipient's rate plan (feed market_prices) converted to their currency — templates opt in
+ *     with "{{product_currency}} {{product_price_local}}".
  */
-export async function hydrateProducts(productIds) {
+export async function hydrateProducts(productIds, market = { plan: 'default', currency: 'AED' }) {
   if (!Array.isArray(productIds) || productIds.length === 0) return [];
   const { rows } = await db.query(`
     SELECT product_id, name, category, city, country,
-           image_url, url, sale_price, normal_price, page_description
+           image_url, url, sale_price, normal_price, page_description, market_prices
     FROM products
     WHERE product_id = ANY($1::int[])
   `, [productIds.map(Number)]);
+
+  const plan = market?.plan || 'default';
+  const currency = String(market?.currency || 'AED').toUpperCase();
+  const rates = await getRates();
+  const rate = Number(rates[currency]) || 1;                 // AED→currency; fail-safe 1 (AED)
+  const num = (v) => (v == null || !Number.isFinite(Number(v))) ? null : Number(v);
+  const money = (n) => (n == null ? '' : Math.round(n).toLocaleString('en-US'));
 
   const byId = new Map(rows.map(r => [r.product_id, r]));
   return productIds
     .map(id => byId.get(Number(id)))
     .filter(Boolean)
-    .map(r => ({
-      product_id:           r.product_id,
-      product_name:         r.name || '',
-      product_url:          r.url || 'https://www.raynatours.com',
-      product_image:        r.image_url || '',
-      product_category:     r.category || 'Activity',
-      product_price:        r.sale_price != null ? Math.round(Number(r.sale_price)) : (r.normal_price != null ? Math.round(Number(r.normal_price)) : ''),
-      product_strike_price: (r.sale_price != null && r.normal_price != null && Number(r.normal_price) > Number(r.sale_price))
-        ? Math.round(Number(r.normal_price))
-        : '',
-      product_discount_percent: (r.sale_price != null && r.normal_price != null && Number(r.normal_price) > Number(r.sale_price))
-        ? Math.round(((Number(r.normal_price) - Number(r.sale_price)) / Number(r.normal_price)) * 100)
-        : '',
-      product_rating:       '4.7',   // No ratings column yet in `products` — placeholder
-      product_reviews:      '',
-    }));
+    .map(r => {
+      const mp = r.market_prices || {};
+      // Default-plan AED (legacy, unchanged): feed default → flat sale_price fallback.
+      const defSale   = num(mp.default?.sale_price) ?? num(r.sale_price);
+      const defStrike = num(mp.default?.price)      ?? num(r.normal_price);
+      const legacyHasStrike = defSale != null && defStrike != null && defStrike > defSale;
+      // Recipient's plan AED → convert to their currency (new fields).
+      const planP     = mp[plan] || mp.default || null;
+      const planSale  = num(planP?.sale_price) ?? defSale;
+      const planStrike= num(planP?.price)      ?? defStrike;
+      const planHasStrike = planSale != null && planStrike != null && planStrike > planSale;
+
+      return {
+        product_id:           r.product_id,
+        product_name:         r.name || '',
+        product_url:          r.url || 'https://www.raynatours.com',
+        product_image:        r.image_url || '',
+        product_category:     r.category || 'Activity',
+        product_city:         r.city || '',
+        // LEGACY — default-plan AED (unchanged behaviour)
+        product_price:        defSale != null ? Math.round(defSale) : '',
+        product_strike_price: legacyHasStrike ? Math.round(defStrike) : '',
+        product_discount_percent: legacyHasStrike ? Math.round(((defStrike - defSale) / defStrike) * 100) : '',
+        // NEW — recipient's market plan, converted to their currency
+        product_currency:            currency,
+        product_price_local:         planSale   != null ? money(planSale   * rate) : '',
+        product_strike_price_local:  planHasStrike ? money(planStrike * rate) : '',
+        product_rating:       '4.7',   // No ratings column yet in `products` — placeholder
+        product_reviews:      '',
+      };
+    });
 }
 
 /**
@@ -133,10 +162,10 @@ function _substitute(html, vars) {
  *
  * Returns { html, productsUsed: [...hydrated products] }.
  */
-export async function renderRecommendationEmail({ templateHtml, ranking, vars = {} } = {}) {
+export async function renderRecommendationEmail({ templateHtml, ranking, vars = {}, market } = {}) {
   if (!templateHtml) throw new Error('templateHtml is required');
   const productIds = ranking?.productIds || ranking?.product_ids || [];
-  const products = await hydrateProducts(productIds);
+  const products = await hydrateProducts(productIds, market);
 
   let html = _expandProductsBlock(templateHtml, products);
   html = _expandIfBlocks(html, vars);
@@ -179,10 +208,19 @@ export async function injectPerUserProducts({ templateHtml, unifiedId, recommend
   const { getForUser } = await import('./RecommendationRankingService.js');
   const cached = await getForUser({ unifiedId, recommendationType });
 
+  // Resolve the recipient's rate plan + currency from their country (India→INR, Saudi→SAR,
+  // UAE→AED, else→USD) so product cards can show local-market pricing.
+  const { resolveMarket } = await import('../utils/marketPlan.js');
+  const { rows: [contact] } = await db.query(
+    'SELECT country, is_indian FROM unified_contacts WHERE id = $1', [unifiedId]
+  ).catch(() => ({ rows: [] }));
+  const market = resolveMarket(contact || {});
+
   const productIds = cached?.productIds || [];
   const enrichedVars = {
     // Pass destinationCity through automatically so templates can use {{destination}}.
     destination: vars.destination || cached?.destinationCity || '',
+    currency: market.currency,      // top-level {{currency}} available to templates
     ...vars,
   };
 
@@ -190,6 +228,7 @@ export async function injectPerUserProducts({ templateHtml, unifiedId, recommend
     templateHtml,
     ranking: { productIds },
     vars: enrichedVars,
+    market,
   });
 
   return {

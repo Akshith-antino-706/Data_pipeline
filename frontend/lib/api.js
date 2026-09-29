@@ -296,6 +296,29 @@ export const refreshBookingMapping = () => request('/api/v3/rayna-sync/refresh-m
 // ── V3 Migrations ───────────────────────────────────────────
 export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'POST' });
 
+// ── Chat Leads ───────────────────────────────────────────────
+export const getChatLeadsSummary = (from, to) => request(`/api/v3/chat-leads/summary?from=${from}&to=${to}`);
+export const getChatLeadsTrend = (from, to, granularity) => request(`/api/v3/chat-leads/trend?from=${from}&to=${to}&granularity=${granularity}`);
+export const getMailLeadsSummary = (from, to) => request(`/api/v3/chat-leads/mail-summary?from=${from}&to=${to}`);
+export const getMailLeadsTrend = (from, to, granularity) => request(`/api/v3/chat-leads/mail-trend?from=${from}&to=${to}&granularity=${granularity}`);
+export const getChatLeadsDepartmentPeriods = (unit, count, from, to) => request(
+  `/api/v3/chat-leads/department-periods?unit=${unit}${from && to ? `&from=${from}&to=${to}` : `&count=${count}`}`
+);
+export const getMailLeadsDepartmentPeriods = (unit, count, from, to) => request(
+  `/api/v3/chat-leads/mail-department-periods?unit=${unit}${from && to ? `&from=${from}&to=${to}` : `&count=${count}`}`
+);
+// Users of one department (receiver) in a range — number, first message + its timestamp (expand row).
+export const getChatLeadsDepartmentUsers = (receiver, from, to, { onlyNew = false, limit = 50 } = {}) => request(
+  `/api/v3/chat-leads/department-users?receiver=${encodeURIComponent(receiver)}&from=${from}&to=${to}${onlyNew ? '&only_new=1' : ''}&limit=${limit}`
+);
+
+// ── Department Groups (Leads screen) ──
+export const getDepartments = () => request('/api/v3/chat-leads/departments');
+export const getDepartmentGroups = () => request('/api/v3/chat-leads/groups');
+export const createDepartmentGroup = (data) => request('/api/v3/chat-leads/groups', { method: 'POST', body: JSON.stringify(data) });
+export const updateDepartmentGroup = (id, data) => request(`/api/v3/chat-leads/groups/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteDepartmentGroup = (id) => request(`/api/v3/chat-leads/groups/${id}`, { method: 'DELETE' });
+
 // ── Daily Data Report ──────────────────────────────────────────
 export const getReportCounts = (from, to) => request(`/api/v3/daily-report/counts?from=${from}&to=${to}`);
 export const getReportPreview = (table, from, to) => request(`/api/v3/daily-report/preview/${table}?from=${from}&to=${to}`);

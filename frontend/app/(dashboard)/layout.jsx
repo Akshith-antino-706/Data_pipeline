@@ -3,7 +3,7 @@
 import { useState, Component } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList, Gauge, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, Target, GitBranch, Menu, X, Link2, Code, FileText, Sun, Moon, Database, Download, UserCheck, Megaphone, Activity, LogOut, PanelLeftClose, PanelLeftOpen, ClipboardList, Gauge, BarChart3, MessageSquare } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -25,6 +25,7 @@ const NAV = [
   { href: '/tag-manager', icon: Code, label: 'GTM & BigQuery' },
   { href: '/data-pipeline', icon: Database, label: 'Data Pipeline' },
   { href: '/daily-report', icon: Download, label: 'Daily Report' },
+  { href: '/leads', icon: MessageSquare, label: 'Leads' },
   { href: '/system', icon: FileText, label: 'System Docs' },
 ];
 
