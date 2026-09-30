@@ -9,6 +9,7 @@ import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import SkipLogService from './SkipLogService.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
@@ -279,6 +280,7 @@ class GtmJourneyService {
         const _missing = missingItemFields(waVars);
         if (_missing.length) {
           await logEvent('action_blocked', { reason: 'missing_item_fields', missing: _missing });
+          SkipLogService.record({ journeyId, channel: 'whatsapp', eventRow, itemId, itemName: waVars.item_name, missing: _missing, contact: c });
           console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp missing item field(s): ${_missing.join(',')} — skipped`);
           await advance();
           return;
@@ -419,6 +421,7 @@ class GtmJourneyService {
       const _iv = buildLiquidVars(ctx);
       const _missing = missingItemFields(_iv);
       if (_missing.length) {
+        SkipLogService.record({ journeyId, channel: 'email', eventRow, itemId, itemName: _iv.ITEM_NAME || _iv.item_name, missing: _missing, contact: c });
         console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — missing item field(s): ${_missing.join(',')} — email skipped`);
         if (entryId) {
           const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');

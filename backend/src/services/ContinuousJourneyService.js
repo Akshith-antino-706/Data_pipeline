@@ -3,6 +3,7 @@ import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { buildWaVars, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import SkipLogService from './SkipLogService.js';
 
 /**
  * CONTINUOUS journey engine — the "conveyor belt".
@@ -186,6 +187,7 @@ class ContinuousJourneyService {
         const miss = missingItemFields(buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload }));
         if (miss.length) {
           await logEvent(v.e.id, 'action_blocked', { reason: 'missing_item_fields', missing: miss });
+          SkipLogService.record({ journeyId, channel: 'whatsapp', eventRow: ev, itemId: v.e.item_id, missing: miss, contact: v.c });
           await this.advance(v.e.id, journeyId, nodeId);
           continue;
         }
