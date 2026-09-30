@@ -16,7 +16,7 @@ const CSV_PATH = process.env.SKIP_LOG_CSV || path.join(__dirname, '../../data/sk
 
 const HEADER = [
   'skipped_at', 'journey_id', 'channel', 'event_id', 'event_name',
-  'item_id', 'item_name', 'missing_keys', 'page_url', 'contact_email', 'contact_mobile',
+  'item_id', 'item_name', 'missing_keys', 'page_url',
 ];
 
 // RFC-4180 field escaping: quote if it contains a comma, quote, or newline.
@@ -38,9 +38,8 @@ export default class SkipLogService {
    * @param {string|number} a.itemId
    * @param {string} [a.itemName]  mapped item name (falls back to raw_payload.itemName)
    * @param {string[]} a.missing   missing field labels, e.g. ['ITEM_PRICE','DESTINATION_CITY']
-   * @param {object} [a.contact]   the contact row (email / actual_email / mobile)
    */
-  static record({ journeyId, channel, eventRow = {}, itemId, itemName, missing = [], contact = {} } = {}) {
+  static record({ journeyId, channel, eventRow = {}, itemId, itemName, missing = [] } = {}) {
     try {
       const rp = eventRow.raw_payload || {};
       const row = [
@@ -53,8 +52,6 @@ export default class SkipLogService {
         itemName || rp.itemName || '',
         Array.isArray(missing) ? missing.join(', ') : (missing || ''),
         eventRow.page_url || rp.pageUrl || '',
-        contact.email || contact.actual_email || '',
-        contact.mobile || '',
       ].map(esc).join(',');
 
       const dir = path.dirname(CSV_PATH);
