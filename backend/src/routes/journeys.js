@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import fs from 'fs';
 import db from '../config/database.js';
 import JourneyService from '../services/JourneyService.js';
 import ConversionDetector from '../services/ConversionDetector.js';
+import SkipLogService from '../services/SkipLogService.js';
 import { queueCounts } from '../services/queue/index.js';
 import { cached, del as cacheDel } from '../config/cache.js';
 const router = Router();
@@ -252,6 +254,21 @@ router.get('/active-on-date', async (req, res, next) => {
       : await cached(`journey:active-on-date:${date}`, () => JourneyService.getJourneysActiveOnDate(req.query.date), 60);
     res.json({ success: true, data });
   } catch (err) { next(err); }
+});
+
+// ── Skipped-products CSV ────────────────────────────────────────────────
+// Every message dropped by the item-completeness (missing-key) guard is appended to a CSV
+// (SkipLogService). This serves that file so it opens directly in Excel / Google Sheets.
+//   GET /api/v3/journeys/skip-log.csv            → view in browser
+//   GET /api/v3/journeys/skip-log.csv?download=1 → force download
+// Declared BEFORE '/:id' so 'skip-log.csv' isn't parsed as a journey id.
+router.get('/skip-log.csv', (req, res) => {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="skipped-products.csv"`);
+  const p = SkipLogService.path;
+  if (!fs.existsSync(p)) return res.send(SkipLogService.header + '\n');  // no skips yet → header only
+  fs.createReadStream(p).pipe(res);
 });
 
 // Per-node breakdown for the dashboard accordion (optional ?date=YYYY-MM-DD)
