@@ -29,7 +29,22 @@ jobs:
             docker compose build --no-cache
             docker compose up -d
 
-            # Cleanup old images
-            docker image prune -f
+            # Make sure every service came up before cleaning. `prune --volumes` deletes
+            # volumes not used by a running container — incl. Redis's BullMQ queue data —
+            # so never prune while a service is down.
+            sleep 15
+            expected=$(docker compose config --services | sort)
+            running=$(docker compose ps --status running --services | sort)
+            if [ "$running" != "$expected" ]; then
+              echo "Not all services are running — skipping Docker cleanup."
+              echo "Expected: $(echo $expected)"
+              echo "Running:  $(echo $running)"
+              exit 1
+            fi
+
+            # Free disk: stopped containers, unused networks/images/volumes and build cache
+            echo "Disk before cleanup: $(df -h / | awk 'NR==2 {print $4 " free of " $2}')"
+            docker system prune -a -f --volumes
+            echo "Disk after cleanup:  $(df -h / | awk 'NR==2 {print $4 " free of " $2}')"
 
             echo "Deploy complete!"
