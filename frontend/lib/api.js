@@ -301,6 +301,10 @@ export const getChatLeadsSummary = (from, to) => request(`/api/v3/chat-leads/sum
 export const getChatLeadsTrend = (from, to, granularity) => request(`/api/v3/chat-leads/trend?from=${from}&to=${to}&granularity=${granularity}`);
 export const getMailLeadsSummary = (from, to) => request(`/api/v3/chat-leads/mail-summary?from=${from}&to=${to}`);
 export const getMailLeadsTrend = (from, to, granularity) => request(`/api/v3/chat-leads/mail-trend?from=${from}&to=${to}&granularity=${granularity}`);
+export const getRegistrationLeads = (params = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString();
+  return request(`/api/v3/chat-leads/registrations${qs ? `?${qs}` : ''}`);
+};
 export const getChatLeadsDepartmentPeriods = (unit, count, from, to) => request(
   `/api/v3/chat-leads/department-periods?unit=${unit}${from && to ? `&from=${from}&to=${to}` : `&count=${count}`}`
 );

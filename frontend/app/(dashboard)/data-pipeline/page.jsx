@@ -257,7 +257,22 @@ export default function DataPipeline() {
   const dataOverview = mappingStats?.dataOverview || {};
   const deptBreakdown = mappingStats?.deptBreakdown || [];
   const mysqlStatus = mappingStats?.mysqlStatus || [];
-  const cronJobs = mappingStats?.cronJobs || [];
+  const apiCronJobs = mappingStats?.cronJobs || [];
+  // Keep the newly-added registration cron visible while a long-running backend
+  // process is still serving the older cron list. Once the backend is restarted,
+  // its tracked version wins and this fallback is not added.
+  const registrationCronFallback = {
+    name: 'registration_data_sync',
+    label: 'Registration Data Sync',
+    category: 'ingest',
+    schedule: '30 0 * * *',
+    humanSchedule: 'Daily at 12:30 AM Dubai',
+    description: 'Syncs the last 7 days of affiliate, guest-user, and agent registrations into the registration tables.',
+    meta: null,
+  };
+  const cronJobs = apiCronJobs.some(job => job.name === registrationCronFallback.name)
+    ? apiCronJobs
+    : [registrationCronFallback, ...apiCronJobs];
 
 
   return (

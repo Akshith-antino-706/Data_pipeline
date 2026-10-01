@@ -193,8 +193,28 @@ router.get('/mapping-stats', async (req, res) => {
       const dailyBillingMeta = dailyBillingSourceLatestAt
         ? { last_synced_at: dailyBillingSourceLatestAt, rows_synced: null, sync_status: 'success', error_message: null, sync_duration_ms: null }
         : null;
+      // This cron runs all three registration feeds in one pass, while each
+      // feed records its own metadata row. Aggregate them for one UI card.
+      const registrationMetas = [
+        sm.registration_affiliate_sync,
+        sm.registration_guestuser_sync,
+        sm.registration_agent_sync,
+      ].filter(Boolean);
+      const registrationMeta = registrationMetas.length
+        ? {
+            last_synced_at: registrationMetas
+              .map(m => m.last_synced_at)
+              .filter(Boolean)
+              .sort((a, b) => new Date(b) - new Date(a))[0] || null,
+            rows_synced: registrationMetas.reduce((sum, m) => sum + (Number(m.rows_synced) || 0), 0),
+            sync_status: registrationMetas.some(m => m.sync_status === 'error') ? 'error' : 'success',
+            error_message: registrationMetas.map(m => m.error_message).filter(Boolean).join('; ') || null,
+            sync_duration_ms: registrationMetas.reduce((sum, m) => sum + (Number(m.sync_duration_ms) || 0), 0),
+          }
+        : null;
       cronJobs = [
         // ── Data-ingest crons ─────────────────────────────
+        { name: 'registration_data_sync',    label: 'Registration Data Sync',     category: 'ingest',   schedule: '30 0 * * *',  humanSchedule: 'Daily at 12:30 AM Dubai',       description: 'Syncs the last 7 days of affiliate, guest-user, and agent registrations into the registration tables.', meta: registrationMeta },
         { name: 'daily_billing_sync',        label: 'Daily Billing Sync',         category: 'ingest',   schedule: '0 1 * * *',   humanSchedule: 'Daily at 1:00 AM Dubai',        description: 'Pulls yesterday’s bookings from Rayna Billing API into rayna_* tables.',                       meta: dailyBillingMeta,                                       sourceLatestAt: dailyBillingSourceLatestAt, sourceLabel: 'Rayna Billing API' },
         { name: 'contact_enrichment',        label: 'Contact Enrichment',         category: 'ingest',   schedule: '30 1 * * *',  humanSchedule: 'Daily at 1:30 AM Dubai',        description: 'Validates emails and normalises mobile numbers for newly-added contacts.',                        meta: sm.contact_enrichment || null },
         { name: 'unsubscribe_sync',          label: 'Unsubscribe Sync',           category: 'ingest',   schedule: '0 2 * * *',   humanSchedule: 'Daily at 2:00 AM Dubai',        description: 'Syncs the email unsubscribe list from phpAdmin into unified_contacts.email_unsubscribe.',         meta: sm.unsubscribed || sm.unsubscribe_sync || null,         sourceLatestAt: unsubscribeSourceLatestAt,  sourceLabel: 'phpAdmin' },
