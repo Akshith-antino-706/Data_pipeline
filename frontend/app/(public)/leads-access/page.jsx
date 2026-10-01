@@ -20,7 +20,8 @@ export default function LeadsAccessPage() {
     }
     setLoading(true);
     try {
-      const response = await fetch('/api/leads-access', {
+      // Not under /api — in production every /api/* path is proxied to the Express backend.
+      const response = await fetch('/leads-access/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
