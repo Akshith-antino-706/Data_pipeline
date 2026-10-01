@@ -13,18 +13,31 @@ const str = (v) => (v === '' || v == null) ? null : String(v);
 const int = (v) => { const m = String(v ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : null; };
 
 // Find-or-create the contact; append 'giveaway' to sources if missing. Returns unified_id (or null).
+// Giveaway contacts are tagged contact_type = 'B2C'.
 async function upsertContact(client, { email, name }) {
   if (!email) return null;
+
+  // NO DUPLICATES: serialize concurrent giveaway ingests for the SAME email with a
+  // transaction-scoped advisory lock (auto-released on COMMIT/ROLLBACK). Without this the
+  // find-or-create (SELECT then INSERT, no unique index) races on redelivery and inserts a
+  // second row for the same email. The lock makes the second ingest wait, then it finds the
+  // row the first one inserted.
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext(lower(trim($1))))`, [email]);
+
   const { rows: [found] } = await client.query(
     `SELECT id, sources FROM unified_contacts WHERE lower(trim(email)) = lower(trim($1)) LIMIT 1`,
     [email]
   );
   if (found) {
     const src = found.sources || '';
-    if (!src.split(',').map(s => s.trim()).includes('giveaway')) {
+    const needsSource = !src.split(',').map(s => s.trim()).includes('giveaway');
+    if (needsSource) {
+      // Append the giveaway source and backfill contact_type to 'B2C' when it isn't set yet
+      // (never overrides an existing B2B/B2C classification).
       await client.query(
         `UPDATE unified_contacts
            SET sources = CASE WHEN sources IS NULL OR sources = '' THEN 'giveaway' ELSE sources || ',giveaway' END,
+               contact_type = COALESCE(contact_type, 'B2C'),
                updated_at = NOW()
          WHERE id = $1`,
         [found.id]
@@ -33,8 +46,8 @@ async function upsertContact(client, { email, name }) {
     return found.id;
   }
   const { rows: [created] } = await client.query(
-    `INSERT INTO unified_contacts (email, name, sources, created_at, updated_at)
-     VALUES ($1, $2, 'giveaway', NOW(), NOW())
+    `INSERT INTO unified_contacts (email, name, sources, contact_type, created_at, updated_at)
+     VALUES ($1, $2, 'giveaway', 'B2C', NOW(), NOW())
      RETURNING id`,
     [email, name || null]
   );
