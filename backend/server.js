@@ -688,6 +688,20 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // import ConversionDetector from './src/services/ConversionDetector.js'; // disabled
 // import ProductAffinityService from './src/services/ProductAffinityService.js'; // disabled
 
+// ── Registration data sync — 12:30 AM Dubai ──
+// Pulls the last 7 days of affiliate / guest-user / agent registrations (by
+// registration date) from the registration-data API into affiliate_data,
+// guestuser_data and agent_data: new sign-ups inserted, edited ones updated.
+cron.schedule('30 0 * * *', async () => {
+  try {
+    const { runRegistrationDataSync } = await import('./src/crons/registrationDataSync.js');
+    await runRegistrationDataSync();
+  } catch (err) {
+    console.error('[Cron:RegistrationSync] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Registration data sync (affiliate/guestuser/agent) scheduled at 12:30 AM Dubai time');
+
 // ── Daily Billing Sync — 1 AM Dubai time (UTC+4) ────────────
 // Retries up to 3 times with 10-minute gaps if any step fails.
 // After all retries exhausted, logs the error and waits for next day.
