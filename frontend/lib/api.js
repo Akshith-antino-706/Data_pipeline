@@ -296,6 +296,26 @@ export const refreshBookingMapping = () => request('/api/v3/rayna-sync/refresh-m
 // ── V3 Migrations ───────────────────────────────────────────
 export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'POST' });
 
+// ── Booking Affinity (top 3 services / products per customer) ─
+const affinityQs = (params = {}) => new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString();
+export const getAffinitySummary = (params = {}) => request(`/api/v3/booking-affinity/summary?${affinityQs(params)}`);
+export const getAffinityTopProducts = (params = {}) => request(`/api/v3/booking-affinity/top-products?${affinityQs(params)}`);
+export const getAffinityCustomers = (params = {}) => request(`/api/v3/booking-affinity/customers?${affinityQs(params)}`);
+export const getContactAffinity = (id) => request(`/api/v3/booking-affinity/customers/${id}`);
+export const searchAffinityProducts = (search, limit = 20) => request(`/api/v3/booking-affinity/products?${affinityQs({ search, limit })}`);
+export const rebuildAffinity = () => request('/api/v3/booking-affinity/rebuild', { method: 'POST' });
+export async function downloadAffinityCSV(params = {}) {
+  const res = await fetch(`${BASE}/api/v3/booking-affinity/customers.csv?${affinityQs(params)}`);
+  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `customer_affinity_${params.view || 'service'}_${params.period || 'all'}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Chat Leads ───────────────────────────────────────────────
 export const getChatLeadsSummary = (from, to) => request(`/api/v3/chat-leads/summary?from=${from}&to=${to}`);
 export const getChatLeadsTrend = (from, to, granularity) => request(`/api/v3/chat-leads/trend?from=${from}&to=${to}&granularity=${granularity}`);

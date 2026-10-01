@@ -24,6 +24,7 @@ import utmRouter from './src/routes/utm.js';
 import gtmRouter from './src/routes/gtm.js';
 import productsRouter from './src/routes/products.js';
 import affinityRouter from './src/routes/productAffinity.js';
+import bookingAffinityRouter from './src/routes/bookingAffinity.js';
 import baseTemplatesRouter from './src/routes/baseTemplates.js';
 import recommendationsRouter from './src/routes/recommendations.js';
 import syncRouter from './src/routes/sync.js';
@@ -138,6 +139,7 @@ app.use('/api/v3/utm', utmRouter);
 app.use('/api/v3/gtm', gtmRouter);
 app.use('/api/v3/products', productsRouter);
 app.use('/api/v3/affinity', affinityRouter);
+app.use('/api/v3/booking-affinity', bookingAffinityRouter);
 app.use('/api/v3/base-templates', baseTemplatesRouter);
 app.use('/api/v3/sync', syncRouter);
 app.use('/api/v3/mysql-sync', mysqlSyncRouter);
@@ -876,6 +878,24 @@ cron.schedule('0 4 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily past-trip user compute scheduled at 4:00 AM Dubai time');
+
+// ── Booking affinity rebuild — 4:30 AM Dubai ──
+// Ranks each customer's top 3 services and top 3 products from the rayna_*
+// booking tables (after the 1 AM billing sync). Feeds the /affinity page,
+// contact profiles, journey variables and segment filters. Tables are created
+// on boot so segment filters can rely on them (migration 115 is idempotent).
+import('./src/services/BookingAffinityService.js')
+  .then(({ default: BookingAffinityService }) => BookingAffinityService.ensureTables())
+  .catch(err => console.error('[BookingAffinity] Table setup failed:', err.message));
+cron.schedule('30 4 * * *', async () => {
+  try {
+    const { default: BookingAffinityService } = await import('./src/services/BookingAffinityService.js');
+    await BookingAffinityService.build();
+  } catch (err) {
+    console.error('[Cron:BookingAffinity] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Booking affinity rebuild scheduled at 4:30 AM Dubai time');
 
 // ── Daily AI recommendation compute — 3:35 AM Dubai ──
 // Precomputes 5 AI-picked products per (user, recommendation_type) for on_trip

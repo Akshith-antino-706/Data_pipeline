@@ -3,6 +3,7 @@ import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { buildWaVars, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import { getAffinityVarsMany } from './affinityVars.js';
 import SkipLogService from './SkipLogService.js';
 
 /**
@@ -196,13 +197,16 @@ class ContinuousJourneyService {
     }
     if (!complete.length) return { broadcasts: 0, sent: 0, exited };
 
+    // product_affinity_* / service_affinity_* for every recipient — one query.
+    const affMap = await getAffinityVarsMany(complete.map(v => v.e.unified_id));
+
     // ── ONE ChatHead broadcast for the whole group ──
     let result;
     try {
       result = await ChatHeadV1Service.sendBroadcast({
         contacts:     complete.map(v => {
           const ev = evMap[v.e.last_event_id] || { raw_payload: {} };
-          return { phone: v.phone, name: v.c.name || '', vars: buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload }) };
+          return { phone: v.phone, name: v.c.name || '', vars: buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload, affinity: affMap.get(String(v.e.unified_id)) }) };
         }),
         channelId:    parseInt(waCh),
         channelName:  node.data?.waChannelName || null,

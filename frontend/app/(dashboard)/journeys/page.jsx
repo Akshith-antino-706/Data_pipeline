@@ -917,7 +917,9 @@ export default function Journeys() {
   // Variables that are auto-populated from contact data — don't show inputs for these
   // Only filter vars that are purely auto-filled internals — never shown as user inputs.
   // first_name, full_name, cta_url etc. are intentionally kept OUT so users can fill them.
-  const SYSTEM_VARS = new Set(['email', 'phone', 'country', 'city', 'company', 'segment', 'utm_link', 'unsubscribe_link']);
+  const SYSTEM_VARS = new Set(['email', 'phone', 'country', 'city', 'company', 'segment', 'utm_link', 'unsubscribe_link',
+    // filled per contact from their bookings (backend/src/services/affinityVars.js)
+    'product_affinity_1', 'product_affinity_2', 'product_affinity_3', 'service_affinity_1', 'service_affinity_2', 'service_affinity_3']);
 
   // Returns the custom (non-system) variable names for a given template.
   // Always parses from body HTML (the ground truth) — the variables DB column can be stale.

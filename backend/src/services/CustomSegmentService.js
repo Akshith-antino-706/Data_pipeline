@@ -244,6 +244,20 @@ export default class CustomSegmentService {
             }
             break;
           }
+          case 'top_service':
+          case 'top_product': {
+            // Booking affinity (user_affinity_top3, rebuilt nightly by BookingAffinityService):
+            // the contact's top business lines / products. value = service names
+            // (tours, visas, …) or product keys; operator 'top1' = #1 only, else in the top 3.
+            const values = (Array.isArray(cond.value) ? cond.value : [cond.value]).filter(v => v != null && v !== '');
+            if (!values.length) break;
+            const placeholders = values.map(v => { params.push(String(v)); return `$${idx++}`; }).join(',');
+            const cols = cond.field === 'top_service'
+              ? (cond.operator === 'top1' ? ['service_1'] : ['service_1', 'service_2', 'service_3'])
+              : (cond.operator === 'top1' ? ['product_1_key'] : ['product_1_key', 'product_2_key', 'product_3_key']);
+            sub.push(`EXISTS (SELECT 1 FROM user_affinity_top3 a WHERE a.unified_id = uc.id AND (${cols.map(c => `a.${c} IN (${placeholders})`).join(' OR ')}))`);
+            break;
+          }
         }
       }
 

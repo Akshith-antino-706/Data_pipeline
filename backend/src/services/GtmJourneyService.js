@@ -14,6 +14,7 @@ import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../utils/reviewUrl.js';
+import { getAffinityVars, usesAffinity } from './affinityVars.js';
 import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -271,7 +272,8 @@ class GtmJourneyService {
       // resolved via placeholderResolver (contact + this triggering event + raw_payload).
       // ChatHead binds these lowercase .data columns to the template's {{item_name}} etc.,
       // so a view_item WhatsApp actually says "which product you viewed", like the email.
-      const waVars = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload });
+      // + product_affinity_* / service_affinity_* (we can't see which keys the ChatHead template binds).
+      const waVars = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload, affinity: await getAffinityVars(c.id) });
 
       // Item completeness — checked against the ACTUAL .data values we send (waVars), not the
       // email resolver, so WhatsApp is judged by exactly what its template will show. Skip if
@@ -406,6 +408,8 @@ class GtmJourneyService {
 
     // Universal placeholder fill — body AND subject (subjects may contain keys too).
     const ctx = { contact: c, event: eventRow, payload: eventRow.raw_payload || {} };
+    // Top booked products / business lines — looked up only when the template uses them.
+    if (usesAffinity(tplBody, tplSubject)) ctx.affinity = await getAffinityVars(c.id);
 
     // ── Guard: cart/product templates must have item data ──
     // Some add_to_cart / begin_checkout events arrive with NO product context (no itemName,

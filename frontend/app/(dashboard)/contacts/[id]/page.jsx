@@ -3,13 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations } from '@/lib/api';
+import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity } from '@/lib/api';
 import {
   ArrowLeft, Globe, MessageSquare, Mail, Phone, Building2,
   Calendar, Clock, Ticket, DollarSign, Plane, Hotel, MessageCircle,
   Layers, FileText, Palmtree, Hash, MapPin, ChevronDown, ChevronUp,
   Zap, Activity, User, Pencil, X, Check, Loader2, GitBranch,
-  Eye, MousePointerClick, Send, ExternalLink, Sparkles,
+  Eye, MousePointerClick, Send, ExternalLink, Sparkles, Heart,
 } from 'lucide-react';
 
 const fadeIn = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35 } } };
@@ -42,6 +42,7 @@ export default function ContactProfile() {
   const [journeys, setJourneys] = useState([]);
   const [journeysLoading, setJourneysLoading] = useState(true);
   const [aiRec, setAiRec] = useState(null);   // { recommendationType, products[], ... } or null
+  const [affinity, setAffinity] = useState(null); // { customer, services[], products[] } or null
   const [expandedJourneys, setExpandedJourneys] = useState(() => new Set());
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
@@ -73,6 +74,11 @@ export default function ContactProfile() {
     getContactRecommendations(id)
       .then(res => setAiRec(res?.recommendation || null))
       .catch(() => setAiRec(null));
+
+    // Top services / products from bookings — 404 (no bookings) just hides the card.
+    getContactAffinity(id)
+      .then(res => setAffinity(res?.customer ? res : null))
+      .catch(() => setAffinity(null));
   }, [id]);
 
   if (contactLoading) return <ProfileSkeleton />;
@@ -326,6 +332,13 @@ export default function ContactProfile() {
         </motion.div>
       )}
 
+      {/* Affinity — top services and products ranked from bookings */}
+      {affinity && (
+        <motion.div variants={fadeIn}>
+          <AffinitySection affinity={affinity} />
+        </motion.div>
+      )}
+
       {/* Journeys this contact is enrolled in */}
       <motion.div variants={fadeIn}>
         <div className="card" style={{ padding: 20, marginBottom: 12 }}>
@@ -566,6 +579,61 @@ function Section({ title, children }) {
     <div className="card" style={{ padding: 20, marginBottom: 12 }}>
       <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600 }}>{title}</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 32px' }}>{children}</div>
+    </div>
+  );
+}
+
+const AFFINITY_SERVICE_LABEL = { tours: 'Tours', packages: 'Packages', hotels: 'Hotels', visas: 'Visas', flights: 'Flights', others: 'Others' };
+
+// Affinity section — the contact's services and products ranked by affinity score
+// (each booking adds 10 points, halving every 6 months). Top 3 by default, "Show all" expands.
+function AffinitySection({ affinity }) {
+  const [showAll, setShowAll] = useState(false);
+  const { customer, services, products } = affinity;
+  const shownServices = showAll ? services : services.slice(0, 3);
+  const shownProducts = showAll ? products : products.slice(0, 3);
+  const hasMore = services.length > 3 || products.length > 3;
+  const score = (n) => (n == null ? '—' : Number(n).toFixed(Number(n) < 1 ? 2 : 1));
+  const day = (s) => (s ? formatDate(String(s).slice(0, 10)) : '—');
+
+  const RankList = ({ title, rows, name, sub }) => (
+    <div style={showAll ? { maxHeight: 420, overflowY: 'auto', paddingRight: 4 } : undefined}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>{title}</div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>None — only fee or add-on lines.</div>
+      ) : rows.map(r => (
+        <div key={r.rank} style={{ display: 'grid', gridTemplateColumns: '26px 1fr auto', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border-color)' }}>
+          <span style={{ width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, background: r.rank === 1 ? 'rgba(236,72,153,0.12)' : 'var(--bg-secondary)', color: r.rank === 1 ? '#ec4899' : 'var(--text-secondary)' }}>#{r.rank}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name(r)}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{r.bookings} booking{r.bookings === 1 ? '' : 's'} · last {day(r.last_booking_date)}{sub ? ` · ${sub(r)}` : ''}</div>
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{score(r.affinity_score)}</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="card" style={{ padding: 20, marginBottom: 12 }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 14, letterSpacing: 0.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Heart size={13} color="#ec4899" /> Affinity
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: 0 }}>
+          From bookings · score {score(customer.affinity_score)}{customer.is_bulk ? ' · bulk / internal account' : ''}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
+        <RankList title={`Top services${showAll ? ` (${services.length})` : ''}`} rows={shownServices} name={r => AFFINITY_SERVICE_LABEL[r.service] || r.service} sub={r => formatAED(Number(r.revenue))} />
+        <RankList title={`Top products${showAll ? ` (${customer.product_count})` : ''}`} rows={shownProducts} name={r => r.product_name} sub={r => (r.services || []).map(s => AFFINITY_SERVICE_LABEL[s] || s).join(', ')} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: 12, fontSize: 11, color: 'var(--text-tertiary)' }}>
+        <span>Each booking adds 10 points, halving every 6 months · built {customer.built_at ? formatDateTime(customer.built_at) : '—'}</span>
+        {hasMore && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowAll(v => !v)} style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+            {showAll ? <>Top 3 only <ChevronUp size={13} /></> : <>Show all <ChevronDown size={13} /></>}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

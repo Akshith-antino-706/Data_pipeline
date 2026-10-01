@@ -13,6 +13,8 @@
  *   - raw_payload       → ITEM_*, CURRENCY, COUPON_CODE, UTM_*, LEAD_*, ERROR_*, etc.
  *   - ecommerce         → ADULT_COUNT, CHILD_COUNT, BOOKING_DATE, SELECTED_DATE, *_VALUE
  *   - generated/static  → CART_URL, WISHLIST_URL, RESUME_*, RETRY_*, VIEW_BOOKING_URL
+ *   - ctx.affinity      → PRODUCT_AFFINITY_1..3, SERVICE_AFFINITY_1..3 (services/affinityVars.js;
+ *                         callers attach it when the template uses those keys)
  */
 
 const SITE = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
@@ -82,6 +84,7 @@ function buildValues(ctx = {}) {
   const c  = ctx.contact || {};
   const ev = ctx.event   || {};
   const p  = ctx.payload || ev.raw_payload || {};
+  const a  = ctx.affinity || {};
   const ecomRoot = p.ecommerceData || p.ecommerce || {};
   const ecom = (Array.isArray(ecomRoot.items) && ecomRoot.items[0]) || {};
 
@@ -182,6 +185,15 @@ function buildValues(ctx = {}) {
     // this to a tracked /api/unsubscribe?log=<id> click. Without this it rendered blank.
     // UNSUBSCRIBE_URL:     c.id ? `${SITE}/unsubscribe?uid=${c.id}` : `${SITE}/unsubscribe`,
 
+    // ── booking affinity (top booked products / business lines) ──
+    // '' → undefined so Liquid's {% if PRODUCT_AFFINITY_1 %} is false for contacts without bookings.
+    PRODUCT_AFFINITY_1: a.product_affinity_1 || undefined,
+    PRODUCT_AFFINITY_2: a.product_affinity_2 || undefined,
+    PRODUCT_AFFINITY_3: a.product_affinity_3 || undefined,
+    SERVICE_AFFINITY_1: a.service_affinity_1 || undefined,
+    SERVICE_AFFINITY_2: a.service_affinity_2 || undefined,
+    SERVICE_AFFINITY_3: a.service_affinity_3 || undefined,
+
     // ── extras (used by the legacy gtm-welcome.html) ──
     RAW_PAYLOAD: JSON.stringify(p, null, 2),
   };
@@ -215,13 +227,15 @@ export function renderTemplate(html, ctx = {}) {
 /**
  * Same UPPER_SNAKE values map renderTemplate uses, PLUS the raw ecommerce `items[]`
  * array — so Liquid templates can `{% for item in items %}` over every cart product
- * (the regex renderTemplate only ever exposes items[0]).
+ * (the regex renderTemplate only ever exposes items[0]). Affinity keys are also given
+ * in lowercase ({{ product_affinity_1 }}) since Liquid is case-sensitive.
  */
 export function buildLiquidVars(ctx = {}) {
   const p = ctx.payload || ctx.event?.raw_payload || {};
   const items = Array.isArray(p.ecommerceData?.items) ? p.ecommerceData.items
               : Array.isArray(p.ecommerce?.items)     ? p.ecommerce.items : [];
-  return { ...buildValues(ctx), items };
+  const affinity = Object.fromEntries(Object.entries(ctx.affinity || {}).filter(([, v]) => v));
+  return { ...buildValues(ctx), ...affinity, items };
 }
 
 /**

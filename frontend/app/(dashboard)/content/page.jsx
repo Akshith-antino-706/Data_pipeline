@@ -25,7 +25,8 @@ const BLANK_FORM = { name: '', channel: 'email', subject: '', body: '', fileName
 // (this is the IMAP inbox the real spam-placement check reads from).
 const ROCKY_EMAIL = 'rocky.86agency@gmail.com';
 
-const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link']);
+const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link',
+  'product_affinity_1', 'product_affinity_2', 'product_affinity_3', 'service_affinity_1', 'service_affinity_2', 'service_affinity_3']);
 
 
 const PREVIEW_SAMPLE = {
@@ -56,6 +57,9 @@ const PREVIEW_SAMPLE = {
   RETRY_PAYMENT_URL: 'https://www.raynatours.com/payment/retry?order=TXN-90817',
   VIEW_BOOKING_URL: 'https://www.raynatours.com/booking/TXN-90817',
   RAW_PAYLOAD: '{ "itemName": "Night Safari Singapore", "itemId": 4683 }',
+  // Booking affinity — the contact's top booked products / business lines
+  PRODUCT_AFFINITY_1: 'Desert Safari', PRODUCT_AFFINITY_2: 'Burj Khalifa', PRODUCT_AFFINITY_3: 'Dhow Cruise',
+  SERVICE_AFFINITY_1: 'Tours', SERVICE_AFFINITY_2: 'Visas', SERVICE_AFFINITY_3: 'Packages',
 };
 // Legacy lowercase keys → canonical (matches backend placeholderResolver aliases)
 const PREVIEW_ALIASES = {
