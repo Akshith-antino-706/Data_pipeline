@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { X, Plus, Trash2, Filter, Loader2, Users, Search } from 'lucide-react';
-import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics, searchContactsByEmail } from '@/lib/api';
+import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics, searchContactsByEmail, searchAffinityProducts } from '@/lib/api';
 
 const FIELD_CONFIG = {
   email: {
@@ -100,6 +100,17 @@ const FIELD_CONFIG = {
   revenue: {
     label: 'Revenue (AED)', type: 'number-range',
     defaultOperator: 'between',
+  },
+  // Booking affinity (user_affinity_top3, rebuilt nightly). operator: top1 = #1 only, top3 = in the top 3.
+  top_service: {
+    label: 'Top Service (booking affinity)', type: 'affinity-service',
+    options: ['tours', 'packages', 'hotels', 'visas', 'flights', 'others'],
+    labels: { tours: 'Tours', packages: 'Packages', hotels: 'Hotels', visas: 'Visas', flights: 'Flights', others: 'Others' },
+    defaultOperator: 'top1',
+  },
+  top_product: {
+    label: 'Top Product (booking affinity)', type: 'affinity-product',
+    defaultOperator: 'top1',
   },
 };
 
@@ -224,13 +235,126 @@ function EmailSearchInput({ condition, onChange }) {
   );
 }
 
-function ConditionValueInput({ fieldKey, condition, onChange }) {
-  const cfg = FIELD_CONFIG[fieldKey];
+// "#1 only" / "in top 3" picker for the booking-affinity fields.
+function AffinityRankSelect({ condition, onChange }) {
+  return (
+    <select value={condition.operator === 'top3' ? 'top3' : 'top1'} onChange={e => onChange({ ...condition, operator: e.target.value })}
+      style={{ ...selectStyle, maxWidth: 150 }}>
+      <option value="top1">is #1</option>
+      <option value="top3">is in the top 3</option>
+    </select>
+  );
+}
+
+const AFFINITY_HINT = 'Ranked from bookings (booked often and recently first) and rebuilt nightly — contacts can join or leave when their ranking changes.';
+
+// product_key is the lower-case product name → show it title-cased on chips.
+const productKeyLabel = (key) => String(key).replace(/\b\w/g, ch => ch.toUpperCase());
+
+function AffinityProductInput({ condition, onChange }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const debounceRef = useRef(null);
+  const selected = Array.isArray(condition.value) ? condition.value : [];
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    if (!open && !query) return;
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await searchAffinityProducts(query.trim(), 15);
+        setResults(res?.data || []);
+      } catch { setResults([]); }
+      finally { setSearching(false); }
+    }, 250);
+    return () => clearTimeout(debounceRef.current);
+  }, [query, open]);
+
+  useEffect(() => {
+    const handler = (e) => { if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggle = (key) => onChange({ ...condition, value: selected.includes(key) ? selected.filter(k => k !== key) : [...selected, key] });
+  const pick = (key) => { toggle(key); setQuery(''); setOpen(false); };
+
+  return (
+    <div ref={containerRef}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>Contact&apos;s top product</span>
+        <AffinityRankSelect condition={condition} onChange={onChange} />
+      </div>
+      {selected.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+          {selected.map(key => (
+            <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 20, fontSize: 12, fontWeight: 500, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.3)' }}>
+              {productKeyLabel(key)}
+              <button type="button" onClick={() => toggle(key)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8b5cf6', padding: 0, lineHeight: 1, display: 'flex', alignItems: 'center' }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ position: 'relative' }}>
+        <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)', pointerEvents: 'none' }} />
+        <input type="text" value={query} onChange={e => { setQuery(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
+          placeholder="Search products, e.g. Desert Safari…" style={{ ...inputStyle, paddingLeft: 28, maxWidth: 320 }} />
+        {searching && <Loader2 size={13} style={{ position: 'absolute', left: 296, top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite', color: 'var(--muted-foreground)' }} />}
+      </div>
+      {open && results.length > 0 && (
+        <div style={{ position: 'absolute', zIndex: 50, marginTop: 4, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 240, overflowY: 'auto', minWidth: 340 }}>
+          {results.map(r => {
+            const added = selected.includes(r.product_key);
+            return (
+              <button key={r.product_key} type="button" onClick={() => pick(r.product_key)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid var(--border)' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--background)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)' }}>{r.product_name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>#1 for {Number(r.customers_rank1).toLocaleString()} · top 3 for {Number(r.customers_top3).toLocaleString()} contacts</div>
+                </div>
+                {added && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>Added</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>{AFFINITY_HINT}</div>
+    </div>
+  );
+}
+
+function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }) {
+  // cfgOverride: render these options as a plain multi-select (used by the affinity-service field).
+  const cfg = cfgOverride ? { ...cfgOverride, type: 'multi-select' } : FIELD_CONFIG[fieldKey];
   if (!cfg) return null;
 
   switch (cfg.type) {
     case 'email-search':
       return <EmailSearchInput condition={condition} onChange={onChange} />;
+
+    case 'affinity-product':
+      return <AffinityProductInput condition={condition} onChange={onChange} />;
+
+    case 'affinity-service':
+      return (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>Contact&apos;s top service</span>
+            <AffinityRankSelect condition={condition} onChange={onChange} />
+          </div>
+          <ConditionValueInput fieldKey={fieldKey} condition={condition} onChange={onChange} cfgOverride={cfg} />
+          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>{AFFINITY_HINT}</div>
+        </div>
+      );
 
     case 'multi-select':
       return (
@@ -377,6 +501,8 @@ function isFieldValid(cond) {
   if (!cfg) return false;
   switch (cfg.type) {
     case 'email-search':  return Array.isArray(cond.value) && cond.value.length > 0;
+    case 'affinity-service':
+    case 'affinity-product': return Array.isArray(cond.value) && cond.value.length > 0;
     case 'multi-select':  return Array.isArray(cond.value) && cond.value.length > 0;
     case 'single-select': return !!cond.value;
     case 'boolean':       return cond.value === true || cond.value === false;
@@ -471,6 +597,7 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     const cfg = FIELD_CONFIG[newField];
     const defaultValue = cfg?.type === 'multi-select' ? [] :
       cfg?.type === 'email-search' ? [] :
+      cfg?.type === 'affinity-service' || cfg?.type === 'affinity-product' ? [] :
       cfg?.type === 'date-range' ? ['', ''] :
       cfg?.type === 'number-range' ? ['', ''] :
       cfg?.type === 'boolean' ? null : '';

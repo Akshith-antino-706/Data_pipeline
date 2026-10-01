@@ -23,6 +23,7 @@ import db from '../config/database.js';
 import { SendTrackService } from '../services/SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
+import { SAMPLE_AFFINITY_VARS } from '../services/affinityVars.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -402,7 +403,7 @@ router.post('/send-template', async (req, res) => {
     // e.g. the giveaway templates — render via LiquidRenderer with sample data (incl. giveaway
     // vars) so {% if %} branches and {{ vars }} resolve instead of shipping raw Liquid.
     const { renderTemplate, buildLiquidVars } = await import('../utils/placeholderResolver.js');
-    const sampleCtx = { contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE' }, event: {}, payload: {} };
+    const sampleCtx = { contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE' }, event: {}, payload: {}, affinity: SAMPLE_AFFINITY_VARS };
     const giveawaySample = {
       name: 'Vaibhav', giveaway: 'Win a luxury Cruise', mechanic: 'leaderboard',
       giveaway_image: 'https://d2ywmeahnmq7k6.cloudfront.net/Tour-Images/false-36/red-dune-safari.jpg',
@@ -454,7 +455,7 @@ router.post('/analyze-email', async (req, res) => {
     // no literal {{PRODUCT_NAME}} flagged as missing). Day 1-7 ignore ctx (AI master).
     const sampleCtx = {
       contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE', is_indian: false, booking_status: 'PROSPECT' },
-      event: {}, payload: {},
+      event: {}, payload: {}, affinity: SAMPLE_AFFINITY_VARS,
     };
     const resolved = await resolveTemplateHtml(templateId, sampleCtx);
     if (!resolved?.html) return res.status(400).json({ success: false, error: `Template ${templateId} has no HTML body to analyze` });

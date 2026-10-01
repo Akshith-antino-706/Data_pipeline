@@ -24,6 +24,7 @@ import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import ChatHeadV1Service from '../ChatHeadV1Service.js';
 import { buildWaVars, RCS_DATA_KEYS } from '../../utils/placeholderResolver.js';
+import { getAffinityVars, usesAffinity, fillAffinityVars } from '../affinityVars.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
 import { sendJourneyEmail } from '../channels/JourneyEmailSender.js';
 import JourneyService, { getOrGenerateNodeEmail } from '../JourneyService.js';
@@ -352,6 +353,17 @@ async function processEmail(job) {
     }
   }
 
+  // ── Per-recipient affinity ──
+  // {{product_affinity_1..3}} / {{service_affinity_1..3}} = this contact's top booked
+  // products / business lines. Like the review link, the shared node HTML can't carry
+  // them, so fill them here per recipient; the guard keeps the lookup off other sends.
+  let affinity = null;
+  if (usesAffinity(html, subject)) {
+    affinity = await getAffinityVars(d.customerId);
+    html    = fillAffinityVars(html, affinity);
+    subject = fillAffinityVars(subject, affinity, { html: false });
+  }
+
   // ── AI recommendation injection — additive, activates only when the journey
   //    has recommendation_type set (new REC journeys). All existing journeys
   //    have recommendation_type = NULL → this branch is skipped entirely.
@@ -385,7 +397,7 @@ async function processEmail(job) {
             `SELECT id, name, email, city FROM unified_contacts WHERE id = $1`,
             [d.customerId]
           );
-          const ctx = { contact: c || { name: d.name, email: recipientEmail }, event: {}, payload: {} };
+          const ctx = { contact: c || { name: d.name, email: recipientEmail }, event: {}, payload: {}, affinity: affinity || undefined };
           html = await LiquidRenderer.render(html, buildLiquidVars(ctx));
           console.log(`[Worker:email]   Liquid rendered for rec journey (contact_id=${d.customerId})`);
         } catch (liqErr) {
@@ -558,9 +570,10 @@ async function processWA(job) {
       // (matches the email per-message model). Targets unified_contacts.mobile (d.phone).
       // NOTE: at very high volume this is the per-message path; the batched collector
       // (one broadcast per due-cohort chunk) is the throughput-optimized variant.
+      const affinity = await getAffinityVars(d.customerId);
       const r = await ChatHeadV1Service.sendBroadcast({
         contacts:     [{ phone: d.phone, name: d.name || '',
-                         vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} }) }],
+                         vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity }) }],
         channelId:    parseInt(d.waChannelId),
         channelName:  d.waChannelName || null,
         templateId:   parseInt(d.waTemplateId),

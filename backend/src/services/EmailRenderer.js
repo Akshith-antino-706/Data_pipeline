@@ -2,6 +2,7 @@ import { query } from '../config/database.js';
 import ProductAffinityService from './ProductAffinityService.js';
 import PopularityService from './PopularityService.js';
 import LiquidRenderer from './LiquidRenderer.js';
+import { getAffinityVars, usesAffinity, dropEmptyAffinity, SAMPLE_AFFINITY_VARS } from './affinityVars.js';
 
 /**
  * EmailRenderer — Renders HTML email templates with dynamic data
@@ -49,6 +50,9 @@ export default class EmailRenderer {
     );
     const siteBaseGeneral = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
     const unsubscribeUrlGeneral = `${siteBaseGeneral}/unsubscribe?uid=${unifiedId || ''}`;
+    // Top booked products / business lines — looked up only when the template uses them.
+    const affinityVars = unifiedId && usesAffinity(tpl.html_body, tpl.body, tpl.subject)
+      ? await getAffinityVars(unifiedId) : {};
     const vars = {
       first_name: user.name || 'there',   // full name (per requirement: send whole name everywhere)
       full_name: user.name || 'Valued Customer',
@@ -64,6 +68,7 @@ export default class EmailRenderer {
       utm_link: 'https://www.raynatours.com',
       unsubscribe_link: unsubscribeUrlGeneral,
       unsubscribe_url:  unsubscribeUrlGeneral,
+      ...affinityVars,
       ...nonEmptyExtraVars,
     };
 
@@ -276,6 +281,9 @@ export default class EmailRenderer {
     );
     const siteBase = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
     const unsubscribeUrl = `${siteBase}/unsubscribe?uid=${unifiedId || ''}`;
+    // Top booked products / business lines — looked up only when the template uses them.
+    const affinityVars = unifiedId && usesAffinity(tpl.html_body, tpl.subject_line, extraVars.subject_override)
+      ? await getAffinityVars(unifiedId) : {};
     const vars = {
       first_name:       user.name || 'there',   // full name (per requirement: send whole name everywhere)
       full_name:        user.name || 'Valued Traveller',
@@ -301,6 +309,7 @@ export default class EmailRenderer {
       seasonal_tour_url: siteBase,
       next_trip_url:     siteBase,
       ugc_url:           'https://www.instagram.com/raynatours_/',
+      ...affinityVars,       // product_affinity_1..3 / service_affinity_1..3
       ...payloadVars,        // destination_city / service_type / product_name / rec* / addon_url
       ...nonEmptyExtraVars,  // caller overrides always win
     };
@@ -316,7 +325,7 @@ export default class EmailRenderer {
     // Body: Liquid for win-back (engine='liquid'), regex for Day 1-7 + legacy.
     if (tpl.engine === 'liquid') {
       try {
-        html = await LiquidRenderer.render(html, vars);
+        html = await LiquidRenderer.render(html, dropEmptyAffinity(vars));
       } catch (err) {
         console.error('[EmailRenderer] Liquid render failed:', err.message);
         // fall through to regex pass so something still renders
@@ -584,6 +593,7 @@ export default class EmailRenderer {
       service_type:      'Activity',
       product_name:      'Desert Safari',
       coupon_code:       'PREVIEW10',
+      ...SAMPLE_AFFINITY_VARS,
       utm_link:          'https://www.raynatours.com',
       unsubscribe_link:  '#',
       unsubscribe_url:   '#',

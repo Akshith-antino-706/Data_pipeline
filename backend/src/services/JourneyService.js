@@ -8,6 +8,7 @@ import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { buildWaVars, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
+import { getAffinityVarsMany } from './affinityVars.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -2419,13 +2420,15 @@ class JourneyService {
 
       for (let i = 0; i < list.length; i += CHUNK) {
         const chunk = list.slice(i, i + CHUNK);
+        // product_affinity_* / service_affinity_* for the whole chunk — one query.
+        const affMap = await getAffinityVarsMany(chunk.map(d => d.customerId));
         const contacts = chunk
           .filter(d => d.phone && String(d.phone).replace(/\D/g, '').length >= 10)
           // Carry the same dynamic keys the email uses into the .data record. Fixed
           // journeys have no per-entry event, so item_* keys resolve blank (omitted);
           // any node-level templateVariables still flow through the resolver.
           .map(d => ({ phone: d.phone, name: d.name || '',
-                       vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} }) }));
+                       vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity: affMap.get(String(d.customerId)) }) }));
 
         let result;
         try {

@@ -12,12 +12,13 @@
 import db from '../config/database.js';
 import { resolveTemplateHtml } from '../routes/testSends.js';
 import { analyzeEmail } from './EmailQAService.js';
+import { SAMPLE_AFFINITY_VARS } from './affinityVars.js';
 
 // Same sample contact the analyze-email route uses, so {{placeholders}} resolve
 // and the scan matches what a real recipient would receive.
 const SAMPLE_CTX = {
   contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE', is_indian: false, booking_status: 'PROSPECT' },
-  event: {}, payload: {},
+  event: {}, payload: {}, affinity: SAMPLE_AFFINITY_VARS,
 };
 
 /** Distinct template ids referenced by any journey's action nodes. */
