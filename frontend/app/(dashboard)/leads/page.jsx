@@ -319,7 +319,7 @@ export default function Leads() {
     loadGroups();
     let expiryTimer;
     let countdownTimer;
-    fetch('/api/leads-access')
+    fetch('/leads-access/verify')
       .then(response => response.ok ? response.json() : null)
       .then(access => {
         if (!access?.expiresAt) return;
