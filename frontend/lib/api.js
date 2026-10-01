@@ -305,6 +305,12 @@ export const getRegistrationLeads = (params = {}) => {
   const qs = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '' && value != null)).toString();
   return request(`/api/v3/chat-leads/registrations${qs ? `?${qs}` : ''}`);
 };
+export const getRegistrationSummary = (source, from, to, granularity) => request(
+  `/api/v3/chat-leads/registrations/summary?source=${source}&from=${from}&to=${to}&granularity=${granularity}`
+);
+export const getRegistrationPeriods = (source, unit, count) => request(
+  `/api/v3/chat-leads/registrations/periods?source=${source}&unit=${unit}&count=${count}`
+);
 export const getChatLeadsDepartmentPeriods = (unit, count, from, to) => request(
   `/api/v3/chat-leads/department-periods?unit=${unit}${from && to ? `&from=${from}&to=${to}` : `&count=${count}`}`
 );

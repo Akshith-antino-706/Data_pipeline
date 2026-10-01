@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import {
   getChatLeadsSummary, getChatLeadsTrend, getMailLeadsSummary, getMailLeadsTrend,
   getChatLeadsDepartmentPeriods, getMailLeadsDepartmentPeriods, getChatLeadsDepartmentUsers,
-  getDepartmentGroups, deleteDepartmentGroup, getRegistrationLeads,
+  getDepartmentGroups, deleteDepartmentGroup, getRegistrationLeads, getRegistrationSummary, getRegistrationPeriods,
 } from '@/lib/api';
 import {
   MessageSquare, Mail, Calendar, BarChart3, Loader2, Users, Building2, UserPlus, UserCheck,
@@ -102,123 +102,314 @@ function DepartmentSkeleton() {
   return <div className="card" aria-label="Loading department data" aria-busy="true" style={{ padding: 20, marginBottom: 24 }}><SkeletonBlock width={190} height={17} style={{ marginBottom: 16 }} />{[0, 1, 2, 3, 4].map(row => <div key={row} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr repeat(4, .7fr)', gap: 14, padding: '12px 4px', borderTop: '1px solid var(--border-color)' }}>{[0, 1, 2, 3, 4, 5].map(cell => <SkeletonBlock key={cell} width={cell < 2 ? '80%' : '65%'} height={12} />)}</div>)}</div>;
 }
 
-function RegistrationSkeleton() {
-  return <div aria-label="Loading registration records" aria-busy="true" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{[0, 1, 2, 3, 4, 5].map(row => <div key={row} style={{ display: 'grid', gridTemplateColumns: '90px minmax(140px, 1.3fr) minmax(150px, 1fr) minmax(120px, .8fr)', gap: 14, alignItems: 'center', padding: '15px 16px', border: '1px solid var(--border-color)', borderRadius: 10, background: 'var(--bg-primary)' }}><SkeletonBlock width={78} height={22} radius={12} /><SkeletonBlock width="72%" height={14} /><SkeletonBlock width="65%" height={12} /><SkeletonBlock width="80%" height={12} /></div>)}</div>;
+const REGISTRATION_SOURCES = {
+  guestuser: { label: 'Guest Users', icon: Users },
+  agent: { label: 'Agents', icon: Building2 },
+  affiliate: { label: 'Affiliates', icon: UserCheck },
+};
+const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
+
+// "GuestUserId" → "Guest User Id", "AgentID" → "Agent ID"
+function humanizeColumn(name) {
+  const spaced = name.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-function RegistrationPanel() {
-  const [filters, setFilters] = useState({ source: 'all', search: '', from: '', to: '', field: '', value: '', limit: 25 });
-  const [applied, setApplied] = useState(filters);
+// Empty values are stored as '' or the text 'NULL'; timestamps as 'YYYY-MM-DD HH:MM:SS[.ffffff]'.
+function formatCell(value) {
+  if (value === null || value === undefined || value === '' || value === 'NULL') return '—';
+  const s = String(value);
+  const ts = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(s);
+  if (ts) return ts[2] === '00:00' && /^\d{4}-\d{2}-\d{2} 00:00(:00(\.0+)?)?$/.test(s) ? ts[1] : `${ts[1]} ${ts[2]}`;
+  return s;
+}
+
+// Single-select pill group (used instead of dropdowns on the registrations tab).
+function PillGroup({ options, value, onChange }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {options.map(o => (
+        <button key={o.value} onClick={() => onChange(o.value)} aria-pressed={value === o.value}
+          style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border-color)', cursor: 'pointer',
+            background: value === o.value ? 'var(--brand-primary)' : 'transparent',
+            color: value === o.value ? '#fff' : 'var(--text-secondary)' }}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RegistrationTableSkeleton() {
+  return <div aria-label="Loading registration records" aria-busy="true">{[0, 1, 2, 3, 4, 5].map(row => <div key={row} style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, padding: '12px 4px', borderTop: '1px solid var(--border-color)' }}>{[0, 1, 2, 3, 4, 5].map(cell => <SkeletonBlock key={cell} width="75%" height={12} />)}</div>)}</div>;
+}
+
+// Registrations tab. `query` ({ from, to, granularity }) comes from the page's shared
+// date filter, so this tab filters exactly like WhatsApp Chats / Email Tickets.
+function RegistrationPanel({ query }) {
+  const [source, setSource] = useState('guestuser');
+
+  // KPI + trend (follows the shared date filter)
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState(null);
+
+  // Day on Day / Week on Week / Month on Month breakdown (own period filter)
+  const [periodUnit, setPeriodUnit] = useState('week');
+  const [periodCount, setPeriodCount] = useState(DEFAULT_PERIOD_COUNT.week);
+  const [periodData, setPeriodData] = useState(null);
+  const [periodLoading, setPeriodLoading] = useState(true);
+  const [periodError, setPeriodError] = useState(null);
+
+  // Records table (follows the shared date filter + its own search / paging)
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [limit, setLimit] = useState(25);
   const [page, setPage] = useState(1);
-  const [result, setResult] = useState({ records: [], total: 0, fieldsBySource: {} });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [records, setRecords] = useState({ records: [], total: 0, columns: [] });
+  const [recordsLoading, setRecordsLoading] = useState(true);
+  const [recordsError, setRecordsError] = useState(null);
+
+  useEffect(() => {
+    try { const saved = window.localStorage.getItem('leads-registration-source'); if (REGISTRATION_SOURCES[saved]) setSource(saved); } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError(null);
-    getRegistrationLeads({ ...applied, page })
-      .then(data => { if (active) setResult(data); })
-      .catch(err => { if (active) setError(err.message || 'Failed to load registrations'); })
-      .finally(() => { if (active) setLoading(false); });
+    setSummaryLoading(true);
+    setSummaryError(null);
+    getRegistrationSummary(source, query.from, query.to, query.granularity)
+      .then(data => { if (active) setSummary(data); })
+      .catch(err => { if (active) setSummaryError(err.message || 'Failed to load registrations'); })
+      .finally(() => { if (active) setSummaryLoading(false); });
     return () => { active = false; };
-  }, [applied, page]);
+  }, [source, query]);
 
-  const sourceFields = filters.source === 'all'
-    ? [...new Set(Object.values(result.fieldsBySource || {}).flat())]
-    : (result.fieldsBySource?.[filters.source] || []);
-  const totalPages = Math.max(Math.ceil((result.total || 0) / Number(applied.limit || 25)), 1);
-  const update = (key, value) => setFilters(current => ({
-    ...current,
-    [key]: value,
-    ...(key === 'source' ? { field: '', value: '' } : {}),
-  }));
-  const apply = () => { setPage(1); setApplied({ ...filters }); };
-  const reset = () => {
-    const clean = { source: 'all', search: '', from: '', to: '', field: '', value: '', limit: 25 };
-    setFilters(clean); setApplied(clean); setPage(1);
+  useEffect(() => {
+    let active = true;
+    setPeriodLoading(true);
+    setPeriodError(null);
+    getRegistrationPeriods(source, periodUnit, periodCount)
+      .then(data => { if (active) setPeriodData(data); })
+      .catch(err => { if (active) setPeriodError(err.message || 'Failed to load period breakdown'); })
+      .finally(() => { if (active) setPeriodLoading(false); });
+    return () => { active = false; };
+  }, [source, periodUnit, periodCount]);
+
+  // Back to page 1 whenever what the table shows changes.
+  useEffect(() => { setPage(1); }, [source, query, search, limit]);
+
+  useEffect(() => {
+    let active = true;
+    setRecordsLoading(true);
+    setRecordsError(null);
+    getRegistrationLeads({ source, from: query.from, to: query.to, search, limit, page })
+      .then(data => { if (active) setRecords(data); })
+      .catch(err => { if (active) setRecordsError(err.message || 'Failed to load registrations'); })
+      .finally(() => { if (active) setRecordsLoading(false); });
+    return () => { active = false; };
+  }, [source, query, search, limit, page]);
+
+  const handleSource = (s) => {
+    setSource(s);
+    try { window.localStorage.setItem('leads-registration-source', s); } catch { /* ignore */ }
   };
-  const sourceLabel = source => ({ guestuser: 'Guest User', agent: 'Agent', affiliate: 'Affiliate' }[source] || source);
-  const displayValue = value => value === null || value === undefined || value === '' || value === 'NULL' ? '—' : String(value);
-  const preview = record => ({
-    name: record.data.guestName || record.data.AgentName || record.data.affiliateName || record.data.CompanyName || 'Unnamed registration',
-    email: record.data.email || record.data.EmailId || record.data.mainAffiliateEmail || null,
-    phone: record.data.contactNumber || record.data.mobileNo || record.data.MobileNo || record.data.PhoneNo || null,
-    externalId: record.data.GuestUserId || record.data.AgentID || record.data.affiliateId || record.recordId,
-  });
+  const handlePeriodUnit = (unit) => { setPeriodUnit(unit); setPeriodCount(DEFAULT_PERIOD_COUNT[unit]); };
+
+  const label = REGISTRATION_SOURCES[source].label;
+  const counts = summary?.counts || {};
+  const chartData = (summary?.points || []).map(p => ({ period: p.period, registrations: p.registrations }));
+  const columns = records.columns || [];
+  const totalPages = Math.max(Math.ceil((records.total || 0) / limit), 1);
+  const cardStyle = { padding: 20, marginBottom: 24 };
 
   return (
-    <motion.div variants={fadeInUp}>
-      <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Registration type
-            <select value={filters.source} onChange={e => update('source', e.target.value)} style={{ display: 'block', width: '100%', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
-              <option value="all">All three tables</option><option value="guestuser">Guest Users</option><option value="agent">Agents</option><option value="affiliate">Affiliates</option>
-            </select>
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Search all fields
-            <input value={filters.search} onChange={e => update('search', e.target.value)} onKeyDown={e => e.key === 'Enter' && apply()} placeholder="Name, email, phone, ID…" style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Registered from
-            <input type="date" value={filters.from} onChange={e => update('from', e.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 8, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Registered to
-            <input type="date" value={filters.to} onChange={e => update('to', e.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 8, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Specific field
-            <select value={filters.field} onChange={e => update('field', e.target.value)} style={{ display: 'block', width: '100%', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
-              <option value="">Any field</option>{sourceFields.map(field => <option key={field} value={field}>{field}</option>)}
-            </select>
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Field contains
-            <input value={filters.value} disabled={!filters.field} onChange={e => update('value', e.target.value)} onKeyDown={e => e.key === 'Enter' && apply()} placeholder={filters.field ? `Filter ${filters.field}` : 'Select a field first'} style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Rows per page
-            <select value={filters.limit} onChange={e => update('limit', Number(e.target.value))} style={{ display: 'block', width: '100%', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
-              {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          <button className="btn btn-primary" onClick={apply} disabled={loading}>{loading ? 'Loading…' : 'Apply filters'}</button>
-          <button className="btn btn-ghost" onClick={reset}>Reset all</button>
-        </div>
-      </div>
+    <>
+      {/* Registration type — single select */}
+      <motion.div variants={fadeInUp} role="radiogroup" aria-label="Registration type" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+        {Object.entries(REGISTRATION_SOURCES).map(([key, s]) => {
+          const selected = source === key;
+          return (
+            <button key={key} role="radio" aria-checked={selected} onClick={() => handleSource(key)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 10, cursor: 'pointer',
+                border: `1px solid ${selected ? 'var(--brand-primary)' : 'var(--border-color)'}`,
+                background: selected ? 'color-mix(in srgb, var(--brand-primary) 10%, var(--bg-card))' : 'var(--bg-card)',
+                color: selected ? 'var(--brand-primary)' : 'var(--text-secondary)' }}>
+              <s.icon size={17} />
+              <span style={{ fontWeight: 700, fontSize: 13.5 }}>{s.label}</span>
+              <span style={{ padding: '2px 9px', borderRadius: 20, fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                background: selected ? 'var(--brand-primary)' : 'var(--bg-secondary)', color: selected ? '#fff' : 'var(--text-secondary)' }}>
+                {summary ? formatNum(counts[key]) : '…'}
+              </span>
+            </button>
+          );
+        })}
+      </motion.div>
 
-      {error && <div className="card" style={{ padding: 16, marginBottom: 20, color: 'var(--red)', borderLeft: '4px solid var(--red)' }}>{error}</div>}
-      <div className="card" style={{ padding: 20 }}>
-        <div className="card-header" style={{ marginBottom: 14 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Registration records</h3>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{formatNum(result.total)} records · page {page} of {totalPages}</span>
+      {summaryError && <motion.div variants={fadeInUp} className="card" style={{ ...cardStyle, padding: 16, borderLeft: '4px solid var(--red)' }}><span style={{ color: 'var(--red)', fontSize: 14 }}>{summaryError}</span></motion.div>}
+      {summaryLoading && !summary && <AnalyticsSkeleton />}
+
+      {summary && (
+        <>
+          {/* KPI strip */}
+          <motion.div variants={fadeInUp} className="card" style={cardStyle}>
+            <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+              {[
+                { icon: REGISTRATION_SOURCES[source].icon, label: `${label} registered`, value: formatNum(summary.total), bg: 'rgba(14,165,233,0.1)', color: 'var(--brand-primary)' },
+                { icon: Calendar, label: 'Date Range', value: `${summary.from}  to  ${summary.to}`, bg: 'rgba(249,115,22,0.1)', color: 'var(--orange)' },
+              ].map(kpi => (
+                <div key={kpi.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 10, background: kpi.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <kpi.icon size={20} style={{ color: kpi.color }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>{kpi.label}</div>
+                    <div style={{ fontSize: kpi.label === 'Date Range' ? 14 : 22, fontWeight: 700, color: 'var(--text-primary)' }}>{kpi.value}</div>
+                  </div>
+                </div>
+              ))}
+              {summaryLoading && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-tertiary)', alignSelf: 'center' }} />}
+            </div>
+          </motion.div>
+
+          {/* Trend chart */}
+          <motion.div variants={fadeInUp} className="card" style={cardStyle}>
+            <div className="card-header" style={{ marginBottom: 12 }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>{label} registrations · {summary.granularity}-wise</h3>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>By registration date</span>
+            </div>
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                  <XAxis dataKey="period" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
+                  <Bar dataKey="registrations" name="Registrations" fill="var(--brand-primary)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>No registrations in the selected range.</div>
+            )}
+          </motion.div>
+        </>
+      )}
+
+      {/* Day on Day / Week on Week / Month on Month */}
+      <motion.div variants={fadeInUp} className="card" style={{ ...cardStyle, overflow: 'hidden' }}>
+        <div className="card-header" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
+          <Building2 size={18} style={{ color: 'var(--text-secondary)' }} />
+          <h3 style={{ margin: 0, fontSize: 16 }}>{label} by {(periodData?.dimension || (source === 'affiliate' ? 'Affiliate type' : 'Website')).toLowerCase()}</h3>
+          {periodLoading && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-tertiary)' }} />}
         </div>
-        {loading ? <RegistrationSkeleton /> : result.records.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-tertiary)' }}>No registration records match these filters.</div>
-        ) : <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {result.records.map(record => {
-            const info = preview(record);
-            return (
-            <details key={`${record.source}-${record.recordId}`} style={{ border: '1px solid var(--border-color)', borderRadius: 10, background: 'var(--bg-primary)' }}>
-              <summary style={{ padding: '13px 16px', cursor: 'pointer', display: 'grid', gridTemplateColumns: '90px minmax(150px, 1.3fr) minmax(160px, 1fr) minmax(120px, .8fr)', alignItems: 'center', gap: 12, listStyle: 'none' }}>
-                <span style={{ padding: '3px 9px', borderRadius: 20, background: 'rgba(14,165,233,0.12)', color: 'var(--brand-primary)', fontSize: 11, fontWeight: 700 }}>{sourceLabel(record.source)}</span>
-                <span style={{ minWidth: 0 }}><strong style={{ display: 'block', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{info.name}</strong><span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>ID: {displayValue(info.externalId)}</span></span>
-                <span style={{ minWidth: 0, fontSize: 11.5, color: 'var(--text-secondary)' }}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayValue(info.email)}</span><span style={{ display: 'block', marginTop: 2 }}>{displayValue(info.phone)}</span></span>
-                <span style={{ color: 'var(--text-secondary)', fontSize: 12, textAlign: 'right' }}>{displayValue(record.registrationDate)}<span style={{ display: 'block', marginTop: 2, fontSize: 10, color: 'var(--text-tertiary)' }}>Click for all fields</span></span>
-              </summary>
-              <div style={{ borderTop: '1px solid var(--border-color)', padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-                {Object.entries(record.data).map(([key, value]) => (
-                  <div key={key} style={{ minWidth: 0 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-tertiary)' }}>{key}</div><div style={{ fontSize: 12.5, overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>{displayValue(value)}</div></div>
+        <div style={{ padding: 16, marginBottom: 16, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', borderRadius: 8, border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+            {[{ key: 'day', label: 'Day on Day' }, { key: 'week', label: 'Week on Week' }, { key: 'month', label: 'Month on Month' }].map(o => (
+              <button key={o.key} onClick={() => handlePeriodUnit(o.key)}
+                style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
+                  background: periodUnit === o.key ? 'var(--bg-card)' : 'transparent',
+                  color: periodUnit === o.key ? 'var(--brand-primary)' : 'var(--text-secondary)',
+                  boxShadow: periodUnit === o.key ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08))' : 'none' }}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Last</span>
+            <PillGroup value={periodCount} onChange={setPeriodCount}
+              options={PERIOD_COUNT_OPTIONS[periodUnit].map(n => ({ value: n, label: `${n} ${periodUnit === 'day' ? 'days' : periodUnit === 'week' ? 'weeks' : 'months'}` }))} />
+          </div>
+        </div>
+        {periodError ? <div style={{ color: 'var(--red)', fontSize: 13 }}>{periodError}</div>
+          : !periodData && periodLoading ? <DepartmentSkeleton />
+          : periodData && (
+          <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid var(--border-color)', maxHeight: 480 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', background: 'var(--bg-secondary)', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)', position: 'sticky', top: 0, left: 0, zIndex: 2 }}>{periodData.dimension}</th>
+                  {periodData.periods.map((p, i) => (
+                    <th key={i} style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap', background: 'var(--bg-secondary)', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)', position: 'sticky', top: 0, zIndex: 1 }}>
+                      <div>{p.label}</div>
+                      <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-tertiary)' }}>{p.sublabel}{p.partial ? ' · PARTIAL' : ''}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {periodData.rows.map((row, i) => (
+                  <tr key={row.name} style={{ borderBottom: '1px solid var(--border-color)', background: i % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
+                    <td style={{ padding: '7px 12px', whiteSpace: 'nowrap', color: 'var(--text-primary)', position: 'sticky', left: 0, background: 'inherit' }}>{row.name}</td>
+                    {row.values.map((v, j) => <td key={j} style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: v ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{formatNum(v)}</td>)}
+                  </tr>
                 ))}
-              </div>
-            </details>
-          );})}
-        </div>}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 18 }}>
-          <button className="btn btn-ghost" disabled={page <= 1 || loading} onClick={() => setPage(p => p - 1)}>Previous</button>
-          <button className="btn btn-ghost" disabled={page >= totalPages || loading} onClick={() => setPage(p => p + 1)}>Next</button>
+                {periodData.rows.length === 0 ? (
+                  <tr><td colSpan={1 + periodData.periods.length} style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>No registrations in these periods.</td></tr>
+                ) : (
+                  <tr style={{ borderTop: '2px solid var(--border-color)' }}>
+                    <td style={{ padding: '8px 12px', fontWeight: 700, position: 'sticky', left: 0, background: 'var(--bg-card)' }}>Total</td>
+                    {periodData.totals.map((v, j) => <td key={j} style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatNum(v)}</td>)}
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Records — the selected table's own columns; columns with no data in the range are hidden */}
+      <motion.div variants={fadeInUp} className="card" style={cardStyle}>
+        <div className="card-header" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>{label} records</h3>
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{formatNum(records.total)} records · page {page} of {totalPages}</span>
+          {recordsLoading && records.records.length > 0 && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-tertiary)' }} />}
         </div>
-      </div>
-    </motion.div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 8, flex: '1 1 280px' }}>
+            <input value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setSearch(searchInput.trim())}
+              placeholder={`Search ${label.toLowerCase()} — name, email, phone, ID…`}
+              style={{ flex: 1, minWidth: 0, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontSize: 14 }} />
+            <button className="btn btn-primary" onClick={() => setSearch(searchInput.trim())}>Search</button>
+            {search && <button className="btn btn-ghost" onClick={() => { setSearchInput(''); setSearch(''); }}>Clear</button>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Rows</span>
+            <PillGroup value={limit} onChange={setLimit} options={ROWS_PER_PAGE_OPTIONS.map(n => ({ value: n, label: String(n) }))} />
+          </div>
+        </div>
+        {recordsError && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{recordsError}</div>}
+        {recordsLoading && records.records.length === 0 ? <RegistrationTableSkeleton /> : records.records.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-tertiary)' }}>No {label.toLowerCase()} registered in this range{search ? ' matching the search' : ''}.</div>
+        ) : (
+          <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid var(--border-color)', maxHeight: 600, opacity: recordsLoading ? 0.6 : 1 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+              <thead>
+                <tr>
+                  {columns.map(col => (
+                    <th key={col} title={col} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', background: 'var(--bg-secondary)', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)', position: 'sticky', top: 0, zIndex: 1 }}>{humanizeColumn(col)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {records.records.map((record, i) => (
+                  <tr key={`${record.source}-${record.recordId}`} style={{ borderBottom: '1px solid var(--border-color)', background: i % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
+                    {columns.map(col => {
+                      const text = formatCell(record.data[col]);
+                      return <td key={col} style={{ padding: '7px 12px', whiteSpace: 'nowrap', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', color: text === '—' ? 'var(--text-tertiary)' : 'var(--text-primary)' }} title={text}>{text}</td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, marginTop: 18 }}>
+          <button className="btn btn-ghost" disabled={page <= 1 || recordsLoading} onClick={() => setPage(p => p - 1)}>Previous</button>
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{page} / {totalPages}</span>
+          <button className="btn btn-ghost" disabled={page >= totalPages || recordsLoading} onClick={() => setPage(p => p + 1)}>Next</button>
+        </div>
+      </motion.div>
+    </>
   );
 }
 
@@ -230,6 +421,8 @@ export default function Leads() {
   const [fromDate, setFromDate] = useState(getDaysAgo(7));
   const [toDate, setToDate] = useState(getToday());
   const [granularity, setGranularity] = useState('day');
+  // Applied filter for the Registrations tab (set by load(), like the other tabs' fetches)
+  const [regQuery, setRegQuery] = useState(() => ({ from: getDaysAgo(7), to: getToday(), granularity: 'day' }));
   const [summary, setSummary] = useState(null);
   const [trend, setTrend] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -312,6 +505,7 @@ export default function Leads() {
     const savedTab = window.localStorage.getItem('leads-active-tab');
     const initialChannel = CHANNEL_TABS[queryTab] ? queryTab : CHANNEL_TABS[savedTab] ? savedTab : 'whatsapp';
     setChannel(initialChannel);
+    // (Registrations: regQuery already starts at the default range — RegistrationPanel loads itself.)
     if (initialChannel !== 'registration') {
       load(initialChannel);
       loadDept(initialChannel);
@@ -340,6 +534,11 @@ export default function Leads() {
   }, []);
 
   const load = async (ch = channel, from = fromDate, to = toDate, gran = granularity) => {
+    if (ch === 'registration') {
+      // RegistrationPanel fetches its own data whenever this applied filter changes.
+      setRegQuery({ from, to, granularity: gran });
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -377,7 +576,7 @@ export default function Leads() {
     const url = new URL(window.location.href);
     url.searchParams.set('tab', ch);
     window.history.replaceState(null, '', `${url.pathname}${url.search}`);
-    if (ch === 'registration') return;
+    if (ch === 'registration') { load(ch, fromDate, toDate, granularity); return; }
     setSummary(null);
     setTrend(null);
     setError(null);
@@ -421,7 +620,7 @@ export default function Leads() {
 
   const handleGranularity = (gran) => {
     setGranularity(gran);
-    if (summary) load(channel, fromDate, toDate, gran);
+    if (summary || channel === 'registration') load(channel, fromDate, toDate, gran);
   };
 
   const chartData = (trend?.points || []).map(p => ({ period: p.period, leads: p.leads, newUsers: p.newUsers ?? 0, oldUsers: p.oldUsers ?? 0 }));
@@ -512,9 +711,10 @@ export default function Leads() {
             <h1 style={{ fontSize: 25, fontWeight: 700, margin: 0 }}>Leads workspace</h1>
             <p style={{ color: 'var(--text-secondary)', margin: '5px 0 0', fontSize: 13.5 }}>Explore conversations, email enquiries, and registrations in one place.</p>
           </div>
-          <span title="You will be asked for the access token again when this timer ends" style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: sessionSecondsLeft === 0 ? 'rgba(220,38,38,0.12)' : 'rgba(34,197,94,0.12)', color: sessionSecondsLeft === 0 ? '#dc2626' : '#16a34a', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+          {/* Token-session timer — public visitors only (signed-in users have no timer) */}
+          {sessionSecondsLeft != null && <span title="You will be asked for the access token again when this timer ends" style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: sessionSecondsLeft === 0 ? 'rgba(220,38,38,0.12)' : 'rgba(34,197,94,0.12)', color: sessionSecondsLeft === 0 ? '#dc2626' : '#16a34a', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
             Secure session · {sessionCountdown}
-          </span>
+          </span>}
         </div>
       </motion.div>
 
@@ -535,17 +735,17 @@ export default function Leads() {
         ))}
       </motion.div>
 
-      {channel === 'registration' ? <RegistrationPanel /> : <>
-
-      {/* Filters */}
+      {/* Filters — shared by all tabs */}
       <motion.div variants={fadeInUp} className="card" style={{ padding: 20, marginBottom: 24 }}>
         {renderFilterBlock({
           from: fromDate, to: toDate, setFrom: setFromDate, setTo: setToDate,
-          onLoad: () => load(), isLoading: loading,
+          onLoad: () => load(), isLoading: channel !== 'registration' && loading,
           pickedMonth, onMonthPick: handleMonthPick, onPreset: handlePreset,
           showTrendToggle: true,
         })}
       </motion.div>
+
+      {channel === 'registration' ? <RegistrationPanel query={regQuery} /> : <>
 
       {/* Error */}
       {error && (

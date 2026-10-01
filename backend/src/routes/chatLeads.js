@@ -554,17 +554,105 @@ router.get('/mail-department-periods', async (req, res) => {
   }
 });
 
-// ── GET /first-msg — first message TEXT (ChatHead API) + TIMESTAMP (our chats) ─
-//   from = customer WhatsApp number (chats.wa_id), to = Rayna receiver (chats.receiver)
-//   ChatHead's /apis/wa/first_msg returns only the text; we add the first-message
-//   time from the chats table (MIN(created_at) for that conversation).
-// GET /registrations - all fields from the three registration feeds.
+// ── Registrations (affiliate_data / guestuser_data / agent_data) ─────────────
 const REGISTRATION_TABLES = {
   guestuser: 'guestuser_data',
   agent: 'agent_data',
   affiliate: 'affiliate_data',
 };
+// Per-period breakdown dimension for each table.
+const REGISTRATION_DIMENSION = {
+  guestuser: { column: 'websiteName', label: 'Website' },
+  agent: { column: 'websiteName', label: 'Website' },
+  affiliate: { column: 'affiliateType', label: 'Affiliate type' },
+};
+// Pipeline bookkeeping columns — not registration data, never shown as table columns.
+const REGISTRATION_INTERNAL_COLUMNS = new Set(['id', 'unified_id', 'created_at', 'updated_at', 'synced_at']);
+// registrationDate is text ('YYYY-MM-DD HH:MM:SS[.ffffff]', or 'NULL'/junk on a few legacy rows).
+const REG_DATE = `(CASE WHEN "registrationDate" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT("registrationDate", 10)::date END)`;
+// Empty values are stored as '' or the text 'NULL'.
+const filledJson = bindKey => `NULLIF(NULLIF(btrim(data ->> ${bindKey}), ''), 'NULL') IS NOT NULL`;
 
+function parseRegistrationSource(req, res) {
+  const source = String(req.query.source || '').toLowerCase();
+  if (!REGISTRATION_TABLES[source]) {
+    res.status(400).json({ error: 'source must be one of: guestuser, agent, affiliate' });
+    return null;
+  }
+  return source;
+}
+
+// ── GET /registrations/summary — per-type counts + day/week/month trend for a date range ─
+router.get('/registrations/summary', async (req, res) => {
+  try {
+    const source = parseRegistrationSource(req, res);
+    if (!source) return;
+    const dates = validateDateRange(req, res);
+    if (!dates) return;
+    const { from, to } = dates;
+    const granularity = ['day', 'week', 'month'].includes(req.query.granularity) ? req.query.granularity : 'day';
+    const bucket = { day: REG_DATE, week: `date_trunc('week', ${REG_DATE})::date`, month: `date_trunc('month', ${REG_DATE})::date` }[granularity];
+
+    const countsSql = Object.entries(REGISTRATION_TABLES)
+      .map(([type, table]) => `(SELECT COUNT(*)::int FROM ${table} WHERE ${REG_DATE} BETWEEN $1 AND $2) AS ${type}`)
+      .join(', ');
+    const [{ rows: [counts] }, { rows: points }] = await Promise.all([
+      db.query(`SELECT ${countsSql}`, [from, to]),
+      db.query(`
+        SELECT to_char(${bucket}, 'YYYY-MM-DD') AS period, COUNT(*)::int AS registrations
+        FROM ${REGISTRATION_TABLES[source]}
+        WHERE ${REG_DATE} BETWEEN $1 AND $2
+        GROUP BY 1 ORDER BY 1
+      `, [from, to]),
+    ]);
+
+    res.json({ success: true, source, from, to, granularity, total: counts[source], counts, points });
+  } catch (err) {
+    console.error('Registration summary error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /registrations/periods — registrations by website (or affiliate type), one column per day/week/month ─
+router.get('/registrations/periods', async (req, res) => {
+  try {
+    const source = parseRegistrationSource(req, res);
+    if (!source) return;
+    const { unit, count, from, to } = parsePeriodParams(req);
+    const periods = buildPeriods(unit, count, from, to);
+    if (!periods.length) return res.status(400).json({ error: 'Invalid period range' });
+    const dim = REGISTRATION_DIMENSION[source];
+
+    const params = [];
+    const bind = v => { params.push(v); return `$${params.length}`; };
+    // registration dates are calendar dates, so compare on the period's date span
+    const cols = periods.map((p, i) =>
+      `COUNT(*) FILTER (WHERE ${REG_DATE} BETWEEN ${bind(p.start.slice(0, 10))} AND ${bind(p.end.slice(0, 10))})::int AS p${i}`).join(', ');
+    const { rows } = await db.query(`
+      SELECT COALESCE(NULLIF(NULLIF(btrim("${dim.column}"), ''), 'NULL'), '(not set)') AS name, ${cols}
+      FROM ${REGISTRATION_TABLES[source]}
+      WHERE ${REG_DATE} BETWEEN ${bind(periods[0].start.slice(0, 10))} AND ${bind(periods[periods.length - 1].end.slice(0, 10))}
+      GROUP BY 1
+    `, params);
+
+    const out = rows.map(r => {
+      const values = periods.map((_, i) => r[`p${i}`]);
+      return { name: r.name, values, total: values.reduce((a, b) => a + b, 0) };
+    }).sort((a, b) => b.values[b.values.length - 1] - a.values[a.values.length - 1] || b.total - a.total);
+
+    res.json({
+      success: true, source, unit, dimension: dim.label,
+      periods: periods.map(({ label, sublabel, partial }) => ({ label, sublabel, partial })),
+      rows: out,
+      totals: periods.map((_, i) => out.reduce((sum, r) => sum + r.values[i], 0)),
+    });
+  } catch (err) {
+    console.error('Registration periods error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /registrations - all fields from the three registration feeds.
 router.get('/registrations', async (req, res) => {
   try {
     const source = String(req.query.source || 'all').toLowerCase();
@@ -615,14 +703,28 @@ router.get('/registrations', async (req, res) => {
     const countParams = [...params];
     const limitBind = bind(limit);
     const offsetBind = bind((page - 1) * limit);
-    const [{ rows }, countResult] = await Promise.all([
+
+    // For a single table: the columns that have at least one value across the filtered
+    // rows (table order, bookkeeping columns dropped) — stable across pages.
+    const candidateColumns = source === 'all' ? [] : fieldsBySource[source].filter(c => !REGISTRATION_INTERNAL_COLUMNS.has(c));
+    const filledParams = [...countParams];
+    const filledSql = candidateColumns.map((c, i) => {
+      filledParams.push(c);
+      return `bool_or(${filledJson(`$${filledParams.length}`)}) AS c${i}`;
+    }).join(', ');
+
+    const [{ rows }, countResult, filledResult] = await Promise.all([
       db.query(`${cte} SELECT source, record_id, registration_date, data FROM registrations ${where}
                 ORDER BY registration_sort_date DESC NULLS LAST, ingested_at DESC NULLS LAST, record_id DESC
                 LIMIT ${limitBind} OFFSET ${offsetBind}`, params),
       db.query(`${cte} SELECT COUNT(*)::int AS total FROM registrations ${where}`, countParams),
+      candidateColumns.length
+        ? db.query(`${cte} SELECT ${filledSql} FROM registrations ${where}`, filledParams)
+        : Promise.resolve(null),
     ]);
+    const columns = filledResult ? candidateColumns.filter((_, i) => filledResult.rows[0]?.[`c${i}`]) : null;
     res.json({
-      success: true, page, limit, total: countResult.rows[0]?.total || 0, fieldsBySource,
+      success: true, page, limit, total: countResult.rows[0]?.total || 0, fieldsBySource, columns,
       records: rows.map(r => ({ source: r.source, recordId: r.record_id, registrationDate: r.registration_date, data: r.data })),
     });
   } catch (err) {
@@ -631,6 +733,10 @@ router.get('/registrations', async (req, res) => {
   }
 });
 
+// ── GET /first-msg — first message TEXT (ChatHead API) + TIMESTAMP (our chats) ─
+//   from = customer WhatsApp number (chats.wa_id), to = Rayna receiver (chats.receiver)
+//   ChatHead's /apis/wa/first_msg returns only the text; we add the first-message
+//   time from the chats table (MIN(created_at) for that conversation).
 router.get('/first-msg', async (req, res) => {
   try {
     const { from, to } = req.query;
