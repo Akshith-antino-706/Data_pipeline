@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import {
   getChatLeadsSummary, getChatLeadsTrend, getMailLeadsSummary, getMailLeadsTrend,
   getChatLeadsDepartmentPeriods, getMailLeadsDepartmentPeriods, getChatLeadsDepartmentUsers,
-  getDepartmentGroups, deleteDepartmentGroup,
+  getDepartmentGroups, deleteDepartmentGroup, getRegistrationLeads,
 } from '@/lib/api';
 import {
   MessageSquare, Mail, Calendar, BarChart3, Loader2, Users, Building2, UserPlus, UserCheck,
@@ -32,6 +32,7 @@ const MONTH_YEAR_OPTIONS = (() => {
 const CHANNELS = {
   whatsapp: {
     label: 'WhatsApp Chats',
+    description: 'Chat volume and department performance',
     icon: MessageSquare,
     color: '#25D366',
     volumeLabel: 'Total Chats',
@@ -44,6 +45,7 @@ const CHANNELS = {
   },
   mail: {
     label: 'Email Tickets',
+    description: 'Email enquiries and department trends',
     icon: Mail,
     color: 'var(--yellow)',
     volumeLabel: 'Total Emails',
@@ -54,6 +56,11 @@ const CHANNELS = {
     getTrend: getMailLeadsTrend,
     getDeptPeriods: getMailLeadsDepartmentPeriods,
   },
+};
+
+const CHANNEL_TABS = {
+  ...CHANNELS,
+  registration: { label: 'Registrations', description: 'Guest users, agents, and affiliates', icon: Users, color: 'var(--brand-primary)' },
 };
 
 const DEFAULT_PERIOD_COUNT = { day: 7, week: 7, month: 3 };
@@ -69,8 +76,155 @@ function getToday() { return new Date().toISOString().split('T')[0]; }
 function getYesterday() { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]; }
 function getDaysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().split('T')[0]; }
 
+function SkeletonBlock({ width = '100%', height = 14, radius = 7, style = {} }) {
+  return <div className="skeleton" aria-hidden="true" style={{ width, height, borderRadius: radius, ...style }} />;
+}
+
+function AnalyticsSkeleton() {
+  return (
+    <div aria-label="Loading lead analytics" aria-busy="true">
+      <div className="card" style={{ padding: 20, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 20 }}>
+          {[0, 1, 2, 3].map(item => <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 11 }}><SkeletonBlock width={42} height={42} radius={10} /><div style={{ flex: 1 }}><SkeletonBlock width="55%" height={10} style={{ marginBottom: 7 }} /><SkeletonBlock width="78%" height={22} /></div></div>)}
+        </div>
+      </div>
+      <div className="card" style={{ padding: 20, marginBottom: 24 }}>
+        <SkeletonBlock width={210} height={17} style={{ marginBottom: 20 }} />
+        <div style={{ height: 245, display: 'flex', alignItems: 'flex-end', gap: '3%', padding: '0 3%', borderBottom: '1px solid var(--border-color)' }}>
+          {[38, 62, 48, 78, 55, 88, 68, 74, 52, 82].map((height, index) => <SkeletonBlock key={index} width="7%" height={`${height}%`} radius={6} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DepartmentSkeleton() {
+  return <div className="card" aria-label="Loading department data" aria-busy="true" style={{ padding: 20, marginBottom: 24 }}><SkeletonBlock width={190} height={17} style={{ marginBottom: 16 }} />{[0, 1, 2, 3, 4].map(row => <div key={row} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr repeat(4, .7fr)', gap: 14, padding: '12px 4px', borderTop: '1px solid var(--border-color)' }}>{[0, 1, 2, 3, 4, 5].map(cell => <SkeletonBlock key={cell} width={cell < 2 ? '80%' : '65%'} height={12} />)}</div>)}</div>;
+}
+
+function RegistrationSkeleton() {
+  return <div aria-label="Loading registration records" aria-busy="true" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{[0, 1, 2, 3, 4, 5].map(row => <div key={row} style={{ display: 'grid', gridTemplateColumns: '90px minmax(140px, 1.3fr) minmax(150px, 1fr) minmax(120px, .8fr)', gap: 14, alignItems: 'center', padding: '15px 16px', border: '1px solid var(--border-color)', borderRadius: 10, background: 'var(--bg-primary)' }}><SkeletonBlock width={78} height={22} radius={12} /><SkeletonBlock width="72%" height={14} /><SkeletonBlock width="65%" height={12} /><SkeletonBlock width="80%" height={12} /></div>)}</div>;
+}
+
+function RegistrationPanel() {
+  const [filters, setFilters] = useState({ source: 'all', search: '', from: '', to: '', field: '', value: '', limit: 25 });
+  const [applied, setApplied] = useState(filters);
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState({ records: [], total: 0, fieldsBySource: {} });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    getRegistrationLeads({ ...applied, page })
+      .then(data => { if (active) setResult(data); })
+      .catch(err => { if (active) setError(err.message || 'Failed to load registrations'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [applied, page]);
+
+  const sourceFields = filters.source === 'all'
+    ? [...new Set(Object.values(result.fieldsBySource || {}).flat())]
+    : (result.fieldsBySource?.[filters.source] || []);
+  const totalPages = Math.max(Math.ceil((result.total || 0) / Number(applied.limit || 25)), 1);
+  const update = (key, value) => setFilters(current => ({
+    ...current,
+    [key]: value,
+    ...(key === 'source' ? { field: '', value: '' } : {}),
+  }));
+  const apply = () => { setPage(1); setApplied({ ...filters }); };
+  const reset = () => {
+    const clean = { source: 'all', search: '', from: '', to: '', field: '', value: '', limit: 25 };
+    setFilters(clean); setApplied(clean); setPage(1);
+  };
+  const sourceLabel = source => ({ guestuser: 'Guest User', agent: 'Agent', affiliate: 'Affiliate' }[source] || source);
+  const displayValue = value => value === null || value === undefined || value === '' || value === 'NULL' ? '—' : String(value);
+  const preview = record => ({
+    name: record.data.guestName || record.data.AgentName || record.data.affiliateName || record.data.CompanyName || 'Unnamed registration',
+    email: record.data.email || record.data.EmailId || record.data.mainAffiliateEmail || null,
+    phone: record.data.contactNumber || record.data.mobileNo || record.data.MobileNo || record.data.PhoneNo || null,
+    externalId: record.data.GuestUserId || record.data.AgentID || record.data.affiliateId || record.recordId,
+  });
+
+  return (
+    <motion.div variants={fadeInUp}>
+      <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Registration type
+            <select value={filters.source} onChange={e => update('source', e.target.value)} style={{ display: 'block', width: '100%', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
+              <option value="all">All three tables</option><option value="guestuser">Guest Users</option><option value="agent">Agents</option><option value="affiliate">Affiliates</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Search all fields
+            <input value={filters.search} onChange={e => update('search', e.target.value)} onKeyDown={e => e.key === 'Enter' && apply()} placeholder="Name, email, phone, ID…" style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Registered from
+            <input type="date" value={filters.from} onChange={e => update('from', e.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 8, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Registered to
+            <input type="date" value={filters.to} onChange={e => update('to', e.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 8, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Specific field
+            <select value={filters.field} onChange={e => update('field', e.target.value)} style={{ display: 'block', width: '100%', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
+              <option value="">Any field</option>{sourceFields.map(field => <option key={field} value={field}>{field}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Field contains
+            <input value={filters.value} disabled={!filters.field} onChange={e => update('value', e.target.value)} onKeyDown={e => e.key === 'Enter' && apply()} placeholder={filters.field ? `Filter ${filters.field}` : 'Select a field first'} style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }} />
+          </label>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Rows per page
+            <select value={filters.limit} onChange={e => update('limit', Number(e.target.value))} style={{ display: 'block', width: '100%', marginTop: 5, padding: 9, borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--input-bg)', color: 'var(--text-primary)' }}>
+              {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+          <button className="btn btn-primary" onClick={apply} disabled={loading}>{loading ? 'Loading…' : 'Apply filters'}</button>
+          <button className="btn btn-ghost" onClick={reset}>Reset all</button>
+        </div>
+      </div>
+
+      {error && <div className="card" style={{ padding: 16, marginBottom: 20, color: 'var(--red)', borderLeft: '4px solid var(--red)' }}>{error}</div>}
+      <div className="card" style={{ padding: 20 }}>
+        <div className="card-header" style={{ marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Registration records</h3>
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{formatNum(result.total)} records · page {page} of {totalPages}</span>
+        </div>
+        {loading ? <RegistrationSkeleton /> : result.records.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-tertiary)' }}>No registration records match these filters.</div>
+        ) : <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {result.records.map(record => {
+            const info = preview(record);
+            return (
+            <details key={`${record.source}-${record.recordId}`} style={{ border: '1px solid var(--border-color)', borderRadius: 10, background: 'var(--bg-primary)' }}>
+              <summary style={{ padding: '13px 16px', cursor: 'pointer', display: 'grid', gridTemplateColumns: '90px minmax(150px, 1.3fr) minmax(160px, 1fr) minmax(120px, .8fr)', alignItems: 'center', gap: 12, listStyle: 'none' }}>
+                <span style={{ padding: '3px 9px', borderRadius: 20, background: 'rgba(14,165,233,0.12)', color: 'var(--brand-primary)', fontSize: 11, fontWeight: 700 }}>{sourceLabel(record.source)}</span>
+                <span style={{ minWidth: 0 }}><strong style={{ display: 'block', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{info.name}</strong><span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>ID: {displayValue(info.externalId)}</span></span>
+                <span style={{ minWidth: 0, fontSize: 11.5, color: 'var(--text-secondary)' }}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayValue(info.email)}</span><span style={{ display: 'block', marginTop: 2 }}>{displayValue(info.phone)}</span></span>
+                <span style={{ color: 'var(--text-secondary)', fontSize: 12, textAlign: 'right' }}>{displayValue(record.registrationDate)}<span style={{ display: 'block', marginTop: 2, fontSize: 10, color: 'var(--text-tertiary)' }}>Click for all fields</span></span>
+              </summary>
+              <div style={{ borderTop: '1px solid var(--border-color)', padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+                {Object.entries(record.data).map(([key, value]) => (
+                  <div key={key} style={{ minWidth: 0 }}><div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text-tertiary)' }}>{key}</div><div style={{ fontSize: 12.5, overflowWrap: 'anywhere', color: 'var(--text-primary)' }}>{displayValue(value)}</div></div>
+                ))}
+              </div>
+            </details>
+          );})}
+        </div>}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 18 }}>
+          <button className="btn btn-ghost" disabled={page <= 1 || loading} onClick={() => setPage(p => p - 1)}>Previous</button>
+          <button className="btn btn-ghost" disabled={page >= totalPages || loading} onClick={() => setPage(p => p + 1)}>Next</button>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function Leads() {
   const [channel, setChannel] = useState('whatsapp');
+  const [sessionSecondsLeft, setSessionSecondsLeft] = useState(null);
 
   // ── Top filter — drives the KPI strip + trend chart ──
   const [fromDate, setFromDate] = useState(getDaysAgo(7));
@@ -151,11 +305,34 @@ export default function Leads() {
     }
   };
 
-  // Auto-load both sections with their default range on first mount.
+  // Restore the last selected tab and expire this open page when its 30-minute
+  // access session ends, even if the visitor never refreshes or navigates.
   useEffect(() => {
-    load();
-    loadDept();
+    const queryTab = new URLSearchParams(window.location.search).get('tab');
+    const savedTab = window.localStorage.getItem('leads-active-tab');
+    const initialChannel = CHANNEL_TABS[queryTab] ? queryTab : CHANNEL_TABS[savedTab] ? savedTab : 'whatsapp';
+    setChannel(initialChannel);
+    if (initialChannel !== 'registration') {
+      load(initialChannel);
+      loadDept(initialChannel);
+    }
     loadGroups();
+    let expiryTimer;
+    let countdownTimer;
+    fetch('/api/leads-access')
+      .then(response => response.ok ? response.json() : null)
+      .then(access => {
+        if (!access?.expiresAt) return;
+        const updateCountdown = () => setSessionSecondsLeft(Math.max(Math.ceil((access.expiresAt - Date.now()) / 1000), 0));
+        updateCountdown();
+        countdownTimer = window.setInterval(updateCountdown, 1000);
+        expiryTimer = window.setTimeout(() => window.location.assign(window.location.href), Math.max(access.expiresAt - Date.now() + 250, 250));
+      })
+      .catch(() => {});
+    return () => {
+      if (expiryTimer) window.clearTimeout(expiryTimer);
+      if (countdownTimer) window.clearInterval(countdownTimer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -193,6 +370,11 @@ export default function Leads() {
 
   const handleChannel = (ch) => {
     setChannel(ch);
+    window.localStorage.setItem('leads-active-tab', ch);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', ch);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+    if (ch === 'registration') return;
     setSummary(null);
     setTrend(null);
     setError(null);
@@ -240,6 +422,9 @@ export default function Leads() {
   };
 
   const chartData = (trend?.points || []).map(p => ({ period: p.period, leads: p.leads, newUsers: p.newUsers ?? 0, oldUsers: p.oldUsers ?? 0 }));
+  const sessionCountdown = sessionSecondsLeft == null
+    ? '--:--'
+    : `${String(Math.floor(sessionSecondsLeft / 60)).padStart(2, '0')}:${String(sessionSecondsLeft % 60).padStart(2, '0')}`;
 
   const QUICK_PRESETS = () => [
     { label: 'Today', from: getToday(), to: getToday() },
@@ -315,29 +500,39 @@ export default function Leads() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
       {/* Header */}
-      <motion.div variants={fadeInUp} style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Leads</h1>
-        <p style={{ color: 'var(--text-secondary)', margin: '6px 0 0', fontSize: 14 }}>
-          WhatsApp chat leads and email ticket leads by department, live from the source database.
-        </p>
+      <motion.div variants={fadeInUp} className="card" style={{ marginBottom: 18, padding: '22px 24px', background: 'linear-gradient(135deg, var(--bg-card) 0%, color-mix(in srgb, var(--brand-primary) 6%, var(--bg-card)) 100%)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <div style={{ height: 52, minWidth: 112, padding: '5px 10px', borderRadius: 12, display: 'grid', placeItems: 'center', background: '#fff', border: '1px solid var(--border-color)' }}>
+            <img src="/rayna-logo.webp" alt="Rayna Tours" style={{ width: 96, height: 40, objectFit: 'contain', display: 'block' }} />
+          </div>
+          <div>
+            <h1 style={{ fontSize: 25, fontWeight: 700, margin: 0 }}>Leads workspace</h1>
+            <p style={{ color: 'var(--text-secondary)', margin: '5px 0 0', fontSize: 13.5 }}>Explore conversations, email enquiries, and registrations in one place.</p>
+          </div>
+          <span title="You will be asked for the access token again when this timer ends" style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: sessionSecondsLeft === 0 ? 'rgba(220,38,38,0.12)' : 'rgba(34,197,94,0.12)', color: sessionSecondsLeft === 0 ? '#dc2626' : '#16a34a', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+            Secure session · {sessionCountdown}
+          </span>
+        </div>
       </motion.div>
 
       {/* Channel Switcher */}
-      <motion.div variants={fadeInUp} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {Object.entries(CHANNELS).map(([key, c]) => (
-          <button key={key} onClick={() => handleChannel(key)}
+      <motion.div variants={fadeInUp} role="tablist" aria-label="Lead data source" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 20 }}>
+        {Object.entries(CHANNEL_TABS).map(([key, c]) => (
+          <button key={key} role="tab" aria-selected={channel === key} onClick={() => handleChannel(key)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 10,
+              display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderRadius: 12, textAlign: 'left',
               border: `1px solid ${channel === key ? c.color : 'var(--border-color)'}`,
-              background: channel === key ? c.color + '20' : 'var(--bg-card)',
+              background: channel === key ? `color-mix(in srgb, ${c.color} 10%, var(--bg-card))` : 'var(--bg-card)',
               color: channel === key ? c.color : 'var(--text-secondary)',
-              fontWeight: 600, fontSize: 14, cursor: 'pointer',
+              cursor: 'pointer', boxShadow: channel === key ? '0 5px 16px rgba(15,23,42,0.07)' : 'none',
             }}>
-            <c.icon size={16} />
-            {c.label}
+            <span style={{ width: 34, height: 34, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 9, background: channel === key ? `color-mix(in srgb, ${c.color} 16%, transparent)` : 'var(--bg-secondary)' }}><c.icon size={17} /></span>
+            <span style={{ minWidth: 0 }}><span style={{ display: 'block', fontWeight: 700, fontSize: 13.5 }}>{c.label}</span><span style={{ display: 'block', marginTop: 2, fontSize: 10.5, fontWeight: 400, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.description}</span></span>
           </button>
         ))}
       </motion.div>
+
+      {channel === 'registration' ? <RegistrationPanel /> : <>
 
       {/* Filters */}
       <motion.div variants={fadeInUp} className="card" style={{ padding: 20, marginBottom: 24 }}>
@@ -356,12 +551,15 @@ export default function Leads() {
         </motion.div>
       )}
 
+      {loading && !summary && <AnalyticsSkeleton />}
+
       {summary && (
         <>
           {/* KPI Strip */}
           <motion.div variants={fadeInUp} className="card" style={{ padding: 20, marginBottom: 24 }}>
             <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
               {[
+                { icon: cfg.icon, label: cfg.volumeLabel, value: formatNum(summary[cfg.volumeKey]), bg: 'rgba(14,165,233,0.1)', color: cfg.color },
                 { icon: Users, label: 'Total Leads', value: formatNum(summary.totalLeads), bg: 'rgba(14,165,233,0.1)', color: 'var(--brand-primary)' },
                 // New vs returning users (WhatsApp only — mail summary omits these).
                 ...(summary.newUsers != null ? [
@@ -386,7 +584,8 @@ export default function Leads() {
           {/* Trend Chart */}
           <motion.div variants={fadeInUp} className="card" style={{ padding: 20, marginBottom: 24 }}>
             <div className="card-header" style={{ marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: 16 }}>Leads Trend — Total / New / Returning ({granularity}-wise)</h3>
+              <h3 style={{ margin: 0, fontSize: 16 }}>{cfg.label} trend · {granularity}-wise</h3>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{summary.newUsers != null ? 'Total, new, and returning leads' : 'Total unique leads'}</span>
             </div>
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={280}>
@@ -398,8 +597,8 @@ export default function Leads() {
                     contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }}
                   />
                   <Bar dataKey="leads" name="Total Leads" fill="var(--brand-primary)" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="newUsers" name="New Users" fill="#22c55e" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="oldUsers" name="Returning Users" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                  {summary.newUsers != null && <Bar dataKey="newUsers" name="New Users" fill="#22c55e" radius={[6, 6, 0, 0]} />}
+                  {summary.newUsers != null && <Bar dataKey="oldUsers" name="Returning Users" fill="#8b5cf6" radius={[6, 6, 0, 0]} />}
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -462,6 +661,8 @@ export default function Leads() {
           <span style={{ color: 'var(--red)', fontSize: 14 }}>{deptError}</span>
         </motion.div>
       )}
+
+      {deptLoading && deptPeriods.length === 0 && <DepartmentSkeleton />}
 
       {deptPeriods.length > 0 && (
         <motion.div variants={fadeInUp} className="card" style={{ padding: 20, overflow: 'hidden', marginBottom: 24 }}>
@@ -673,6 +874,7 @@ export default function Leads() {
         onClose={() => { setGroupModalOpen(false); setEditGroup(null); }}
         onSaved={loadGroups}
       />
+      </>}
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </motion.div>

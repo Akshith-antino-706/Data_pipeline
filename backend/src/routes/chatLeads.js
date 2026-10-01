@@ -558,6 +558,79 @@ router.get('/mail-department-periods', async (req, res) => {
 //   from = customer WhatsApp number (chats.wa_id), to = Rayna receiver (chats.receiver)
 //   ChatHead's /apis/wa/first_msg returns only the text; we add the first-message
 //   time from the chats table (MIN(created_at) for that conversation).
+// GET /registrations - all fields from the three registration feeds.
+const REGISTRATION_TABLES = {
+  guestuser: 'guestuser_data',
+  agent: 'agent_data',
+  affiliate: 'affiliate_data',
+};
+
+router.get('/registrations', async (req, res) => {
+  try {
+    const source = String(req.query.source || 'all').toLowerCase();
+    if (source !== 'all' && !REGISTRATION_TABLES[source]) {
+      return res.status(400).json({ error: 'Invalid registration source' });
+    }
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
+    const search = String(req.query.search || '').trim().slice(0, 200);
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : '';
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : '';
+    const field = String(req.query.field || '').trim();
+    const value = String(req.query.value || '').trim().slice(0, 200);
+    const selected = source === 'all' ? Object.entries(REGISTRATION_TABLES) : [[source, REGISTRATION_TABLES[source]]];
+    const unionSql = selected.map(([type, table]) => `
+      SELECT '${type}'::text AS source, id::text AS record_id,
+             NULLIF("registrationDate", 'NULL') AS registration_date,
+             CASE WHEN "registrationDate" ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                  THEN LEFT("registrationDate", 10) END AS registration_sort_date,
+             created_at AS ingested_at, to_jsonb(t) AS data
+      FROM ${table} t
+    `).join(' UNION ALL ');
+    const cte = `WITH registrations AS (${unionSql})`;
+
+    const { rows: fieldRows } = await db.query(`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = ANY($1)
+      ORDER BY table_name, ordinal_position
+    `, [Object.values(REGISTRATION_TABLES)]);
+    const fieldsBySource = {};
+    for (const row of fieldRows) {
+      const type = Object.entries(REGISTRATION_TABLES).find(([, table]) => table === row.table_name)?.[0];
+      if (!type) continue;
+      if (!fieldsBySource[type]) fieldsBySource[type] = [];
+      fieldsBySource[type].push(row.column_name);
+    }
+    const allFields = [...new Set(Object.values(fieldsBySource).flat())];
+    if (field && !allFields.includes(field)) return res.status(400).json({ error: 'Invalid filter field' });
+
+    const params = [];
+    const conditions = [];
+    const bind = input => { params.push(input); return `$${params.length}`; };
+    if (search) conditions.push(`data::text ILIKE ${bind(`%${search}%`)}`);
+    if (from) conditions.push(`registration_sort_date >= ${bind(from)}`);
+    if (to) conditions.push(`registration_sort_date <= ${bind(to)}`);
+    if (field && value) conditions.push(`COALESCE(data ->> ${bind(field)}, '') ILIKE ${bind(`%${value}%`)}`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countParams = [...params];
+    const limitBind = bind(limit);
+    const offsetBind = bind((page - 1) * limit);
+    const [{ rows }, countResult] = await Promise.all([
+      db.query(`${cte} SELECT source, record_id, registration_date, data FROM registrations ${where}
+                ORDER BY registration_sort_date DESC NULLS LAST, ingested_at DESC NULLS LAST, record_id DESC
+                LIMIT ${limitBind} OFFSET ${offsetBind}`, params),
+      db.query(`${cte} SELECT COUNT(*)::int AS total FROM registrations ${where}`, countParams),
+    ]);
+    res.json({
+      success: true, page, limit, total: countResult.rows[0]?.total || 0, fieldsBySource,
+      records: rows.map(r => ({ source: r.source, recordId: r.record_id, registrationDate: r.registration_date, data: r.data })),
+    });
+  } catch (err) {
+    console.error('Registration leads list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/first-msg', async (req, res) => {
   try {
     const { from, to } = req.query;
