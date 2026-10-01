@@ -319,8 +319,11 @@ export default function Leads() {
     loadGroups();
     let expiryTimer;
     let countdownTimer;
-    fetch('/leads-access/verify')
-      .then(response => response.ok ? response.json() : null)
+    // The token session (countdown + reload on expiry) only applies to public visitors;
+    // users signed in through /login skip the token (see middleware.js).
+    const signedIn = document.cookie.split('; ').some(c => c.startsWith('rayna-auth='));
+    (signedIn ? Promise.resolve(null) : fetch('/leads-access/verify'))
+      .then(response => response?.ok ? response.json() : null)
       .then(access => {
         if (!access?.expiresAt) return;
         const updateCountdown = () => setSessionSecondsLeft(Math.max(Math.ceil((access.expiresAt - Date.now()) / 1000), 0));
