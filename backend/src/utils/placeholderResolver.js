@@ -274,12 +274,18 @@ export function missingItemFields(v = {}) {
     return s === '' || /^(na|n\/a|null|undefined|none|-)$/i.test(s);
   };
   const pick = (...keys) => { for (const k of keys) { if (!blank(v[k])) return v[k]; } return ''; };
+
+  // Category-aware exemption: VISA products have no destination city (you apply for a
+  // country's visa, there's no "city"), so a missing DESTINATION_CITY must NOT skip them.
+  const category = String(pick('ITEM_CATEGORY', 'item_category', 'service_type')).toLowerCase();
+  const isVisa = /visa/.test(category);
+
   const missing = [];
   if (blank(pick('ITEM_NAME', 'item_name')))                      missing.push('ITEM_NAME');
   if (blank(pick('ITEM_PRICE', 'item_price')))                    missing.push('ITEM_PRICE');
   if (blank(pick('ITEM_IMAGE_URL', 'item_image_url', 'item_image'))) missing.push('ITEM_IMAGE_URL');
   if (blank(pick('CURRENCY', 'currency')))                        missing.push('CURRENCY');
-  if (blank(pick('DESTINATION_CITY', 'destination_city')))        missing.push('DESTINATION_CITY');
+  if (!isVisa && blank(pick('DESTINATION_CITY', 'destination_city'))) missing.push('DESTINATION_CITY');
   if (blank(pick('ITEM_URL', 'item_url', 'PAGE_URL', 'page_url', 'cta_url'))) missing.push('URL');
   return missing;
 }
