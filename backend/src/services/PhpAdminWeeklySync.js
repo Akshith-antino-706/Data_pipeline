@@ -34,6 +34,7 @@
 
 import mysql from 'mysql2/promise';
 import db from '../config/database.js';
+import { normalizeContactType } from '../utils/contactTypes.js';
 
 const SYNC_KEY = 'phpadmin_weekly_sync';
 
@@ -244,7 +245,7 @@ export async function runPhpAdminSync({ triggeredBy = 'cron' } = {}) {
         );
         params2.push(
           email, mobile, r.name || null, r.country_name || null, r.city || null,
-          r.contact_type || null, bookingStatus, geography, isIndian, segments,
+          normalizeContactType(r.contact_type) || r.contact_type || null, bookingStatus, geography, isIndian, segments,
           emailUnsub, rawEmail, rawMobile, mobileCountry
         );
       });

@@ -694,10 +694,15 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // Pulls the last 7 days of affiliate / guest-user / agent registrations (by
 // registration date) from the registration-data API into affiliate_data,
 // guestuser_data and agent_data: new sign-ups inserted, edited ones updated.
+// Then links every registration to unified_contacts (new contacts created; type
+// Affiliate / B2B / B2C) via RegistrationContactSync.
 cron.schedule('30 0 * * *', async () => {
   try {
     const { runRegistrationDataSync } = await import('./src/crons/registrationDataSync.js');
     await runRegistrationDataSync();
+    // Then bring the registrations into unified_contacts (Affiliate / B2B / B2C)
+    const { default: RegistrationContactSync } = await import('./src/services/RegistrationContactSync.js');
+    await RegistrationContactSync.run();
   } catch (err) {
     console.error('[Cron:RegistrationSync] Error:', err.message);
   }

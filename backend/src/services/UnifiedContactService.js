@@ -1,5 +1,6 @@
 import pool from '../config/database.js';
 import { cached, invalidate } from '../config/cache.js';
+import { CONTACT_TYPES, normalizeContactType } from '../utils/contactTypes.js';
 
 /**
  * UnifiedContactService — updated for the new 18-column unified_contacts schema:
@@ -255,6 +256,7 @@ export default class UnifiedContactService {
   static async createContact(fields) {
     const { name, email, mobile, city, country, contact_type, geography, wa_unsubscribe, email_unsubscribe } = fields;
     if (!name && !email && !mobile) throw new Error('At least one of name, email, or phone is required');
+    if (contact_type && !normalizeContactType(contact_type)) throw new Error(`Contact type must be one of ${CONTACT_TYPES.join(', ')}`);
     const { rows } = await pool.query(`
       INSERT INTO unified_contacts
         (name, email, mobile, city, country, contact_type, geography,
@@ -263,7 +265,7 @@ export default class UnifiedContactService {
       RETURNING *
     `, [
       name || null, email || null, mobile || null, city || null,
-      country || null, contact_type || 'B2C', geography || null,
+      country || null, normalizeContactType(contact_type) || 'B2C', geography || null,
       wa_unsubscribe || 'no', email_unsubscribe || 'no',
     ]);
     return rows[0];
@@ -273,6 +275,12 @@ export default class UnifiedContactService {
     const ALLOWED = ['name', 'email', 'mobile', 'city', 'country', 'contact_type', 'wa_unsubscribe', 'email_unsubscribe', 'actual_email', 'actual_mobile', 'mobile_country'];
     const entries = Object.entries(fields).filter(([k]) => ALLOWED.includes(k));
     if (entries.length === 0) throw new Error('No valid fields to update');
+    const typeIdx = entries.findIndex(([k]) => k === 'contact_type');
+    if (typeIdx >= 0) {
+      const type = normalizeContactType(entries[typeIdx][1]);
+      if (!type) throw new Error(`Contact type must be one of ${CONTACT_TYPES.join(', ')}`);
+      entries[typeIdx] = ['contact_type', type];
+    }
     const setClause = entries.map(([k], i) => `${k} = $${i + 1}`).join(', ');
     const values = [...entries.map(([, v]) => v), id];
     const { rows } = await pool.query(
@@ -301,7 +309,7 @@ export default class UnifiedContactService {
     ]);
     return {
       countries: countries.rows.map(r => r.country),
-      contactTypes: ['B2B', 'B2C'],
+      contactTypes: CONTACT_TYPES,
       bookingStatuses: statuses.rows.map(r => r.booking_status),
       productTiers: tiers.rows.map(r => r.product_tier),
       geographies: geos.rows.map(r => r.geography),
@@ -418,15 +426,17 @@ export default class UnifiedContactService {
 
       // Store async (don't block the response)
       pool.query(
-        `UPDATE segmentation_tree_snapshot
-         SET total_contacts  = $1,
-             segment_count   = $2,
-             total_revenue   = $3,
-             status_counts   = $4,
-             breakdown       = $5,
-             revenue_by_type = $6,
-             computed_at     = now()
-         WHERE business_type = $7`,
+        `INSERT INTO segmentation_tree_snapshot
+           (total_contacts, segment_count, total_revenue, status_counts, breakdown, revenue_by_type, business_type, computed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+         ON CONFLICT (business_type) DO UPDATE SET
+           total_contacts  = EXCLUDED.total_contacts,
+           segment_count   = EXCLUDED.segment_count,
+           total_revenue   = EXCLUDED.total_revenue,
+           status_counts   = EXCLUDED.status_counts,
+           breakdown       = EXCLUDED.breakdown,
+           revenue_by_type = EXCLUDED.revenue_by_type,
+           computed_at     = now()`,
         [
           data.totals.total,
           data.totals.segment_count,
@@ -447,8 +457,8 @@ export default class UnifiedContactService {
    * segmentation_tree_snapshot. Called by the nightly cron in server.js
    * and the POST /api/v3/snapshot/refresh manual trigger.
    *
-   * Runs sequentially (B2C → B2B → All) to avoid saturating the DB pool.
-   * After all three are stored, invalidates Redis so the next request
+   * Runs sequentially (B2C → B2B → Affiliate → All) to avoid saturating the DB pool.
+   * After all variants are stored, invalidates Redis so the next request
    * reads fresh data from the table.
    */
   static async refreshSegmentationSnapshot() {
@@ -456,6 +466,7 @@ export default class UnifiedContactService {
     const variants = [
       { businessType: 'B2C', key: 'B2C' },
       { businessType: 'B2B', key: 'B2B' },
+      { businessType: 'Affiliate', key: 'Affiliate' },
       { businessType: undefined, key: 'All' },
     ];
 
@@ -464,15 +475,17 @@ export default class UnifiedContactService {
       const data = await this._computeSegmentationTree({ businessType });
 
       await pool.query(
-        `UPDATE segmentation_tree_snapshot
-         SET total_contacts  = $1,
-             segment_count   = $2,
-             total_revenue   = $3,
-             status_counts   = $4,
-             breakdown       = $5,
-             revenue_by_type = $6,
-             computed_at     = now()
-         WHERE business_type = $7`,
+        `INSERT INTO segmentation_tree_snapshot
+           (total_contacts, segment_count, total_revenue, status_counts, breakdown, revenue_by_type, business_type, computed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+         ON CONFLICT (business_type) DO UPDATE SET
+           total_contacts  = EXCLUDED.total_contacts,
+           segment_count   = EXCLUDED.segment_count,
+           total_revenue   = EXCLUDED.total_revenue,
+           status_counts   = EXCLUDED.status_counts,
+           breakdown       = EXCLUDED.breakdown,
+           revenue_by_type = EXCLUDED.revenue_by_type,
+           computed_at     = now()`,
         [
           data.totals.total,
           data.totals.segment_count,
@@ -489,7 +502,7 @@ export default class UnifiedContactService {
     // Invalidate Redis so next requests read the fresh table data
     await invalidate('dashboard:tree:snapshot:*');
     console.log('[Snapshot] Nightly refresh complete — Redis invalidated');
-    return { refreshed: ['B2C', 'B2B', 'All'], at: new Date().toISOString() };
+    return { refreshed: variants.map(v => v.key), at: new Date().toISOString() };
   }
 
   /**
@@ -510,6 +523,7 @@ export default class UnifiedContactService {
     if (isDate(bookingFrom)) clauses.push(`b.booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' AND to_date(b.booking_date,'DD/MM/YYYY') >= '${bookingFrom}'`);
     if (isDate(bookingTo))   clauses.push(`b.booking_date ~ '^\\d{2}/\\d{2}/\\d{4}$' AND to_date(b.booking_date,'DD/MM/YYYY') <= '${bookingTo}'`);
     const filterAnd = clauses.length ? ' AND ' + clauses.join(' AND ') : '';
+    businessType = normalizeContactType(businessType);
     const btAnd = businessType ? ` AND uc.contact_type = '${businessType}'` : '';
 
     // Optional product filter: restrict to one booking table (else union all six).
@@ -553,6 +567,7 @@ export default class UnifiedContactService {
   }
 
   static async _computeSegmentationTree({ businessType, dateFrom, dateTo } = {}) {
+    businessType = normalizeContactType(businessType);
     const btWhere = businessType ? `WHERE contact_type = '${businessType}'` : '';
 
     // Date filter for revenue queries (applied to bill_date)

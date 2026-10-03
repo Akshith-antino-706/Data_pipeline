@@ -2,6 +2,7 @@ import { Router } from 'express';
 import UnifiedContactService from '../services/UnifiedContactService.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
 import { invalidate } from '../config/cache.js';
+import { parseBusinessType } from '../utils/contactTypes.js';
 
 const router = Router();
 
@@ -22,16 +23,34 @@ router.post('/sync', async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /api/v3/unified-contacts/registration-sync — link affiliate / agent / guest registrations
+// to contacts now (the cron does this daily after the 00:30 registration sync).
+//   ?full=1    every registration, not just unlinked / recently changed ones
+//   ?dryRun=1  report what would change, write nothing (waits for the result)
+router.post('/registration-sync', async (req, res, next) => {
+  try {
+    const { default: RegistrationContactSync } = await import('../services/RegistrationContactSync.js');
+    const full = req.query.full === '1' || req.query.full === 'true';
+    const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+    if (RegistrationContactSync.isRunning()) return res.json({ success: true, started: false, message: 'Already running' });
+    if (dryRun) return res.json({ success: true, ...(await RegistrationContactSync.run({ full, dryRun })) });
+    RegistrationContactSync.run({ full })
+      .then(() => invalidate('dashboard:*'))
+      .catch(() => { /* logged + recorded in sync_metadata */ });
+    res.status(202).json({ success: true, started: true });
+  } catch (err) { next(err); }
+});
+
 router.get('/stats', async (req, res, next) => {
   try {
-    const data = await UnifiedContactService.getStats({ businessType: req.query.businessType });
+    const data = await UnifiedContactService.getStats({ businessType: parseBusinessType(req.query.businessType) });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
 
 router.get('/filters', async (req, res, next) => {
   try {
-    const data = await UnifiedContactService.getFilterOptions({ businessType: req.query.businessType });
+    const data = await UnifiedContactService.getFilterOptions({ businessType: parseBusinessType(req.query.businessType) });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -82,8 +101,8 @@ router.get('/', async (req, res, next) => {
     const { sortBy, sortDir } = req.query;
     const source = req.query.source || undefined;
     const country = req.query.country || undefined;
-    const contactType = req.query.contactType || undefined;
-    const businessType = req.query.businessType || undefined;
+    const contactType = parseBusinessType(req.query.contactType);
+    const businessType = parseBusinessType(req.query.businessType);
     const bookingStatus = req.query.bookingStatus || undefined;
     const productTier = req.query.productTier || undefined;
     const geography = req.query.geography || undefined;
@@ -122,7 +141,7 @@ router.get('/segment-activity', async (req, res, next) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const segment = req.query.segment || undefined;
-    const businessType = req.query.businessType || undefined;
+    const businessType = parseBusinessType(req.query.businessType);
     const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
@@ -133,7 +152,7 @@ router.get('/segment-activity/download', async (req, res, next) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const segment = req.query.segment || undefined;
-    const businessType = req.query.businessType || undefined;
+    const businessType = parseBusinessType(req.query.businessType);
     const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType });
     const rows = data.logs;
 
@@ -152,8 +171,9 @@ router.get('/segment-activity/download', async (req, res, next) => {
 router.get('/segment-customers/download', async (req, res, next) => {
   try {
     const { bookingStatus, productTier, geography } = req.query;
+    const businessType = parseBusinessType(req.query.businessType);
     const result = await UnifiedContactService.getSegmentCustomers({
-      bookingStatus, productTier, geography, page: 1, limit: 10000,
+      bookingStatus, productTier, geography, businessType, page: 1, limit: 10000,
     });
 
     const header = 'Name,Email,Mobile,Country,Contact Type,Status,Tier,Geography,Sources';
@@ -170,7 +190,8 @@ router.get('/segment-customers/download', async (req, res, next) => {
 // GET /api/v3/unified-contacts/segmentation-tree — 3-step decision tree dashboard data
 router.get('/segmentation-tree', async (req, res, next) => {
   try {
-    const { businessType, dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product } = req.query;
+    const { dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product } = req.query;
+    const businessType = parseBusinessType(req.query.businessType);
     const data = await UnifiedContactService.getSegmentationTree({ businessType, dateFrom, dateTo, travelFrom, travelTo, bookingFrom, bookingTo, product });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
@@ -187,7 +208,8 @@ router.post('/recompute-segmentation', async (_req, res, next) => {
 // GET /api/v3/unified-contacts/segment-customers — customers for a specific segment combo
 router.get('/segment-customers', async (req, res, next) => {
   try {
-    const { bookingStatus, productTier, geography, businessType, page, limit, search } = req.query;
+    const { bookingStatus, productTier, geography, page, limit, search } = req.query;
+    const businessType = parseBusinessType(req.query.businessType);
     const result = await UnifiedContactService.getSegmentCustomers({
       bookingStatus, productTier, geography, businessType,
       page: parseInt(page) || 1, limit: parseInt(limit) || 25, search,

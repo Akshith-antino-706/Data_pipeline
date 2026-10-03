@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import db, { query } from '../config/database.js';
+import { normalizeContactType } from '../utils/contactTypes.js';
 
 /**
  * BookingAffinityService — each customer's top 3 services and top 3 products,
@@ -201,7 +202,7 @@ export default class BookingAffinityService {
       await step('Customers', `
         CREATE TEMP TABLE _aff_customer AS
         SELECT b.unified_id, uc.name, uc.email, uc.mobile, COALESCE(NULLIF(uc.country, ''), uc.mobile_country) AS country,
-               CASE WHEN UPPER(uc.contact_type) = 'B2B' THEN 'B2B' ELSE 'B2C' END AS contact_type,
+               CASE UPPER(uc.contact_type) WHEN 'B2B' THEN 'B2B' WHEN 'AFFILIATE' THEN 'Affiliate' ELSE 'B2C' END AS contact_type,
                ${SUFFIXES.map(s => `COUNT(DISTINCT b.bill_key) FILTER (WHERE ${booked(s)})::int AS bookings_${s}`).join(',\n               ')},
                COALESCE(SUM(b.revenue) FILTER (WHERE b.active), 0) AS revenue_all,
                MIN(b.booking_day) FILTER (WHERE b.active) AS first_booking_date,
@@ -372,7 +373,7 @@ export default class BookingAffinityService {
 
   /**
    * WHERE clause shared by every list on the page.
-   *   businessType  'B2B' | 'B2C' | anything else = both
+   *   businessType  'B2B' | 'B2C' | 'Affiliate' | anything else = all
    *   excludeBulk   leave out bulk / internal accounts (50+ bookings or a Rayna email)
    *   period        only customers with a booking in the window
    *   view=service + service   #1 service = service
@@ -383,7 +384,8 @@ export default class BookingAffinityService {
     const params = [];
     const where = [];
     const add = (sql, value) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
-    if (businessType === 'B2B' || businessType === 'B2C') add('contact_type = ?', businessType);
+    const type = normalizeContactType(businessType);
+    if (type) add('contact_type = ?', type);
     if (excludeBulk) where.push('NOT is_bulk');
     const w = PERIODS[period];
     if (w && w !== 'all') where.push(`bookings_${w} > 0`);

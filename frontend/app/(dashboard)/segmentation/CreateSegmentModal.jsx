@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { X, Plus, Trash2, Filter, Loader2, Users, Search } from 'lucide-react';
 import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics, searchContactsByEmail, searchAffinityProducts } from '@/lib/api';
+import { CONTACT_TYPES } from '@/lib/contactTypes';
 
 const FIELD_CONFIG = {
   email: {
@@ -30,7 +31,7 @@ const FIELD_CONFIG = {
   },
   contact_type: {
     label: 'Contact Type', type: 'single-select',
-    options: ['B2B', 'B2C'],
+    options: CONTACT_TYPES,
     defaultOperator: 'eq',
   },
   country: {

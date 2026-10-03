@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity } from '@/lib/api';
+import { CONTACT_TYPES } from '@/lib/contactTypes';
 import {
   ArrowLeft, Globe, MessageSquare, Mail, Phone, Building2,
   Calendar, Clock, Ticket, DollarSign, Plane, Hotel, MessageCircle,
@@ -241,7 +242,7 @@ export default function ContactProfile() {
               <EditField label="City"    value={editForm.city}    onChange={v => setField('city', v)} />
               <EditField label="Country" value={editForm.country} onChange={v => setField('country', v)} />
               <EditSelect label="Type" value={editForm.contact_type} onChange={v => setField('contact_type', v)}
-                options={[{ value: 'B2C', label: 'B2C' }, { value: 'B2B', label: 'B2B' }]} />
+                options={CONTACT_TYPES.map(t => ({ value: t, label: t }))} />
               <EditSelect label="Email Status" value={editForm.email_unsubscribe} onChange={v => setField('email_unsubscribe', v)}
                 options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
               <EditSelect label="WA Status" value={editForm.wa_unsubscribe} onChange={v => setField('wa_unsubscribe', v)}

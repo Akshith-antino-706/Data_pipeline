@@ -1372,10 +1372,11 @@ export default function Journeys() {
   // ── Filtered Journeys ─────────────────────────────────────────
   const filteredJourneys = useMemo(() => {
     let filtered = journeys;
-    // B2B/B2C scope filter.
-    //   'All'  → show every journey (B2C + B2B).
-    //   'B2B'  → journeys whose NAME or SEGMENT mentions B2B (e.g. "All B2B users").
-    //   'B2C'  → everything that isn't B2B.
+    // Scope filter.
+    //   'All'       → show every journey.
+    //   'B2B'       → journeys whose NAME or SEGMENT mentions B2B (e.g. "All B2B users").
+    //   'Affiliate' → journeys whose NAME or SEGMENT mentions Affiliate.
+    //   'B2C'       → everything that is neither B2B nor Affiliate.
     // Classify by name OR segment containing "B2B" (substring, not startsWith — so segments
     // like "All B2B users" are caught; the old startsWith only matched names, which hid
     // B2B-segment journeys whose title didn't literally start with "B2B").
@@ -1384,7 +1385,10 @@ export default function Journeys() {
       const name = (j.name || '').toUpperCase();
       const seg = (j.segment_name || '').toUpperCase();
       const isB2B = name.includes('B2B') || seg.includes('B2B');
-      return businessType === 'B2B' ? isB2B : !isB2B;
+      const isAffiliate = name.includes('AFFILIATE') || seg.includes('AFFILIATE');
+      if (businessType === 'B2B') return isB2B;
+      if (businessType === 'Affiliate') return isAffiliate;
+      return !isB2B && !isAffiliate;
     });
     if (statusFilter !== 'all') {
       filtered = filtered.filter(j => j.status === statusFilter);

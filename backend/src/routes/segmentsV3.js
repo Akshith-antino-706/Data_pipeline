@@ -46,8 +46,8 @@ router.get('/general', async (req, res, next) => {
     const { query } = await import('../config/database.js');
     const { getRedisClient } = await import('../config/redis.js');
 
-    const businessType = req.query.businessType === 'B2B' || req.query.businessType === 'B2C'
-      ? req.query.businessType : null;
+    const { parseBusinessType } = await import('../utils/contactTypes.js');
+    const businessType = parseBusinessType(req.query.businessType) || null;
     const btParams = businessType ? [businessType] : [];
     const btAnd = businessType ? `AND uc.contact_type = $1` : '';
     const btWhere = businessType ? `WHERE contact_type = $1` : '';

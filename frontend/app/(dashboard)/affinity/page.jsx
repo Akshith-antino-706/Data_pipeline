@@ -11,6 +11,7 @@ import {
   getAffinitySummary, getAffinityTopProducts, getAffinityCustomers, getContactAffinity, rebuildAffinity, downloadAffinityCSV,
 } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
+import { CONTACT_TYPES, contactTypeColor } from '@/lib/contactTypes';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -117,7 +118,7 @@ function RankCell({ title, score, bookings }) {
 function TypeBadges({ contactType, isBulk }) {
   return (
     <span style={{ display: 'inline-flex', gap: 4 }}>
-      <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: contactType === 'B2B' ? 'rgba(249,115,22,0.12)' : 'rgba(14,165,233,0.12)', color: contactType === 'B2B' ? 'var(--orange)' : 'var(--brand-primary)' }}>{contactType}</span>
+      <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: contactTypeColor(contactType).bg, color: contactTypeColor(contactType).fg }}>{contactType}</span>
       {isBulk && <span title="50+ bookings in total (reseller, OTA, corporate) or a Rayna staff email" style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(100,116,139,0.15)', color: 'var(--text-secondary)' }}>Bulk</span>}
     </span>
   );
@@ -337,7 +338,7 @@ export default function AffinityPage() {
   const thStyle = { padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', background: 'var(--bg-secondary)', borderBottom: '2px solid var(--border-color)', color: 'var(--text-secondary)', position: 'sticky', top: 0, zIndex: 1 };
   const tdStyle = { padding: '8px 12px', whiteSpace: 'nowrap', verticalAlign: 'top' };
   const periodLabel = PERIOD_OPTIONS.find(p => p.value === period)?.label;
-  const scopeLabel = businessType === 'B2B' || businessType === 'B2C' ? businessType : 'B2C + B2B';
+  const scopeLabel = CONTACT_TYPES.includes(businessType) ? businessType : CONTACT_TYPES.join(' + ');
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer}>

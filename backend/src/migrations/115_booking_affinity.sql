@@ -187,7 +187,7 @@ CREATE TABLE IF NOT EXISTS user_affinity_top3 (
   email               TEXT,
   mobile              TEXT,
   country             TEXT,
-  contact_type        TEXT    NOT NULL,               -- B2B | B2C (from unified_contacts)
+  contact_type        TEXT    NOT NULL,               -- B2B | B2C | Affiliate (from unified_contacts)
   is_bulk             BOOLEAN NOT NULL DEFAULT FALSE,   -- 50+ bookings or Rayna staff email
   bookings_1d         INTEGER NOT NULL DEFAULT 0,
   bookings_7d         INTEGER NOT NULL DEFAULT 0,

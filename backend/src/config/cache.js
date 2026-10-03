@@ -11,10 +11,13 @@ function getRedis() {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
       lazyConnect: true,
+      // While Redis is unreachable, commands fail at once (callers fall back to
+      // computing) instead of queueing forever and hanging the request.
+      enableOfflineQueue: false,
     });
+    _redis.on('error', () => {});  // reconnects on its own; errors are handled per call
     _redis.connect().catch(() => {
-      console.warn('[Cache] Redis unavailable — running without cache');
-      _redis = null;
+      console.warn('[Cache] Redis unavailable — running without cache until it connects');
     });
   }
   return _redis;

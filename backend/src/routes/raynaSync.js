@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import RaynaSyncService from '../services/RaynaSyncService.js';
 import pool, { query } from '../config/database.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
+import { parseBusinessType } from '../utils/contactTypes.js';
 import DailyBillingSync from '../services/DailyBillingSync.js';
 
 const router = Router();
@@ -71,10 +72,15 @@ router.get('/status', async (_req, res) => {
 // rayna_flights, rayna_packages, rayna_others, chats, unified_contacts.
 router.get('/mapping-stats', async (req, res) => {
   try {
-    const bt = (req.query.businessType || '').toUpperCase();
+    const bt = parseBusinessType(req.query.businessType);
     let UC_FILTER, PROFIT_FILTER;
     if (bt === 'B2B')      { UC_FILTER = "contact_type = 'B2B'"; PROFIT_FILTER = "is_b2b = '1'"; }
     else if (bt === 'B2C') { UC_FILTER = "contact_type = 'B2C'"; PROFIT_FILTER = "is_b2b = '0'"; }
+    // Bookings carry no affiliate flag — count the bookings of Affiliate contacts
+    else if (bt === 'Affiliate') {
+      UC_FILTER = "contact_type = 'Affiliate'";
+      PROFIT_FILTER = "unified_id IN (SELECT id FROM unified_contacts WHERE contact_type = 'Affiliate')";
+    }
     else                   { UC_FILTER = "1=1";                    PROFIT_FILTER = "1=1"; }
 
     // Overall stats from unified_contacts

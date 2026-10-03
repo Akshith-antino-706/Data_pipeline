@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { RequireAuth } from './require-auth';
+import { SCOPES } from '@/lib/contactTypes';
 
 const NAV = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -55,7 +56,7 @@ function BusinessTypeSwitcher({ collapsed }) {
     <div className="biz-switcher">
       <span className="biz-switcher-label">Scope</span>
       <div className="biz-switcher-pills">
-        {['All', 'B2C', 'B2B'].map(type => (
+        {SCOPES.map(type => (
           <button
             key={type}
             onClick={() => setBusinessType(type)}
