@@ -19,6 +19,7 @@ import amqp from 'amqplib';
 import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
 import { ingestGiveawayEvent } from './giveawayIngest.js';
+import { SendTrackService } from '../SendTrackService.js';   // log direct sends to email_send_log
 
 // The producer publishes `giveaway.email.<env>.<type>` (4 segments). A topic `*` matches exactly
 // ONE segment, so the old `giveaway.email.*` matched nothing and the exchange silently dropped
@@ -114,8 +115,9 @@ async function handle(msg) {
   // Runs for EVERY valid message, independent of send-enabled, and safe on redelivery
   // (contact upsert + event insert + journey entry are all idempotent).
   let journeyHandled = 0;
+  let unifiedId = null;
   try {
-    const { unifiedId } = await ingestGiveawayEvent(p);
+    ({ unifiedId } = await ingestGiveawayEvent(p));
     if (unifiedId) {
       const { default: GiveawayJourneyService } = await import('../GiveawayJourneyService.js');
       journeyHandled = (await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id })) || 0;
@@ -151,6 +153,17 @@ async function handle(msg) {
     return _ch.ack(msg);
   }
 
+  // Log the direct send to email_send_log too (not just the Redis events list), so giveaway
+  // emails are visible in the Send Log screen like every other channel. source='giveaway'.
+  let logId = null;
+  const _started = Date.now();
+  try {
+    logId = await SendTrackService.logSend({
+      unifiedId, email: p.to.email, contactName: p.to.name || null,
+      subject: p.subject, templateLabel: `Giveaway: ${p.type}`, source: 'giveaway',
+    });
+  } catch { /* logging must never block the send */ }
+
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -163,6 +176,7 @@ async function handle(msg) {
         headers: { 'X-Giveaway-Email-Id': String(p.id) },  // for bounce reconciliation
       });
       console.log(`${tag} ✅ SENT <${p.to.email}> msgId=${info.messageId}`);
+      if (logId) await SendTrackService.markSent(logId, { externalId: info.messageId, provider: 'giveaway-smtp', durationMs: Date.now() - _started }).catch(() => {});
       await record({ ...meta, outcome: 'sent', msgId: info.messageId });
       return _ch.ack(msg);
     } catch (err) {
@@ -171,6 +185,7 @@ async function handle(msg) {
     }
   }
   // all retries failed → release the claim so a DLQ replay can retry, then DLQ (no requeue)
+  if (logId) await SendTrackService.markFailed(logId, { error: lastErr?.message, provider: 'giveaway-smtp', durationMs: Date.now() - _started }).catch(() => {});
   await redis.del(`giveaway:email:${p.id}`).catch(() => {});
   console.error(`${tag} ❌ SEND FAILED after ${MAX_RETRIES} tries: ${lastErr?.message} — nack→DLQ`);
   await record({ ...meta, outcome: 'failed', reason: lastErr?.message });
