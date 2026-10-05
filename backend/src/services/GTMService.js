@@ -261,6 +261,31 @@ window.addEventListener('scroll', function() {
       }
     }
 
+    // ── Image enrichment (new events only — no backfill of past rows) ──
+    // Some events (notably add_to_cart / begin_checkout) arrive with no product image in the
+    // payload. Our products catalog has image_url for every product, so fill it from there by
+    // itemId when the payload's image is empty. Mutates `body`/`ecommerceData` so BOTH the
+    // stored raw_payload (p.imageUrl) and ecommerce_data (items[0].image_url) carry it — which
+    // is exactly what the send-time resolver / skip-guard read (ITEM_IMAGE_URL).
+    try {
+      const _items    = Array.isArray(ecommerceData?.items) ? ecommerceData.items : [];
+      const _firstItm = _items[0] || null;
+      const _hasImg   = (body.imageUrl && String(body.imageUrl).trim())
+                        || (_firstItm && _firstItm.image_url && String(_firstItm.image_url).trim());
+      const _lookupId = body.itemId ?? _firstItm?.item_id ?? null;
+      if (!_hasImg && _lookupId != null && String(_lookupId).trim() !== '') {
+        const { rows: [prod] } = await db.query(
+          `SELECT image_url FROM products WHERE product_id::text = $1 AND COALESCE(image_url, '') <> '' LIMIT 1`,
+          [String(_lookupId)]
+        );
+        if (prod?.image_url) {
+          body.imageUrl = prod.image_url;                                   // → raw_payload.imageUrl
+          for (const it of _items) { if (!it.image_url) it.image_url = prod.image_url; }  // → ecommerce_data items
+          console.log(`[GTM] enriched imageUrl from catalog for item ${_lookupId} (${eventName})`);
+        }
+      }
+    } catch (e) { console.warn('[GTM] image enrichment skipped:', e.message); }
+
     const { rows: [event] } = await db.query(`
       INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload, journey_id, node_id)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
