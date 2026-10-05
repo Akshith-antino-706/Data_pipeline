@@ -113,14 +113,26 @@ async function handle(msg) {
   // then real-time enrol into any matching giveaway journey (segment-gated, like GTM).
   // Runs for EVERY valid message, independent of send-enabled, and safe on redelivery
   // (contact upsert + event insert + journey entry are all idempotent).
+  let journeyHandled = 0;
   try {
     const { unifiedId } = await ingestGiveawayEvent(p);
     if (unifiedId) {
       const { default: GiveawayJourneyService } = await import('../GiveawayJourneyService.js');
-      await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id });
+      journeyHandled = (await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id })) || 0;
     }
   } catch (e) {
     console.error(`${tag} ⚠️ ingest/journey failed (continuing): ${e.message}`);
+  }
+
+  // 1c. DEDUP THE EMAIL: when a giveaway JOURNEY handles this contact (active journey for this
+  // type + segment member), the journey's template email is the ONLY email we want — so DO NOT
+  // also send the producer's direct email (that was the duplicate). We only fall through to the
+  // direct send below when NO journey handles the contact (fallback, so they're not left without
+  // any email).
+  if (journeyHandled > 0) {
+    console.log(`${tag} ✉️ handled by ${journeyHandled} giveaway journey(s) — skipping direct send (journey email only)`);
+    await record({ ...meta, outcome: 'journey_handled' });
+    return _ch.ack(msg);
   }
 
   // 2. idempotency — claim BEFORE sending; duplicate redelivery is a no-op

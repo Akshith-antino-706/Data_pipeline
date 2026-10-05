@@ -20,8 +20,15 @@ class GiveawayJourneyService {
   /**
    * @param {{ giveawayType: string, unifiedId: number|string, eventId: string }} args
    */
+  /**
+   * Returns the number of giveaway journeys this contact is HANDLED by (active journey for this
+   * type + segment member). The consumer uses this to decide whether to ALSO send the producer's
+   * direct email: when ≥1 journey handles the contact, the journey owns the email and the direct
+   * send is skipped (no duplicate). Eligibility is used (not "newly-created entry") so the count
+   * is stable across RabbitMQ redeliveries.
+   */
   static async onEvent({ giveawayType, unifiedId, eventId }) {
-    if (!giveawayType || !unifiedId) return;
+    if (!giveawayType || !unifiedId) return 0;
 
     const { rows: journeys } = await db.query(
       `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
@@ -32,12 +39,13 @@ class GiveawayJourneyService {
           AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
       [giveawayType]
     );
-    if (!journeys.length) return;
+    if (!journeys.length) return 0;
 
     const { default: GtmJourneyService }       = await import('./GtmJourneyService.js');
     const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
     const itemKey = String(eventId ?? '_noitem');   // unique per giveaway event → per-event fan-out
 
+    let handled = 0;
     for (const j of journeys) {
       try {
         // SEGMENT GUARD (identical to GTM): the trigger alone must NOT grant entry — the
@@ -54,11 +62,15 @@ class GiveawayJourneyService {
           journeyId: j.journey_id, unifiedId, itemId: itemKey, eventId,
           firstNodeId, entryDelayMs: firstStep ? firstStep.delayMs : 0,
         });
+        // The contact is eligible for this journey → it owns the email (whether `id` is a new
+        // entry or null because an idempotent re-entry already existed).
+        handled++;
         if (id) console.log(`[GiveawayJourney ${j.journey_id}] entered uid=${unifiedId} event=${itemKey} @ ${firstNodeId} delay=${Math.round((firstStep?.delayMs||0)/1000)}s (${giveawayType})`);
       } catch (e) {
         console.error(`[GiveawayJourney ${j.journey_id}] onEvent failed: ${e.message}`);
       }
     }
+    return handled;
   }
 }
 
