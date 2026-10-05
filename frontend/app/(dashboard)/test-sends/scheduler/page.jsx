@@ -7,6 +7,7 @@ import {
   Search, X, ClipboardList, Square, Cpu, Plus, ArrowLeft, Filter, CheckSquare,
 } from 'lucide-react';
 import Link from 'next/link';
+import { contactTypeColor } from '@/lib/contactTypes';
 
 const DAY6_DESTINATIONS = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
 
@@ -387,8 +388,8 @@ export default function SchedulerPage() {
                         <span style={{
                           fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
                           letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
-                          background: c.contact_type === 'B2B' ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)',
-                          color:      c.contact_type === 'B2B' ? '#3b82f6'               : '#a855f7',
+                          background: contactTypeColor(c.contact_type).bg,
+                          color:      contactTypeColor(c.contact_type).fg,
                         }}>
                           {c.contact_type}
                         </span>

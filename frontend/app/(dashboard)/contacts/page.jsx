@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getUnifiedContacts, getUnifiedStats, getUnifiedFilters, createUnifiedContact, deleteUnifiedContact } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
+import { CONTACT_TYPES, CONTACT_TYPE_LABELS, SCOPE_DESCRIPTIONS } from '@/lib/contactTypes';
 import {
   Users, Search, Ticket,
   ArrowUpDown, ChevronLeft, ChevronRight, Eye,
@@ -80,7 +81,7 @@ export default function UnifiedContacts() {
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
   useEffect(() => {
-    // Stats + filter options both scope to the current B2B/B2C selection
+    // Stats + filter options both scope to the current B2C / B2B / Affiliate selection
     const btParam = businessType === 'All' ? {} : { businessType };
     getUnifiedStats(btParam).then(res => setStats(res.data)).catch(() => {});
     getUnifiedFilters(btParam).then(res => setFilterOptions(res.data)).catch(() => {});
@@ -152,7 +153,7 @@ export default function UnifiedContacts() {
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, padding: '3px 10px', borderRadius: 12, background: '#C9A96E', color: '#fff' }}>{businessType}</span>
           </div>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-            {businessType === 'B2B' ? 'B2B partners & agents' : 'B2C end-customers'} &middot; across chats, tickets, CRM &amp; bookings &middot; {formatNum(total)} records
+            {SCOPE_DESCRIPTIONS[businessType] || SCOPE_DESCRIPTIONS.All} &middot; across chats, tickets, CRM &amp; bookings &middot; {formatNum(total)} records
           </p>
         </div>
         <button className="btn btn-primary" onClick={openAddModal}
@@ -427,7 +428,7 @@ export default function UnifiedContacts() {
                   <AddField label="City" value={addForm.city} onChange={v => setAddField('city', v)} placeholder="e.g. Dubai" />
                   <AddField label="Country" value={addForm.country} onChange={v => setAddField('country', v)} placeholder="e.g. United Arab Emirates" />
                   <AddSelect label="Contact Type" value={addForm.contact_type} onChange={v => setAddField('contact_type', v)}
-                    options={[{ value: 'B2C', label: 'B2C — Individual' }, { value: 'B2B', label: 'B2B — Business' }]} />
+                    options={CONTACT_TYPES.map(t => ({ value: t, label: CONTACT_TYPE_LABELS[t] }))} />
                   <AddSelect label="Geography" value={addForm.geography} onChange={v => setAddField('geography', v)}
                     options={[{ value: '', label: 'Unknown' }, { value: 'LOCAL', label: 'Local (UAE)' }, { value: 'INTERNATIONAL', label: 'International' }]} />
                   <AddSelect label="WA Status" value={addForm.wa_unsubscribe} onChange={v => setAddField('wa_unsubscribe', v)}

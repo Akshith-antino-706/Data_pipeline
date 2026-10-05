@@ -8,6 +8,7 @@ import {
   MousePointer, Eye, ArrowRight, Link2, Filter, ChevronDown,
 } from 'lucide-react';
 import Link from 'next/link';
+import { contactTypeColor } from '@/lib/contactTypes';
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.06 } } };
@@ -460,8 +461,8 @@ export default function TestSends() {
                         <span style={{
                           fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
                           letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
-                          background: c.contact_type === 'B2B' ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)',
-                          color:      c.contact_type === 'B2B' ? '#3b82f6'               : '#a855f7',
+                          background: contactTypeColor(c.contact_type).bg,
+                          color:      contactTypeColor(c.contact_type).fg,
                         }}>
                           {c.contact_type}
                         </span>

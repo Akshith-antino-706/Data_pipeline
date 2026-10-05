@@ -57,9 +57,23 @@ class UnifiedContactBuilder {
     const linked    = await this.linkRaynaTables();
     const segmented = await this.computeSegmentation();
 
+    // The rebuild recreates contacts from bookings only (B2B/B2C) with new ids, so
+    // re-link the website registrations: Affiliate types and registration-only
+    // contacts come back, and the registration rows point at the new ids.
+    let registrations = null;
+    try {
+      for (const t of ['affiliate_data', 'agent_data', 'guestuser_data']) {
+        await query(`UPDATE ${t} SET unified_id = NULL WHERE unified_id IS NOT NULL`);
+      }
+      const { default: RegistrationContactSync } = await import('./RegistrationContactSync.js');
+      registrations = await RegistrationContactSync.run({ full: true });
+    } catch (err) {
+      console.error('[UCB] Registration re-link failed (runs again at 00:30):', err.message);
+    }
+
     const ms = Date.now() - t0;
     console.log(`[UCB] Rebuild complete in ${(ms / 1000).toFixed(1)}s`);
-    return { extracted, linked, segmented, durationMs: ms };
+    return { extracted, linked, segmented, registrations, durationMs: ms };
   }
 
   // ─── Step 1: Extract & dedup contacts ────────────────────

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect } from 'react';
+import { SCOPES } from '@/lib/contactTypes';
 
 const BusinessTypeContext = createContext();
 
@@ -14,7 +15,7 @@ export function BusinessTypeProvider({ children }) {
   useEffect(() => {
     try {
       const stored = localStorage.getItem('business-type');
-      if (stored) setBusinessType(stored);
+      if (SCOPES.includes(stored)) setBusinessType(stored);
     } catch {}
   }, []);
 
