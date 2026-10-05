@@ -270,21 +270,36 @@ window.addEventListener('scroll', function() {
     try {
       const _items    = Array.isArray(ecommerceData?.items) ? ecommerceData.items : [];
       const _firstItm = _items[0] || null;
-      const _hasImg   = (body.imageUrl && String(body.imageUrl).trim())
-                        || (_firstItm && _firstItm.image_url && String(_firstItm.image_url).trim());
       const _lookupId = body.itemId ?? _firstItm?.item_id ?? null;
-      if (!_hasImg && _lookupId != null && String(_lookupId).trim() !== '') {
+      const _blank    = (v) => !(v != null && String(v).trim() !== '');
+      // Which fields are the payload missing?
+      const _needImg = _blank(body.imageUrl) && _blank(_firstItm?.image_url);
+      const _needCur = _blank(body.currency) && _blank(ecommerceData?.currency) && _blank(_firstItm?.currency);
+
+      if ((_needImg || _needCur) && _lookupId != null && String(_lookupId).trim() !== '') {
+        // ONE catalog lookup fills whatever is missing — values come FROM the catalog, never hardcoded.
         const { rows: [prod] } = await db.query(
-          `SELECT image_url FROM products WHERE product_id::text = $1 AND COALESCE(image_url, '') <> '' LIMIT 1`,
+          `SELECT image_url, currency FROM products WHERE product_id::text = $1 LIMIT 1`,
           [String(_lookupId)]
         );
-        if (prod?.image_url) {
-          body.imageUrl = prod.image_url;                                   // → raw_payload.imageUrl
-          for (const it of _items) { if (!it.image_url) it.image_url = prod.image_url; }  // → ecommerce_data items
-          console.log(`[GTM] enriched imageUrl from catalog for item ${_lookupId} (${eventName})`);
+        if (prod) {
+          if (_needImg && prod.image_url) {
+            body.imageUrl = prod.image_url;                                   // → raw_payload.imageUrl
+            for (const it of _items) { if (_blank(it.image_url)) it.image_url = prod.image_url; }  // → ecommerce_data items
+          }
+          if (_needCur && prod.currency) {
+            body.currency = prod.currency;                                    // → raw_payload.currency (p.currency)
+            if (ecommerceData) ecommerceData.currency = ecommerceData.currency || prod.currency;  // → ecommerce_data.currency
+            for (const it of _items) { if (_blank(it.currency)) it.currency = prod.currency; }     // → items[].currency
+          }
+          if ((_needImg && prod.image_url) || (_needCur && prod.currency)) {
+            console.log(`[GTM] catalog-enriched item ${_lookupId} (${eventName})`
+              + (_needImg && prod.image_url ? ' +image' : '')
+              + (_needCur && prod.currency ? ` +currency(${prod.currency})` : ''));
+          }
         }
       }
-    } catch (e) { console.warn('[GTM] image enrichment skipped:', e.message); }
+    } catch (e) { console.warn('[GTM] catalog enrichment skipped:', e.message); }
 
     const { rows: [event] } = await db.query(`
       INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload, journey_id, node_id)
