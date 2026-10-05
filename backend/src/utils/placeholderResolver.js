@@ -79,6 +79,11 @@ const ALIASES = {
 // Per-key defaults when the resolved value is empty (otherwise → blank, never literal {{}})
 const DEFAULTS = { USER_FIRST_NAME: 'there' };
 
+// Some product/visa image URLs contain raw spaces (e.g. ".../Saudi Arabia Visa New_309/Saudi-Arabia.jpg")
+// which break in email/WhatsApp unless percent-encoded. Encode spaces only (never double-encode an
+// already-escaped URL). Applied to the image URL so every template/channel renders it.
+const encImgUrl = (u) => (u == null || u === '' ? u : String(u).replace(/ /g, '%20'));
+
 /** Build the full {KEY: value} map for one (contact, event) pair. */
 function buildValues(ctx = {}) {
   const c  = ctx.contact || {};
@@ -135,7 +140,7 @@ function buildValues(ctx = {}) {
     // ── raw_payload ──
     ITEM_NAME:       p.itemName ?? ecom.item_name,
     ITEM_ID:         p.itemId ?? ecom.item_id,
-    ITEM_IMAGE_URL:  p.imageUrl ?? ecom.image_url ?? p.img,
+    ITEM_IMAGE_URL:  encImgUrl(p.imageUrl ?? ecom.image_url ?? p.img),
     ITEM_CATEGORY:   p.itemCategory,
     ITEM_REFERRER:   p.referrer,
     CURRENCY:        p.currency ?? ecomRoot.currency ?? ecom.currency,
