@@ -20,6 +20,13 @@
  *   - a guest registration only types a contact that has no type yet
  * Contacts that already exist keep their name / country / city; blanks are filled.
  *
+ * Email opt-out (business rule):
+ *   guestuser_data.doSendPromotionMail  0 → mail allowed, 1 → don't mail
+ *   affiliate_data.isVerifyEmail        1 → mail allowed, 0 → don't mail
+ * "Don't mail" sets email_unsubscribe = 'Yes' on the contact — new or existing,
+ * logged in unsubscribe_log as 'registration_optout'. It never re-subscribes anyone:
+ * an existing 'Yes' may come from a bounce, complaint or unsubscribe click.
+ *
  * Modes:
  *   full: true  → every registration row (one-time backfill, and after a contacts rebuild)
  *   default     → rows not linked yet, or added / edited by the registration sync in
@@ -50,6 +57,7 @@ const SOURCES = [
     country: nz('"countryName"'),
     city: nz('"cityName"'),
     regDate: regDate('"registrationDate"'),
+    optOut: `TRIM("isVerifyEmail") = '0'`,   // unverified email → don't mail
   },
   {
     table: 'agent_data', rank: 2, tag: 'agent',
@@ -60,6 +68,7 @@ const SOURCES = [
     country: 'NULL::text',
     city: 'NULL::text',
     regDate: regDate('"registrationDate"'),
+    optOut: 'FALSE',
   },
   {
     table: 'guestuser_data', rank: 1, tag: 'guestuser',
@@ -75,6 +84,7 @@ const SOURCES = [
     country: nz('"countryName"'),
     city: 'NULL::text',
     regDate: regDate('"registrationDate"'),
+    optOut: `TRIM("doSendPromotionMail") = '1'`,   // 0 = mail allowed, 1 = don't mail
   },
 ];
 
@@ -147,7 +157,8 @@ export default class RegistrationContactSync {
       ${SOURCES.map(s => `
         SELECT '${s.table}'::text AS tbl, id AS row_id, unified_id, ${s.rank} AS rank, '${s.tag}'::text AS tag,
                ${s.email} AS email, ${s.mobile} AS mobile, ${s.name} AS name,
-               ${s.country} AS country, ${s.city} AS city, ${s.regDate} AS reg_date
+               ${s.country} AS country, ${s.city} AS city, ${s.regDate} AS reg_date,
+               ${s.optOut} AS opt_out
         FROM ${s.table} ${recent}`).join(' UNION ALL ')}
     `);
     await q(`
@@ -203,12 +214,13 @@ export default class RegistrationContactSync {
         (id, email, mobile, name, country, city, sources, contact_type,
          wa_unsubscribe, email_unsubscribe, booking_status, synced_date, created_at, updated_at)
       SELECT n.id, g.email, g.mobile, g.name, g.country, g.city, g.sources, g.contact_type,
-             'no', 'no', 'PROSPECT', NOW(), NOW(), NOW()
+             'no', g.email_unsubscribe, 'PROSPECT', NOW(), NOW(), NOW()
       FROM (
         SELECT gkey, MAX(email) AS email, ${best('mobile')} AS mobile, ${best('name')} AS name,
                ${best('country')} AS country, ${best('city')} AS city,
                STRING_AGG(DISTINCT tag, ',' ORDER BY tag) AS sources,
-               ${TYPE_FOR_RANK} AS contact_type
+               ${TYPE_FOR_RANK} AS contact_type,
+               CASE WHEN BOOL_OR(opt_out) THEN 'Yes' ELSE 'no' END AS email_unsubscribe
         FROM _rc WHERE uid IS NULL GROUP BY gkey
       ) g
       JOIN _rc_new n ON n.gkey = g.gkey
@@ -236,17 +248,17 @@ export default class RegistrationContactSync {
     //    matched by mobile, also uses).
     await q(`
       CREATE TEMP TABLE _rc_target ON COMMIT DROP AS
-      SELECT uid, MAX(rank) AS rank, STRING_AGG(DISTINCT tag, ',') AS tags,
+      SELECT uid, MAX(rank) AS rank, STRING_AGG(DISTINCT tag, ',') AS tags, BOOL_OR(opt_out) AS opt_out,
              ${best('name')} AS name, ${best('country')} AS country, ${best('city')} AS city
       FROM (
-        SELECT uid, rank, tag, name, country, city, reg_date FROM _rc
+        SELECT uid, rank, tag, name, country, city, reg_date, opt_out FROM _rc
         UNION ALL
-        SELECT uc.id, r.rank, r.tag, r.name, r.country, r.city, r.reg_date
+        SELECT uc.id, r.rank, r.tag, r.name, r.country, r.city, r.reg_date, r.opt_out
         FROM _rc r JOIN unified_contacts uc ON LOWER(TRIM(uc.email)) = r.email
         WHERE r.email IS NOT NULL
         UNION ALL
         ${SOURCES.map(s => `
-          SELECT unified_id, ${s.rank}, '${s.tag}', NULL, NULL, NULL, NULL::timestamp FROM ${s.table}
+          SELECT unified_id, ${s.rank}, '${s.tag}', NULL, NULL, NULL, NULL::timestamp, ${s.optOut} FROM ${s.table}
           WHERE unified_id IN (SELECT uid FROM _rc)`).join(' UNION ALL ')}
       ) x
       GROUP BY uid
@@ -265,21 +277,24 @@ export default class RegistrationContactSync {
            WHERE TRIM(s) <> '') AS sources,
           COALESCE(NULLIF(TRIM(uc.name), ''), t.name) AS name,
           COALESCE(NULLIF(TRIM(uc.country), ''), t.country) AS country,
-          COALESCE(NULLIF(TRIM(uc.city), ''), t.city) AS city
+          COALESCE(NULLIF(TRIM(uc.city), ''), t.city) AS city,
+          uc.email_unsubscribe AS old_unsub,
+          CASE WHEN t.opt_out THEN 'Yes' ELSE uc.email_unsubscribe END AS email_unsubscribe
         FROM unified_contacts uc JOIN _rc_target t ON t.uid = uc.id
       ),
       changed AS (
         UPDATE unified_contacts uc
         SET contact_type = n.contact_type, sources = n.sources, name = n.name,
-            country = n.country, city = n.city, updated_at = NOW()
+            country = n.country, city = n.city, email_unsubscribe = n.email_unsubscribe, updated_at = NOW()
         FROM next n
         WHERE uc.id = n.id
           AND (uc.contact_type IS DISTINCT FROM n.contact_type OR uc.sources IS DISTINCT FROM n.sources
                OR uc.name IS DISTINCT FROM n.name OR uc.country IS DISTINCT FROM n.country
-               OR uc.city IS DISTINCT FROM n.city)
-        RETURNING uc.id, n.old_type, n.contact_type
+               OR uc.city IS DISTINCT FROM n.city OR uc.email_unsubscribe IS DISTINCT FROM n.email_unsubscribe)
+        RETURNING uc.id, uc.email, n.old_type, n.contact_type,
+                  (n.email_unsubscribe = 'Yes' AND LOWER(COALESCE(n.old_unsub, '')) <> 'yes') AS opted_out
       )
-      SELECT id, old_type, contact_type FROM changed
+      SELECT id, email, old_type, contact_type, opted_out FROM changed
     `);
 
     const typeChangeCounts = {};
@@ -290,6 +305,20 @@ export default class RegistrationContactSync {
     }
     const { rows: newIds } = await q(`SELECT id FROM _rc_new`);
 
+    // Record registration opt-outs (new contacts created as 'Yes' + existing ones switched)
+    const { rowCount: newOptOuts } = await q(`
+      INSERT INTO unsubscribe_log (unified_id, email, campaign)
+      SELECT id, email, 'registration_optout' FROM unified_contacts
+      WHERE id IN (SELECT id FROM _rc_new) AND email_unsubscribe = 'Yes'
+    `);
+    const switched = typeChanges.filter(r => r.opted_out);
+    if (switched.length) {
+      await q(`
+        INSERT INTO unsubscribe_log (unified_id, email, campaign)
+        SELECT UNNEST($1::bigint[]), UNNEST($2::text[]), 'registration_optout'
+      `, [switched.map(r => r.id), switched.map(r => r.email)]);
+    }
+
     return {
       processed,
       matchedByEmail: byEmail,
@@ -299,6 +328,7 @@ export default class RegistrationContactSync {
       updated: typeChanges.length,
       typeChanges: typeChangeCounts,
       registrationsLinked: linked,
+      emailOptOuts: { newContacts: newOptOuts, existingContacts: switched.length },
       straySpellingsFixed: normalized,
       touchedIds: [...new Set([...newIds.map(r => r.id), ...typeChanges.map(r => r.id)])],
     };
