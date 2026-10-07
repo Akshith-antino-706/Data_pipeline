@@ -855,6 +855,20 @@ cron.schedule('30 5 * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Daily FX rates refresh scheduled at 5:30 AM Dubai time');
 
+// ── Contact market/currency refresh — 5:45 AM Dubai (after FX) ─────────────
+// Re-derives unified_contacts.market_plan + currency_code from country/is_indian
+// (utils/marketPlan). Set-based per distinct country; only rows whose values
+// changed are touched, so the nightly run after the initial backfill is cheap.
+cron.schedule('45 5 * * *', async () => {
+  try {
+    const { runContactMarketRefresh } = await import('./src/crons/contactMarketRefresh.js');
+    await runContactMarketRefresh();
+  } catch (err) {
+    console.error('[Cron:ContactMarket] Error:', err.message);
+  }
+}, { timezone: 'Asia/Dubai' });
+console.log('[Cron] Contact market/currency refresh scheduled at 5:45 AM Dubai time');
+
 // ── Daily category picks — 3:45 AM Dubai ──
 // Computes top-5 products per journey-level category (activities / holidays /
 // cruises) via Claude. Feeds past-trip AI recs (see dailyPastTripCompute).

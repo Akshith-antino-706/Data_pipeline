@@ -472,11 +472,17 @@ class GtmJourneyService {
     let recAllowlistBlocked = false;
     try {
       const { rows: [jf] } = await db.query(
-        `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
+        `SELECT recommendation_type, trigger_event, trigger_source FROM journey_flows WHERE journey_id = $1`,
         [journeyId]
       );
       if (jf?.recommendation_type) {
         const { injectPerUserProducts, isRecipientAllowedForRec } = await import('./RecommendationRenderer.js');
+        // MARKET PRICING RULE: per-user local-currency pricing applies ONLY to pure CONTINUOUS
+        // journeys (no gtm/giveaway trigger event selected). When a trigger event IS selected
+        // (gtm or giveaway), product-card prices stay default-plan AED — consistent with the
+        // event values placeholderResolver renders — so the email never mixes currencies.
+        const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim()) || jf.trigger_source === 'giveaway';
+        const marketOverride = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
         if (!isRecipientAllowedForRec(c.email)) {
           console.log(`[GtmJourney ${journeyId}] REC ALLOWLIST BLOCKED — ${c.email} not in REC_JOURNEY_ALLOWLIST (type=${jf.recommendation_type}). Skipping send + advancing.`);
           recAllowlistBlocked = true;
@@ -486,6 +492,7 @@ class GtmJourneyService {
             unifiedId:          c.id,
             recommendationType: jf.recommendation_type,
             vars: { customer_name: c.name || '' },
+            market:             marketOverride,   // gtm/giveaway-triggered → {default, AED}; continuous → null (per-user market)
           });
           if (injected?.html) {
             html = injected.html;

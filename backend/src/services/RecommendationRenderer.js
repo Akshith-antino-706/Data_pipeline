@@ -47,9 +47,14 @@ export async function hydrateProducts(productIds, market = { plan: 'default', cu
   `, [productIds.map(Number)]);
 
   const plan = market?.plan || 'default';
-  const currency = String(market?.currency || 'AED').toUpperCase();
+  let currency = String(market?.currency || 'AED').toUpperCase();
   const rates = await getRates();
-  const rate = Number(rates[currency]) || 1;                 // AED→currency; fail-safe 1 (AED)
+  let rate = currency === 'AED' ? 1 : Number(rates[currency]);
+  // Fail-safe: NO rate for this currency → show AED (correctly labeled), never a mislabeled
+  // number. Hyper-devalued currencies (IRR ~403k, VND ~6.6k …) produce billion-looking prices
+  // in an email → also fall back to AED (threshold tunable via FX_MAX_DISPLAY_RATE).
+  const MAX_RATE = parseFloat(process.env.FX_MAX_DISPLAY_RATE || '1000');
+  if (!Number.isFinite(rate) || rate <= 0 || rate > MAX_RATE) { currency = 'AED'; rate = 1; }
   const num = (v) => (v == null || !Number.isFinite(Number(v))) ? null : Number(v);
   const money = (n) => (n == null ? '' : Math.round(n).toLocaleString('en-US'));
 
@@ -197,7 +202,7 @@ export async function renderRecommendationEmail({ templateHtml, ranking, vars = 
  * Returns { html, productsUsed, source } — same shape as renderRecommendationEmail
  * but sourced from the per-user cache instead of an in-flight Claude call.
  */
-export async function injectPerUserProducts({ templateHtml, unifiedId, recommendationType, vars = {} } = {}) {
+export async function injectPerUserProducts({ templateHtml, unifiedId, recommendationType, vars = {}, market: marketOverride = null } = {}) {
   if (!templateHtml) throw new Error('templateHtml is required');
   if (!unifiedId || !recommendationType) {
     // Safe default — collapse {{#products}} to empty, keep other vars.
@@ -208,13 +213,19 @@ export async function injectPerUserProducts({ templateHtml, unifiedId, recommend
   const { getForUser } = await import('./RecommendationRankingService.js');
   const cached = await getForUser({ unifiedId, recommendationType });
 
-  // Resolve the recipient's rate plan + currency from their country (India→INR, Saudi→SAR,
-  // UAE→AED, else→USD) so product cards can show local-market pricing.
-  const { resolveMarket } = await import('../utils/marketPlan.js');
-  const { rows: [contact] } = await db.query(
-    'SELECT country, is_indian FROM unified_contacts WHERE id = $1', [unifiedId]
-  ).catch(() => ({ rows: [] }));
-  const market = resolveMarket(contact || {});
+  // Market = rate plan + display currency for the product cards.
+  //   • callers may pass `market` explicitly (GTM/continuous journeys pin {default, AED} so
+  //     card prices stay consistent with placeholderResolver's event values — no conversion);
+  //   • otherwise resolve from the contact (stored market_plan/currency_code, else country):
+  //     India→INR, Saudi→SAR, UAE→AED, other known country→own currency, blank/unknown→AED.
+  let market = marketOverride;
+  if (!market) {
+    const { resolveMarket } = await import('../utils/marketPlan.js');
+    const { rows: [contact] } = await db.query(
+      'SELECT country, mobile_country, is_indian, market_plan, currency_code FROM unified_contacts WHERE id = $1', [unifiedId]
+    ).catch(() => ({ rows: [] }));
+    market = resolveMarket(contact || {});
+  }
 
   const productIds = cached?.productIds || [];
   const enrichedVars = {

@@ -14,8 +14,9 @@
 import db from '../config/database.js';
 
 const FX_URL = process.env.FX_RATES_URL || 'https://open.er-api.com/v6/latest/AED';
-const CURRENCIES = ['AED', 'INR', 'SAR', 'USD'];
-// Sanity bounds — reject absurd rates (bad API response) so we never ship a crazy price.
+// ALL currencies from the API response are stored (one AED-base call returns ~160) so the
+// `default` market plan can display every user's OWN currency (see utils/countryCurrency).
+// Core currencies keep strict sanity bounds; the rest just need to be finite and positive.
 const BOUNDS = { AED: [1, 1], INR: [10, 40], SAR: [0.8, 1.3], USD: [0.2, 0.35] };
 
 export async function runFxRatesSync() {
@@ -32,12 +33,14 @@ export async function runFxRatesSync() {
     return { ok: false, error: err.message };
   }
 
-  const updated = [];
-  for (const cur of CURRENCIES) {
-    const rate = Number(data.rates[cur]);
-    const [lo, hi] = BOUNDS[cur] || [0, Infinity];
+  let updated = 0, skipped = 0;
+  for (const [cur, raw] of Object.entries(data.rates)) {
+    if (!/^[A-Z]{3}$/.test(cur)) { skipped++; continue; }
+    const rate = Number(raw);
+    const [lo, hi] = BOUNDS[cur] || [1e-9, Infinity];   // non-core: finite & positive
     if (!Number.isFinite(rate) || rate < lo || rate > hi) {
-      console.warn(`[FxRatesCron] ${cur}: rate ${data.rates[cur]} out of bounds [${lo},${hi}] — skipped`);
+      console.warn(`[FxRatesCron] ${cur}: rate ${raw} out of bounds [${lo},${hi}] — skipped`);
+      skipped++;
       continue;
     }
     try {
@@ -46,14 +49,14 @@ export async function runFxRatesSync() {
         VALUES ($1, $2, 'api', now())
         ON CONFLICT (currency) DO UPDATE SET aed_to_currency = EXCLUDED.aed_to_currency, source = 'api', updated_at = now()
       `, [cur, rate]);
-      updated.push(`${cur}=${rate}`);
+      updated++;
     } catch (err) {
       console.error(`[FxRatesCron] ${cur} upsert failed:`, err.message);
     }
   }
 
-  console.log(`[FxRatesCron] Done in ${Date.now() - started}ms — updated: ${updated.join(', ') || '(none)'}`);
-  return { ok: true, updated };
+  console.log(`[FxRatesCron] Done in ${Date.now() - started}ms — updated ${updated} currencies (${skipped} skipped)`);
+  return { ok: true, updated, skipped };
 }
 
 export default { runFxRatesSync };
