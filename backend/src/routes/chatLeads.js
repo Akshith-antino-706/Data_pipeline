@@ -802,10 +802,12 @@ router.get('/department-users', async (req, res) => {
     }
     const onlyNew = String(req.query.only_new || '') === '1';
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
     // Users active with this receiver in the range, with their FIRST-EVER message time.
     // is_new = that first message falls inside the range.
-    const rows = await mysqlQuery(`
+    // Fetch one extra row past the page so has_more needs no COUNT(*) query.
+    const rowsPlus = await mysqlQuery(`
       SELECT c.wa_id,
              MAX(c.wa_name) AS wa_name,
              f.first_at,
@@ -819,8 +821,10 @@ router.get('/department-users', async (req, res) => {
       ${onlyNew ? 'AND f.first_at >= ? AND f.first_at < DATE_ADD(?, INTERVAL 1 DAY)' : ''}
       GROUP BY c.wa_id, f.first_at
       ORDER BY f.first_at DESC
-      LIMIT ?
-    `, onlyNew ? [from, to, receiver, from, to, from, to, limit] : [from, to, receiver, from, to, limit], 'chats');
+      LIMIT ? OFFSET ?
+    `, onlyNew ? [from, to, receiver, from, to, from, to, limit + 1, offset] : [from, to, receiver, from, to, limit + 1, offset], 'chats');
+    const hasMore = rowsPlus.length > limit;
+    const rows = hasMore ? rowsPlus.slice(0, limit) : rowsPlus;
 
     // Fetch each user's first message text from ChatHead (throttled, small concurrency).
     async function firstMsgText(from_) {
@@ -844,7 +848,7 @@ router.get('/department-users', async (req, res) => {
       }));
     }
 
-    res.json({ success: true, receiver, from, to, count: users.length, limit, users });
+    res.json({ success: true, receiver, from, to, count: users.length, limit, offset, has_more: hasMore, users });
   } catch (err) {
     console.error('department-users error:', err);
     res.status(500).json({ error: err.message });

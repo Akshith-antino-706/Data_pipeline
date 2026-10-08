@@ -442,6 +442,8 @@ export default function Leads() {
   const [deptUsers, setDeptUsers] = useState([]);
   const [deptUsersLoading, setDeptUsersLoading] = useState(false);
   const [deptUsersError, setDeptUsersError] = useState(null);
+  const [deptUsersHasMore, setDeptUsersHasMore] = useState(false);
+  const [deptUsersLoadingMore, setDeptUsersLoadingMore] = useState(false);
 
   // ── Department Groups ──
   const [groups, setGroups] = useState([]);
@@ -486,15 +488,32 @@ export default function Leads() {
     if (expandedReceiver === receiver) { setExpandedReceiver(null); return; }
     setExpandedReceiver(receiver);
     if (channel !== 'whatsapp') return;  // expand (first-msg lookup) is WhatsApp-only
-    setDeptUsers([]); setDeptUsersError(null); setDeptUsersLoading(true);
+    setDeptUsers([]); setDeptUsersError(null); setDeptUsersHasMore(false); setDeptUsersLoading(true);
     try {
       const { from, to } = deptSpan();
       const res = await getChatLeadsDepartmentUsers(receiver, from, to, { onlyNew: true, limit: 50 });
       setDeptUsers(res.users || []);
+      setDeptUsersHasMore(!!res.has_more);
     } catch (e) {
       setDeptUsersError(e.message || 'Failed to load users');
     } finally {
       setDeptUsersLoading(false);
+    }
+  };
+
+  // "Show more" in the expanded row: fetch the next page and append it.
+  const loadMoreDeptUsers = async () => {
+    if (!expandedReceiver || deptUsersLoadingMore) return;
+    setDeptUsersLoadingMore(true);
+    try {
+      const { from, to } = deptSpan();
+      const res = await getChatLeadsDepartmentUsers(expandedReceiver, from, to, { onlyNew: true, limit: 50, offset: deptUsers.length });
+      setDeptUsers(prev => [...prev, ...(res.users || [])]);
+      setDeptUsersHasMore(!!res.has_more);
+    } catch (e) {
+      setDeptUsersError(e.message || 'Failed to load more users');
+    } finally {
+      setDeptUsersLoadingMore(false);
     }
   };
 
@@ -1013,13 +1032,13 @@ export default function Leads() {
                             ) : (
                               <div>
                                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                                  New users for {row.department || row.receiver} — showing {deptUsers.length}
+                                  New users for {row.department || row.receiver} — showing {deptUsers.length}{deptUsersHasMore ? '+' : ''}
                                 </div>
                                 <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 8 }}>
                                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
                                     <thead>
                                       <tr>
-                                        {['Number', 'First Message', 'First Message At'].map(h => (
+                                        {['#', 'Number', 'First Message', 'First Message At'].map(h => (
                                           <th key={h} style={{ textAlign: 'left', padding: '7px 12px', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-tertiary)', background: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)' }}>{h}</th>
                                         ))}
                                       </tr>
@@ -1027,6 +1046,7 @@ export default function Leads() {
                                     <tbody>
                                       {deptUsers.map((u, k) => (
                                         <tr key={`${u.wa_id}-${k}`} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                          <td style={{ padding: '7px 12px', color: 'var(--text-tertiary)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', width: 1 }}>{k + 1}</td>
                                           <td style={{ padding: '7px 12px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
                                             {u.wa_id}{u.wa_name ? <span style={{ color: 'var(--text-tertiary)' }}> · {u.wa_name}</span> : null}
                                           </td>
@@ -1039,6 +1059,20 @@ export default function Leads() {
                                     </tbody>
                                   </table>
                                 </div>
+                                {deptUsersHasMore && (
+                                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); loadMoreDeptUsers(); }}
+                                      disabled={deptUsersLoadingMore}
+                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 16px', fontSize: 12.5, fontWeight: 600,
+                                        color: '#0ea5e9', background: 'rgba(14,165,233,0.1)', border: '1px solid rgba(14,165,233,0.35)', borderRadius: 8,
+                                        cursor: deptUsersLoadingMore ? 'default' : 'pointer', opacity: deptUsersLoadingMore ? 0.6 : 1 }}>
+                                      {deptUsersLoadingMore
+                                        ? (<><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Loading…</>)
+                                        : 'Show more'}
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </td>
