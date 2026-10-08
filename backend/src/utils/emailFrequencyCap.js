@@ -90,4 +90,61 @@ export async function releaseSend(target) {
   try { await redis.decr(key); } catch { /* ignore */ }
 }
 
-export default { reserveSend, releaseSend, isCapEnabled, capLimit };
+// ═══════════════════════════════════════════════════════════════════════════
+// WHATSAPP frequency cap — same semantics as the email cap, separate counter.
+//   WHATSAPP_CAP_ENABLED=true   → enforced (default off = allow all)
+//   WHATSAPP_CAP_PER_24H=3      → max WhatsApp messages per recipient per window
+//   WHATSAPP_CAP_WINDOW_SEC     → window (default 24h)
+// Bypass: EMAIL_CAP_BYPASS_EMAILS ∪ WHATSAPP_CAP_BYPASS_EMAILS (QA inboxes).
+// Fail-OPEN like email: Redis down / disabled → sends allowed.
+// ═══════════════════════════════════════════════════════════════════════════
+const WA_ENABLED    = process.env.WHATSAPP_CAP_ENABLED === 'true';
+const WA_CAP        = parseInt(process.env.WHATSAPP_CAP_PER_24H || '3', 10);
+const WA_WINDOW_SEC = parseInt(process.env.WHATSAPP_CAP_WINDOW_SEC || '86400', 10);
+const _WA_BYPASS = new Set(
+  ((process.env.EMAIL_CAP_BYPASS_EMAILS || '') + ',' + (process.env.WHATSAPP_CAP_BYPASS_EMAILS || ''))
+    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+);
+const _isWaBypassed = (email) => !!email && _WA_BYPASS.has(String(email).trim().toLowerCase());
+
+// Prefer the stable contact id; fall back to email, then phone (WA-only contacts).
+function waCapKey({ unifiedId, email, phone } = {}) {
+  if (unifiedId !== undefined && unifiedId !== null && `${unifiedId}` !== '') return `capwa:u:${unifiedId}`;
+  if (email) return `capwa:e:${String(email).trim().toLowerCase()}`;
+  if (phone) return `capwa:p:${String(phone).replace(/\D/g, '')}`;
+  return null;
+}
+
+export function isWaCapEnabled() { return WA_ENABLED; }
+export function waCapLimit() { return WA_CAP; }
+
+/** Reserve a WhatsApp send slot. Returns { allowed, count, capped }. */
+export async function reserveWaSend(target) {
+  if (_isWaBypassed(target?.email)) return { allowed: true, count: 0, capped: false, bypassed: true };
+  if (!WA_ENABLED) return { allowed: true, count: 0, capped: false };
+  const key = waCapKey(target);
+  if (!key) return { allowed: true, count: 0, capped: false };
+  const redis = getRedis();
+  if (!redis) return { allowed: true, count: 0, capped: false }; // fail-open
+  try {
+    const n = await redis.incr(key);
+    if (n === 1) await redis.expire(key, WA_WINDOW_SEC);
+    if (n > WA_CAP) return { allowed: false, count: n, capped: true };
+    return { allowed: true, count: n, capped: false };
+  } catch {
+    return { allowed: true, count: 0, capped: false }; // fail-open
+  }
+}
+
+/** Release a reserved WhatsApp slot (call when the send itself failed). */
+export async function releaseWaSend(target) {
+  if (_isWaBypassed(target?.email)) return;
+  if (!WA_ENABLED) return;
+  const key = waCapKey(target);
+  if (!key) return;
+  const redis = getRedis();
+  if (!redis) return;
+  try { await redis.decr(key); } catch { /* ignore */ }
+}
+
+export default { reserveSend, releaseSend, isCapEnabled, capLimit, reserveWaSend, releaseWaSend, isWaCapEnabled, waCapLimit };

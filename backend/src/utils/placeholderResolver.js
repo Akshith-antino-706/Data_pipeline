@@ -93,7 +93,12 @@ function buildValues(ctx = {}) {
   const ecomRoot = p.ecommerceData || p.ecommerce || {};
   const ecom = (Array.isArray(ecomRoot.items) && ecomRoot.items[0]) || {};
 
-  const firstName = (c.name || p.name || '').toString().trim().split(/\s+/)[0] || '';
+  // Strip leading honorifics ("Mr. Vaibhav Gupta" → "Vaibhav Gupta", "Mrs  Priya" → "Priya")
+  // so greetings never read "Hi Mr." / "Dear Mrs.". Repeated titles are stripped too.
+  const HONORIFIC_RE = /^(?:(?:mr|mrs|ms|miss|mistress|master|dr|prof|professor|sir|madam|mdm|mx|shri|smt|capt|captain|er|eng)\.?,?\s+)+/i;
+  const cleanName = (n) => String(n ?? '').trim().replace(HONORIFIC_RE, '').trim();
+  const fullName  = cleanName(c.name ?? p.name);
+  const firstName = fullName.split(/\s+/)[0] || '';
   const pageUrl   = ev.page_url || p.pageUrl || '';
   const orderId   = p.transactionId || '';
   const ts        = ev.created_at ? new Date(ev.created_at).toLocaleString() : (p.timestamp || '');
@@ -101,10 +106,10 @@ function buildValues(ctx = {}) {
 
   return {
     // ── unified_contacts ──
-    USER_NAME:        c.name ?? p.name,
-    // Full name (not just the first word) — imported names often lead with a title
-    // ("Mr. Vaibhav Gupta"), so first-word extraction would greet "Hi Mr.". Send the full name.
-    USER_FIRST_NAME:  c.name ?? p.name ?? firstName,
+    USER_NAME:        fullName,
+    // Full name (not just the first word), with honorifics stripped — imported names often
+    // lead with a title ("Mr. Vaibhav Gupta"); cleaned here so it greets "Hi Vaibhav Gupta".
+    USER_FIRST_NAME:  fullName || firstName,
     USER_EMAIL:       c.email ?? p.email,
     // WhatsApp node payload carries the phone as `d` and a per-contact image as `img`
     // (ChatHead .data record shape: {id, d, name, img}). Read those alongside the
