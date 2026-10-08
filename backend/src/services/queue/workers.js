@@ -33,7 +33,7 @@ import { injectClickTracking, injectOpenPixel } from '../../utils/emailTracking.
 import WelcomeEmailService from '../WelcomeEmailService.js';
 import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
-import { reserveSend, releaseSend } from '../../utils/emailFrequencyCap.js';
+import { reserveSend, releaseSend, reserveWaSend, releaseWaSend } from '../../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../../utils/reviewUrl.js';
 
 // ── Per-journey graph cache ──
@@ -561,6 +561,13 @@ async function processWA(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
   }
 
+  // WhatsApp frequency cap — same rule as email (default 3 / 24h per recipient).
+  const _waCap = await reserveWaSend({ unifiedId: d.customerId, email: d.email, phone: d.phone });
+  if (!_waCap.allowed) {
+    console.log(`[Worker:wa] FREQUENCY CAPPED (count=${_waCap.count}) — skipping for entry=${d.entryId} customer=${d.customerId}`);
+    return _logAndAdvance(d, 'action_blocked', { reason: 'frequency_capped', count: _waCap.count }, false);
+  }
+
   let approvalBlocked = false;
   let sendResult;
   try {
@@ -601,6 +608,7 @@ async function processWA(job) {
     approvalBlocked = /not approved/i.test(err.message);
     sendResult = { success: false, error: err.message, blocked: approvalBlocked };
   }
+  if (!sendResult?.success) releaseWaSend({ unifiedId: d.customerId, email: d.email, phone: d.phone }); // failed send doesn't consume a slot
 
   // Per-message WhatsApp send log (journey-attributed). Isolated try/catch — a logging
   // failure must never fail the send or the entry advance. Each row is independent.

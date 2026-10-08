@@ -5,6 +5,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { buildWaVars, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 import { getAffinityVarsMany } from './affinityVars.js';
 import SkipLogService from './SkipLogService.js';
+import { reserveWaSend, releaseWaSend } from '../utils/emailFrequencyCap.js';
 
 /**
  * CONTINUOUS journey engine — the "conveyor belt".
@@ -141,7 +142,7 @@ class ContinuousJourneyService {
     // Batch-fetch contacts once; then exit-check + opt-out + validity per entry.
     const uids = [...new Set(entries.map(e => e.unified_id))];
     const { rows: cs } = await db.query(
-      'SELECT id, name, mobile, wa_unsubscribe FROM unified_contacts WHERE id = ANY($1::bigint[])', [uids]
+      'SELECT id, name, email, mobile, wa_unsubscribe FROM unified_contacts WHERE id = ANY($1::bigint[])', [uids]
     );
     const cMap = Object.fromEntries(cs.map(c => [c.id, c]));
 
@@ -197,14 +198,25 @@ class ContinuousJourneyService {
     }
     if (!complete.length) return { broadcasts: 0, sent: 0, exited };
 
+    // WhatsApp frequency cap — same rule as email (default 3 / 24h per recipient).
+    // Capped entries advance without sending (logged action_blocked, like the email path).
+    const sendable = [];
+    for (const v of complete) {
+      const cap = await reserveWaSend({ unifiedId: v.e.unified_id, email: v.c.email, phone: v.phone });
+      if (cap.allowed) { sendable.push(v); continue; }
+      await logEvent(v.e.id, 'action_blocked', { reason: 'frequency_capped', count: cap.count });
+      await this.advance(v.e.id, journeyId, nodeId);
+    }
+    if (!sendable.length) return { broadcasts: 0, sent: 0, exited };
+
     // product_affinity_* / service_affinity_* for every recipient — one query.
-    const affMap = await getAffinityVarsMany(complete.map(v => v.e.unified_id));
+    const affMap = await getAffinityVarsMany(sendable.map(v => v.e.unified_id));
 
     // ── ONE ChatHead broadcast for the whole group ──
     let result;
     try {
       result = await ChatHeadV1Service.sendBroadcast({
-        contacts:     complete.map(v => {
+        contacts:     sendable.map(v => {
           const ev = evMap[v.e.last_event_id] || { raw_payload: {} };
           return { phone: v.phone, name: v.c.name || '', vars: buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload, affinity: affMap.get(String(v.e.unified_id)) }) };
         }),
@@ -212,10 +224,12 @@ class ContinuousJourneyService {
         channelName:  node.data?.waChannelName || null,
         templateId:   parseInt(waTpl),
         templateName: node.data?.waTemplateName || null,
-        name:         `gtm journey ${journeyId} ${nodeId} (${complete.length})`,
+        name:         `gtm journey ${journeyId} ${nodeId} (${sendable.length})`,
         sendTime:     new Date(Date.now() + 60 * 1000),
       });
     } catch (err) { result = { success: false, error: err.message }; }
+    // Failed broadcast → give the reserved cap slots back (failures don't consume quota).
+    if (!result?.success) for (const v of sendable) releaseWaSend({ unifiedId: v.e.unified_id, email: v.c.email, phone: v.phone });
 
     const ok      = !!result?.success;
     const bcastId = result?.broadcast?.id ?? null;
@@ -223,7 +237,7 @@ class ContinuousJourneyService {
 
     // Per-recipient log + advance (each entry independent). Advance on failure too —
     // retrying would re-broadcast (dup sends); the failure is recorded instead.
-    for (const v of complete) {
+    for (const v of sendable) {
       await db.query(
         `INSERT INTO whatsapp_send_log
            (unified_id, phone, contact_name, channel_id, template_id, template_name,
@@ -234,11 +248,11 @@ class ContinuousJourneyService {
          node.data?.waTemplateName || null, journeyId, nodeId, bcastId, extId,
          ok ? 'sent' : 'failed', ok ? null : String(result?.error || 'broadcast failed').slice(0, 500)]
       ).catch(() => {});
-      await logEvent(v.e.id, ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', bulk: true, broadcastId: extId, recipients: complete.length });
+      await logEvent(v.e.id, ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', bulk: true, broadcastId: extId, recipients: sendable.length });
       await this.advance(v.e.id, journeyId, nodeId);
     }
-    console.log(`[Continuous] WhatsApp BULK broadcast journey=${journeyId} node=${nodeId} recipients=${complete.length} status=${ok ? 'sent' : 'FAILED'} chId=${extId || '-'}`);
-    return { broadcasts: 1, sent: complete.length, exited };
+    console.log(`[Continuous] WhatsApp BULK broadcast journey=${journeyId} node=${nodeId} recipients=${sendable.length} status=${ok ? 'sent' : 'FAILED'} chId=${extId || '-'}`);
+    return { broadcasts: 1, sent: sendable.length, exited };
   }
 
   /**

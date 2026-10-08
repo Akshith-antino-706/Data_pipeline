@@ -12,7 +12,7 @@ import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingIte
 import SkipLogService from './SkipLogService.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
-import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
+import { reserveSend, releaseSend, reserveWaSend, releaseWaSend } from '../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../utils/reviewUrl.js';
 import { getAffinityVars, usesAffinity } from './affinityVars.js';
 import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
@@ -289,6 +289,15 @@ class GtmJourneyService {
         }
       }
 
+      // WhatsApp frequency cap — same rule as email (default 3 / 24h per recipient).
+      const _waCap = await reserveWaSend({ unifiedId: c.id, email: c.email, phone });
+      if (!_waCap.allowed) {
+        await logEvent('action_blocked', { reason: 'frequency_capped', count: _waCap.count });
+        console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp FREQUENCY CAPPED (count=${_waCap.count}) — skipped`);
+        await advance();
+        return;
+      }
+
       let result;
       try {
         result = await ChatHeadV1Service.sendBroadcast({
@@ -301,6 +310,7 @@ class GtmJourneyService {
           sendTime:     new Date(Date.now() + 60 * 1000),
         });
       } catch (err) { result = { success: false, error: err.message }; }
+      if (!result?.success) releaseWaSend({ unifiedId: c.id, email: c.email, phone }); // failed send doesn't consume a slot
 
       const ok    = !!result?.success;
       const extId = result?.broadcast?.chatheadBroadcastId != null ? String(result.broadcast.chatheadBroadcastId) : null;
