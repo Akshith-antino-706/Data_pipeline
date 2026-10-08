@@ -338,8 +338,8 @@ export const getMailLeadsDepartmentPeriods = (unit, count, from, to) => request(
   `/api/v3/chat-leads/mail-department-periods?unit=${unit}${from && to ? `&from=${from}&to=${to}` : `&count=${count}`}`
 );
 // Users of one department (receiver) in a range — number, first message + its timestamp (expand row).
-export const getChatLeadsDepartmentUsers = (receiver, from, to, { onlyNew = false, limit = 50 } = {}) => request(
-  `/api/v3/chat-leads/department-users?receiver=${encodeURIComponent(receiver)}&from=${from}&to=${to}${onlyNew ? '&only_new=1' : ''}&limit=${limit}`
+export const getChatLeadsDepartmentUsers = (receiver, from, to, { onlyNew = false, limit = 50, offset = 0 } = {}) => request(
+  `/api/v3/chat-leads/department-users?receiver=${encodeURIComponent(receiver)}&from=${from}&to=${to}${onlyNew ? '&only_new=1' : ''}&limit=${limit}&offset=${offset}`
 );
 
 // ── Department Groups (Leads screen) ──
