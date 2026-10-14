@@ -14,7 +14,7 @@ import {
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
   getJourneyNodeConversions, previewJourneyNodeEmail,
-  getWhatsAppChannels, getWhatsAppTemplates
+  getWhatsAppChannels, getWhatsAppTemplates, getJourneySnapshotStatus
 } from '@/lib/api';
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
@@ -615,8 +615,9 @@ export default function Journeys() {
   const [toast, setToast] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, name } for list/card delete
+  const [deletingId, setDeletingId] = useState(null);       // journey_id whose delete is in flight
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active'); // default view = running journeys ('All' still one click away)
   const [viewMode, setViewMode] = useState('cards');
   const [journeyPage, setJourneyPage] = useState(1);   // client-side pagination for the journey list
   const JOURNEYS_PER_PAGE = 24;
@@ -793,9 +794,14 @@ export default function Journeys() {
   }, [detail?.scheduled_start_at, detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Toast helper ──────────────────────────────────────────────
-  const showToast = (msg, type = 'info') => {
+  // sticky = stays until something replaces it (used while a journey's audience builds,
+  // which runs for minutes). The timer is tracked so a sticky toast can't be cleared by
+  // an earlier toast's pending timeout.
+  const toastTimerRef = useRef(null);
+  const showToast = (msg, type = 'info', { sticky = false } = {}) => {
+    clearTimeout(toastTimerRef.current);
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
+    if (!sticky) toastTimerRef.current = setTimeout(() => setToast(null), 4000);
   };
 
   // ── Data Loading ──────────────────────────────────────────────
@@ -815,6 +821,37 @@ export default function Journeys() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // ── Background audience build (create) ────────────────────────
+  // create() returns as soon as the journey row is committed; the segment snapshot
+  // (up to ~1.4 M rows) keeps writing server-side. Poll until it lands, then toast
+  // the real count. Kept in a ref so unmounting the page cancels the poll.
+  // Must stay BELOW loadData — the dependency array reads it during render.
+  const snapshotPollRef = useRef(null);
+  useEffect(() => () => clearTimeout(snapshotPollRef.current), []);
+
+  const pollSnapshotBuild = useCallback((journeyId, journeyName) => {
+    const startedAt = Date.now();
+    const MAX_MS = 15 * 60 * 1000;   // a 1.4 M-row build runs 1-6 min; well past that = stop polling
+    const tick = async () => {
+      try {
+        const res = await getJourneySnapshotStatus(journeyId);
+        const { state, count } = res.data || {};
+        if (state === 'done') {
+          showToast(`Journey "${journeyName}" created — ${(count || 0).toLocaleString()} users snapshotted`, 'success');
+          loadData();
+          return;
+        }
+        if (state === 'failed') {
+          showToast(`Journey "${journeyName}" was created, but building its audience failed. Re-save its segment to retry.`, 'error');
+          loadData();
+          return;
+        }
+      } catch { /* transient — keep polling */ }
+      if (Date.now() - startedAt < MAX_MS) snapshotPollRef.current = setTimeout(tick, 5000);
+    };
+    snapshotPollRef.current = setTimeout(tick, 2000);
+  }, [loadData]);
 
   // Restore selected journey from URL on page load / refresh
   useEffect(() => {
@@ -1190,9 +1227,11 @@ export default function Journeys() {
           target: n.id,
         }))
       });
-      const snapCount = res.data?.snapshot_count || 0;
-      const snapNoun = createForm.journeyType === 'continuous' ? 'emails' : 'users';
-      showToast(`Journey "${res.data?.name}" created — ${snapCount} ${snapNoun} snapshotted`, 'success');
+      // The journey row is committed; its audience is still being built server-side.
+      // Close the modal now; the sticky toast stays up and pollSnapshotBuild replaces it
+      // with the real count once the snapshot lands (the journey is not listed until then).
+      showToast(`Journey "${res.data?.name}" is being created — building audience…`, 'info', { sticky: true });
+      if (res.data?.journey_id) pollSnapshotBuild(res.data.journey_id, res.data.name);
       setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
@@ -1742,7 +1781,12 @@ export default function Journeys() {
         {(() => {
           const ct = campaignData?.totals || {};
           const kpis = [
-            { label: 'Snapshotted', value: fmt(detail.snapshot_count || stats.total_entries), color: 'kpi-blue', icon: Users },
+            // snapshot_count is -1 while the audience builds in the background, -2 if that build failed.
+            { label: 'Snapshotted',
+              value: Number(detail.snapshot_count) === -1 ? 'Building…'
+                   : Number(detail.snapshot_count) === -2 ? 'Build failed'
+                   : fmt(detail.snapshot_count || stats.total_entries),
+              color: 'kpi-blue', icon: Users },
             { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
             { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
             { label: 'Unsub (Exit)', value: fmt(stats.unsubscribed_from_journey ?? stats.unsubscribed_during_journey ?? stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
@@ -4675,12 +4719,15 @@ export default function Journeys() {
                   <span className="text-secondary" style={{ fontSize: 11 }}>{j.created_at ? new Date(j.created_at).toLocaleDateString() : ''}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: j.journey_id, name: j.name }); }}
-                    title="Delete journey"
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', transition: 'all 0.15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                    title={deletingId === j.journey_id ? 'Deleting…' : 'Delete journey'}
+                    disabled={deletingId === j.journey_id}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: deletingId === j.journey_id ? 'var(--red)' : 'var(--text-muted)', cursor: deletingId === j.journey_id ? 'default' : 'pointer', transition: 'all 0.15s' }}
+                    onMouseEnter={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
+                    onMouseLeave={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
                   >
-                    <Trash2 size={14} />
+                    {deletingId === j.journey_id
+                      ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                      : <Trash2 size={14} />}
                   </button>
                 </div>
               </div>
@@ -4761,12 +4808,15 @@ export default function Journeys() {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: j.journey_id, name: j.name }); }}
-                            title="Delete journey"
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                            title={deletingId === j.journey_id ? 'Deleting…' : 'Delete journey'}
+                            disabled={deletingId === j.journey_id}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: deletingId === j.journey_id ? 'var(--red)' : 'var(--text-muted)', cursor: deletingId === j.journey_id ? 'default' : 'pointer' }}
+                            onMouseEnter={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
+                            onMouseLeave={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
                           >
-                            <Trash2 size={14} />
+                            {deletingId === j.journey_id
+                              ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                              : <Trash2 size={14} />}
                           </button>
                           <ChevronRight size={14} color="var(--text-muted)" />
                         </div>
@@ -4904,21 +4954,27 @@ export default function Journeys() {
                 This will permanently delete this journey and all associated entries and events.
               </p>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button onClick={() => setDeleteConfirm(null)}
-                  style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                <button onClick={() => setDeleteConfirm(null)} disabled={!!deletingId}
+                  style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', cursor: deletingId ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, opacity: deletingId ? 0.5 : 1 }}>
                   Cancel
                 </button>
-                <button onClick={async () => {
+                {/* Stays open with a spinner while the request is in flight — deleting a journey
+                    also clears its entries, so it is not instant on a large one. */}
+                <button disabled={!!deletingId} onClick={async () => {
                   const id = deleteConfirm.id;
-                  setDeleteConfirm(null);
+                  setDeletingId(id);
                   try {
                     await deleteJourney(id);
+                    setDeleteConfirm(null);
                     hotToast.success('Journey deleted successfully');
                     await loadData();
                   } catch (err) { hotToast.error(err.message || 'Failed to delete journey'); }
+                  finally { setDeletingId(null); }
                 }}
-                  style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--red)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Trash2 size={14} /> Delete
+                  style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--red)', color: '#fff', cursor: deletingId ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, opacity: deletingId ? 0.8 : 1 }}>
+                  {deletingId
+                    ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Deleting…</>
+                    : <><Trash2 size={14} /> Delete</>}
                 </button>
               </div>
             </motion.div>

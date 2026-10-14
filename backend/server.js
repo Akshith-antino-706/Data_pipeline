@@ -1108,6 +1108,16 @@ app.listen(PORT, async () => {
   console.log(`  HTTP  → http://localhost:${PORT}`);
   await flushCache();
 
+  // Journey audience snapshots are built in a background task inside THIS process
+  // (JourneyService.create). A restart kills any in-flight build and Postgres rolls
+  // its INSERT back, leaving snapshot_count stuck at -1 ("building") forever — and a
+  // journey stuck at -1 is hidden from the list. Mark those orphans failed so they
+  // reappear and can be rebuilt or deleted. Safe because no build can outlive its
+  // process; it assumes a single backend instance, which is how we deploy.
+  pool.query(`UPDATE journey_flows SET snapshot_count = -2 WHERE snapshot_count = -1`)
+    .then(({ rowCount }) => { if (rowCount) console.warn(`[Journey] ${rowCount} orphaned snapshot build(s) marked failed after restart`); })
+    .catch(() => {});
+
   // Auto-populate snapshot table on first deploy (or after migration).
   // Checks if any variant has computed_at = NULL, then runs a full refresh.
   // Runs in background — does not delay server startup.

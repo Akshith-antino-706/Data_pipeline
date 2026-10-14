@@ -424,6 +424,31 @@ router.post('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Snapshot progress for a just-created journey — polled by the create flow until the
+// background audience build finishes. Deliberately a single indexed row read (no cache,
+// no journey_entries scan) so it stays cheap at a few-second poll interval.
+//   building: snapshot_count = -1 | failed: -2 | done: >= 0
+router.get('/:id/snapshot-status', async (req, res, next) => {
+  try {
+    const pool = (await import('../config/database.js')).default;
+    const { rows: [row] } = await pool.query(
+      'SELECT journey_id, name, snapshot_count, status FROM journey_flows WHERE journey_id = $1',
+      [parseInt(req.params.id)]
+    );
+    if (!row) return res.status(404).json({ error: 'Journey not found' });
+    const count = Number(row.snapshot_count);
+    res.json({
+      data: {
+        journeyId: row.journey_id,
+        name: row.name,
+        state: count === -1 ? 'building' : count === -2 ? 'failed' : 'done',
+        count: count >= 0 ? count : 0,
+        status: row.status,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
 // Update journey
 router.put('/:id', async (req, res, next) => {
   try {
