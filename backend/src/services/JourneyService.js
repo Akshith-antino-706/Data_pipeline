@@ -8,6 +8,7 @@ import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
 import { buildWaVars, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
+import { del as cacheDel } from '../config/cache.js';
 import { getAffinityVarsMany } from './affinityVars.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -318,6 +319,10 @@ class JourneyService {
       params.push(audience);
       where += ` AND jf.audience = $${params.length}`;
     }
+    // A journey whose audience is still being built in the background (snapshot_count = -1)
+    // is not listed yet — it appears once the snapshot lands. A FAILED build (-2) stays
+    // visible so it can be fixed or deleted.
+    where += ' AND jf.snapshot_count IS DISTINCT FROM -1';
 
     const { rows: [{ count }] } = await db.query(
       `SELECT COUNT(*) FROM journey_flows jf WHERE ${where}`, params
@@ -1157,19 +1162,38 @@ class JourneyService {
     // ── Snapshot segment users at creation time (NORMAL journeys only) ──────
     // GTM journeys are event-triggered (no snapshot) — users enter when they fire
     // the trigger event, handled by GtmJourneyService.
+    //
+    // The snapshot INSERT writes ~1.4 M rows into a 20 GB / 10-index table and takes
+    // 80-380 s — longer than any HTTP timeout. Awaiting it returned 500 to the client
+    // while the journey had in fact been created and the rows kept landing. So the
+    // journey row is committed, the client gets its response immediately, and the
+    // audience is built in the background. snapshot_count doubles as the progress flag:
+    //   -1 = building    -2 = build failed    >= 0 = done (the real count)
     const journeyId = journey.journey_id;
     const firstNodeId = (nodes || [])[0]?.id || 'node_0';
     const snapshotArgs = { customSegmentId, stdSegmentId, audience, firstNodeId };
 
-    if (jType === 'normal' && (customSegmentId || stdSegmentId)) {
-      // Both paths are now pure SQL — safe to await even for 1 M rows.
-      const count = await this._snapshotEntries(journeyId, snapshotArgs);
-      journey.snapshot_count = count;
-    } else if (jType === 'gtm' && (customSegmentId || stdSegmentId)) {
-      // GTM journeys don't pre-create entries (users enter on event), but we still
-      // surface the planned snapshot size = DISTINCT (user × item) pairs for the
-      // selected trigger_event, so the create toast / KPI shows a real number.
-      journey.snapshot_count = await this._gtmSnapshotCount(journey).catch(() => 0);
+    if (customSegmentId || stdSegmentId) {
+      await db.query('UPDATE journey_flows SET snapshot_count = -1 WHERE journey_id = $1', [journeyId]);
+      journey.snapshot_count = -1;
+
+      // normal → build the real snapshot entries (this IS the audience).
+      // gtm    → only the planned-size number shown in the UI; actual enrollment
+      //          happens in _gtmFanout at start, so this is cosmetic.
+      const build = jType === 'normal'
+        ? () => this._snapshotEntries(journeyId, snapshotArgs)
+        : () => this._gtmSnapshotCount(journey).then(n => db.query(
+            'UPDATE journey_flows SET snapshot_count = $1 WHERE journey_id = $2', [n, journeyId]));
+
+      setImmediate(() => build()
+        .then(() => console.log(`[Journey ${journeyId}] snapshot complete`))
+        .catch((err) => {
+          console.error(`[Journey ${journeyId}] snapshot FAILED: ${err.message}`);
+          return db.query('UPDATE journey_flows SET snapshot_count = -2 WHERE journey_id = $1', [journeyId]).catch(() => {});
+        })
+        // The detail endpoint caches getById for up to 30 min, so without this the KPI
+        // would keep reading "Building…" long after the rows landed.
+        .finally(() => cacheDel(`journey:detail:${journeyId}`).catch(() => {})));
     }
 
     return journey;
@@ -3006,6 +3030,13 @@ class JourneyService {
     );
     if (!journey) throw new Error('Journey not found');
     if (journey.status === 'active') throw new Error('Journey is already active');
+
+    // The audience is built in the background after create (see create()). Starting
+    // mid-build would launch on a PARTIAL snapshot — the entry count would be non-zero,
+    // so the "no users snapshotted" check below would wave it through.
+    const snapState = Number(journey.snapshot_count);
+    if (snapState === -1) throw new Error('Audience is still being built for this journey — please wait a moment and try again.');
+    if (snapState === -2) throw new Error('Audience build failed for this journey. Re-save its segment to rebuild it.');
 
     const nodes = journey.nodes || [];
     if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');

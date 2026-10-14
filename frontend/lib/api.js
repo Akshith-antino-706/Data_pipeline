@@ -158,6 +158,8 @@ export const refreshJourneyAnalytics  = (id) => request(`/api/v3/journeys/analyt
 export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analytics/regenerate-qa', { method: 'POST' });
 export const getJourney = (id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
+// Progress of the background audience build kicked off by createJourney — 'building' | 'done' | 'failed'.
+export const getJourneySnapshotStatus = (id) => request(`/api/v3/journeys/${id}/snapshot-status`);
 export const updateJourney = (id, data) => request(`/api/v3/journeys/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteJourney = (id) => request(`/api/v3/journeys/${id}`, { method: 'DELETE' });
 export const generateJourneyFromStrategy = (strategyId) => request(`/api/v3/journeys/generate-from-strategy/${strategyId}`, { method: 'POST' });
