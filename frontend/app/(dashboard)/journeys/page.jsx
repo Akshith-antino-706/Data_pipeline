@@ -6,8 +6,8 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  getJourneys, getJourney, generateJourneyFromStrategy, enrollJourney,
-  processJourney, getStrategies, aiFlowSuggest, getJourneyAnalytics,
+  getJourneys, getJourney, enrollJourney,
+  processJourney, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
   getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
@@ -600,17 +600,14 @@ export default function Journeys() {
   const [analytics, setAnalytics] = useState(null);
   const [campaignData, setCampaignData] = useState(null);
   const [nodeConversions, setNodeConversions] = useState(null);
-  const [strategies, setStrategies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('flow');
-  const [showGenerate, setShowGenerate] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [suggestions, setSuggestions] = useState(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [, setProcessing] = useState(false);
   const [, setEnrolling] = useState(false);
-  const [generating, setGenerating] = useState(false);
   const [starting, setStarting] = useState(false);
   const [toast, setToast] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
@@ -808,14 +805,10 @@ export default function Journeys() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [j, s] = await Promise.all([
-        // Load all journeys (backend default page size is 20) so client-side search /
-        // status filter / pagination below work across the full list, not just page 1.
-        getJourneys({ limit: 1000 }).catch(() => ({ data: [] })),
-        getStrategies().catch(() => ({ data: [] }))
-      ]);
+      // Load all journeys (backend default page size is 20) so client-side search /
+      // status filter / pagination below work across the full list, not just page 1.
+      const j = await getJourneys({ limit: 1000 }).catch(() => ({ data: [] }));
       setJourneys(j.data || []);
-      setStrategies(s.data || []);
     } catch (err) { console.error(err); }
     setLoading(false);
   }, []);
@@ -920,7 +913,14 @@ export default function Journeys() {
     await _fetchNodeAnalytics(id);
   };
 
+  // Bumped on every open so a slow response from a journey the user has already
+  // navigated away from can't overwrite the one now on screen.
+  const openReqRef = useRef(0);
+
   const openJourney = async (id) => {
+    const reqId = ++openReqRef.current;
+    const isCurrent = () => openReqRef.current === reqId;
+
     setSelected(id);
     router.replace(`${pathname}?id=${id}`, { scroll: false });
     setDetail(null);
@@ -934,19 +934,28 @@ export default function Journeys() {
     setLiveNodeId(null);
     setNodeAnalyticsLoaded(false);
     setTimeline(null);
+
+    // All three start together, but only the journey itself gates the render.
+    // The other two feed small per-node labels (predicted trigger time, live queue
+    // depth) that the canvas already renders as absent when null — so they fill in
+    // on arrival instead of holding the whole page in its skeleton state.
+    const detailP = getJourney(id);
+    const queueP  = getJourneyQueueCounts().catch(() => ({ data: null }));
+    const timeP   = getJourneyTimeline(id).catch(() => ({ data: null }));
+
+    queueP.then(r => { if (isCurrent()) setQueueStats(r?.data ?? null); });
+    timeP.then(r => { if (isCurrent()) setTimeline(r?.data || null); });
+
     try {
-      const [d, qc, tl] = await Promise.all([
-        getJourney(id),
-        getJourneyQueueCounts().catch(() => ({ data: null })),
-        getJourneyTimeline(id).catch(() => ({ data: null })),
-      ]);
+      const d = await detailP;
+      if (!isCurrent()) return;
       setDetail(d.data);
-      setQueueStats(qc.data);
-      setTimeline(tl?.data || null);
       loadTemplates();
       if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
-    } catch (err) { showToast('Failed to load journey', 'error'); }
-    setDetailLoading(false);
+    } catch (err) {
+      if (isCurrent()) showToast('Failed to load journey', 'error');
+    }
+    if (isCurrent()) setDetailLoading(false);
   };
 
   const BLANK_NODE_FORM = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
@@ -1100,17 +1109,6 @@ export default function Journeys() {
     setShowNodeModal(false);
     setEditNodeId(null);
     setNodeForm({ ...BLANK_NODE_FORM });
-  };
-
-  const handleGenerate = async (strategyId) => {
-    setShowGenerate(false);
-    setGenerating(true);
-    try {
-      const res = await generateJourneyFromStrategy(strategyId);
-      showToast(`Journey generated: ${res.data?.name}`, 'success');
-      await loadData();
-    } catch (err) { showToast(err.message, 'error'); }
-    setGenerating(false);
   };
 
   const loadSegments = async () => {
@@ -4491,11 +4489,8 @@ export default function Journeys() {
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={14} /></button>
-          <button className="btn btn-secondary" onClick={() => setShowCreate(true)}>
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
             <Plus size={14} /> New Journey
-          </button>
-          <button className="btn btn-primary" onClick={() => setShowGenerate(true)} disabled={generating}>
-            <Zap size={14} /> {generating ? 'Generating...' : 'Generate from Strategy'}
           </button>
         </div>
       </div>
@@ -4594,14 +4589,10 @@ export default function Journeys() {
               <h3 className="mt-4 mb-2">No Journeys Yet</h3>
               <p className="text-secondary" style={{ maxWidth: 440, margin: '0 auto 20px', lineHeight: 1.6 }}>
                 Create automated customer journeys to engage users across WhatsApp, Email, SMS, Push, and more.
-                Auto-generate from your 28 omnichannel strategies to get started instantly.
               </p>
               <div className="flex gap-2 justify-center">
-                <button className="btn btn-secondary" onClick={() => setShowCreate(true)}>
-                  <Plus size={14} /> Create Blank
-                </button>
-                <button className="btn btn-primary" onClick={() => setShowGenerate(true)}>
-                  <Zap size={14} /> Generate from Strategy
+                <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+                  <Plus size={14} /> Create Journey
                 </button>
               </div>
             </>
@@ -4850,76 +4841,6 @@ export default function Journeys() {
               style={{ opacity: journeyPage >= journeyPageCount ? 0.5 : 1, cursor: journeyPage >= journeyPageCount ? 'not-allowed' : 'pointer' }}>
               Next <ChevronRight size={14} />
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Generate from Strategy Modal ───────────────────────── */}
-      {showGenerate && (
-        <div className="modal-overlay" onClick={() => setShowGenerate(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 className="flex items-center gap-2">
-              <Zap size={20} color="var(--red)" /> Generate Journey from Strategy
-            </h3>
-            <p className="text-secondary mb-5" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              Select a strategy to auto-generate a complete journey flow with entry triggers, channel-specific actions, wait steps, branching conditions, and conversion goals.
-            </p>
-            <div className="flex flex-col gap-2" style={{ maxHeight: 420, overflow: 'auto' }}>
-              {strategies.map(s => {
-                const channelList = typeof s.channels === 'string'
-                  ? s.channels.replace(/[{}]/g, '').split(',').filter(Boolean)
-                  : (s.channels || []);
-
-                return (
-                  <div
-                    key={s.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleGenerate(s.id)}
-                    onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && handleGenerate(s.id)}
-                    style={{
-                      padding: '14px 16px', cursor: 'pointer',
-                      background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
-                      borderRadius: 10, transition: 'all 0.15s'
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--accent-light)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                  >
-                    <div className="font-semibold mb-1" style={{ fontSize: 14 }}>{s.name}</div>
-                    <div className="flex gap-2 items-center flex-wrap">
-                      <span className="badge badge-purple" style={{ fontSize: 10 }}>{s.segment_label}</span>
-                      {channelList.slice(0, 4).map(ch => {
-                        const conf = CHANNEL_CONFIG[ch.trim().toLowerCase()] || {};
-                        return (
-                          <span key={ch} style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 3,
-                            padding: '2px 6px', borderRadius: 8, fontSize: 10, fontWeight: 600,
-                            background: (conf.color || '#78716c') + '10', color: conf.color || '#78716c'
-                          }}>
-                            {conf.label || ch.trim()}
-                          </span>
-                        );
-                      })}
-                      {channelList.length > 4 && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>+{channelList.length - 4}</span>}
-                    </div>
-                    {s.description && (
-                      <div className="text-secondary" style={{ fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
-                        {s.description.length > 120 ? s.description.slice(0, 120) + '...' : s.description}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {strategies.length === 0 && (
-                <div className="text-secondary" style={{ textAlign: 'center', padding: 40 }}>
-                  <Zap size={24} style={{ opacity: 0.3, marginBottom: 8 }} /><br />
-                  No strategies available. Create strategies first.
-                </div>
-              )}
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowGenerate(false)}>Cancel</button>
-            </div>
           </div>
         </div>
       )}

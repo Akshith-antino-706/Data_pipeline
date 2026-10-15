@@ -115,6 +115,15 @@ class AuthService {
       .catch(() => {});
   }
 
+  // Short-lived token for the backend calling its own protected API (e.g. TestSendScheduler).
+  static signServiceToken(service) {
+    return jwt.sign(
+      { userId: null, email: null, role: 'system', service, type: 'access' },
+      JWT_SECRET,
+      { expiresIn: '30m' }
+    );
+  }
+
   static verifyToken(token) {
     try {
       return jwt.verify(token, JWT_SECRET);

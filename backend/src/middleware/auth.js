@@ -23,6 +23,37 @@ export function requireAuth(req, res, next) {
   }
 }
 
+// Routes reachable without a login, matched against req.path under the /api mount.
+// Everything else under /api requires a valid access token.
+const PUBLIC_API_ROUTES = [
+  // Login flow
+  ['POST', /^\/auth\/(login|refresh|logout)$/],
+  ['GET', /^\/health$/],
+  // Called by email clients, recipients and providers — they can't send a user token
+  ['GET', /^\/track\//],
+  ['GET', /^\/v3\/utm\/track\/[^/]+$/],
+  ['*', /^\/unsubscribe(\/|$)/],
+  ['*', /^\/webhooks\//],
+  ['POST', /^\/v3\/gupshup\/webhook\/(wa|sms)$/],
+  ['POST', /^\/v3\/gtm\/events$/],
+  // Leads screen (opened with the leads access token, not a login)
+  ['GET', /^\/v3\/chat-leads\/(summary|trend|mail-summary|mail-trend|department-periods|mail-department-periods|department-users|departments|groups|registrations|registrations\/summary|registrations\/periods)$/],
+  ['POST', /^\/v3\/chat-leads\/groups$/],
+  ['PUT', /^\/v3\/chat-leads\/groups\/[^/]+$/],
+  ['DELETE', /^\/v3\/chat-leads\/groups\/[^/]+$/],
+];
+
+function isPublicApiRoute(req) {
+  const reqMethod = req.method === 'HEAD' ? 'GET' : req.method;
+  return PUBLIC_API_ROUTES.some(([method, re]) => (method === '*' || method === reqMethod) && re.test(req.path));
+}
+
+/** Mount with app.use('/api', apiAuthGate) — protects every /api route not in PUBLIC_API_ROUTES. */
+export function apiAuthGate(req, res, next) {
+  if (req.method === 'OPTIONS' || isPublicApiRoute(req)) return next();
+  return requireAuth(req, res, next);
+}
+
 /**
  * Role-based guard (for future use).
  * Usage: router.use(requireRole('admin'))

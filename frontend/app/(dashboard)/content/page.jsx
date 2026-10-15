@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport } from '@/lib/api';
+import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport, authFetch } from '@/lib/api';
 import WhatsAppTestSend from './WhatsAppTestSend';
 import CreateWhatsAppTemplate from './CreateWhatsAppTemplate';
 import SmsTestSend from './SmsTestSend';
@@ -204,7 +204,7 @@ export default function Content() {
   }
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  const tsGet = (path) => fetch(`${apiBase}${path}`, { credentials: 'include' })
+  const tsGet = (path) => authFetch(`${apiBase}${path}`, { credentials: 'include' })
     .then(r => r.json())
     .then(d => d.data || d); // unwrap { data: ... } envelope
 

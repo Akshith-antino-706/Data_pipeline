@@ -7,6 +7,7 @@ import {
   Search, X, ClipboardList, Square, Cpu, Plus, ArrowLeft, Filter, CheckSquare,
 } from 'lucide-react';
 import Link from 'next/link';
+import { authFetch } from '@/lib/api';
 import { contactTypeColor } from '@/lib/contactTypes';
 
 const DAY6_DESTINATIONS = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lumpur', 'istanbul'];
@@ -14,7 +15,7 @@ const DAY6_DESTINATIONS = ['singapore', 'bangkok', 'phuket', 'bali', 'kuala_lump
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 async function apiPost(path, body = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await authFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -25,7 +26,7 @@ async function apiPost(path, body = {}) {
 }
 
 async function apiGet(path) {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await authFetch(`${API_BASE}${path}`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data.data || data;
