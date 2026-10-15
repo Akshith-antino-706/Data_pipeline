@@ -6,11 +6,12 @@ import {
   ClipboardList, Search, X, Loader2, ChevronLeft, ChevronRight, ArrowLeft,
 } from 'lucide-react';
 import Link from 'next/link';
+import { authFetch } from '@/lib/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 async function apiGet(path) {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await authFetch(`${API_BASE}${path}`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data.data || data;

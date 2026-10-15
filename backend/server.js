@@ -50,6 +50,7 @@ import giveawaysRouter from './src/routes/giveaways.js';
 import chatLeadsRouter from './src/routes/chatLeads.js';
 import { startGiveawayWorker } from './src/services/giveaway/giveawayWorker.js';
 import authRouter from './src/routes/auth.js';
+import { apiAuthGate } from './src/middleware/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
@@ -115,6 +116,10 @@ app.use((req, _res, next) => {
   });
   next();
 });
+
+// Every /api route below (and the inline app.get/app.post routes further down) needs a
+// login unless it is in PUBLIC_API_ROUTES.
+app.use('/api', apiAuthGate);
 
 // ── Routes ──────────────────────────────────────────────────
 // Auth

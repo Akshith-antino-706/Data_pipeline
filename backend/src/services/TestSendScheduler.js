@@ -10,6 +10,12 @@
  */
 
 import db from '../config/database.js';
+import AuthService from './AuthService.js';
+
+const selfHeaders = () => ({
+  'Content-Type': 'application/json',
+  Authorization: `Bearer ${AuthService.signServiceToken('test-send-scheduler')}`,
+});
 
 const DAY_LABELS = {
   1: 'Welcome',
@@ -129,7 +135,7 @@ async function _prewarmThenSend({ id, destinationKey, baseUrl }) {
   try {
     const res  = await fetch(`${baseUrl}/api/v3/test-sends/prewarm`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: selfHeaders(),
       body: JSON.stringify({ destinationKey }),
     });
     const data = await res.json().catch(() => ({}));
@@ -195,7 +201,7 @@ export async function tick(id, {
 
   const res  = await fetch(baseUrl + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: selfHeaders(),
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));

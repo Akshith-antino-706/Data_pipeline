@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats, getContactSourcesBreakdown } from '@/lib/api';
+import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats, getContactSourcesBreakdown, authFetch } from '@/lib/api';
 import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2, Filter } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
@@ -104,7 +104,7 @@ export default function Dashboard() {
 
   const [schedSummary, setSchedSummary] = useState({ running: 0, total: 0, lastSentDay: null, lastSentAt: null });
   useEffect(() => {
-    fetch(`${API_BASE}/api/v3/test-sends/schedule/list`)
+    authFetch(`${API_BASE}/api/v3/test-sends/schedule/list`)
       .then(r => r.json())
       .then(d => {
         const list = Array.isArray(d?.data) ? d.data : [];

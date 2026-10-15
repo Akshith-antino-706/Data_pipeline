@@ -43,28 +43,32 @@ function tryRefresh() {
   return _refreshPromise;
 }
 
-async function request(path, options = {}, _retried = false) {
+// fetch() that sends the access token and, on a 401, refreshes it once and retries.
+// Returns the raw Response; if the session can't be restored it redirects to /login.
+export async function authFetch(url, options = {}, _retried = false) {
   const token = getToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  const headers = { ...options.headers };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(url, { ...options, headers });
+  if (res.status !== 401) return res;
 
-  if (res.status === 401) {
-    // Access token likely expired — try a one-time refresh, then retry the original request.
-    // Don't attempt this for auth endpoints themselves (avoids a refresh loop).
-    if (!_retried && !path.startsWith('/api/auth/')) {
-      const newToken = await tryRefresh();
-      if (newToken) return request(path, options, true);
-    }
-    clearAuthAndRedirect();
-    throw new Error('Session expired. Please log in again.');
+  // Don't refresh for auth endpoints themselves (avoids a refresh loop).
+  if (!_retried && !url.includes('/api/auth/')) {
+    const newToken = await tryRefresh();
+    if (newToken) return authFetch(url, options, true);
   }
+  clearAuthAndRedirect();
+  return res;
+}
+
+async function request(path, options = {}) {
+  const res = await authFetch(`${BASE}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+
+  if (res.status === 401) throw new Error('Session expired. Please log in again.');
 
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -307,7 +311,7 @@ export const getContactAffinity = (id) => request(`/api/v3/booking-affinity/cust
 export const searchAffinityProducts = (search, limit = 20) => request(`/api/v3/booking-affinity/products?${affinityQs({ search, limit })}`);
 export const rebuildAffinity = () => request('/api/v3/booking-affinity/rebuild', { method: 'POST' });
 export async function downloadAffinityCSV(params = {}) {
-  const res = await fetch(`${BASE}/api/v3/booking-affinity/customers.csv?${affinityQs(params)}`);
+  const res = await authFetch(`${BASE}/api/v3/booking-affinity/customers.csv?${affinityQs(params)}`);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -356,7 +360,7 @@ export const getReportCounts = (from, to) => request(`/api/v3/daily-report/count
 export const getReportPreview = (table, from, to) => request(`/api/v3/daily-report/preview/${table}?from=${from}&to=${to}`);
 
 export async function downloadReportCSV(table, from, to) {
-  const res = await fetch(`${BASE}/api/v3/daily-report/download/${table}?from=${from}&to=${to}`);
+  const res = await authFetch(`${BASE}/api/v3/daily-report/download/${table}?from=${from}&to=${to}`);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -441,7 +445,7 @@ export const snapshotDailySegments = () => request('/api/v3/unified-contacts/sna
 export const getSegmentChanges = () => request('/api/v3/unified-contacts/segment-changes');
 export const downloadSegmentActivity = async (params = {}) => {
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${BASE}/api/v3/unified-contacts/segment-activity/download?${qs}`);
+  const res = await authFetch(`${BASE}/api/v3/unified-contacts/segment-activity/download?${qs}`);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -453,7 +457,7 @@ export const downloadSegmentActivity = async (params = {}) => {
 };
 export const downloadSegmentCustomers = async (params = {}) => {
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${BASE}/api/v3/unified-contacts/segment-customers/download?${qs}`);
+  const res = await authFetch(`${BASE}/api/v3/unified-contacts/segment-customers/download?${qs}`);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -549,7 +553,7 @@ export const getEmailUtmLog = (params = {}) => {
 export const getEmailUtmSummary = () => request('/api/v3/test-sends/utm-log/summary');
 
 export async function downloadReportAll(from, to) {
-  const res = await fetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);
+  const res = await authFetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
