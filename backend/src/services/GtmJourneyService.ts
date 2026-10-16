@@ -1,0 +1,588 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import db from '../config/database.js';
+import { getConnection, enqueueGtmJourney } from './queue/index.js';
+import WelcomeEmailService from './WelcomeEmailService.js';
+import ChatHeadV1Service from './ChatHeadV1Service.js';
+import GupshupService from './GupshupService.js';
+import { SendTrackService } from './SendTrackService.js';
+import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
+import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import SkipLogService from './SkipLogService.js';
+import LiquidRenderer from './LiquidRenderer.js';
+import { isEmailAllowed } from '../utils/emailAllowlist.js';
+import { reserveSend, releaseSend, reserveWaSend, releaseWaSend } from '../utils/emailFrequencyCap.js';
+import { buildReviewUrl } from '../utils/reviewUrl.js';
+import { getAffinityVars, usesAffinity } from './affinityVars.js';
+import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
+import type { GtmJourneyJobData, JourneyEdge } from '../types/queueJobs.js';
+import type { PlaceholderContext, PlaceholderEvent } from '../types/utilsPlaceholder.js';
+import type { GiveawayEventRow, GtmContactRow, GtmFlowNode, GtmJourneyFlowRow, GtmNextStep, GtmOnEventArgs, GtmStartRow, InjectedRecMeta } from '../types/servicesGtmJourney.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
+
+/**
+ * GTM (event-triggered) journeys.
+ *
+ *   journey_type='gtm' + trigger_event='view_item' (etc.)
+ *
+ * When a contact fires the trigger event, send them a per-user, welcome-style
+ * email personalised withenv THAT event's data (item, image, page). Deduped per
+ * DISTINCT item per user per journey — so a user who views 6 different tours gets
+ * 6 emails (one per tour), but viewing the same tour repeatedly = 1 email.
+ *
+ * Flow:  recordEvent() → onEvent() → (dedup by itemId) → delayed BullMQ job
+ *        → processJob() → render welcome template with payload → send → log.
+ *
+ * Safety: only WELCOME_EMAILS-allow-listed recipients receive mail (see emailAllowlist).
+ */
+class GtmJourneyService {
+  static get _delayMs() {
+    return (parseFloat(process.env.GTM_JOURNEY_DELAY_MIN || '2')) * 60_000;
+  }
+  // Dedup is per (journey, user, NODE) so the SAME item can send once at each step
+  // of a multi-node gtm journey (action → wait → action → …).
+  static _dedupKey(journeyId: string | number | undefined, unifiedId: string | number, nodeId: string | null | undefined) { return `gtmj:j${journeyId}:u${unifiedId}:${nodeId || 'n1'}`; }
+
+  // Wait-node duration → ms. Honors JOURNEY_WAIT_SECS_PER_DAY for testing
+  // (e.g. 10 → 1 day = 10s); 0/unset → real days, same as the normal engine.
+  static _waitMs(waitDays: string | number | undefined) {
+    const d = parseFloat(waitDays as string) || 1;
+    const secsPerDay = parseFloat(process.env.JOURNEY_WAIT_SECS_PER_DAY || '0');
+    return secsPerDay > 0 ? d * secsPerDay * 1000 : d * 86_400_000;
+  }
+
+  /**
+   * Walk the flow from `fromNodeId` to the NEXT action node, summing any wait-node
+   * delays in between (so gtm journeys honor wait nodes just like normal journeys).
+   * Returns { nodeId, delayMs } for the next action, or null if the sequence ends.
+   */
+  static _nextStep(nodes: GtmFlowNode[], edges: JourneyEdge[], fromNodeId: string): GtmNextStep | null {
+    const nodeMap: Record<string, GtmFlowNode> = Object.fromEntries((nodes || []).map(n => [n.id, n]));
+    let delayMs = 0, cur = fromNodeId;
+    const seen = new Set<string>();
+    for (;;) {
+      const edge = (edges || []).find(e => e.source === cur);
+      if (!edge) return null;
+      const next = nodeMap[edge.target];
+      if (!next || seen.has(next.id)) return null;
+      seen.add(next.id);
+      if (next.type === 'wait')   { delayMs += this._waitMs(next.data?.waitDays); cur = next.id; continue; }
+      if (next.type === 'action') return { nodeId: next.id, delayMs };
+      return null; // goal/condition — gtm journeys stop here
+    }
+  }
+
+  /**
+   * Called (fire-and-forget) from GTMService.recordEvent after an event is stored.
+   * Finds active gtm journeys listening to this event and enqueues a per-user send,
+   * deduped on (journey, user, itemId).
+   */
+  static async onEvent({ eventName, unifiedId, eventId, itemId }: GtmOnEventArgs) {
+    if (!eventName || !unifiedId) return;
+    const { rows: journeys } = await db.query<GtmJourneyFlowRow>(
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
+         FROM journey_flows
+       WHERE status = 'active' AND journey_type = 'gtm'
+         AND trigger_event IS NOT NULL
+         AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))
+         -- DATE CUTOFF: skip real-time enrollment until the journey's trigger_from_date
+         -- has arrived (future-dated picker). The event fires "now", so NOW() is its time.
+         AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
+      [eventName]
+    );
+    if (!journeys.length) return;
+
+    // CONTINUOUS engine: real-time entry → write a per-user state row (idempotent via the
+    // UNIQUE(journey,user,item) constraint). The progression cron fires it; no BullMQ delay.
+    const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+    const itemKey = String(itemId ?? '_noitem');
+    for (const j of journeys) {
+      try {
+        // SEGMENT GUARD: the trigger event alone must NOT grant entry. A user only enters
+        // if they ALSO belong to the journey's selected segment (+ audience). Without this,
+        // any contact firing the trigger blasts into the journey regardless of who was
+        // targeted (e.g. a 2-person test segment leaking emails to real customers).
+        if (!(await this._isSegmentMember(j, unifiedId))) continue;
+        // Entry node + delay = leading wait from the trigger (PDF N1 +1h/+2h/+24h…).
+        const triggerNode = (j.nodes || []).find(n => n.type === 'trigger');
+        const firstStep = triggerNode ? this._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
+        const firstNodeId = firstStep?.nodeId || (j.nodes || []).find(n => n.type === 'action')?.id || null;
+        if (!firstNodeId) continue;
+        const id = await ContinuousJourneyService.enter({
+          journeyId: j.journey_id, unifiedId, itemId: itemKey, eventId,
+          firstNodeId, entryDelayMs: firstStep ? firstStep.delayMs : 0,
+        });
+        if (id) console.log(`[Continuous ${j.journey_id}] entered uid=${unifiedId} item=${itemKey} @ ${firstNodeId} delay=${Math.round((firstStep?.delayMs||0)/1000)}s (${eventName})`);
+      } catch (e) { console.error(`[GtmJourney ${j.journey_id}] onEvent failed: ${(e as Error).message}`); }
+    }
+  }
+
+  /**
+   * Is `unifiedId` a member of THIS journey's segment (respecting audience)? Used by the
+   * real-time onEvent entry path so the trigger event can never bypass the segment the
+   * user selected. Reuses JourneyService._journeySegmentRows (the same SQL the start
+   * fan-out uses) so membership is defined identically everywhere. Imported dynamically
+   * to avoid the JourneyService↔GtmJourneyService circular import.
+   *
+   * Returns false when the journey has no segment — a trigger journey with no segment has
+   * no audience to honour, so we don't enter anyone (prevents the J193-style blast).
+   */
+  static async _isSegmentMember(journey: GtmJourneyFlowRow, unifiedId: string | number) {
+    if (!unifiedId) return false;
+    const { default: JourneyService } = await import('./JourneyService.js');
+    const segRows = await JourneyService._journeySegmentRows(journey).catch(() => null);
+    if (!segRows) {
+      console.warn(`[Continuous ${journey.journey_id}] no segment — onEvent entry skipped for uid=${unifiedId}`);
+      return false;
+    }
+    const { sql, params } = segRows;
+    const { rows } = await db.query(
+      `SELECT 1 FROM (${sql}) m WHERE m.id = $${params.length + 1} LIMIT 1`,
+      [...params, unifiedId]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * Fan-out at journey START (segment-based, like a normal journey). Given the
+   * pre-resolved rows [{ unifiedId, eventId, itemId }] — one per (segment user ×
+   * DISTINCT triggered item) — enqueue one prefilled email each, deduped per
+   * (journey, user, item). Users with no matching event aren't in `rows`, so they
+   * are skipped automatically. Returns the number of emails queued.
+   */
+  static async enqueueForStart(journeyId: string | number, rows: GtmStartRow[], firstNodeId: string) {
+    const conn = getConnection();
+    let queued = 0;
+    for (const r of rows) {
+      try {
+        const itemKey = String(r.itemId ?? '_noitem');
+        const key = this._dedupKey(journeyId, r.unifiedId, firstNodeId);
+        if (await conn.sismember(key, itemKey)) continue;   // already emailed this item at node 1
+        await conn.sadd(key, itemKey);
+        await enqueueGtmJourney({ journeyId, unifiedId: r.unifiedId, eventId: r.eventId, nodeId: firstNodeId, itemId: itemKey }, this._delayMs);
+        queued++;
+      } catch (e) { console.error(`[GtmJourney ${journeyId}] enqueueForStart failed uid=${r.unifiedId}: ${(e as Error).message}`); }
+    }
+    return queued;
+  }
+
+  /** Worker entry — render the node's email, send, then schedule the next node (after any wait). */
+  static async processJob({ entryId, journeyId, unifiedId, eventId, nodeId: jobNodeId, itemId }: GtmJourneyJobData) {
+    if (!unifiedId) return;
+
+    // Full contact row — feeds the USER_*, RID, BOOKING_STATUS, PRODUCT_TIER, etc. keys.
+    const { rows: [c] } = await db.query<GtmContactRow>(
+      `SELECT id, email, name, mobile, city, country, is_indian, booking_status,
+              product_tier, segments, geography, email_unsubscribe, wa_unsubscribe
+       FROM unified_contacts WHERE id = $1`, [unifiedId]
+    );
+    if (!c?.email) { console.warn(`[GtmJourney ${journeyId}] uid=${unifiedId} no email — skip`); return; }
+
+    // ── Per-node snapshot refresh: re-apply the GTM exit conditions at EVERY node ──
+    // (not just the start fan-out). So a user who unsubscribes, or buys this item during
+    // the wait between nodes, is dropped from the rest of the sequence — no further sends.
+    // IMPORTANT: also MARK the entry exited (not just skip the send), so a purchase that
+    // lands after the cron already enqueued this job still flips the row to 'exited' here.
+    const _exit = async (reason: string) => {
+      if (entryId) await db.query(
+        `UPDATE gtm_journey_entries SET status='exited', exit_reason=$2, next_fire_at=NULL, updated_at=NOW() WHERE id=$1 AND status='active'`,
+        [entryId, reason]
+      ).catch(() => {});
+      console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} ${reason} — EXITED at node ${jobNodeId}, send skipped`);
+    };
+    if (String(c.email_unsubscribe || '').toLowerCase() === 'yes') { await _exit('unsubscribed'); return; }
+    if (itemId && itemId !== '_noitem') {
+      const { rows: [bought] } = await db.query(
+        `SELECT 1 FROM gtm_events
+         WHERE unified_id = $1 AND event_name = 'purchase'
+           AND COALESCE(raw_payload->>'itemId', '') = $2 LIMIT 1`,
+        [unifiedId, String(itemId)]
+      );
+      if (bought) { await _exit('purchased'); return; }
+    }
+
+    // Giveaway journeys: the trigger is a giveaway_events row (PK = a UUID), not a GTM event.
+    // Load it so its data can fill the email ({{ giveaway }}, {{ prize }}, {{ rank }}, {{ code }}, …).
+    let gvRow: GiveawayEventRow | null = null;
+    const gvId = String(itemId || eventId || '');
+    if (gvId) {
+      const { rows: [gv] } = await db.query<GiveawayEventRow>(
+        `SELECT name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
+                rank, code, offer, offer_code, expiry, position, points
+           FROM giveaway_events WHERE id = $1`, [gvId]
+      ).catch(() => ({ rows: [] }));
+      if (gv) gvRow = gv;
+    }
+
+    // Full triggering event — feeds PAGE_URL, EVENT_*, JOURNEY_ID, NODE_ID + raw_payload.
+    // GTM journeys only: a giveaway eventId is a UUID and would break the bigint lookup, so skip it.
+    let eventRow: PlaceholderEvent = { event_id: eventId, event_name: null, page_url: null, page_title: null, raw_payload: {}, created_at: null, journey_id: journeyId, node_id: null };
+    if (eventId && !gvRow) {
+      const { rows: [ev] } = await db.query<PlaceholderEvent>(
+        `SELECT event_id, event_name, page_url, page_title, raw_payload, created_at, journey_id, node_id
+         FROM gtm_events WHERE event_id = $1`, [eventId]
+      ).catch(() => ({ rows: [] }));
+      if (ev) eventRow = ev;
+    }
+
+    // ── Template selected on the journey's action node ──
+    // Each GTM event can have its own template using ANY of the 60 master placeholder
+    // keys; the universal resolver fills them all from contact + event + raw_payload +
+    // ecommerce + generated URLs. Falls back to the bundled gtm-welcome.html if none.
+    const { rows: [jf] } = await db.query<{ nodes: GtmFlowNode[] | null; edges: JourneyEdge[] | null; email_credential: string | null }>('SELECT nodes, edges, email_credential FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    const nodes = jf?.nodes || [];
+    // Per-journey email sender: 'giveaway' → the giveaway SMTP mailbox; anything else → default AWS.
+    const emailCredential = jf?.email_credential || 'default';
+    // Send the SPECIFIC node this job is for (multi-step); fall back to the first action node.
+    const actionNode = (jobNodeId ? nodes.find(n => n.id === jobNodeId && n.type === 'action') : null)
+      || nodes.find(n => n.type === 'action');
+    const nodeId = actionNode?.id || null;
+
+    // ── WhatsApp action node (channel parity with the fixed engine) ──────────────
+    // GTM/continuous journeys can mix channels (email + whatsapp). A WhatsApp node
+    // sends via ChatHead — the SAME transport + whatsapp_send_log shape the fixed
+    // engine's _sendWhatsAppBatch uses — then advances the per-user state row. It
+    // must NEVER fall through to the email block below (that was the bug where a
+    // WhatsApp node with no email template silently sent the default welcome email).
+    if (actionNode?.data?.channel === 'whatsapp') {
+      const advance = async () => {
+        if (!entryId) return;
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
+      };
+      const logEvent = (type: string, details: Record<string, unknown>) => (entryId ? db.query(
+        `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1,$2,$3,'whatsapp',$4)`,
+        [entryId, nodeId, type, JSON.stringify(details || {})]
+      ).catch(() => {}) : Promise.resolve());
+
+      // WhatsApp opt-out — mirror the email_unsubscribe exit.
+      if (String(c.wa_unsubscribe || '').toLowerCase() === 'yes') { await _exit('wa_unsubscribed'); return; }
+
+      const phone = String(c.mobile || '').replace(/\D/g, '');
+      const waChannelId  = actionNode.data?.waChannelId;
+      const waTemplateId = actionNode.data?.waTemplateId;
+      // No mobile or missing ChatHead config → block + advance (never wedge, never email).
+      if (phone.length < 10 || !waChannelId || !waTemplateId) {
+        await logEvent('action_blocked', { reason: phone.length < 10 ? 'no_mobile' : 'missing_chathead_config' });
+        await advance();
+        return;
+      }
+
+      // Personalise the WhatsApp .data record with the SAME dynamic keys the email uses —
+      // resolved via placeholderResolver (contact + this triggering event + raw_payload).
+      // ChatHead binds these lowercase .data columns to the template's {{item_name}} etc.,
+      // so a view_item WhatsApp actually says "which product you viewed", like the email.
+      // + product_affinity_* / service_affinity_* (we can't see which keys the ChatHead template binds).
+      const waVars = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload, affinity: await getAffinityVars(c.id) });
+
+      // Item completeness — checked against the ACTUAL .data values we send (waVars), not the
+      // email resolver, so WhatsApp is judged by exactly what its template will show. Skip if
+      // ANY item field is empty. Non-item WhatsApp sends (no item context) are unaffected.
+      if (isItemBased(eventRow.event_name as string, itemId)) {
+        const _missing = missingItemFields(waVars);
+        if (_missing.length) {
+          await logEvent('action_blocked', { reason: 'missing_item_fields', missing: _missing });
+          SkipLogService.record({ journeyId, channel: 'whatsapp', eventRow, itemId, itemName: waVars.item_name, missing: _missing, contact: c });
+          console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp missing item field(s): ${_missing.join(',')} — skipped`);
+          await advance();
+          return;
+        }
+      }
+
+      // WhatsApp frequency cap — same rule as email (default 3 / 24h per recipient).
+      const _waCap = await reserveWaSend({ unifiedId: c.id, email: c.email, phone });
+      if (!_waCap.allowed) {
+        await logEvent('action_blocked', { reason: 'frequency_capped', count: _waCap.count });
+        console.log(`[GtmJourney ${journeyId}] uid=${c.id} WhatsApp FREQUENCY CAPPED (count=${_waCap.count}) — skipped`);
+        await advance();
+        return;
+      }
+
+      let result;
+      try {
+        result = await ChatHeadV1Service.sendBroadcast({
+          contacts:     [{ phone, name: c.name || '', vars: waVars }],
+          channelId:    parseInt(waChannelId),
+          channelName:  actionNode.data?.waChannelName || null,
+          templateId:   parseInt(waTemplateId),
+          templateName: actionNode.data?.waTemplateName || null,
+          name:         `gtm journey ${journeyId} ${nodeId}`,
+          sendTime:     new Date(Date.now() + 60 * 1000),
+        });
+      } catch (err) { result = { success: false, error: (err as Error).message }; }
+      if (!result?.success) releaseWaSend({ unifiedId: c.id, email: c.email, phone }); // failed send doesn't consume a slot
+
+      const ok    = !!result?.success;
+      const extId = result?.broadcast?.chatheadBroadcastId != null ? String(result.broadcast.chatheadBroadcastId) : null;
+      await db.query(
+        `INSERT INTO whatsapp_send_log
+           (unified_id, phone, contact_name, channel_id, template_id, template_name,
+            journey_id, node_id, broadcast_id, external_id, status, source, error, sent_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'gtm_journey',$12,
+                 CASE WHEN $11='sent' THEN NOW() ELSE NULL END)`,
+        [c.id, phone, c.name || null, parseInt(waChannelId), parseInt(waTemplateId),
+         actionNode.data?.waTemplateName || null, journeyId, nodeId,
+         result?.broadcast?.id ?? null, extId, ok ? 'sent' : 'failed',
+         ok ? null : String(result?.error || 'broadcast failed').slice(0, 500)]
+      ).catch(() => {});
+      await logEvent(ok ? 'action_sent' : 'action_failed', { channel: 'whatsapp', broadcastId: extId, templateId: waTemplateId });
+      console.log(`[GtmJourney ${journeyId}] WhatsApp ${ok ? 'sent' : 'FAILED'} to=${phone} node=${nodeId} chId=${extId || '-'}`);
+
+      // Always advance — on failure too. Retrying a ChatHead broadcast risks a
+      // duplicate WhatsApp send (same reason the fixed engine advances on WA failure
+      // instead of throwing). The failure is recorded in whatsapp_send_log + journey_events.
+      await advance();
+      return;
+    }
+
+    // ── RCS (Gupshup RBM) action node — per-message send, channel parity with the
+    //    fixed engine's processRCS. Targets unified_contacts.mobile, personalized with
+    //    the SAME dynamic keys the email/WhatsApp use (item_name, item_image, cta_url …)
+    //    as RCS customParams. Never falls through to the email block below. ──
+    if (actionNode?.data?.channel === 'rcs') {
+      const advanceRcs = async () => {
+        if (!entryId) return;
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
+      };
+      const logRcs = (type: string, details: Record<string, unknown>) => (entryId ? db.query(
+        `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details) VALUES ($1,$2,$3,'rcs',$4)`,
+        [entryId, nodeId, type, JSON.stringify(details || {})]
+      ).catch(() => {}) : Promise.resolve());
+
+      if (String(c.wa_unsubscribe || '').toLowerCase() === 'yes') { await _exit('wa_unsubscribed'); return; }
+
+      const phone = String(c.mobile || '').replace(/\D/g, '');
+      const templateCode = actionNode.data?.rcsTemplateCode;
+      if (phone.length < 10 || !templateCode) {
+        await logRcs('action_blocked', { reason: phone.length < 10 ? 'no_mobile' : 'missing_rcs_template' });
+        await advanceRcs();
+        return;
+      }
+
+      // RCS: SMALL curated key set (never '*') — Gupshup caps the message payload length.
+      const rcsParams = buildWaVars({ contact: c, event: eventRow, payload: eventRow.raw_payload }, RCS_DATA_KEYS);
+      let result;
+      try {
+        result = await GupshupService.sendRCS({
+          to: phone, templateCode,
+          customParams: Object.keys(rcsParams).length ? rcsParams : null,
+        });
+      } catch (err) { result = { success: false, error: (err as Error).message }; }
+
+      const ok = !!result?.success;
+      await db.query(
+        `INSERT INTO sms_send_log
+           (unified_id, phone, contact_name, template_id, journey_id, node_id, provider, external_id,
+            status, source, error, message_body, sent_at)
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,'gtm_journey',$9,$10,
+                 CASE WHEN $8 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
+        [c.id, phone, c.name || null, journeyId, nodeId, result?.provider || 'gupshup-rcs', result?.externalId || null,
+         result?.simulated ? 'simulated' : (ok ? 'sent' : 'failed'),
+         ok ? null : String(result?.error || 'send failed').slice(0, 500),
+         `RCS templateCode=${templateCode}`]
+      ).catch(() => {});
+      await logRcs(ok ? 'action_sent' : 'action_failed', { channel: 'rcs', templateCode, simulated: result?.simulated });
+      console.log(`[GtmJourney ${journeyId}] RCS ${ok ? 'sent' : 'FAILED'} to=${phone} node=${nodeId} tpl=${templateCode}`);
+      await advanceRcs();
+      return;
+    }
+
+    // WELCOME_EMAILS allow-list gate (validate the real user). Off-list → skip the send
+    // and advance the entry so the continuous journey progresses (no send, no retry storm).
+    if (!isEmailAllowed(c.email)) {
+      console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} ${c.email} not in WELCOME_EMAILS — send skipped`);
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
+      }
+      return;
+    }
+
+    const templateId = actionNode?.data?.emailTemplateId ?? actionNode?.data?.templateId ?? null;
+
+    let tplBody: string | null = null, tplSubject: string | null = null;
+    if (templateId) {
+      const { rows: [t] } = await db.query<{ subject: string | null; body: string | null; html_template_id: number | null }>('SELECT subject, body, html_template_id FROM content_templates WHERE id = $1', [parseInt(templateId as string)]).catch(() => ({ rows: [] }));
+      if (t?.body) tplBody = t.body;
+      if (t?.subject) tplSubject = t.subject;
+      // The HTML for most templates lives in the linked email_html_templates row
+      // (content_templates.body is often empty). Use that when there's no inline body.
+      if (!tplBody && t?.html_template_id) {
+        const { rows: [h] } = await db.query<{ html_body: string | null; subject_line: string | null }>('SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [t.html_template_id]).catch(() => ({ rows: [] }));
+        if (h?.html_body) tplBody = h.html_body;
+        if (!tplSubject && h?.subject_line) tplSubject = h.subject_line;
+      }
+    }
+    if (!tplBody) { tplBody = fs.readFileSync(DEFAULT_TEMPLATE_PATH, 'utf8'); console.warn(`[GtmJourney ${journeyId}] node template ${templateId} has no HTML — using default welcome template`); }
+
+    // Universal placeholder fill — body AND subject (subjects may contain keys too).
+    const ctx: PlaceholderContext = { contact: c, event: eventRow, payload: eventRow.raw_payload || {} };
+    // Top booked products / business lines — looked up only when the template uses them.
+    if (usesAffinity(tplBody, tplSubject)) ctx.affinity = await getAffinityVars(c.id);
+
+    // ── Guard: cart/product templates must have item data ──
+    // Some add_to_cart / begin_checkout events arrive with NO product context (no itemName,
+    // ecommerceData or imageUrl). Rendering a cart template from those produces an EMPTY
+    // product card (blank image, no name, "AED" with no price). If the template depends on
+    // item fields and none resolve, skip the send and advance the entry (an empty
+    // "here's your cart item" email is worse than no email). Giveaway journeys (gvRow) are
+    // exempt — they don't use the cart item fields.
+    // Item-completeness gate — SAME condition as the WhatsApp node (isItemBased) so email and
+    // WhatsApp always agree: for an item/product send, skip if ANY item field is empty
+    // (name / price / image / currency / destination_city / url, or "NA"). Giveaway journeys exempt.
+    if (isItemBased(eventRow.event_name as string, itemId) && !gvRow) {
+      const _iv = buildLiquidVars(ctx);
+      const _missing = missingItemFields(_iv);
+      if (_missing.length) {
+        SkipLogService.record({ journeyId, channel: 'email', eventRow, itemId, itemName: (_iv as Record<string, unknown>).ITEM_NAME || (_iv as Record<string, unknown>).item_name, missing: _missing, contact: c });
+        console.log(`[GtmJourney ${journeyId}] uid=${unifiedId} item=${itemId} — missing item field(s): ${_missing.join(',')} — email skipped`);
+        if (entryId) {
+          const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+          await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
+        }
+        return;
+      }
+    }
+
+    // Giveaway journeys: expose the giveaway_events row as lowercase template vars so
+    // {{ giveaway }}, {{ prize }}, {{ rank }}, {{ mechanic }}, {{ code }}, {{ value }}, etc. resolve.
+    const gvVars = gvRow ? {
+      name: gvRow.name || c.name || '', giveaway: gvRow.giveaway || '', giveaway_image: gvRow.giveaway_image || '',
+      mechanic: gvRow.mechanic || '', prize: gvRow.prize || '', prize_image: gvRow.prize_image || '',
+      prize_type: gvRow.prize_type || '', value: gvRow.value || '', rank: gvRow.rank ?? '',
+      code: gvRow.code || '', offer: gvRow.offer || '', offer_code: gvRow.offer_code || '', expiry: gvRow.expiry || '',
+      position: gvRow.position ?? '', points: gvRow.points ?? '',
+    } : null;
+    // Fill {{ key }} from gvVars for the regex/subject paths (Liquid gets them via the vars object).
+    const fillGv = (s: string) => gvVars ? String(s).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k: string) => (k in gvVars) ? String(gvVars[k as keyof typeof gvVars] ?? '') : m) : s;
+
+    // Liquid templates (contain {% … %}) render via LiquidRenderer with the full items[]
+    // array so {% for item in items %} shows every cart product; plain {{KEY}}-only
+    // templates keep the regex resolver (items[0] scalars only).
+    let html = /\{%/.test(tplBody)
+      ? await LiquidRenderer.render(tplBody, { ...buildLiquidVars(ctx), ...(gvVars || {}) })
+      : fillGv(renderTemplate(tplBody, ctx));
+    let subject = fillGv(renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx));
+
+    // Per-recipient review link (post-trip templates carry the %%REVIEW_URL%% sentinel).
+    // placeholderResolver leaves it untouched, so swap it here for a feedback link
+    // pre-filled with THIS contact's most recent trip. Same as the normal-journey worker.
+    if (html && html.includes('%%REVIEW_URL%%')) {
+      const reviewUrl = await buildReviewUrl(c.id).catch(() => null);
+      if (reviewUrl) {
+        html = html.split('%%REVIEW_URL%%').join(reviewUrl);
+        console.log(`[GtmJourney ${journeyId}] injected review link for uid=${c.id}`);
+      }
+    }
+
+    // ── AI recommendation injection + allowlist gate — additive. Existing
+    //    GTM journeys have recommendation_type = NULL → this whole block is
+    //    skipped. When set, REC_JOURNEY_ALLOWLIST decides delivery. ──
+    let recAllowlistBlocked = false;
+    try {
+      const { rows: [jf] } = await db.query(
+        `SELECT recommendation_type, trigger_event, trigger_source FROM journey_flows WHERE journey_id = $1`,
+        [journeyId]
+      );
+      if (jf?.recommendation_type) {
+        const { injectPerUserProducts, isRecipientAllowedForRec } = await import('./RecommendationRenderer.js');
+        // MARKET PRICING RULE: per-user local-currency pricing applies ONLY to pure CONTINUOUS
+        // journeys (no gtm/giveaway trigger event selected). When a trigger event IS selected
+        // (gtm or giveaway), product-card prices stay default-plan AED — consistent with the
+        // event values placeholderResolver renders — so the email never mixes currencies.
+        const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim()) || jf.trigger_source === 'giveaway';
+        const marketOverride = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
+        if (!isRecipientAllowedForRec(c.email)) {
+          console.log(`[GtmJourney ${journeyId}] REC ALLOWLIST BLOCKED — ${c.email} not in REC_JOURNEY_ALLOWLIST (type=${jf.recommendation_type}). Skipping send + advancing.`);
+          recAllowlistBlocked = true;
+        } else if (html && html.includes('{{#products}}')) {
+          const injected = await injectPerUserProducts({
+            templateHtml:       html,
+            unifiedId:          c.id,
+            recommendationType: jf.recommendation_type,
+            vars: { customer_name: c.name || '' },
+            market:             marketOverride,   // gtm/giveaway-triggered → {default, AED}; continuous → null (per-user market)
+          });
+          if (injected?.html) {
+            html = injected.html;
+            console.log(`[GtmJourney ${journeyId}] AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${(injected as InjectedRecMeta).source} fromCache=${(injected as InjectedRecMeta).fromCache}`);
+          }
+        }
+      }
+    } catch (recErr) {
+      console.warn(`[GtmJourney ${journeyId}] AI rec injection failed (falling back): ${(recErr as Error).message}`);
+    }
+
+    // If the recipient was blocked by REC_JOURNEY_ALLOWLIST, don't send — but
+    // still advance the entry so the journey doesn't spin on this user.
+    if (recAllowlistBlocked) {
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
+      }
+      return;
+    }
+
+    const recipientEmail = c.email;
+
+    // Frequency cap (max N / 24h per recipient) — skip + advance if over the limit.
+    const _cap = await reserveSend({ unifiedId: c.id, email: recipientEmail });
+    if (!_cap.allowed) {
+      console.log(`[GtmJourney ${journeyId}] FREQUENCY CAPPED uid=${c.id} count=${_cap.count} — skip + advance`);
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
+      }
+      return;
+    }
+
+    const logId = await SendTrackService.logSend({
+      unifiedId: c.id, email: recipientEmail, contactName: c.name, subject,
+      templateLabel: `GTM Journey ${journeyId}`, source: 'gtm_journey', journeyId, nodeId,
+    });
+
+    // Inject click/open tracking (so product links + opens are tracked, like normal sends)
+    let baseUrl = process.env.TRACKING_BASE_URL || process.env.BACKEND_URL || 'https://promotions.raynatours.com';
+    // Safety net: a mis-set env (e.g. TRACKING_BASE_URL=http://localhost:3001) must NEVER
+    // ship localhost tracking links on real sends. In production, force the public domain.
+    // (Local dev keeps localhost so tracking can be tested against a local server.)
+    if (process.env.NODE_ENV === 'production' && /localhost|127\.0\.0\.1/.test(baseUrl)) {
+      baseUrl = 'https://promotions.raynatours.com';
+    }
+    html = injectClickTracking(html, { logId, baseUrl, campaign: `gtm_${journeyId}`, content: 'gtm_journey', unifiedId: c.id, journeyId, nodeId });
+    html = injectOpenPixel(html, logId, baseUrl);
+
+    // Sender selection honours the journey's email_credential — the SAME helper the fixed
+    // engine (workers.js) uses: 'giveaway' → giveaway SMTP, else default AWS Email API.
+    const start = Date.now();
+    const res = await sendJourneyEmail({ emailCredential, to: recipientEmail, subject, html });
+    if (emailCredential === 'giveaway') console.log(`[GtmJourney ${journeyId}] sender=${res.provider} (email_credential=giveaway)`);
+    const ms = Date.now() - start;
+
+    if (res?.success) {
+      await SendTrackService.markSent(logId, { externalId: res.externalId || null, provider: res.provider || null, durationMs: ms }).catch(() => {});
+      console.log(`[GtmJourney ${journeyId}] ✓ sent to=${recipientEmail} node=${nodeId}`);
+
+      // ── Advance the per-user state row: next action node (after any wait) or complete ──
+      // CONTINUOUS engine: the wait lives in gtm_journey_entries.next_fire_at; the 1-min
+      // cron fires the next node. (Wait nodes work: action → wait N days → next action.)
+      try {
+        if (entryId) {
+          const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+          const r = await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!);
+          console.log(`[Continuous ${journeyId}] entry=${entryId} ${r.completed ? 'COMPLETED' : `→ ${r.advancedTo} in ${Math.round(r.delayMs! / 1000)}s`}`);
+        }
+      } catch (e) { console.error(`[GtmJourney ${journeyId}] advance failed: ${(e as Error).message}`); }
+    } else {
+      releaseSend({ unifiedId: c.id, email: recipientEmail }); // failed send doesn't consume a slot
+      await SendTrackService.markFailed(logId, { error: res?.error || 'unknown', provider: res?.provider || null, durationMs: ms }).catch(() => {});
+      throw new Error(res?.error || 'gtm journey send failed'); // let BullMQ retry
+    }
+  }
+}
+
+export default GtmJourneyService;

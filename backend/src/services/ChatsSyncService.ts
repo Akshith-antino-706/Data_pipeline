@@ -1,0 +1,274 @@
+import { query as pgQuery } from '../config/database.js';
+import { mysqlQuery } from '../config/mysql.js';
+import type { ChatSourceRow, ChatsSyncResult } from '../types/syncC.js';
+
+const BATCH = 2000;
+
+const toDate = (v: unknown): Date | null => (v instanceof Date && !isNaN(v as unknown as number) ? v : null);
+
+const INSERT_COLS = [
+  'wa_id', 'wa_name', 'email', 'country', 'receiver', 'boat', 'status',
+  'priority', 'tags', 'fv', 'last_in', 'last_out', 'last_msg', 'last_short',
+  'seen', 'spam', 'last_packed', 'created_at', 'updated_at',
+  'user_id', 'first_msg_text', 'last_msg_at', 'unified_id',
+];
+
+function buildPlaceholders(rowCount: number, colCount: number) {
+  const parts: string[] = [];
+  let p = 1;
+  for (let r = 0; r < rowCount; r++) {
+    const row: string[] = [];
+    for (let c = 0; c < colCount; c++) row.push(`$${p++}`);
+    parts.push(`(${row.join(',')})`);
+  }
+  return parts.join(',');
+}
+
+function rowToParams(r: ChatSourceRow) {
+  return [
+    r.wa_id,
+    r.wa_name,
+    r.email,
+    r.country,
+    r.receiver,
+    r.boat,
+    r.status,
+    r.priority,
+    r.tags,
+    r.fv,
+    toDate(r.last_in),
+    toDate(r.last_out),
+    toDate(r.last_msg),
+    r.last_short,
+    r.seen,
+    r.spam,
+    r.last_packed,
+    toDate(r.created_at),
+    toDate(r.updated_at),
+    null,                   // user_id
+    null,                   // first_msg_text
+    toDate(r.last_msg),     // last_msg_at mirrors last_msg
+    null,                   // unified_id (set by backfill step)
+  ];
+}
+
+export default class ChatsSyncService {
+  /**
+   * Pull new chats from MySQL (created_at > MAX(created_at) in RDS),
+   * insert them into RDS, then backfill unified_id on NULL rows.
+   * Insert-only — UPDATEs to existing MySQL chats are not propagated.
+   */
+  static async sync() {
+    const t0 = Date.now();
+    const result: ChatsSyncResult = { watermark: null, inserted: 0, unifiedMatched: 0, promoted: 0, elapsedMs: 0 };
+    let syncStatus = 'success';
+    let errorMessage: string | null = null;
+
+    try {
+    // 1. Watermark from RDS — read as ::text to bypass JS Date / TZ conversions
+    //    on both pg and mysql2 sides. The literal datetime string round-trips
+    //    correctly regardless of Node process TZ.
+    const wmRes = await pgQuery("SELECT to_char(MAX(created_at), 'YYYY-MM-DD HH24:MI:SS') AS wm FROM chats");
+    const watermark = wmRes.rows[0].wm;
+    result.watermark = watermark;
+    console.log(`[ChatsSync] Watermark (RDS MAX(created_at)): ${watermark || 'NULL (empty table)'}`);
+
+    // 2. Pull new rows from MySQL, batched by keyset on id.
+    //    Using a fixed watermark + id-keyset means a slow loop won't re-pull rows.
+    const cols = 'id, wa_id, wa_name, email, country, receiver, boat, status, priority, tags, fv, last_in, last_out, last_msg, last_short, seen, spam, last_packed, created_at, updated_at';
+    const colList = INSERT_COLS.join(', ');
+    const colCount = INSERT_COLS.length;
+
+    let lastId = 0;
+    let inserted = 0;
+    while (true) {
+      const rows = watermark
+        ? await mysqlQuery<ChatSourceRow[]>(
+            `SELECT ${cols} FROM chats WHERE created_at > ? AND id > ? ORDER BY id ASC LIMIT ?`,
+            [watermark, lastId, BATCH],
+            'chats',
+          )
+        : await mysqlQuery<ChatSourceRow[]>(
+            `SELECT ${cols} FROM chats WHERE id > ? ORDER BY id ASC LIMIT ?`,
+            [lastId, BATCH],
+            'chats',
+          );
+      if (rows.length === 0) break;
+
+      const sql = `INSERT INTO chats (${colList}) VALUES ${buildPlaceholders(rows.length, colCount)}`;
+      const params: unknown[] = [];
+      for (const r of rows) params.push(...rowToParams(r));
+      await pgQuery(sql, params);
+
+      inserted += rows.length;
+      lastId = rows[rows.length - 1].id;
+    }
+    result.inserted = inserted;
+    console.log(`[ChatsSync] Inserted ${inserted} new chats`);
+
+    // 3. Backfill unified_id on NULL rows (mobile then email)
+    const p1 = await pgQuery(`
+      WITH ranked AS (
+        SELECT DISTINCT ON (normalize_phone(mobile))
+               normalize_phone(mobile) AS phone_key, id
+        FROM unified_contacts
+        WHERE mobile IS NOT NULL AND mobile <> ''
+          AND normalize_phone(mobile) IS NOT NULL
+        ORDER BY normalize_phone(mobile), id
+      )
+      UPDATE chats c
+      SET unified_id = r.id
+      FROM ranked r
+      WHERE c.unified_id IS NULL
+        AND c.wa_id IS NOT NULL
+        AND normalize_phone(c.wa_id) = r.phone_key
+    `);
+    const p2 = await pgQuery(`
+      WITH ranked AS (
+        SELECT DISTINCT ON (lower(trim(email)))
+               lower(trim(email)) AS email_key, id
+        FROM unified_contacts
+        WHERE email IS NOT NULL AND email <> ''
+        ORDER BY lower(trim(email)), id
+      )
+      UPDATE chats c
+      SET unified_id = r.id
+      FROM ranked r
+      WHERE c.unified_id IS NULL
+        AND c.email IS NOT NULL AND c.email <> ''
+        AND lower(trim(c.email)) = r.email_key
+    `);
+    result.unifiedMatched = (p1.rowCount || 0) + (p2.rowCount || 0);
+    console.log(`[ChatsSync] unified_id matched — phone: ${p1.rowCount || 0}, email: ${p2.rowCount || 0}`);
+
+    // 4. Promote chat-only users (still unified_id IS NULL after step 3) into
+    //    unified_contacts as PROSPECT/B2C rows. Handles both wa_id-only and
+    //    email-only chats. Dedup by normalized phone / lowercased email so we
+    //    only create one unified_contact per unique key.
+    // created_at / updated_at use the EARLIEST chat date for that phone/email
+    // (not NOW()) so acquisition-date reporting stays accurate even if the
+    // MySQL sync lags behind. DISTINCT ON picks the newest name/country per
+    // key while the aggregated MIN() gives the historical first-contact date.
+    const p3 = await pgQuery(`
+      WITH agg AS (
+        SELECT normalize_phone(wa_id) AS phone_key, MIN(created_at) AS first_at
+        FROM chats
+        WHERE unified_id IS NULL
+          AND wa_id IS NOT NULL AND wa_id <> ''
+          AND normalize_phone(wa_id) IS NOT NULL
+        GROUP BY normalize_phone(wa_id)
+      ),
+      latest AS (
+        SELECT DISTINCT ON (normalize_phone(c.wa_id))
+          normalize_phone(c.wa_id) AS phone_key,
+          c.wa_id, c.wa_name, c.country
+        FROM chats c
+        WHERE c.unified_id IS NULL
+          AND c.wa_id IS NOT NULL AND c.wa_id <> ''
+          AND normalize_phone(c.wa_id) IS NOT NULL
+        ORDER BY normalize_phone(c.wa_id), c.created_at DESC
+      )
+      INSERT INTO unified_contacts
+        (mobile, name, country, sources, booking_status, contact_type, created_at, updated_at)
+      SELECT l.wa_id, l.wa_name, l.country,
+             'chats', 'PROSPECT', 'B2C', a.first_at, a.first_at
+      FROM latest l JOIN agg a ON a.phone_key = l.phone_key
+      WHERE NOT EXISTS (
+        SELECT 1 FROM unified_contacts uc
+        WHERE normalize_phone(uc.mobile) = l.phone_key
+      )
+    `);
+    const p4 = await pgQuery(`
+      WITH agg AS (
+        SELECT LOWER(TRIM(email)) AS email_key, MIN(created_at) AS first_at
+        FROM chats
+        WHERE unified_id IS NULL
+          AND email IS NOT NULL AND email <> ''
+          AND (wa_id IS NULL OR wa_id = '' OR normalize_phone(wa_id) IS NULL)
+        GROUP BY LOWER(TRIM(email))
+      ),
+      latest AS (
+        SELECT DISTINCT ON (LOWER(TRIM(c.email)))
+          LOWER(TRIM(c.email)) AS email_key,
+          c.email, c.wa_name, c.country
+        FROM chats c
+        WHERE c.unified_id IS NULL
+          AND c.email IS NOT NULL AND c.email <> ''
+          AND (c.wa_id IS NULL OR c.wa_id = '' OR normalize_phone(c.wa_id) IS NULL)
+        ORDER BY LOWER(TRIM(c.email)), c.created_at DESC
+      )
+      INSERT INTO unified_contacts
+        (email, name, country, sources, booking_status, contact_type, created_at, updated_at)
+      SELECT l.email, l.wa_name, l.country,
+             'chats', 'PROSPECT', 'B2C', a.first_at, a.first_at
+      FROM latest l JOIN agg a ON a.email_key = l.email_key
+      WHERE NOT EXISTS (
+        SELECT 1 FROM unified_contacts uc
+        WHERE LOWER(TRIM(uc.email)) = l.email_key
+      )
+    `);
+    result.promoted = (p3.rowCount || 0) + (p4.rowCount || 0);
+    console.log(`[ChatsSync] promoted new contacts — by phone: ${p3.rowCount || 0}, by email: ${p4.rowCount || 0}`);
+
+    // 5. Re-run unified_id backfill so the newly-created rows link back to their
+    //    source chats. Idempotent — only touches chats where unified_id IS NULL.
+    if (result.promoted > 0) {
+      const p5 = await pgQuery(`
+        WITH ranked AS (
+          SELECT DISTINCT ON (normalize_phone(mobile))
+                 normalize_phone(mobile) AS phone_key, id
+          FROM unified_contacts
+          WHERE mobile IS NOT NULL AND mobile <> ''
+            AND normalize_phone(mobile) IS NOT NULL
+          ORDER BY normalize_phone(mobile), id DESC
+        )
+        UPDATE chats c SET unified_id = r.id
+        FROM ranked r
+        WHERE c.unified_id IS NULL
+          AND c.wa_id IS NOT NULL
+          AND normalize_phone(c.wa_id) = r.phone_key
+      `);
+      const p6 = await pgQuery(`
+        WITH ranked AS (
+          SELECT DISTINCT ON (lower(trim(email)))
+                 lower(trim(email)) AS email_key, id
+          FROM unified_contacts
+          WHERE email IS NOT NULL AND email <> ''
+          ORDER BY lower(trim(email)), id DESC
+        )
+        UPDATE chats c SET unified_id = r.id
+        FROM ranked r
+        WHERE c.unified_id IS NULL
+          AND c.email IS NOT NULL AND c.email <> ''
+          AND lower(trim(c.email)) = r.email_key
+      `);
+      result.unifiedMatched += (p5.rowCount || 0) + (p6.rowCount || 0);
+      console.log(`[ChatsSync] post-promote backfill — phone: ${p5.rowCount || 0}, email: ${p6.rowCount || 0}`);
+    }
+
+    } catch (err) {
+      syncStatus = 'error';
+      errorMessage = (err as Error).message?.slice(0, 500) || String(err);
+      throw err;
+    } finally {
+      result.elapsedMs = Date.now() - t0;
+      try {
+        await pgQuery(
+          `INSERT INTO sync_metadata (table_name, last_synced_at, rows_synced, sync_status, error_message, sync_duration_ms, updated_at)
+           VALUES ('chats_sync', now(), $1, $2, $3, $4, now())
+           ON CONFLICT (table_name) DO UPDATE SET
+             last_synced_at = EXCLUDED.last_synced_at,
+             rows_synced = EXCLUDED.rows_synced,
+             sync_status = EXCLUDED.sync_status,
+             error_message = EXCLUDED.error_message,
+             sync_duration_ms = EXCLUDED.sync_duration_ms,
+             updated_at = EXCLUDED.updated_at`,
+          [result.inserted + result.unifiedMatched, syncStatus, errorMessage, result.elapsedMs],
+        );
+      } catch (metaErr) {
+        console.error('[ChatsSync] Failed to write sync_metadata:', (metaErr as Error).message);
+      }
+    }
+    return result;
+  }
+}

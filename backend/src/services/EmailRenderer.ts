@@ -1,0 +1,644 @@
+import { query } from '../config/database.js';
+import ProductAffinityService from './ProductAffinityService.js';
+import PopularityService from './PopularityService.js';
+import LiquidRenderer from './LiquidRenderer.js';
+import { getAffinityVars, usesAffinity, dropEmptyAffinity, SAMPLE_AFFINITY_VARS } from './affinityVars.js';
+import type {
+  TemplateVars, ContentTemplateRow, RenderContactRow, HtmlTemplateRow, RenderGtmEventRow, RenderGtmPayload,
+  RenderGtmEcomItem, TemplateProducts, TemplateProductCard, PopularitySnapshot, PopularitySnapshotRow,
+  SlotExpandArgs, SlotExpandResult, RenderForJourneyNodeArgs, BuildUtmLinkArgs, RenderedEmail, RenderedEmailPreview,
+} from '../types/emailRender.js';
+
+/**
+ * EmailRenderer — Renders HTML email templates with dynamic data
+ *
+ * Takes a content_template (which links to an email_html_template) and injects:
+ *   - {{first_name}}, {{offer_tag}}, {{holiday_name}} — simple variable replacement
+ *   - {{utm_link}} — user-specific UTM tracking link
+ *   - Product affinity cards — for cart abandonment template (dynamic product injection)
+ *   - Destination-specific content — for destination templates (city swap)
+ *   - Popular-product slots — for templates marked uses_popular_products=true,
+ *     filled from a frozen popularity_snapshots row keyed by (journey_id, node_id, run_id)
+ */
+export default class EmailRenderer {
+
+  /**
+   * Render a full HTML email for a specific user
+   * @param {number} templateId - content_templates.id
+   * @param {number} unifiedId - unified_contacts.unified_id
+   * @param {object} extraVars - additional template variables { holiday_name, offer_tag, etc }
+   * @returns {{ subject: string, html: string, plainText: string }}
+   */
+  static async render(templateId: number | string, unifiedId: number | string | null | undefined, extraVars: TemplateVars = {}): Promise<RenderedEmail> {
+    // 1. Load content template + linked HTML template
+    const { rows: [tpl] } = await query<ContentTemplateRow>(`
+      SELECT ct.*, eht.html_body, eht.name as html_name, eht.type as html_type, eht.category as html_category
+      FROM content_templates ct
+      LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
+      WHERE ct.id = $1
+    `, [templateId]);
+
+    if (!tpl) throw new Error(`Template ${templateId} not found`);
+
+    // 2. Load user data for personalization
+    let user: RenderContactRow = {};
+    if (unifiedId) {
+      const { rows: [u] } = await query<RenderContactRow>('SELECT * FROM unified_contacts WHERE id = $1', [unifiedId]);
+      user = u || {};
+    }
+
+    // 3. Build variable map
+    // Only apply extraVars entries that have non-blank values so that an empty
+    // journey-node input doesn't wipe out the contact's real first_name etc.
+    const nonEmptyExtraVars = Object.fromEntries(
+      Object.entries(extraVars).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+    );
+    const siteBaseGeneral = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
+    const unsubscribeUrlGeneral = `${siteBaseGeneral}/unsubscribe?uid=${unifiedId || ''}`;
+    // Top booked products / business lines — looked up only when the template uses them.
+    const affinityVars = unifiedId && usesAffinity(tpl.html_body, tpl.body, tpl.subject)
+      ? await getAffinityVars(unifiedId) as Record<string, string> : {};
+    const vars = {
+      first_name: user.name || 'there',   // full name (per requirement: send whole name everywhere)
+      full_name: user.name || 'Valued Customer',
+      email: user.email || '',
+      phone: user.mobile || user.actual_mobile || '',
+      country: user.country || '',
+      city: user.city || '',
+      company: '',
+      segment: user.booking_status || '',
+      offer_tag: '',
+      holiday_name: '',
+      city_name: user.city || 'Dubai',
+      utm_link: 'https://www.raynatours.com',
+      unsubscribe_link: unsubscribeUrlGeneral,
+      unsubscribe_url:  unsubscribeUrlGeneral,
+      ...affinityVars,
+      ...nonEmptyExtraVars,
+    } as TemplateVars;
+
+    // 4. Render subject line
+    let subject = tpl.subject || '';
+    for (const [key, val] of Object.entries(vars)) {
+      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val as string);
+    }
+
+    // 5. Render HTML body
+    let html = tpl.html_body || tpl.body || '';
+
+    // Simple variable replacement in HTML
+    for (const [key, val] of Object.entries(vars)) {
+      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val as string);
+    }
+
+    // 6. Inject product affinity cards ONLY for dynamic/cart-abandonment templates.
+    //    Static templates (Day 1–5) must render exactly as designed.
+    if (unifiedId && (tpl.html_type === 'dynamic' || tpl.html_category === 'cart_abandonment')) {
+      html = await this.injectProductCards(html, unifiedId, vars.utm_link as string);
+    }
+
+    // 7. Append UTM params to all raynatours.com links (preserves paths).
+    html = this.injectUTMLinks(html, vars.utm_link as string);
+
+    // 8. Plain text fallback
+    const plainText = tpl.body || subject;
+
+    return { subject, html, plainText };
+  }
+
+  /**
+   * Inject user's product affinity data into HTML template
+   * Replaces product card placeholders or appends product section
+   */
+  static async injectProductCards(html: string, unifiedId: number | string, baseUtmLink: string): Promise<string> {
+    try {
+      const { primaryProduct, recommendations } = await ProductAffinityService.getTemplateProducts(unifiedId) as TemplateProducts;
+
+      if (!primaryProduct && recommendations.length === 0) return html;
+
+      // Build product cards HTML
+      let productsHtml = '';
+
+      if (primaryProduct) {
+        productsHtml += this.buildProductCard(primaryProduct, primaryProduct.reason, baseUtmLink);
+      }
+
+      for (const rec of recommendations.slice(0, 3)) {
+        productsHtml += this.buildProductCard(rec, 'Recommended for you', baseUtmLink);
+      }
+
+      // Try to inject into existing product section, or append before footer
+      if (html.includes('<!-- PRODUCT_CARDS -->')) {
+        html = html.replace('<!-- PRODUCT_CARDS -->', productsHtml);
+      } else if (html.includes('class="products-section"')) {
+        html = html.replace(/<div class="products-section">[\s\S]*?<\/div>/,
+          `<div class="products-section">${productsHtml}</div>`);
+      }
+      // Otherwise just return as-is (static template doesn't need injection)
+
+    } catch (err) {
+      console.error('[EmailRenderer] Product injection failed:', (err as Error).message);
+    }
+
+    return html;
+  }
+
+  /**
+   * Build a single product card HTML block
+   */
+  static buildProductCard(product: TemplateProductCard, label: string | undefined, utmLink: string): string {
+    const price = product.price || '';
+    const image = product.image || 'https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/placeholder.jpg';
+    const url = product.url || utmLink;
+    const name = product.name || 'Experience';
+    const category = product.category || '';
+
+    return `
+      <div style="display:flex;gap:16px;padding:16px 24px;border-bottom:1px solid #F0EDE8;align-items:center;">
+        <img src="${image}" alt="${name}" style="width:120px;height:80px;object-fit:cover;border-radius:6px;" />
+        <div style="flex:1;">
+          <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#888;margin-bottom:4px;">${category}</div>
+          <div style="font-size:15px;font-weight:600;color:#1A1A1A;margin-bottom:4px;">${name}</div>
+          <div style="font-size:11px;color:#888;margin-bottom:6px;">${label}</div>
+          ${price ? `<div style="font-size:16px;font-weight:700;color:#1A1A1A;">${price}</div>` : ''}
+        </div>
+        <a href="${url}" style="background:#1A1A1A;color:#FFFFFF;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:10px 20px;display:inline-block;">BOOK NOW →</a>
+      </div>
+    `;
+  }
+
+  /**
+   * Append UTM query params (and rid) to every raynatours.com link, preserving paths.
+   * Accepts either:
+   *   - A per-user tracking URL (e.g. https://track.rayna.com/u/<token>) — used as-is for CTAs
+   *     that should hit the redirect-tracker; other links get UTM params appended.
+   *   - A full UTM URL (e.g. https://www.raynatours.com/activities?utm_source=...) — we extract
+   *     its query string and append it to each link.
+   * Links that already carry utm_source are left untouched.
+   */
+  static injectUTMLinks(html: string, utmLink: string | null | undefined): string {
+    if (!utmLink) return html;
+
+    // Extract the UTM query string from the provided link (if any).
+    let utmQuery = '';
+    try {
+      const u = new URL(utmLink);
+      const params = new URLSearchParams();
+      for (const [k, v] of u.searchParams) {
+        if (k.startsWith('utm_') || k === 'rid') params.append(k, v);
+      }
+      utmQuery = params.toString();
+    } catch { /* utmLink is not a full URL (e.g. tracker path) — nothing to extract */ }
+
+    if (!utmQuery) return html;
+
+    return html.replace(
+      /href="(https?:\/\/(?:www\.)?raynatours\.com[^"]*)"/g,
+      (_m: string, url: string) => {
+        if (/[?&]utm_source=/.test(url)) return `href="${url}"`;
+        const sep = url.includes('?') ? '&' : '?';
+        return `href="${url}${sep}${utmQuery}"`;
+      }
+    );
+  }
+
+  /**
+   * Render an HTML email for a single journey entry, expanding any
+   * `<!-- SLOT:product_grid ... -->` markers from the run's popularity snapshot.
+   *
+   * @param {object} args
+   * @param {number} args.htmlTemplateId  email_html_templates.id
+   * @param {number} args.unifiedId       unified_contacts.unified_id (for personalization + UTM rid)
+   * @param {number} args.journeyId       journey_flows.id (used as snapshot key)
+   * @param {string} args.nodeId          journey node id (used as snapshot key)
+   * @param {string} args.runId           journey run uuid (used as snapshot key)
+   * @param {object} [args.extraVars]     additional {{var}} substitutions
+   * @returns {{ subject, html, plainText, slotsFilled }}
+   */
+  static async renderForJourneyNode({ htmlTemplateId, unifiedId, journeyId, nodeId, runId, extraVars = {} }: RenderForJourneyNodeArgs): Promise<RenderedEmail & { slotsFilled: number }> {
+    const { rows: [tpl] } = await query<HtmlTemplateRow>(
+      `SELECT id, name, html_body, preview_text, engine, subject_line,
+              uses_popular_products, product_type, product_limit
+         FROM email_html_templates WHERE id = $1`,
+      [htmlTemplateId]
+    );
+    if (!tpl) throw new Error(`html_template ${htmlTemplateId} not found`);
+
+    let user: RenderContactRow = {};
+    if (unifiedId) {
+      const { rows: [u] } = await query<RenderContactRow>(
+        `SELECT id, name, email, mobile, actual_mobile, country, city, booking_status
+           FROM unified_contacts WHERE id = $1`,
+        [unifiedId]
+      );
+      user = u || {};
+    }
+
+    // For Liquid (win-back) templates, fetch the contact's latest GTM event so
+    // destination_city + service_type land in the template from raw_payload.
+    // Day 1–7 (engine='regex') don't use these vars — skip the lookup.
+    let payloadVars: Record<string, string> = {};
+    if (tpl.engine === 'liquid' && unifiedId) {
+      try {
+        const { rows: [ev] } = await query<RenderGtmEventRow>(
+          `SELECT raw_payload, page_url
+             FROM gtm_events
+            WHERE unified_id = $1 AND raw_payload IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [unifiedId]
+        );
+        const p: RenderGtmPayload = ev?.raw_payload || {};
+        const ecom: RenderGtmEcomItem = (Array.isArray(p.ecommerceData?.items) && p.ecommerceData!.items[0]) || {};
+        const itemName  = p.itemName || ecom.item_name || '';
+        const itemUrl   = p.pageUrl || ev?.page_url || '';
+        const itemImage = p.imageUrl || ecom.image_url || '';
+        const destCity  = p.city || ecom.city || '';
+        const rawPrice  = p.eventValue ?? p.ecommerceData?.value ?? ecom.price;
+        const itemPrice = (rawPrice === undefined || rawPrice === null) ? '' : String(rawPrice);
+        payloadVars = {
+          destination_city: destCity,
+          service_type:     p.itemCategory || ecom.item_category || '',
+          product_name:     itemName,
+          // Product-recommendation slots (rec1/2/3) → the item the contact actually
+          // engaged with. Left '' when unknown so the template's own `| default:'…'`
+          // fallback still renders (liquidjs treats '' as empty for the default filter).
+          rec1_name: itemName,      rec2_name: itemName,      rec3_name: itemName,
+          rec1_url:  itemUrl,       rec2_url:  itemUrl,       rec3_url:  itemUrl,
+          rec1_price: itemPrice,    rec2_price: itemPrice,    rec3_price: itemPrice,
+          rec1_image_url: itemImage, rec2_image_url: itemImage, rec3_image_url: itemImage,
+          rec1_city: destCity,      rec2_city: destCity,      rec3_city: destCity,
+          // "Same service URL" — the add-on CTA points at the engaged item's page.
+          addon_url: itemUrl,
+        };
+      } catch (err) {
+        console.warn('[EmailRenderer] raw_payload lookup failed:', (err as Error).message);
+      }
+    }
+
+    const utmLink = (extraVars.utm_link as string | undefined)
+      || this._buildUtmLink({ journeyId, nodeId, htmlTemplateName: tpl.name, unifiedId });
+
+    // Only apply extraVars entries that have non-blank values so that an empty
+    // journey-node input doesn't wipe out the contact's real first_name etc.
+    const nonEmptyExtraVars = Object.fromEntries(
+      Object.entries(extraVars).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+    );
+    const siteBase = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
+    const unsubscribeUrl = `${siteBase}/unsubscribe?uid=${unifiedId || ''}`;
+    // Top booked products / business lines — looked up only when the template uses them.
+    const affinityVars = unifiedId && usesAffinity(tpl.html_body, tpl.subject_line, extraVars.subject_override)
+      ? await getAffinityVars(unifiedId) as Record<string, string> : {};
+    const vars = {
+      first_name:       user.name || 'there',   // full name (per requirement: send whole name everywhere)
+      full_name:        user.name || 'Valued Traveller',
+      email:            user.email || '',
+      phone:            user.mobile || user.actual_mobile || '',
+      country:          user.country || '',
+      city:             user.city || '',
+      offer_tag:        '',
+      holiday_name:     '',
+      city_name:        user.city || 'Dubai',
+      utm_link:         utmLink,
+      // Provide BOTH names so templates using either {{unsubscribe_link}} or
+      // {{unsubscribe_url}} resolve correctly. Win-back uses _url.
+      unsubscribe_link: unsubscribeUrl,
+      unsubscribe_url:  unsubscribeUrl,
+      // Static marketing-link CTAs. Set here (not just as inline `| default:`) because
+      // several templates consume these via `{% assign _u = seasonal_tour_url %}` where
+      // no inline default applies. Overridable via extraVars.
+      top_tours_url:     siteBase,
+      vip_tours_url:     siteBase,
+      new_tours_url:     siteBase,
+      new_arrivals_url:  siteBase,
+      seasonal_tour_url: siteBase,
+      next_trip_url:     siteBase,
+      ugc_url:           'https://www.instagram.com/raynatours_/',
+      ...affinityVars,       // product_affinity_1..3 / service_affinity_1..3
+      ...payloadVars,        // destination_city / service_type / product_name / rec* / addon_url
+      ...nonEmptyExtraVars,  // caller overrides always win
+    } as TemplateVars;
+
+    let subject = (extraVars.subject_override || tpl.subject_line || tpl.preview_text || tpl.name || '').toString();
+    let html    = tpl.html_body || '';
+
+    // Subject: always regex (subjects don't carry Liquid control flow).
+    for (const [k, v] of Object.entries(vars)) {
+      subject = subject.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v as string);
+    }
+
+    // Body: Liquid for win-back (engine='liquid'), regex for Day 1-7 + legacy.
+    if (tpl.engine === 'liquid') {
+      try {
+        html = await LiquidRenderer.render(html, dropEmptyAffinity(vars) as TemplateVars);
+      } catch (err) {
+        console.error('[EmailRenderer] Liquid render failed:', (err as Error).message);
+        // fall through to regex pass so something still renders
+      }
+    }
+    for (const [k, v] of Object.entries(vars)) {
+      html = html.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v as string);
+    }
+
+    let slotsFilled = 0;
+    if (tpl.uses_popular_products && journeyId && nodeId && runId) {
+      // Hero image first — it pulls from the same snapshot but is rendered as
+      // a full-width <img> using the #1 ranked product's image, not a card grid.
+      const heroOut = await this.expandHeroImageSlots({
+        html, journeyId, nodeId, runId, fallbackProductType: tpl.product_type, utmLink,
+      });
+      html = heroOut.html;
+      slotsFilled += heroOut.slotsFilled;
+
+      const { html: filled, slotsFilled: n } = await this.expandProductSlots({
+        html, journeyId, nodeId, runId, fallbackProductType: tpl.product_type, utmLink,
+      });
+      html = filled;
+      slotsFilled += n;
+    }
+
+    html = this.injectUTMLinks(html, utmLink);
+
+    return { subject, html, plainText: subject, slotsFilled };
+  }
+
+  /**
+   * Replace every `<!-- SLOT:product_grid ... -->` comment in `html` with a
+   * grid of product cards built from the journey-run popularity snapshot.
+   *
+   * Slot syntax (HTML comment):
+   *   <!-- SLOT:product_grid product_type="activity" theme="thrill" count="4" cols="2" -->
+   *
+   * Attributes:
+   *   product_type   required — must match a snapshot row's product_type
+   *   theme          optional — pulls only rows whose theme matches
+   *   count          how many cards to render (defaults to all matching rows)
+   *   cols           grid width (defaults to 2)
+   */
+  static async expandProductSlots({ html, journeyId, nodeId, runId, fallbackProductType, utmLink }: SlotExpandArgs): Promise<SlotExpandResult> {
+    const slotRe = /<!--\s*SLOT:product_grid\s+([^>]*?)-->/g;
+    const matches = [...html.matchAll(slotRe)];
+    if (matches.length === 0) return { html, slotsFilled: 0 };
+
+    // Group lookups by product_type so we hit popularity_snapshots once per type.
+    const types = new Set<string>();
+    const parsedSlots = matches.map(m => {
+      const attrs = this._parseSlotAttrs(m[1]);
+      const productType = attrs.product_type || fallbackProductType;
+      types.add(productType as string);
+      return { match: m[0], productType, theme: attrs.theme || null,
+               count: attrs.count ? parseInt(attrs.count) : null,
+               cols: attrs.cols ? parseInt(attrs.cols) : 2 };
+    });
+
+    const snapshots = new Map<string, PopularitySnapshot>();          // productType → Map(theme → rows)
+    for (const t of types) {
+      const grouped = await PopularityService.getSnapshot({ journeyId, nodeId, runId, productType: t }) as PopularitySnapshot;
+      snapshots.set(t, grouped);
+    }
+
+    let out = html;
+    let filled = 0;
+    for (const slot of parsedSlots) {
+      const grouped = snapshots.get(slot.productType as string);
+      const themeKey = slot.theme || '_default';
+      let rows = grouped?.get(themeKey)
+              || grouped?.get('_default')
+              || [];
+      if (slot.count) rows = rows.slice(0, slot.count);
+
+      const grid = rows.length > 0
+        ? this._buildProductGrid(rows, slot.cols, utmLink)
+        : '';                              // empty snapshot → drop the marker silently
+
+      out = out.replace(slot.match, grid);
+      if (rows.length > 0) filled++;
+    }
+
+    return { html: out, slotsFilled: filled };
+  }
+
+  /**
+   * Build the deterministic UTM link for a journey node send.
+   *
+   *   utm_source   = email
+   *   utm_medium   = journey
+   *   utm_campaign = general_broadcast      (sliced by /utm_campaign in GA)
+   *   utm_content  = j<journeyId>_<nodeId>  (per-node attribution)
+   *   utm_term     = <html-template-slug>   (theme — activities/cruise/etc.)
+   *   rid          = <unifiedId>            (recipient id for click tracking)
+   *
+   * Per-node UTMs let GA/UTM dashboards split open/click/booking conversion
+   * by node — which day in the drip is actually driving the booking.
+   */
+  static _buildUtmLink({ journeyId, nodeId, htmlTemplateName, unifiedId, base = 'https://www.raynatours.com/' }: BuildUtmLinkArgs): string {
+    const slug = (s: string | null | undefined): string => String(s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    const params = new URLSearchParams({
+      utm_source:   'email',
+      utm_medium:   'journey',
+      utm_campaign: 'general_broadcast',
+    });
+    if (journeyId && nodeId) params.set('utm_content', `j${journeyId}_${slug(nodeId)}`);
+    if (htmlTemplateName)    params.set('utm_term',    slug(htmlTemplateName));
+    if (unifiedId)           params.set('rid',         String(unifiedId));
+    return `${base}${base.includes('?') ? '&' : '?'}${params.toString()}`;
+  }
+
+  /**
+   * Replace every `<!-- SLOT:hero_image ... -->` comment with an <img> tag
+   * built from the #1-ranked product in the run's popularity snapshot. The
+   * marker pulls from the same snapshot a SLOT:product_grid would — so the
+   * hero image is always the same cruise/holiday/activity that ranks first
+   * in the cards below it. No extra LLM call.
+   *
+   * Slot syntax:
+   *   <!-- SLOT:hero_image product_type="cruise" height="280" -->
+   *
+   * Attributes:
+   *   product_type   required — must match a snapshot row's product_type
+   *   theme          optional — pulls only rows whose theme matches
+   *   height         optional — px height of the hero band (default 280)
+   *   alt            optional — override alt text (default = product name)
+   */
+  static async expandHeroImageSlots({ html, journeyId, nodeId, runId, fallbackProductType, utmLink }: SlotExpandArgs): Promise<SlotExpandResult> {
+    const slotRe = /<!--\s*SLOT:hero_image\s+([^>]*?)-->/g;
+    const matches = [...html.matchAll(slotRe)];
+    if (matches.length === 0) return { html, slotsFilled: 0 };
+
+    const types = new Set<string>();
+    const parsed = matches.map(m => {
+      const a = this._parseSlotAttrs(m[1]);
+      const productType = a.product_type || fallbackProductType;
+      types.add(productType as string);
+      return { match: m[0], productType, theme: a.theme || null,
+               height: parseInt(a.height || '280'), alt: a.alt || null };
+    });
+
+    const snapshots = new Map<string, PopularitySnapshot>();
+    for (const t of types) {
+      const grouped = await PopularityService.getSnapshot({ journeyId, nodeId, runId, productType: t }) as PopularitySnapshot;
+      snapshots.set(t, grouped);
+    }
+
+    const utmQs = this._extractUtmQuery(utmLink);
+    const linkWithUtm = (url: string | null | undefined): string => {
+      if (!url) return '#';
+      if (/[?&]utm_source=/.test(url)) return url;
+      if (!utmQs) return url;
+      return url + (url.includes('?') ? '&' : '?') + utmQs;
+    };
+
+    let out = html;
+    let filled = 0;
+    for (const slot of parsed) {
+      const grouped = snapshots.get(slot.productType as string);
+      const themeKey = slot.theme || '_default';
+      const rows = grouped?.get(themeKey) || grouped?.get('_default') || [];
+      const top = rows[0];
+      if (!top || !top.image_url) {
+        // No snapshot row → drop the marker silently (keeps the rest of the
+        // template intact even if popularity backfill failed for this node).
+        out = out.replace(slot.match, '');
+        continue;
+      }
+
+      const altText = this._escapeAttr(slot.alt || top.name || 'Featured');
+      const linked  = this._escapeAttr(linkWithUtm(top.product_url));
+      const heroHtml = `<a href="${linked}" style="display: block; line-height: 0;"><img src="${this._escapeAttr(top.image_url)}" alt="${altText}" width="600" style="display: block; width: 100%; max-width: 600px; height: ${slot.height}px; object-fit: cover; border: 0;" /></a>`;
+      out = out.replace(slot.match, heroHtml);
+      filled++;
+    }
+
+    return { html: out, slotsFilled: filled };
+  }
+
+  // ── slot helpers ────────────────────────────────────────────────
+
+  static _parseSlotAttrs(attrString: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    const re = /(\w+)\s*=\s*"([^"]*)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(attrString)) !== null) out[m[1]] = m[2];
+    return out;
+  }
+
+  /**
+   * Build the same 2×N table-card grid the original day5 / day4 / day2 templates
+   * used. Pixel-identical chrome — only the per-card data is supplied here.
+   */
+  static _buildProductGrid(rows: PopularitySnapshotRow[], cols: number, utmLink: string): string {
+    const utmQs = this._extractUtmQuery(utmLink);
+    const linkWithUtm = (url: string | null | undefined): string => {
+      if (!url) return '#';
+      if (/[?&]utm_source=/.test(url)) return url;
+      if (!utmQs) return url;
+      return url + (url.includes('?') ? '&' : '?') + utmQs;
+    };
+
+    const card = (r: PopularitySnapshotRow): string => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; height: 280px">
+      <tr>
+        <td valign="bottom" style="height: 220px; background-color: #101010; background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.7)), url(&quot;${this._escapeAttr(r.image_url || '')}&quot;); background-size: cover; background-position: center; background-repeat: no-repeat; padding: 40px 20px 20px 20px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%">
+            <tr><td align="left" style="font-family: Arial, Helvetica, sans-serif; font-size: 8px; line-height: 12px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; color: #ffffff;"><span style="opacity: 0.8">${this._escape(r.category || '')}${r.location ? ' - ' + this._escape(r.location) : ''}</span></td></tr>
+            <tr><td align="left" style="font-family: Georgia, &quot;Times New Roman&quot;, serif; font-size: 20px; line-height: 30px; font-weight: 400; color: #ffffff; padding-top: 6px;">${this._escape(r.name || '')}</td></tr>
+            <tr><td align="left" style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; color: #e0e0e0; padding-top: 6px;">${this._escape(r.duration || '')}</td></tr>
+            <tr><td align="left" style="font-family: Georgia, &quot;Times New Roman&quot;, serif; font-size: 18px; line-height: 22px; font-weight: 700; color: #ffffff; padding-top: 6px;">${this._escape(r.price || '')}</td></tr>
+            <tr><td align="left" style="padding-top: 10px"><a href="${this._escapeAttr(linkWithUtm(r.product_url))}" style="font-family: Arial, Helvetica, sans-serif; font-size: 9px; line-height: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #1a1a1a; text-decoration: none; background-color: #ffffff; display: inline-block; padding: 8px 14px;">Book Now -&gt;</a></td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>`;
+
+    const colWidth = `${Math.floor(100 / cols)}%`;
+    const tdCell = (r: PopularitySnapshotRow): string => `<td width="${colWidth}" valign="top" style="padding: 0 5px 10px 5px">${card(r)}</td>`;
+
+    let body = '';
+    for (let i = 0; i < rows.length; i += cols) {
+      const cells = rows.slice(i, i + cols).map(tdCell).join('');
+      body += `<tr>${cells}</tr>`;
+    }
+
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">${body}</table>`;
+  }
+
+  static _extractUtmQuery(utmLink: string | null | undefined): string {
+    if (!utmLink) return '';
+    try {
+      const u = new URL(utmLink);
+      const p = new URLSearchParams();
+      for (const [k, v] of u.searchParams) {
+        if (k.startsWith('utm_') || k === 'rid') p.append(k, v);
+      }
+      return p.toString();
+    } catch {
+      return '';
+    }
+  }
+
+  static _escape(s: unknown): string     { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  static _escapeAttr(s: unknown): string { return String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
+
+  /**
+   * Render a preview with sample data (for Content page preview)
+   * @param {number} templateId
+   * @param {object} extraVars - custom variable values from the journey node (override sample defaults)
+   */
+  static async renderPreview(templateId: number | string, extraVars: TemplateVars = {}): Promise<RenderedEmailPreview> {
+    // Sample data — win-back templates need service_type + destination_city
+    // to exercise the Liquid case branches.
+    const sampleVars = {
+      first_name:        'Vaibhav',
+      offer_tag:         'PREVIEW20',
+      holiday_name:      'Diwali',
+      city_name:         'Dubai',
+      destination_city:  'Dubai',
+      service_type:      'Activity',
+      product_name:      'Desert Safari',
+      coupon_code:       'PREVIEW10',
+      ...SAMPLE_AFFINITY_VARS,
+      utm_link:          'https://www.raynatours.com',
+      unsubscribe_link:  '#',
+      unsubscribe_url:   '#',
+      ...extraVars,
+    };
+
+    const { rows: [tpl] } = await query<ContentTemplateRow>(`
+      SELECT ct.*, eht.html_body, eht.name as html_name,
+             eht.engine as html_engine, eht.subject_line as html_subject_line
+      FROM content_templates ct
+      LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
+      WHERE ct.id = $1
+    `, [templateId]);
+
+    if (!tpl) throw new Error('Template not found');
+
+    let subject = tpl.subject || tpl.html_subject_line || '';
+    let html = tpl.html_body || tpl.body || '';
+
+    for (const [key, val] of Object.entries(sampleVars)) {
+      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
+    }
+
+    if (tpl.html_engine === 'liquid') {
+      try {
+        html = await LiquidRenderer.render(html, sampleVars);
+      } catch (err) {
+        console.error('[EmailRenderer] Liquid preview failed:', (err as Error).message);
+      }
+    }
+    for (const [key, val] of Object.entries(sampleVars)) {
+      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
+    }
+
+    return {
+      subject,
+      html,
+      htmlTemplateName: tpl.html_name || null,
+      channel: tpl.channel,
+      segment: tpl.segment_label,
+    };
+  }
+}

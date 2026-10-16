@@ -16,6 +16,6 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["server.js", "src/**/*", "tests/**/*"],
+  "include": ["server.ts", "src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "src/migrations"]
 }

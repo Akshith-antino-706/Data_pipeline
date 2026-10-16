@@ -10,4 +10,4 @@ COPY . .
 EXPOSE 3001
 
 # tsx runs TypeScript directly (no build step), so file paths used at runtime stay the same.
-CMD ["node_modules/.bin/tsx", "server.js"]
+CMD ["node_modules/.bin/tsx", "server.ts"]
