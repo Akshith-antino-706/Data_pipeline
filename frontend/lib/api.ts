@@ -531,7 +531,7 @@ export const getRcsConfig = () => request('/api/v3/gupshup/rcs/config');
 export const getRcsTemplates = () => request('/api/v3/gupshup/rcs/templates');
 export const getRcsTemplatePreview = (code: string) => request(`/api/v3/gupshup/rcs/templates/${encodeURIComponent(code)}/preview`);
 export const rcsTestSend = ({ phone, name, templateCode, customParams, smsFallback }: {
-  phone: string; name?: string; templateCode: string; customParams?: JsonBody; smsFallback?: boolean;
+  phone: string; name?: string; templateCode: string; customParams?: JsonBody; smsFallback?: string;
 }) =>
   request('/api/v3/gupshup/rcs/test-send', { method: 'POST', body: JSON.stringify({ phone, name, templateCode, customParams, smsFallback }) });
 
