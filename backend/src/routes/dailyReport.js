@@ -133,7 +133,7 @@ router.get('/download-all', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => { throw err; });
+    archive.on('error', (err) => { console.error('[DailyReport] zip error:', err.message); res.destroy(err); });
     archive.pipe(res);
 
     for (const table of ALLOWED_TABLES) {

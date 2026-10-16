@@ -70,8 +70,7 @@ export async function reserveSend(target) {
   const redis = getRedis();
   if (!redis) return { allowed: true, count: 0, capped: false }; // fail-open
   try {
-    const n = await redis.incr(key);
-    if (n === 1) await redis.expire(key, WINDOW_SEC);
+    const [[, n]] = await redis.multi().incr(key).expire(key, WINDOW_SEC, 'NX').exec();
     if (n > CAP) return { allowed: false, count: n, capped: true };
     return { allowed: true, count: n, capped: false };
   } catch {

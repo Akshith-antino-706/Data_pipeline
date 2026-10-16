@@ -1,0 +1,18 @@
+{
+  // Type-checking foundation. JS stays JS: allowJs with checkJs off means nothing changes at
+  // runtime. Opt a file in with `// @ts-check` at the top, or convert it to .ts later.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["server.js", "src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "src/migrations"]
+}

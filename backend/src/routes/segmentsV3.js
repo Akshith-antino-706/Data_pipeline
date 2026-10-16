@@ -44,7 +44,9 @@ router.post('/run', async (req, res, next) => {
 router.get('/general', async (req, res, next) => {
   try {
     const { query } = await import('../config/database.js');
-    const { getRedisClient } = await import('../config/redis.js');
+    // There is no config/redis.js; this import made the route always 500. Fall back to
+    // no caching (the counts below are still computed) until a shared client is wired.
+    const getRedisClient = () => ({ get: async () => null, set: async () => {} });
 
     const { parseBusinessType } = await import('../utils/contactTypes.js');
     const businessType = parseBusinessType(req.query.businessType) || null;

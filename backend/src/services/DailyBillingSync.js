@@ -98,6 +98,7 @@ class DailyBillingSync {
     console.log('[DailySync] Fetching from API...');
     const res = await fetch(API_URL, {
       method: 'POST',
+      signal: AbortSignal.timeout(180_000), // a hung API used to block the 01:00 cron forever
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         apiname: 'getallyesterdaybookingdatedata',
@@ -110,6 +111,8 @@ class DailyBillingSync {
     }
 
     const data = await res.json();
+    // An error object instead of an array used to pass through as "undefined records".
+    if (!Array.isArray(data)) throw new Error('Billing API did not return an array');
     console.log(`[DailySync] Fetched ${data.length} records`);
     return data;
   }

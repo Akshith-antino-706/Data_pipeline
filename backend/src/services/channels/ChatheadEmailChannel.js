@@ -56,6 +56,8 @@ export class ChatheadEmailChannel {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        // A hung relay used to pin a worker slot forever. 60s is far above normal latency.
+        signal: AbortSignal.timeout(60_000),
       });
       text = await res.text();
     } catch (err) {

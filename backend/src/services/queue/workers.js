@@ -93,6 +93,13 @@ function _scheduleProcess(journeyId, nextNodeType) {
 
 let _workers = null;
 
+// Opt-out flags are stored as 'Yes', 'yes', 'YES' or 'Y' depending on which sync wrote
+// them. Treat all of those as opted out.
+function isYes(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === 'yes' || s === 'y';
+}
+
 /** Start all journey workers in this process. Idempotent — safe to call once at boot. */
 export function startWorkers() {
   if (_workers) return _workers;
@@ -202,6 +209,9 @@ export function startWorkers() {
   return _workers;
 }
 
+/** Live worker set (null when stopped). Used by /api/health. */
+export function getWorkers() { return _workers; }
+
 export async function stopWorkers() {
   if (!_workers) return;
   await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.rcs.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
@@ -269,7 +279,7 @@ async function processEmail(job) {
     'SELECT email_unsubscribe, booking_status FROM unified_contacts WHERE id = $1', [d.customerId]
   );
 
-  if (contact?.email_unsubscribe === 'Yes') {
+  if (isYes(contact?.email_unsubscribe)) {
     console.log(`[Worker:email] UNSUBSCRIBED — skipping send for entry=${d.entryId} customer=${d.customerId}`);
     await db.query(
       `INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign)
@@ -556,7 +566,7 @@ async function processWA(job) {
   const { rows: [contactWA] } = await db.query(
     'SELECT wa_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
   );
-  if (contactWA?.wa_unsubscribe === 'Yes') {
+  if (isYes(contactWA?.wa_unsubscribe)) {
     console.log(`[Worker:wa] WA_UNSUBSCRIBED — skipping for entry=${d.entryId} customer=${d.customerId}`);
     return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
   }
@@ -658,7 +668,7 @@ async function processSMS(job) {
   const { rows: [contactSMS] } = await db.query(
     'SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
   );
-  if (contactSMS?.email_unsubscribe === 'Yes') {
+  if (isYes(contactSMS?.email_unsubscribe)) {
     console.log(`[Worker:sms] UNSUBSCRIBED — skipping for entry=${d.entryId} customer=${d.customerId}`);
     return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
   }

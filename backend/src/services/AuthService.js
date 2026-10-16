@@ -126,7 +126,9 @@ class AuthService {
 
   static verifyToken(token) {
     try {
-      return jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+      if (decoded?.type && decoded.type !== 'access') throw new Error('Wrong token type');
+      return decoded;
     } catch {
       const error = new Error('Invalid or expired token');
       error.status = 401;

@@ -67,16 +67,26 @@ export async function del(...keys) {
 /**
  * Invalidate cached keys by pattern (e.g., 'dashboard:*')
  */
+// Incremental SCAN + UNLINK. KEYS is O(N) over the whole keyspace and blocks Redis,
+// which BullMQ shares — long blocks expire worker locks and re-run jobs.
+async function scanDelete(redis, match) {
+  let cursor = '0';
+  let total = 0;
+  do {
+    const [next, keys] = await redis.scan(cursor, 'MATCH', match, 'COUNT', 500);
+    cursor = next;
+    if (keys.length) { await redis.unlink(...keys); total += keys.length; }
+  } while (cursor !== '0');
+  return total;
+}
+
 export async function invalidate(pattern) {
   const redis = getRedis();
   if (!redis) return;
 
   try {
-    const keys = await redis.keys(PREFIX + pattern);
-    if (keys.length > 0) {
-      await redis.del(...keys);
-      console.log(`[Cache] Invalidated ${keys.length} keys matching "${pattern}"`);
-    }
+    const n = await scanDelete(redis, PREFIX + pattern);
+    if (n > 0) console.log(`[Cache] Invalidated ${n} keys matching "${pattern}"`);
   } catch (err) {
     console.warn('[Cache] Invalidation error:', err.message);
   }
@@ -91,10 +101,9 @@ export async function flushAll() {
   if (!redis) return;
 
   try {
-    const keys = await redis.keys(PREFIX + '*');
-    if (keys.length > 0) {
-      await redis.del(...keys);
-      console.log(`[Cache] Startup flush — cleared ${keys.length} cached keys`);
+    const n = await scanDelete(redis, PREFIX + '*');
+    if (n > 0) {
+      console.log(`[Cache] Startup flush — cleared ${n} cached keys`);
     } else {
       console.log('[Cache] Startup flush — no cached keys to clear');
     }

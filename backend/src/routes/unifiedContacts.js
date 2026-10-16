@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import UnifiedContactService from '../services/UnifiedContactService.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
-import { invalidate } from '../config/cache.js';
+import { invalidate, cached } from '../config/cache.js';
 import { parseBusinessType } from '../utils/contactTypes.js';
 
 const router = Router();
@@ -43,7 +43,14 @@ router.post('/registration-sync', async (req, res, next) => {
 
 router.get('/stats', async (req, res, next) => {
   try {
-    const data = await UnifiedContactService.getStats({ businessType: parseBusinessType(req.query.businessType) });
+    const businessType = parseBusinessType(req.query.businessType);
+    const compute = () => UnifiedContactService.getStats({ businessType });
+    // getStats scans unified_contacts, the booking tables and chats on every call. The
+    // dashboard passes ?cached=1 to read a 10-min cached copy instead; every other caller
+    // (e.g. the Contacts page) still gets live numbers exactly as before.
+    const data = req.query.cached === '1'
+      ? await cached(`contacts:stats:${businessType || 'all'}`, compute, 600)
+      : await compute();
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });

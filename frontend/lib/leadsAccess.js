@@ -6,6 +6,15 @@ async function signature(token, expiresAt) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// Constant-time compare (middleware runs on the Edge runtime, so no node:crypto).
+export function safeEqual(a, b) {
+  a = String(a); b = String(b);
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 export async function createLeadsAccessCookie(token, expiresAt) {
   return `${expiresAt}.${await signature(token, expiresAt)}`;
 }
@@ -15,5 +24,5 @@ export async function readLeadsAccessCookie(value, token) {
   const expiresAt = Number(expiresText);
   if (!expiresAt || expiresAt <= Date.now() || !suppliedSignature) return null;
   const expectedSignature = await signature(token, expiresAt);
-  return suppliedSignature === expectedSignature ? { expiresAt } : null;
+  return safeEqual(suppliedSignature, expectedSignature) ? { expiresAt } : null;
 }

@@ -199,7 +199,9 @@ export async function renderDayHtml(templateId, contactId, { journeyId, nodeId, 
  */
 export async function getDailyAITemplate(templateId, dateStr = null) {
   const tid = parseInt(templateId);
-  const day = dateStr || new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+  // Dubai calendar day (YYYY-MM-DD). The 03:00 Dubai cron runs at 23:00 UTC the previous
+  // day, so a UTC key filed the master under the wrong day and 04:00 sends missed it.
+  const day = dateStr || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 
   const { rows: [existing] } = await db.query(
     'SELECT subject, html, source FROM daily_ai_templates WHERE template_id = $1 AND render_date = $2',

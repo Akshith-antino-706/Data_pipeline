@@ -482,7 +482,7 @@ export default function JourneyDashboardPage() {
               ) : templateModal.error ? (
                 <div style={{ padding: 40, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{templateModal.error}</div>
               ) : (
-                <iframe srcDoc={templateModal.html || ''} title={templateModal.label}
+                <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={templateModal.html || ''} title={templateModal.label}
                   style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }} />
               )}
             </div>

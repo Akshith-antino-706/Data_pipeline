@@ -1279,7 +1279,7 @@ export default function Content() {
                 }
                 if (previewDevice === 'desktop') {
                   return (
-                    <iframe ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
+                    <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
                       style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }}
                       title={preview.template.name} />
                   );
@@ -1292,7 +1292,7 @@ export default function Content() {
                 const innerH = previewFit.contentH || Math.round((window.innerHeight * 0.7) / scale);
                 return (
                   <div style={{ width: frameW, maxWidth: '100%', height: previewFit.height || '70vh', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
-                    <iframe ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
+                    <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
                       style={{ width: contentW, height: innerH, border: 0, background: '#fff',
                         transform: `scale(${scale})`, transformOrigin: 'top left' }}
                       title={preview.template.name} />
@@ -1413,7 +1413,7 @@ export default function Content() {
                           </div>
                         )}
                       </div>
-                      <iframe
+                      <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                         title="template-preview"
                         srcDoc={
                           form.body

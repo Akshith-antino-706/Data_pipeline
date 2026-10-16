@@ -1,2 +1,8 @@
 node_modules
 dist
+# Local build output and env files must not leak into the image build stage.
+.next
+.env
+.env.*
+.git
+*.log

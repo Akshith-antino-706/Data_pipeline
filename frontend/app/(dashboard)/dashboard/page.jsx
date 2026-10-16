@@ -1,14 +1,31 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats, getContactSourcesBreakdown, authFetch } from '@/lib/api';
-import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Activity, Mail, CheckCircle2, Filter } from 'lucide-react';
+import { useState } from 'react';
+import dynamic from 'next/dynamic';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats, getContactSourcesBreakdown } from '@/lib/api';
+import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Filter } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 import { useBusinessType } from '@/context/BusinessTypeContext';
+
+// Recharts is only needed for the Segment Distribution chart — load it on the client after
+// the page shell so it stays out of the initial bundle.
+const SegmentBarChart = dynamic(() => import('./SegmentBarChart'), { ssr: false, loading: () => <ChartSkeleton /> });
+
+// Dashboard numbers only change with the nightly syncs, so a short cache is safe. It stops
+// the B2B/B2C toggle and back-navigation from refetching everything.
+const STALE_MS = 2 * 60 * 1000;
+
+function ChartSkeleton() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 250, padding: '0 8px 8px' }}>
+      {[65, 85, 45, 90, 55, 70, 40, 60].map((h, i) => (
+        <div key={i} className="skeleton" style={{ flex: 1, height: `${h}%`, borderRadius: '6px 6px 0 0' }} />
+      ))}
+    </div>
+  );
+}
 
 const fadeInUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
@@ -49,10 +66,10 @@ const PRODUCT_OPTIONS = [
 ];
 
 export default function Dashboard() {
-  const [tree, setTree] = useState(null);
-  const [activity, setActivity] = useState(null);
-  const [treeLoading, setTreeLoading] = useState(true);
-  const [activityLoading, setActivityLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { businessType } = useBusinessType();
+  const btParams = businessType === 'All' ? {} : { businessType };
+
   // Travel-date revenue filter (Revenue by Segment section)
   const [travelFrom, setTravelFrom] = useState('');
   const [travelTo, setTravelTo] = useState('');
@@ -60,102 +77,83 @@ export default function Dashboard() {
   const [bookingTo, setBookingTo] = useState('');
   const [product, setProduct] = useState('all');
   const [showFilter, setShowFilter] = useState(false);
-  // Filtered revenue-by-segment — scoped to THIS section only (separate from the
-  // base dashboard `tree`, so the filter doesn't change any other card).
-  const [revData, setRevData] = useState(null);
-  const [revLoading, setRevLoading] = useState(false);
-  const { businessType } = useBusinessType();
+  const filterActive = !!(travelFrom || travelTo || bookingFrom || bookingTo || (product && product !== 'all'));
 
   // ── Contacts by source (date filter = contacts ADDED on that Dubai day) ──
   // Computed once (useState initializer) so it doesn't run Date.now() on every render.
   const [dubaiToday] = useState(() => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10));
   const [sourceFrom, setSourceFrom] = useState('');
   const [sourceTo, setSourceTo] = useState('');
-  const [sourcesData, setSourcesData] = useState(null);
-  const [sourcesLoading, setSourcesLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    setSourcesLoading(true);
-    getContactSourcesBreakdown(sourceFrom || undefined, sourceTo || undefined)
-      .then(r => { if (!cancelled) setSourcesData(r.data || null); })
-      .catch(() => { if (!cancelled) setSourcesData(null); })
-      .finally(() => { if (!cancelled) setSourcesLoading(false); });
-    return () => { cancelled = true; };
-  }, [sourceFrom, sourceTo]);
 
-  // ── email schedule summary ─────────────────────────────────────────
-  const [quickStats, setQuickStats] = useState({ contacts: null, campaigns: null, journeys: null, conversations: null });
+  // All dashboard data goes through React Query: keyed on the inputs that change it and
+  // cached for STALE_MS, so fast input changes can't leave a stale response on screen.
+  const queryOpts = { staleTime: STALE_MS, refetchOnWindowFocus: false };
 
-  useEffect(() => {
-    const btParam = businessType === 'All' ? {} : { businessType };
-    Promise.allSettled([
-      getUnifiedStats(btParam),
+  const sourcesQ = useQuery({
+    queryKey: ['dashboard', 'sources', sourceFrom, sourceTo],
+    queryFn: () => getContactSourcesBreakdown(sourceFrom || undefined, sourceTo || undefined).then(r => r.data || null),
+    ...queryOpts,
+  });
+
+  const quickQ = useQuery({
+    queryKey: ['dashboard', 'quick', businessType],
+    // allSettled so one failing call can't blank the other tiles.
+    queryFn: () => Promise.allSettled([
+      // cached=1: the backend serves this from a 10-min cache for the dashboard only.
+      getUnifiedStats({ ...btParams, cached: 1 }),
       getCampaigns({ limit: 1 }),
       getJourneys({ limit: 1 }),
-    ]).then(([contacts, campaigns, journeys]) => {
-      setQuickStats({
-        contacts:      contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts   ?? null : null,
-        conversations: contacts.status  === 'fulfilled' ? contacts.value?.data?.conversations_7d ?? null : null,
-        campaigns:     campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
-        journeys:      journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
-      });
-    });
-  }, [businessType]);
-
-  const [schedSummary, setSchedSummary] = useState({ running: 0, total: 0, lastSentDay: null, lastSentAt: null });
-  useEffect(() => {
-    authFetch(`${API_BASE}/api/v3/test-sends/schedule/list`)
-      .then(r => r.json())
-      .then(d => {
-        const list = Array.isArray(d?.data) ? d.data : [];
-        const running = list.filter(s => s.is_running);
-        const last = list.find(s => s.last_sent_at);
-        setSchedSummary({
-          running:     running.length,
-          total:       list.length,
-          lastSentDay: last?.last_sent_day ?? null,
-          lastSentAt:  last?.last_sent_at  ?? null,
-        });
-      })
-      .catch(() => {});
-  }, []);
+    ]).then(([contacts, campaigns, journeys]) => ({
+      contacts:      contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts   ?? null : null,
+      conversations: contacts.status  === 'fulfilled' ? contacts.value?.data?.conversations_7d ?? null : null,
+      campaigns:     campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
+      journeys:      journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
+    })),
+    ...queryOpts,
+  });
+  const quickStats = quickQ.data || { contacts: null, campaigns: null, journeys: null, conversations: null };
 
   // Base dashboard data — NOT affected by the Revenue-by-Segment filter.
-  const loadData = () => {
-    const params = {};
-    if (businessType !== 'All') params.businessType = businessType;
+  const treeQ = useQuery({
+    queryKey: ['dashboard', 'tree', businessType],
+    queryFn: () => getSegmentationTree(btParams).catch(() => ({})),
+    ...queryOpts,
+  });
+  const activityQ = useQuery({
+    queryKey: ['dashboard', 'activity'],
+    queryFn: () => getSegmentActivity({ days: 7 }).catch(() => ({})),
+    ...queryOpts,
+  });
 
-    setTreeLoading(true);
-    getSegmentationTree(params)
-      .catch(() => ({}))
-      .then(t => setTree(t))
-      .finally(() => setTreeLoading(false));
+  // Filtered revenue-by-segment — scoped to THIS section only (separate from the base
+  // `tree`, so the filter doesn't change any other card). Only fetched once a filter is set.
+  const revQ = useQuery({
+    queryKey: ['dashboard', 'rev', businessType, travelFrom, travelTo, bookingFrom, bookingTo, product],
+    queryFn: () => {
+      const params = { ...btParams };
+      if (travelFrom) params.travelFrom = travelFrom;
+      if (travelTo) params.travelTo = travelTo;
+      if (bookingFrom) params.bookingFrom = bookingFrom;
+      if (bookingTo) params.bookingTo = bookingTo;
+      if (product && product !== 'all') params.product = product;
+      return getSegmentationTree(params).catch(() => ({}));
+    },
+    enabled: filterActive,
+    ...queryOpts,
+  });
 
-    setActivityLoading(true);
-    getSegmentActivity({ days: 7 })
-      .catch(() => ({}))
-      .then(a => setActivity(a))
-      .finally(() => setActivityLoading(false));
-  };
+  const tree = treeQ.data ?? null;
+  const activity = activityQ.data ?? null;
+  const revData = filterActive ? (revQ.data ?? null) : null;
+  const sourcesData = sourcesQ.data ?? null;
+  // Skeletons on first load and on a manual refresh, as before.
+  const treeLoading = treeQ.isPending || treeQ.isFetching;
+  const activityLoading = activityQ.isPending || activityQ.isFetching;
+  const revLoading = filterActive && (revQ.isPending || revQ.isFetching);
+  const sourcesLoading = sourcesQ.isPending || sourcesQ.isFetching;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadData(); }, [businessType]);
-
-  // Scoped fetch: only re-fetches the Revenue-by-Segment numbers when a filter is set.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const active = !!(travelFrom || travelTo || bookingFrom || bookingTo || (product && product !== 'all'));
-    if (!active) { setRevData(null); setRevLoading(false); return; }
-    const params = {};
-    if (businessType !== 'All') params.businessType = businessType;
-    if (travelFrom) params.travelFrom = travelFrom;
-    if (travelTo) params.travelTo = travelTo;
-    if (bookingFrom) params.bookingFrom = bookingFrom;
-    if (bookingTo) params.bookingTo = bookingTo;
-    if (product && product !== 'all') params.product = product;
-    setRevLoading(true);
-    getSegmentationTree(params).catch(() => ({})).then(setRevData).finally(() => setRevLoading(false));
-  }, [businessType, travelFrom, travelTo, bookingFrom, bookingTo, product]);
+  // Refresh button: drop every cached dashboard query and fetch again.
+  const loadData = () => queryClient.invalidateQueries({ queryKey: ['dashboard'] });
 
   // ── travel-date preset helpers ──
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -175,7 +173,6 @@ export default function Dashboard() {
     setTravelFrom(ymd(new Date(y, m - 1, 1))); setTravelTo(ymd(new Date(y, m, 0)));
   };
   const clearFilters = () => { setTravelFrom(''); setTravelTo(''); setBookingFrom(''); setBookingTo(''); setProduct('all'); };
-  const filterActive = !!(travelFrom || travelTo || bookingFrom || bookingTo || (product && product !== 'all'));
   const activeCount = (travelFrom || travelTo ? 1 : 0) + (bookingFrom || bookingTo ? 1 : 0) + (product && product !== 'all' ? 1 : 0);
   // current "YYYY-MM" if the travel range exactly spans one month (to highlight the month picker)
   const pickedMonth = (travelFrom && travelTo && travelFrom.slice(0, 7) === travelTo.slice(0, 7)) ? travelFrom.slice(0, 7) : '';
@@ -267,26 +264,10 @@ export default function Dashboard() {
             <Link href="/segmentation" className="btn btn-sm btn-ghost">View Details</Link>
           </div>
           {treeLoading ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 250, padding: '0 8px 8px' }}>
-              {[65, 85, 45, 90, 55, 70, 40, 60].map((h, i) => (
-                <div key={i} className="skeleton" style={{ flex: 1, height: `${h}%`, borderRadius: '6px 6px 0 0' }} />
-              ))}
-            </div>
+            <ChartSkeleton />
           ) : barData.length > 0 ? (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={barData}>
-                  <XAxis dataKey="name" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
-                  <YAxis tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
-                  <Tooltip
-                    formatter={(v) => fmt(v)}
-                    contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }}
-                  />
-                  <Bar dataKey="customers" name="Customers" radius={[6, 6, 0, 0]}>
-                    {barData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <SegmentBarChart data={barData} fmt={fmt} />
             </motion.div>
           ) : (
             <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
@@ -316,58 +297,7 @@ export default function Dashboard() {
             </div>
           </Link>
         ))}
-        {/* <Link href="/segment-activity" className="card action-card">
-          <Activity size={24} color="var(--orange)" />
-          <div className="action-title">Segment Activity</div>
-          <div className="action-desc">Daily entries, exits & reach</div>
-        </Link> */}
       </motion.div>
-
-      {/* Email Schedule Status — always visible (own useEffect) */}
-      {/* <motion.div variants={fadeInUp}>
-        <div className="card mb-24">
-          <div className="card-header">
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Mail size={16} color="#e2b340" /> Email Scheduless
-            </h3>
-            <Link href="/test-sends" className="btn btn-sm btn-ghost">Manage</Link>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '4px 0' }}>
-            <div style={{ textAlign: 'center', padding: '14px 8px' }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: schedSummary.running > 0 ? '#22c55e' : 'var(--text-primary)' }}>
-                {schedSummary.running}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                {schedSummary.running > 0 && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 2s infinite' }} />}
-                Active Schedules
-              </div>
-            </div>
-            <div style={{ textAlign: 'center', padding: '14px 8px' }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary)' }}>
-                {schedSummary.total}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Total Schedules</div>
-            </div>
-            <div style={{ textAlign: 'center', padding: '14px 8px' }}>
-              {schedSummary.lastSentDay ? (
-                <>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: '#e2b340', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    <CheckCircle2 size={20} /> Day {schedSummary.lastSentDay}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>
-                    Last sent · {new Date(schedSummary.lastSentAt).toLocaleTimeString()}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-tertiary)' }}>—</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>No sends yet</div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </motion.div> */}
 
       {/* Last 7 Days Activity */}
       <motion.div variants={fadeInUp}>

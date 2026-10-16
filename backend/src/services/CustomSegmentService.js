@@ -265,7 +265,8 @@ export default class CustomSegmentService {
         const combined = sub.length === 1 ? sub[0] : `(${sub.join(' AND ')})`;
         clauseItems.push({
           clause: cond.exclude ? `NOT (${combined})` : combined,
-          joinOp: cond.joinOp || 'AND',
+          // Only AND / OR ever reach the SQL — this value is concatenated into the WHERE clause.
+          joinOp: String(cond.joinOp || 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND',
         });
       }
     }

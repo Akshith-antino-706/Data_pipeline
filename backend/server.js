@@ -50,7 +50,7 @@ import giveawaysRouter from './src/routes/giveaways.js';
 import chatLeadsRouter from './src/routes/chatLeads.js';
 import { startGiveawayWorker } from './src/services/giveaway/giveawayWorker.js';
 import authRouter from './src/routes/auth.js';
-import { apiAuthGate } from './src/middleware/auth.js';
+import { apiAuthGate, requireRole } from './src/middleware/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
@@ -120,6 +120,9 @@ app.use((req, _res, next) => {
 // Every /api route below (and the inline app.get/app.post routes further down) needs a
 // login unless it is in PUBLIC_API_ROUTES.
 app.use('/api', apiAuthGate);
+// Schema migrations over HTTP rewrite or wipe tables — admins only (the gate above has
+// already authenticated the caller and set req.user).
+app.use((req, res, next) => (/^\/api\/v[23]\/migrate/.test(req.path) ? requireRole('admin')(req, res, next) : next()));
 
 // ── Routes ──────────────────────────────────────────────────
 // Auth
@@ -221,8 +224,8 @@ app.get('/api/health', async (_, res) => {
 
   // ── Workers ──
   try {
-    const { _workers } = await import('./src/services/queue/workers.js');
-    const w = _workers;
+    const { getWorkers } = await import('./src/services/queue/workers.js');
+    const w = getWorkers();
     checks.workers = {
       status: w ? 'running' : 'stopped',
       email:    w?.email  ? 'running' : 'stopped',
@@ -616,53 +619,50 @@ app.post('/api/v3/sync-first-messages', async (req, res) => {
       return res.json({ success: true, ...result });
     }
     // Fire and forget — full sync runs in background
-    FirstMessageService.syncAll().then(r => console.log('[FirstMessage] Done:', r));
+    FirstMessageService.syncAll()
+      .then(r => console.log('[FirstMessage] Done:', r))
+      .catch(e => console.error('[FirstMessage] Sync failed:', e.message));
     res.json({ success: true, message: 'First message sync started in background' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ── Test Email Endpoint ─────────────────────────────────────
-app.post('/api/v2/email/test', async (req, res) => {
-  try {
-    const { EmailChannel } = await import('./src/services/channels/EmailChannel.js');
-    const { to, subject, html } = req.body;
-    const recipient = to || process.env.SMTP_USER;
-    const result = await EmailChannel.send({
-      to: recipient,
-      subject: subject || 'Rayna Tours — SMTP Test Email',
-      html: html || `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px">
-        <div style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:32px;border-radius:12px;text-align:center">
-          <h1 style="margin:0">Rayna Tours</h1>
-          <p style="margin:8px 0 0;opacity:0.9">Omnichannel Marketing Platform</p>
-        </div>
-        <div style="padding:24px 0">
-          <h2>SMTP Configuration Successful!</h2>
-          <p>This is a test email from your Rayna Tours marketing platform.</p>
-          <p>Your SMTP connection is working correctly via <b>${process.env.SMTP_HOST}:${process.env.SMTP_PORT}</b></p>
-          <p style="color:#888;font-size:12px">Sent at ${new Date().toISOString()}</p>
-        </div>
-      </div>`,
-    });
-    res.json({ success: result.success, data: result });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// POST /api/v2/email/test was removed: it sent any to/subject/html through the company
+// SMTP (an open mail relay) and nothing in the frontend called it.
 
 // ── Error handler ───────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Error:', err.stack || err.message);
-  const status = err.status || 500;
-  // Never leak SQL errors, stack traces, or internal paths to clients
-  const safeMsg = err.message || 'Internal server error';
+  const status = err.status || err.statusCode || 500;
+  // Never leak SQL errors, stack traces, or internal paths to clients: 5xx messages
+  // stay in the server log; only deliberate 4xx messages reach the caller.
+  const safeMsg = status < 500 ? (err.message || 'Request failed') : 'Internal server error';
   res.status(status).json({ success: false, error: safeMsg });
 });
 
 // ── Graceful shutdown ───────────────────────────────────────
-function shutdown(signal) {
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`\n${signal} received. Shutting down gracefully...`);
+  // Stop taking new work before closing the pool: crons first, then let in-flight
+  // queue jobs finish (stopWorkers waits for active jobs) so a send isn't cut off mid-way.
+  try { cron.getTasks().forEach(t => t.stop()); } catch { /* ignore */ }
+  try { httpServer?.close(); } catch { /* ignore */ }
+  try {
+    const { stopWorkers } = await import('./src/services/queue/workers.js');
+    await stopWorkers();
+  } catch (e) { console.error('[Shutdown] stopWorkers:', e.message); }
+  try {
+    const { stopGiveawayWorker } = await import('./src/services/giveaway/giveawayWorker.js');
+    await stopGiveawayWorker();
+  } catch (e) { console.error('[Shutdown] stopGiveawayWorker:', e.message); }
+  try {
+    const { closeQueues } = await import('./src/services/queue/index.js');
+    await closeQueues();
+  } catch (e) { console.error('[Shutdown] closeQueues:', e.message); }
   // Flush any buffered email_send_log rows before the pool closes (no-op unless
   // JOURNEY_LOG_BATCH is enabled).
   import('./src/services/SendTrackService.js')
@@ -677,6 +677,14 @@ function shutdown(signal) {
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+// One stray rejected promise must not take down the API, crons and workers together.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason?.stack || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err?.stack || err);
+  shutdown('uncaughtException').finally(() => process.exit(1));
+});
 
 // ── All cron jobs DISABLED ──────────────────────────────────
 // To re-enable, uncomment the relevant sections below.
@@ -711,7 +719,7 @@ cron.schedule('30 0 * * *', async () => {
   } catch (err) {
     console.error('[Cron:RegistrationSync] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Registration data sync (affiliate/guestuser/agent) scheduled at 12:30 AM Dubai time');
 
 // ── Daily Billing Sync — 1 AM Dubai time (UTC+4) ────────────
@@ -739,7 +747,7 @@ async function runDailySyncWithRetry() {
   }
 }
 
-cron.schedule('0 1 * * *', () => { runDailySyncWithRetry(); }, { timezone: 'Asia/Dubai' });
+cron.schedule('0 1 * * *', () => { runDailySyncWithRetry(); }, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Daily billing sync scheduled at 1:00 AM Dubai time (3 retries, 10min gap)');
 
 // ── Segmentation tree snapshot — 2 AM Dubai time ─────────────────────────────
@@ -754,7 +762,7 @@ async function runSnapshotRefresh() {
   }
 }
 
-cron.schedule('0 2 * * *', runSnapshotRefresh, { timezone: 'Asia/Dubai' });
+cron.schedule('0 2 * * *', runSnapshotRefresh, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Segmentation tree snapshot scheduled at 2:00 AM Dubai time');
 
 // ── Daily AI templates — render all 7 Day templates via Claude once/day at 3 AM Dubai ──
@@ -767,7 +775,7 @@ cron.schedule('0 3 * * *', async () => {
   } catch (err) {
     console.error('[Cron:DailyAI] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Daily AI templates scheduled at 3:00 AM Dubai time (7 Claude calls)');
 
 // ── Daily Email QA reports — re-run the QA scan for every template attached to a
@@ -782,7 +790,7 @@ cron.schedule('30 3 * * *', async () => {
   } catch (err) {
     console.error('[Cron:TemplateQA] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Journey template QA reports scheduled at 3:30 AM Dubai time');
 
 // ── Unsubscribe Sync — MySQL → RDS daily at 2 AM Dubai ──────────────
@@ -793,7 +801,7 @@ cron.schedule('0 2 * * *', async () => {
   } catch (err) {
     console.error('[Cron:UnsubscribeSync] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Unsubscribe sync scheduled at 2:00 AM Dubai time');
 
 // ── WhatsApp Unsubscribe Sync — MYSQL2 → RDS daily at 2:15 AM Dubai ──
@@ -805,7 +813,7 @@ cron.schedule('15 2 * * *', async () => {
   } catch (err) {
     console.error('[Cron:WAUnsubSync] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] WhatsApp unsubscribe sync scheduled at 2:15 AM Dubai time');
 
 // ── Contact Enrichment — validate emails + format mobiles daily at 1:30 AM Dubai ──
@@ -816,7 +824,7 @@ cron.schedule('30 1 * * *', async () => {
   } catch (err) {
     console.error('[Cron:Enrichment] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Contact enrichment scheduled at 1:30 AM Dubai time (new contacts only)');
 
 // ── Chats Sync — MySQL → RDS insert-only at 3:30 AM Dubai, plus unified_id backfill ──
@@ -827,7 +835,7 @@ cron.schedule('30 3 * * *', async () => {
   } catch (err) {
     console.error('[Cron:ChatsSync] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Chats sync scheduled at 3:30 AM Dubai time');
 
 // ── Daily journey re-snapshot — 2:30 AM Dubai ──
@@ -844,7 +852,7 @@ cron.schedule('30 2 * * *', async () => {
   } catch (err) {
     console.error('[Cron:JourneyReSnapshot] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Daily journey re-snapshot scheduled at 2:30 AM Dubai time');
 
 // ── Daily FX rates refresh — 5:30 AM Dubai ──
@@ -857,7 +865,7 @@ cron.schedule('30 5 * * *', async () => {
   } catch (err) {
     console.error('[Cron:FxRates] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Daily FX rates refresh scheduled at 5:30 AM Dubai time');
 
 // ── Contact market/currency refresh — 5:45 AM Dubai (after FX) ─────────────
@@ -871,7 +879,7 @@ cron.schedule('45 5 * * *', async () => {
   } catch (err) {
     console.error('[Cron:ContactMarket] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Contact market/currency refresh scheduled at 5:45 AM Dubai time');
 
 // ── Daily category picks — 3:45 AM Dubai ──
@@ -885,7 +893,7 @@ cron.schedule('45 3 * * *', async () => {
   } catch (err) {
     console.error('[Cron:CategoryPicks] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Daily category picks compute scheduled at 3:45 AM Dubai time');
 
 // ── Daily past-trip user compute — 4:00 AM Dubai ──
@@ -900,7 +908,7 @@ cron.schedule('0 4 * * *', async () => {
   } catch (err) {
     console.error('[Cron:PastTrip] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Daily past-trip user compute scheduled at 4:00 AM Dubai time');
 
 // ── Booking affinity rebuild — 4:30 AM Dubai ──
@@ -918,7 +926,7 @@ cron.schedule('30 4 * * *', async () => {
   } catch (err) {
     console.error('[Cron:BookingAffinity] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Booking affinity rebuild scheduled at 4:30 AM Dubai time');
 
 // ── Daily AI recommendation compute — 3:35 AM Dubai ──
@@ -933,7 +941,7 @@ cron.schedule('35 3 * * *', async () => {
   } catch (err) {
     console.error('[Cron:RecCompute] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] AI recommendation compute scheduled at 3:35 AM Dubai time');
 
 // ── Weekly enriched products sync — Mondays 5:00 AM Dubai ──
@@ -948,7 +956,7 @@ cron.schedule('0 5 * * 1', async () => {
   } catch (err) {
     console.error('[Cron:ProductSync] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Enriched products sync scheduled: Mondays 05:00 Asia/Dubai');
 
 // ── Product URL health check — Mondays 06:00 Dubai (1 hour AFTER enriched sync) ──
@@ -966,7 +974,7 @@ cron.schedule('0 6 * * 1', async () => {
   } catch (err) {
     console.error('[Cron:UrlHealthCheck] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Product URL health check scheduled: Mondays 06:00 Asia/Dubai');
 
 // ── PhpAdmin weekly sync — pull new MySQL contacts into unified_contacts ──
@@ -980,7 +988,7 @@ cron.schedule('0 5 * * 0', async () => {
   } catch (err) {
     console.error('[Cron:PhpAdminWeekly] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] PhpAdmin weekly sync scheduled: Sundays 05:00 Asia/Dubai');
 
 // ── Journey Engine — process due entries every 5 min ──────────────
@@ -993,7 +1001,7 @@ cron.schedule('*/5 * * * *', async () => {
   } catch (err) {
     console.error('[Cron:Journey] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Journey engine scheduled: every 5 min (Asia/Dubai)');
 
 // ── CONTINUOUS (gtm) journey engine — every 1 min: fire due per-user state rows ──
@@ -1035,7 +1043,7 @@ cron.schedule('0 4 * * *', async () => {
   } catch (err) {
     console.error('[Cron:ContinuousReEnroll] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Continuous per-user re-enrollment scheduled: daily 4 AM (Asia/Dubai)');
 
 // ── Journey auto-start — check every minute for scheduled journeys ──
@@ -1058,7 +1066,7 @@ cron.schedule('* * * * *', async () => {
   } catch (err) {
     console.error('[Cron:AutoStart] Error:', err.message);
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Journey auto-start scheduled: every 1 min (Asia/Dubai)');
 
 // ── Journey Analytics rollup — powers the dashboard Analytics tab ──
@@ -1080,7 +1088,7 @@ cron.schedule(process.env.JOURNEY_STATS_CRON || '*/30 * * * *', async () => {
   } finally {
     _journeyStatsRunning = false;
   }
-}, { timezone: 'Asia/Dubai' });
+}, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Journey analytics rollup scheduled: every 30 min (Asia/Dubai)');
 
 // ── Startup env validation — fail fast in production ──
@@ -1109,7 +1117,10 @@ try {
 // ── Start (HTTP + HTTPS) ─────────────────────────────────────
 const HTTPS_PORT = 3443;
 
-app.listen(PORT, async () => {
+const httpServer = app.listen(PORT, async (err) => {
+  // Express 5 passes bind errors (e.g. EADDRINUSE) here. Without this the process kept
+  // running crons and workers with no HTTP server.
+  if (err) { console.error(`[Server] Failed to bind port ${PORT}:`, err.message); process.exit(1); }
   console.log(`  HTTP  → http://localhost:${PORT}`);
   await flushCache();
 

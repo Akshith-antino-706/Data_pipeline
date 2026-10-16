@@ -37,7 +37,7 @@ const QUEUE_DEFAULTS = {
   attempts: 3,
   backoff: { type: 'exponential', delay: 5_000 },
   removeOnComplete: { age: 86_400, count: 50_000 },
-  removeOnFail:     { age: 7 * 86_400 },
+  removeOnFail:     { age: 7 * 86_400, count: 50_000 },
 };
 
 let _queues;

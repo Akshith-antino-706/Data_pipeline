@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomBytes } from 'node:crypto'; // UTM tokens must not be guessable
 import { query } from '../config/database.js';
 import { EmailChannel } from '../services/channels/EmailChannel.js';
 import EmailRenderer from '../services/EmailRenderer.js';
@@ -54,7 +55,7 @@ router.post('/send-journey-emails', async (_req, res, next) => {
             if (existing) {
               utmLink = `/api/v3/utm/track/${existing.token}`;
             } else {
-              const token = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+              const token = randomBytes(8).toString('hex');
               await query(
                 'INSERT INTO user_utm_links (utm_id, unified_id, token, destination_url, customer_email, customer_name) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING',
                 [utm.utm_id, user.unified_id, token, utm.full_url || 'https://www.raynatours.com/activities', user.email, user.name]
@@ -238,7 +239,7 @@ router.post('/generate-utm-links', async (_req, res, next) => {
       );
 
       for (const c of campaigns) {
-        const token = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+        const token = randomBytes(8).toString('hex');
         const { rowCount } = await query(
           'INSERT INTO user_utm_links (utm_id, unified_id, token, destination_url, customer_email, customer_name) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING',
           [c.utm_id, user.unified_id, token, c.full_url || 'https://www.raynatours.com/activities', user.email, user.name]

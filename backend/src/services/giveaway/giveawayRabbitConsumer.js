@@ -88,14 +88,16 @@ async function record(evt) {
 }
 
 // ── message handler ──
-async function handle(msg) {
+// ch = the channel this message was delivered on. After a reconnect the module-level
+// _ch is a NEW channel, and acking an old delivery tag on it closes that channel.
+async function handle(msg, ch) {
   const raw = msg.content.toString();
   let p;
   try { p = JSON.parse(raw); }
   catch {
     console.warn('[GiveawayMQ] ⛔ malformed JSON — ack+drop');
     await record({ outcome: 'poison', reason: 'malformed_json' });
-    return _ch.ack(msg);
+    return ch.ack(msg);
   }
 
   const tag = `[GiveawayMQ] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
@@ -107,7 +109,7 @@ async function handle(msg) {
   if (!v.ok) {
     console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`);
     await record({ ...meta, outcome: 'poison', reason: v.reason });
-    return _ch.ack(msg);
+    return ch.ack(msg);
   }
 
   // 1b. PERSIST — upsert contact (no duplicates) + store the event (idempotent on id),
@@ -134,7 +136,7 @@ async function handle(msg) {
   if (journeyHandled > 0) {
     console.log(`${tag} ✉️ handled by ${journeyHandled} giveaway journey(s) — skipping direct send (journey email only)`);
     await record({ ...meta, outcome: 'journey_handled' });
-    return _ch.ack(msg);
+    return ch.ack(msg);
   }
 
   // 2. idempotency — claim BEFORE sending; duplicate redelivery is a no-op
@@ -143,14 +145,14 @@ async function handle(msg) {
   if (claimed === null) {
     console.log(`${tag} 🔁 DUPLICATE — ack`);
     await record({ ...meta, outcome: 'duplicate' });
-    return _ch.ack(msg);
+    return ch.ack(msg);
   }
 
   // 3. send (or log-only), with transient-failure retries → DLQ
   if (!SEND_ENABLED) {
     console.log(`${tag} ✅ RECEIVED (GIVEAWAY_SEND_ENABLED!=true → log-only) <${p.to.email}> subject="${p.subject}"`);
     await record({ ...meta, outcome: 'received' });
-    return _ch.ack(msg);
+    return ch.ack(msg);
   }
 
   // Log the direct send to email_send_log too (not just the Redis events list), so giveaway
@@ -178,7 +180,7 @@ async function handle(msg) {
       console.log(`${tag} ✅ SENT <${p.to.email}> msgId=${info.messageId}`);
       if (logId) await SendTrackService.markSent(logId, { externalId: info.messageId, provider: 'giveaway-smtp', durationMs: Date.now() - _started }).catch(() => {});
       await record({ ...meta, outcome: 'sent', msgId: info.messageId });
-      return _ch.ack(msg);
+      return ch.ack(msg);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_RETRIES) await sleep(500 * attempt + Math.floor(Math.random() * 300)); // jittered backoff
@@ -189,7 +191,7 @@ async function handle(msg) {
   await redis.del(`giveaway:email:${p.id}`).catch(() => {});
   console.error(`${tag} ❌ SEND FAILED after ${MAX_RETRIES} tries: ${lastErr?.message} — nack→DLQ`);
   await record({ ...meta, outcome: 'failed', reason: lastErr?.message });
-  return _ch.nack(msg, false, false);
+  return ch.nack(msg, false, false);
 }
 
 // ── topology (idempotent; re-asserted on every connect) ──
@@ -215,21 +217,33 @@ async function connect() {
     _ch = await _conn.createChannel();
     await assertTopology(_ch);            // re-assert on every (re)connect — idempotent
     await _ch.prefetch(PREFETCH);
-    await _ch.consume(QUEUE, (msg) => { if (msg) handle(msg).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { _ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
+    const ch = _ch;
+    // A channel-level close (e.g. a 406) used to stop consumption silently. Closing the
+    // connection routes it through the normal reconnect path.
+    ch.on('error', (e) => console.error(`[GiveawayMQ] channel error: ${e.message}`));
+    ch.on('close', () => { if (!_stopped && _ch === ch) _conn?.close().catch(() => {}); });
+    await ch.consume(QUEUE, (msg) => { if (msg) handle(msg, ch).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
 
     _reconnectMs = 1000;
     console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
+    // connect() can succeed and createChannel/assertTopology fail — close that connection
+    // so each retry doesn't leak one (CloudAMQP caps connections).
+    const stale = _conn;
     scheduleReconnect(`connect failed: ${err.message}`);
+    try { await stale?.close(); } catch { /* already closed */ }
   }
 }
 
+let _reconnectTimer = null;
 function scheduleReconnect(why) {
   _ch = null; _conn = null;
-  if (_stopped) return;
+  // One pending reconnect at a time: a connection close and a failed connect can both
+  // land here, which used to start two parallel reconnect loops.
+  if (_stopped || _reconnectTimer) return;
   const delay = Math.min(_reconnectMs, 30_000);
   console.warn(`[GiveawayMQ] ${why} — reconnecting in ${delay}ms`);
-  setTimeout(connect, delay);
+  _reconnectTimer = setTimeout(() => { _reconnectTimer = null; connect(); }, delay);
   _reconnectMs = Math.min(_reconnectMs * 2, 30_000);
 }
 

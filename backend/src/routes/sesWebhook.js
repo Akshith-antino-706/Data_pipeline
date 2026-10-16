@@ -37,9 +37,16 @@ router.post('/ses', async (req, res) => {
     if (messageType === 'SubscriptionConfirmation') {
       const subscribeUrl = payload.SubscribeURL;
       console.log('[SES Webhook] SNS SubscriptionConfirmation received');
-      if (subscribeUrl) {
-        await fetch(subscribeUrl);
+      let snsHost = null;
+      try {
+        const u = new URL(subscribeUrl);
+        if (u.protocol === 'https:' && /^sns\.[a-z0-9-]+\.amazonaws\.com$/.test(u.hostname)) snsHost = u.hostname;
+      } catch { /* invalid URL */ }
+      if (snsHost) {
+        await fetch(subscribeUrl, { signal: AbortSignal.timeout(10_000) });
         console.log('[SES Webhook] SNS subscription confirmed');
+      } else if (subscribeUrl) {
+        console.warn('[SES Webhook] Ignored SubscribeURL that is not an AWS SNS https URL');
       }
       return res.status(200).send('OK');
     }
@@ -147,7 +154,7 @@ async function processEventAsync(message, eventType) {
       const { rowCount } = await db.query(`
         UPDATE unified_contacts
         SET email_unsubscribe = 'Yes', updated_at = NOW()
-        WHERE LOWER(TRIM(email)) = $1 AND email_unsubscribe <> 'Yes'
+        WHERE LOWER(TRIM(email)) = $1 AND COALESCE(LOWER(email_unsubscribe), 'no') <> 'yes'
       `, [normalizedEmail]);
 
       if (rowCount > 0) {

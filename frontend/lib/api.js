@@ -70,8 +70,10 @@ async function request(path, options = {}) {
 
   if (res.status === 401) throw new Error('Session expired. Please log in again.');
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  // 204s and HTML error pages (502 from a proxy) aren't JSON — don't turn them into
+  // a confusing 'Unexpected token <' error.
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
   return data;
 }
 

@@ -11,6 +11,9 @@ import { fileURLToPath } from 'url';
 import SEGMENT_EMAIL_CONFIG from '../templates/segmentEmailConfig.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Template keys come from request bodies; escape them before building a RegExp (ReDoS).
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const TEMPLATE_DIR = join(__dirname, '..', 'templates', 'email');
 
 // Template metadata registry
@@ -117,7 +120,7 @@ export class BaseTemplateService {
         let block = productBlock;
         // Replace product-level variables
         for (const [key, value] of Object.entries(product)) {
-          const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+          const regex = new RegExp(`\\{\\{${escapeRe(key)}\\}\\}`, 'g');
           block = block.replace(regex, value || '');
         }
         return block;
@@ -127,7 +130,7 @@ export class BaseTemplateService {
     // Replace top-level {{variables}}
     for (const [key, value] of Object.entries(data)) {
       if (key === 'products') continue; // Already handled above
-      const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      const regex = new RegExp(`\\{\\{${escapeRe(key)}\\}\\}`, 'g');
       html = html.replace(regex, value || '');
     }
 
@@ -145,7 +148,7 @@ export class BaseTemplateService {
     let subject = meta.subject;
     for (const [key, value] of Object.entries(data)) {
       if (key === 'products') continue;
-      const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g');
+      const regex = new RegExp(`\\{\\{${escapeRe(key)}\\}\\}`, 'g');
       subject = subject.replace(regex, value || '');
     }
     return subject;

@@ -1,2 +1,14 @@
 node_modules
 .env
+.env.*
+# Credentials and keys must never be baked into the image (they are mounted at runtime).
+service-account.json
+*.pem
+*.key
+# One-off scripts, data dumps and logs are not needed to run the server.
+scripts/
+*.csv
+*.log
+*.dump
+data_backups/
+.git

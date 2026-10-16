@@ -3704,7 +3704,7 @@ export default function Journeys() {
                         </div>
                       )}
                       <div style={{ background: '#fff', borderRadius: 8, padding: 16, border: '1px solid var(--border-color)' }}>
-                        <iframe
+                        <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                           srcDoc={previewTemplate.body_html}
                           style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }}
                           title="Template Preview"
@@ -4461,7 +4461,7 @@ export default function Journeys() {
               <div style={{ padding: '20px 24px', overflow: 'auto', flex: 1 }}>
                 {previewTemplate.body_html ? (
                   <div style={{ background: '#fff', borderRadius: 8, padding: 16, border: '1px solid var(--border-color)' }}>
-                    <iframe srcDoc={previewTemplate.body_html} style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }} title="Template Preview" />
+                    <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={previewTemplate.body_html} style={{ width: '100%', minHeight: 400, border: 'none', borderRadius: 4 }} title="Template Preview" />
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>Loading preview…</div>
