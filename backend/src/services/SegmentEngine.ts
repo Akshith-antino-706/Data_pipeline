@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import type { SegmentCustomersOpts } from '../types/services_C.js';
+import type { GenericRow, FunnelStageRow, SegmentPageStatsRow, SchemaColumnRow, SegmentDetailRow, SegmentMetricsRow, SegmentDefinitionRow, StageSummaryRow, ConversionMetricRow } from '../types/u3SegmentEngine.js';
 
 /**
  * SegmentEngine — Auto-assigns customers to the 28 defined segments
@@ -11,7 +12,7 @@ class SegmentEngine {
    * Get all funnel stages with their segments and customer counts
    */
   static async getFunnelOverview() {
-    const { rows: stages } = await db.query(`
+    const { rows: stages } = await db.query<FunnelStageRow>(`
       SELECT fs.*,
         COALESCE(json_agg(
           json_build_object(
@@ -47,7 +48,7 @@ class SegmentEngine {
    */
   static async getFullPageData() {
     // Get stages with segments
-    const { rows: stages } = await db.query(`
+    const { rows: stages } = await db.query<FunnelStageRow>(`
       SELECT fs.*,
         COALESCE(json_agg(
           json_build_object(
@@ -89,7 +90,7 @@ class SegmentEngine {
     `);
 
     // Get summary stats
-    const { rows: [stats] } = await db.query(`
+    const { rows: [stats] } = await db.query<SegmentPageStatsRow>(`
       SELECT
         (SELECT COUNT(*) FROM segment_definitions) AS total_segments,
         (SELECT COUNT(*) FROM funnel_stages) AS total_stages,
@@ -99,7 +100,7 @@ class SegmentEngine {
     `);
 
     // Get data schema from information_schema
-    const { rows: columns } = await db.query(`
+    const { rows: columns } = await db.query<SchemaColumnRow>(`
       SELECT table_name, column_name, data_type, is_nullable, column_default
       FROM information_schema.columns
       WHERE table_schema = 'public'
@@ -114,7 +115,7 @@ class SegmentEngine {
    * Get a single segment with full details + associated strategy + customers
    */
   static async getSegmentDetail(segmentId: string | number) {
-    const { rows: [segment] } = await db.query(`
+    const { rows: [segment] } = await db.query<SegmentDetailRow>(`
       SELECT sd.*, fs.stage_name, fs.stage_number, fs.stage_color,
         (SELECT COUNT(*) FROM segment_customers WHERE segment_id = sd.segment_id AND is_active = true) AS customer_count
       FROM segment_definitions sd
@@ -125,14 +126,14 @@ class SegmentEngine {
     if (!segment) return null;
 
     // Get associated strategy
-    const { rows: strategies } = await db.query(`
+    const { rows: strategies } = await db.query<GenericRow>(`
       SELECT * FROM omnichannel_strategies
       WHERE segment_label = $1
       ORDER BY created_at DESC
     `, [segment.segment_name]);
 
     // Get customer sample (first 50)
-    const { rows: customers } = await db.query(`
+    const { rows: customers } = await db.query<GenericRow>(`
       SELECT c.customer_id, c.first_name, c.last_name, c.email, c.phone_number,
              c.customer_type, c.nationality, c.gender, c.total_bookings, c.total_revenue,
              c.days_since_last_booking, c.lead_status, sc.assigned_at, sc.confidence
@@ -144,7 +145,7 @@ class SegmentEngine {
     `, [segmentId]);
 
     // Get segment metrics
-    const { rows: [metrics] } = await db.query(`
+    const { rows: [metrics] } = await db.query<SegmentMetricsRow>(`
       SELECT
         COUNT(*) AS total_customers,
         AVG(c.total_bookings)::NUMERIC(10,1) AS avg_bookings,
@@ -179,11 +180,11 @@ class SegmentEngine {
       where += ` AND (c.first_name ILIKE $${params.length} OR c.last_name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
     }
 
-    const { rows: [{ count }] } = await db.query(
+    const { rows: [{ count }] } = await db.query<{ count: string }>(
       `SELECT COUNT(*) FROM segment_customers sc JOIN customers c ON c.customer_id = sc.customer_id WHERE ${where}`, params
     );
 
-    const { rows } = await db.query(`
+    const { rows } = await db.query<GenericRow>(`
       SELECT c.*, sc.assigned_at, sc.confidence, sc.assigned_by
       FROM segment_customers sc
       JOIN customers c ON c.customer_id = sc.customer_id
@@ -201,7 +202,7 @@ class SegmentEngine {
    * and assign customers accordingly
    */
   static async runSegmentation() {
-    const { rows: segments } = await db.query(
+    const { rows: segments } = await db.query<SegmentDefinitionRow>(
       'SELECT segment_id, segment_name, sql_criteria FROM segment_definitions ORDER BY segment_number'
     );
 
@@ -265,7 +266,7 @@ class SegmentEngine {
    * Get segment summary stats across all stages
    */
   static async getSummaryStats() {
-    const { rows: [stats] } = await db.query(`
+    const { rows: [stats] } = await db.query<SegmentPageStatsRow>(`
       SELECT
         (SELECT COUNT(*) FROM customers) AS total_customers,
         (SELECT COUNT(DISTINCT customer_id) FROM segment_customers WHERE is_active = true) AS segmented_customers,
@@ -274,7 +275,7 @@ class SegmentEngine {
         (SELECT COUNT(*) FROM omnichannel_strategies WHERE status = 'active') AS active_strategies
     `);
 
-    const { rows: stageSummary } = await db.query(`
+    const { rows: stageSummary } = await db.query<StageSummaryRow>(`
       SELECT fs.stage_number, fs.stage_name, fs.stage_color,
         COUNT(DISTINCT sc.customer_id) AS customer_count,
         COUNT(DISTINCT sd.segment_id) AS segment_count
@@ -292,7 +293,7 @@ class SegmentEngine {
    * Get conversion metrics per segment
    */
   static async getConversionMetrics(segmentId?: string | number) {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<ConversionMetricRow>(`
       SELECT
         ct.conversion_type,
         COUNT(*) AS conversions,

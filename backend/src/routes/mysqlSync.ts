@@ -18,8 +18,8 @@ function runPythonSync(args: string[] = [], timeoutMs = 480000): Promise<PythonS
       cwd: REPO_ROOT, env: process.env,
     });
     let stdout = '', stderr = '';
-    child.stdout.on('data', d => { stdout += d.toString(); });
-    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
     const killer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.on('close', code => {
       clearTimeout(killer);

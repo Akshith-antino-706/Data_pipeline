@@ -110,7 +110,7 @@ async function record(evt: GiveawayMqEvent): Promise<void> {
 async function handle(msg: ConsumeMessage, ch: Channel): Promise<void> {
   const raw = msg.content.toString();
   let p: GiveawayMessage;
-  try { p = JSON.parse(raw); }
+  try { p = JSON.parse(raw) as GiveawayMessage; }
   catch {
     console.warn('[GiveawayMQ] ⛔ malformed JSON — ack+drop');
     await record({ outcome: 'poison', reason: 'malformed_json' });

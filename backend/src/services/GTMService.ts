@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import type { GtmEventBody, GtmEventAnalyticsOpts, GtmExportOpts, SpecialOccasionInput } from '../types/services_C.js';
+import type { U4IdRow, U4UnifiedIdRow, U4ProductImageCurrencyRow, U4GtmEventRow, U4PassThroughRow } from '../types/u4GtmService.js';
 
 /**
  * GTM (Google Tag Manager) & BigQuery Integration Service
@@ -208,7 +209,7 @@ window.addEventListener('scroll', function() {
       if (m) resolvedUnifiedId = parseInt(m[1]);
     }
     if (!resolvedUnifiedId && customerId && customerId.includes('@')) {
-      const { rows: [uc] } = await db.query(
+      const { rows: [uc] } = await db.query<U4IdRow>(
         'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) LIMIT 1',
         [customerId]
       );
@@ -219,14 +220,14 @@ window.addEventListener('scroll', function() {
     // email, AUTO-CREATE one from the event payload and use the new id.
     // Uses LOWER(TRIM(email)) to hit idx_uc_email_lower_trim (index scan, not seq scan).
     if (!resolvedUnifiedId && email && String(email).includes('@')) {
-      const { rows: [uc] } = await db.query(
+      const { rows: [uc] } = await db.query<U4IdRow>(
         'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) LIMIT 1',
         [email]
       );
       if (uc) {
         resolvedUnifiedId = uc.id;
       } else {
-        const { rows: [created] } = await db.query(
+        const { rows: [created] } = await db.query<U4IdRow>(
           `INSERT INTO unified_contacts
              (email, name, mobile, city, country, contact_type, sources, booking_status, created_at)
            VALUES ($1, $2, $3, $4, $5, 'B2C', 'gtm_event', 'PROSPECT', NOW())
@@ -239,7 +240,7 @@ window.addEventListener('scroll', function() {
     }
     // Final fallback: borrow unified_id from a recent event in the same session (last 2 hrs)
     if (!resolvedUnifiedId && sessionId) {
-      const { rows: [prev] } = await db.query(
+      const { rows: [prev] } = await db.query<U4UnifiedIdRow>(
         `SELECT unified_id FROM gtm_events
          WHERE session_id = $1 AND unified_id IS NOT NULL AND created_at > NOW() - INTERVAL '2 hours'
          ORDER BY created_at DESC LIMIT 1`,
@@ -279,7 +280,7 @@ window.addEventListener('scroll', function() {
 
       if ((_needImg || _needCur) && _lookupId != null && String(_lookupId).trim() !== '') {
         // ONE catalog lookup fills whatever is missing — values come FROM the catalog, never hardcoded.
-        const { rows: [prod] } = await db.query(
+        const { rows: [prod] } = await db.query<U4ProductImageCurrencyRow>(
           `SELECT image_url, currency FROM products WHERE product_id::text = $1 LIMIT 1`,
           [String(_lookupId)]
         );
@@ -302,7 +303,7 @@ window.addEventListener('scroll', function() {
       }
     } catch (e) { console.warn('[GTM] catalog enrichment skipped:', (e as Error).message); }
 
-    const { rows: [event] } = await db.query(`
+    const { rows: [event] } = await db.query<U4GtmEventRow>(`
       INSERT INTO gtm_events (event_name, customer_id, session_id, page_url, page_title, event_category, event_action, event_label, event_value, ecommerce_data, utm_source, utm_medium, utm_campaign, utm_content, device_type, browser, country, city, unified_id, raw_payload, journey_id, node_id)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *
@@ -314,14 +315,14 @@ window.addEventListener('scroll', function() {
       import('./WelcomeEmailService.js')
         .then(({ default: WelcomeEmailService }) =>
           WelcomeEmailService.schedule({ unifiedId: resolvedUnifiedId, eventName, eventId: event.event_id }))
-        .catch(e => console.error('[Welcome] hook failed:', e.message));
+        .catch((e: Error) => console.error('[Welcome] hook failed:', e.message));
 
       // GTM (event-triggered) journeys: fan out to any active gtm journey listening
       // to this event. Deduped per distinct item. NOT awaited — never blocks the response.
       import('./GtmJourneyService.js')
         .then(({ default: GtmJourneyService }) =>
           GtmJourneyService.onEvent({ eventName, unifiedId: resolvedUnifiedId, eventId: event.event_id, itemId: body.itemId ?? null }))
-        .catch(e => console.error('[GtmJourney] hook failed:', e.message));
+        .catch((e: Error) => console.error('[GtmJourney] hook failed:', e.message));
     }
 
     return event;
@@ -370,7 +371,7 @@ window.addEventListener('scroll', function() {
     if (dateFrom) { params.push(dateFrom); where += ` AND ge.created_at >= $${params.length}`; }
     if (dateTo) { params.push(dateTo); where += ` AND ge.created_at <= $${params.length}`; }
 
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U4PassThroughRow>(`
       SELECT ge.*,
         c.first_name, c.last_name, c.email, c.nationality,
         c.rfm_segment_label, c.rfm_total_score, c.total_bookings, c.total_revenue
@@ -388,7 +389,7 @@ window.addEventListener('scroll', function() {
    * Get Special Occasions with active campaigns
    */
   static async getSpecialOccasions() {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U4PassThroughRow>(`
       SELECT so.*,
         c.code AS coupon_code, c.discount_type, c.discount_value, c.is_active AS coupon_active
       FROM special_occasions so
@@ -399,7 +400,7 @@ window.addEventListener('scroll', function() {
   }
 
   static async createSpecialOccasion({ name, occasionType, startDate, endDate, targetMarkets, discountCode, campaignTheme }: SpecialOccasionInput) {
-    const { rows: [occasion] } = await db.query(`
+    const { rows: [occasion] } = await db.query<U4PassThroughRow>(`
       INSERT INTO special_occasions (name, occasion_type, start_date, end_date, target_markets, discount_code, campaign_theme)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *

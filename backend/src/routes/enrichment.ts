@@ -23,7 +23,7 @@ router.get('/stats', async (req, res, next) => {
 // POST /api/v2/enrichment/preview — preview cleaning for a single record
 router.post('/preview', async (req, res, next) => {
   try {
-    const { phone, email, name } = req.body;
+    const { phone, email, name } = req.body as { phone: unknown; email: unknown; name: string | null };
     const result: EnrichmentPreview = {
       phone: DataCleaningService.cleanPhone(phone),
       email: DataCleaningService.cleanEmail(email),

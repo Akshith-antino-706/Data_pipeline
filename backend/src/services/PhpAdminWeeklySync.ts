@@ -98,7 +98,7 @@ function deriveSegments(bookingStatus: string, geography: string | null, isIndia
 }
 
 async function readWatermark() {
-  const { rows } = await db.query(
+  const { rows } = await db.query<{ last_synced_at: Date | null }>(
     `SELECT last_synced_at FROM sync_metadata WHERE table_name = $1`,
     [SYNC_KEY]
   );
@@ -109,7 +109,7 @@ async function readWatermark() {
     );
     return new Date('1970-01-01T00:00:00Z');
   }
-  return new Date(rows[0].last_synced_at);
+  return new Date(rows[0].last_synced_at!);
 }
 
 async function writeMetadata({ rowsSynced, durationMs, status, error, watermarkAdvance }: SyncMetadataWrite) {

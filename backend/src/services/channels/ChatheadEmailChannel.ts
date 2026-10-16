@@ -66,7 +66,7 @@ export class ChatheadEmailChannel {
     }
 
     let body: ChatheadApiResponse | null = null;
-    try { body = JSON.parse(text); } catch { /* keep raw text */ }
+    try { body = JSON.parse(text) as ChatheadApiResponse; } catch { /* keep raw text */ }
     const ok = res.ok && body?.status === 'success';
     if (!ok) {
       console.warn(`[AWS Email] REJECTED ${to} → HTTP ${res.status} | body:`, text.slice(0, 300));

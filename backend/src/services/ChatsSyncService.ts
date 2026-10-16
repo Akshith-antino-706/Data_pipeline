@@ -68,7 +68,7 @@ export default class ChatsSyncService {
     // 1. Watermark from RDS — read as ::text to bypass JS Date / TZ conversions
     //    on both pg and mysql2 sides. The literal datetime string round-trips
     //    correctly regardless of Node process TZ.
-    const wmRes = await pgQuery("SELECT to_char(MAX(created_at), 'YYYY-MM-DD HH24:MI:SS') AS wm FROM chats");
+    const wmRes = await pgQuery<{ wm: string | null }>("SELECT to_char(MAX(created_at), 'YYYY-MM-DD HH24:MI:SS') AS wm FROM chats");
     const watermark = wmRes.rows[0].wm;
     result.watermark = watermark;
     console.log(`[ChatsSync] Watermark (RDS MAX(created_at)): ${watermark || 'NULL (empty table)'}`);

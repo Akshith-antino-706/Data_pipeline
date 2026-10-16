@@ -23,7 +23,7 @@ const SAMPLE_CTX = {
 
 /** Distinct template ids referenced by any journey's action nodes. */
 export async function journeyTemplateIds() {
-  const { rows } = await db.query(`
+  const { rows } = await db.query<{ tid: string }>(`
     SELECT DISTINCT COALESCE(
              NULLIF(n->'data'->>'emailTemplateId',''),
              NULLIF(n->'data'->>'templateId','')

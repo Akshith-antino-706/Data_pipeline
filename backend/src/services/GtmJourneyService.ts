@@ -195,7 +195,7 @@ class GtmJourneyService {
     };
     if (String(c.email_unsubscribe || '').toLowerCase() === 'yes') { await _exit('unsubscribed'); return; }
     if (itemId && itemId !== '_noitem') {
-      const { rows: [bought] } = await db.query(
+      const { rows: [bought] } = await db.query<{ '?column?': number }>(
         `SELECT 1 FROM gtm_events
          WHERE unified_id = $1 AND event_name = 'purchase'
            AND COALESCE(raw_payload->>'itemId', '') = $2 LIMIT 1`,
@@ -484,7 +484,7 @@ class GtmJourneyService {
     //    skipped. When set, REC_JOURNEY_ALLOWLIST decides delivery. ──
     let recAllowlistBlocked = false;
     try {
-      const { rows: [jf] } = await db.query(
+      const { rows: [jf] } = await db.query<{ recommendation_type: string | null; trigger_event: string | null; trigger_source: string | null }>(
         `SELECT recommendation_type, trigger_event, trigger_source FROM journey_flows WHERE journey_id = $1`,
         [journeyId]
       );

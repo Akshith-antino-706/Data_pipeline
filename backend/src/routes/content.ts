@@ -1,6 +1,8 @@
 import path from 'node:path';
 import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
+import type { ContentTemplateInput, ContentTemplateUpdate } from '../types/services_A.js';
+import type { TemplateVars } from '../types/emailRender.js';
 import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
 import { ContentService } from '../services/ContentService.js';
@@ -205,7 +207,7 @@ router.post('/templates/:id/preview', async (req, res, next) => {
     }
 
     const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
-    const result = await EmailRenderer.renderPreview(parseInt(req.params.id), req.body?.variables || {});
+    const result = await EmailRenderer.renderPreview(parseInt(req.params.id), (req.body as { variables?: TemplateVars } | undefined)?.variables || {});
     res.json({ success: true, data: { html: result.html, subject: result.subject } });
   } catch (err) { next(err); }
 });
@@ -213,7 +215,7 @@ router.post('/templates/:id/preview', async (req, res, next) => {
 // POST /api/v2/content/templates
 router.post('/templates', async (req, res, next) => {
   try {
-    const data = await ContentService.create(req.body);
+    const data = await ContentService.create(req.body as ContentTemplateInput);
     res.status(201).json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -221,7 +223,7 @@ router.post('/templates', async (req, res, next) => {
 // PUT /api/v2/content/templates/:id
 router.put('/templates/:id', async (req, res, next) => {
   try {
-    const data = await ContentService.update(req.params.id, req.body);
+    const data = await ContentService.update(req.params.id, req.body as ContentTemplateUpdate);
     if (!data) return res.status(404).json({ success: false, error: 'Template not found' });
     res.json({ success: true, data });
   } catch (err) { next(err); }
@@ -230,7 +232,7 @@ router.put('/templates/:id', async (req, res, next) => {
 // POST /api/v2/content/templates/:id/approve
 router.post('/templates/:id/approve', async (req, res, next) => {
   try {
-    const data = await ContentService.approve(req.params.id, req.body.approvedBy || 'system');
+    const data = await ContentService.approve(req.params.id, (req.body as { approvedBy?: string | number }).approvedBy || 'system');
     if (!data) return res.status(404).json({ success: false, error: 'Template not found' });
     res.json({ success: true, data });
   } catch (err) { next(err); }

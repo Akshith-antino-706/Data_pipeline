@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Response } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import type { Period, PeriodUnit, DepartmentPeriodsArgs, Granularity, RegistrationSource, DepartmentUser, DepartmentGroupInput } from '../types/routesChatLeads.js';
+import type { DepartmentPeriodsRow, ChatSummaryRow, ChatTotalsRow, UserStatsRow, ChatTrendRow, MailSummaryRow, MailTotalsRow, MailTrendRow, RegistrationCountsRow, RegistrationPointRow, RegistrationPeriodsRow, InfoSchemaColumnRow, RegistrationRecordRow, FilledColumnsRow, ChatHeadFirstMsgResponse, ChatTimestampsRow, DepartmentUserRow, DepartmentCatalogRow, GroupMemberAssignmentRow, DepartmentGroupRow, DepartmentGroupMemberRow, GroupDepartmentEntry, TakenReceiverRow } from '../types/u3ChatLeads.js';
 import { mysqlQuery } from '../config/mysql.js';
 import db from '../config/database.js';
 
@@ -245,7 +246,7 @@ async function queryDepartmentPeriods({ table, dateCol, leadCol, departmentJoin,
   });
   params.push(periods[0].start, periods[periods.length - 1].end);
 
-  const rows = await mysqlQuery(`
+  const rows = await mysqlQuery<DepartmentPeriodsRow[]>(`
     SELECT x.${receiverCol} AS receiver, d.name AS department,
       ${caseClauses}
     FROM ${table} x
@@ -310,7 +311,7 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
     if (!dates) return;
     const { from, to } = dates;
 
-    const rows = await mysqlQuery(`
+    const rows = await mysqlQuery<ChatSummaryRow[]>(`
       SELECT c.receiver,
              d.name AS department,
              COUNT(*) AS chats,
@@ -322,7 +323,7 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
       ORDER BY chats DESC
     `, [from, to], 'chats');
 
-    const totalsRow = await mysqlQuery(`
+    const totalsRow = await mysqlQuery<ChatTotalsRow[]>(`
       SELECT COUNT(*) AS chats, COUNT(DISTINCT wa_id) AS leads
       FROM chats
       WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
@@ -331,7 +332,7 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
     // New vs old users: for each user active in the range, take their FIRST-EVER message
     // time (MIN(created_at) over all history). first message on/after `from` → NEW (this is
     // their first contact ever); earlier → OLD (returning). new + old = unique users in range.
-    const userStatsRow = await mysqlQuery(`
+    const userStatsRow = await mysqlQuery<UserStatsRow[]>(`
       SELECT
         SUM(CASE WHEN f.first_at >= ? THEN 1 ELSE 0 END) AS new_users,
         SUM(CASE WHEN f.first_at <  ? THEN 1 ELSE 0 END) AS old_users
@@ -388,7 +389,7 @@ router.get('/trend', async (req: QueryRequest, res: Response) => {
 
     // new vs returning per period: a user is NEW in a period if their FIRST-EVER message
     // (f.first_at) falls in the SAME period bucket as their activity; RETURNING if earlier.
-    const rows = await mysqlQuery(`
+    const rows = await mysqlQuery<ChatTrendRow[]>(`
       SELECT ${pe('c.created_at')} AS period,
              COUNT(*) AS chats,
              COUNT(DISTINCT c.wa_id) AS leads,
@@ -430,7 +431,7 @@ router.get('/mail-summary', async (req: QueryRequest, res: Response) => {
     if (!dates) return;
     const { from, to } = dates;
 
-    const rows = await mysqlQuery(`
+    const rows = await mysqlQuery<MailSummaryRow[]>(`
       SELECT t.t_to AS receiver,
              d.name AS department,
              COUNT(*) AS emails,
@@ -443,7 +444,7 @@ router.get('/mail-summary', async (req: QueryRequest, res: Response) => {
       ORDER BY emails DESC
     `, [from, to], 'primary');
 
-    const totalsRow = await mysqlQuery(`
+    const totalsRow = await mysqlQuery<MailTotalsRow[]>(`
       SELECT COUNT(*) AS emails, COUNT(DISTINCT t_from) AS leads
       FROM tickets
       WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
@@ -484,7 +485,7 @@ router.get('/mail-trend', async (req: QueryRequest, res: Response) => {
       month: "DATE_FORMAT(t.created_at, '%Y-%m-01')",
     }[granularity];
 
-    const rows = await mysqlQuery(`
+    const rows = await mysqlQuery<MailTrendRow[]>(`
       SELECT ${periodExpr} AS period,
              COUNT(*) AS emails,
              COUNT(DISTINCT t.t_from) AS leads
@@ -600,8 +601,8 @@ router.get('/registrations/summary', async (req: QueryRequest, res: Response) =>
       .map(([type, table]) => `(SELECT COUNT(*)::int FROM ${table} WHERE ${REG_DATE} BETWEEN $1 AND $2) AS ${type}`)
       .join(', ');
     const [{ rows: [counts] }, { rows: points }] = await Promise.all([
-      db.query(`SELECT ${countsSql}`, [from, to]),
-      db.query(`
+      db.query<RegistrationCountsRow>(`SELECT ${countsSql}`, [from, to]),
+      db.query<RegistrationPointRow>(`
         SELECT to_char(${bucket}, 'YYYY-MM-DD') AS period, COUNT(*)::int AS registrations
         FROM ${REGISTRATION_TABLES[source]}
         WHERE ${REG_DATE} BETWEEN $1 AND $2
@@ -631,7 +632,7 @@ router.get('/registrations/periods', async (req: QueryRequest, res: Response) =>
     // registration dates are calendar dates, so compare on the period's date span
     const cols = periods.map((p, i) =>
       `COUNT(*) FILTER (WHERE ${REG_DATE} BETWEEN ${bind(p.start.slice(0, 10))} AND ${bind(p.end.slice(0, 10))})::int AS p${i}`).join(', ');
-    const { rows } = await db.query(`
+    const { rows } = await db.query<RegistrationPeriodsRow>(`
       SELECT COALESCE(NULLIF(NULLIF(btrim("${dim.column}"), ''), 'NULL'), '(not set)') AS name, ${cols}
       FROM ${REGISTRATION_TABLES[source]}
       WHERE ${REG_DATE} BETWEEN ${bind(periods[0].start.slice(0, 10))} AND ${bind(periods[periods.length - 1].end.slice(0, 10))}
@@ -680,7 +681,7 @@ router.get('/registrations', async (req: QueryRequest, res: Response) => {
     `).join(' UNION ALL ');
     const cte = `WITH registrations AS (${unionSql})`;
 
-    const { rows: fieldRows } = await db.query(`
+    const { rows: fieldRows } = await db.query<InfoSchemaColumnRow>(`
       SELECT table_name, column_name FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = ANY($1)
       ORDER BY table_name, ordinal_position
@@ -717,12 +718,12 @@ router.get('/registrations', async (req: QueryRequest, res: Response) => {
     }).join(', ');
 
     const [{ rows }, countResult, filledResult] = await Promise.all([
-      db.query(`${cte} SELECT source, record_id, registration_date, data FROM registrations ${where}
+      db.query<RegistrationRecordRow>(`${cte} SELECT source, record_id, registration_date, data FROM registrations ${where}
                 ORDER BY registration_sort_date DESC NULLS LAST, ingested_at DESC NULLS LAST, record_id DESC
                 LIMIT ${limitBind} OFFSET ${offsetBind}`, params),
-      db.query(`${cte} SELECT COUNT(*)::int AS total FROM registrations ${where}`, countParams),
+      db.query<{ total: number }>(`${cte} SELECT COUNT(*)::int AS total FROM registrations ${where}`, countParams),
       candidateColumns.length
-        ? db.query(`${cte} SELECT ${filledSql} FROM registrations ${where}`, filledParams)
+        ? db.query<FilledColumnsRow>(`${cte} SELECT ${filledSql} FROM registrations ${where}`, filledParams)
         : Promise.resolve(null),
     ]);
     const columns = filledResult ? candidateColumns.filter((_, i) => filledResult.rows[0]?.[`c${i}`]) : null;
@@ -748,12 +749,12 @@ router.get('/first-msg', async (req: QueryRequest, res: Response) => {
     }
 
     // 1. first message TEXT — ChatHead API (always HTTP 200; check body.status).
-    let firstMsg = null;
+    let firstMsg: string | null = null;
     let chatheadStatus = 'error';
     try {
       const url = `https://chathead.io/apis/wa/first_msg/?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
       const chResp = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      const body = await chResp.json();
+      const body = await chResp.json() as ChatHeadFirstMsgResponse;
       chatheadStatus = body?.status || 'error';
       if (chatheadStatus === 'success') firstMsg = body.msg ?? null;
     } catch (e) {
@@ -761,11 +762,11 @@ router.get('/first-msg', async (req: QueryRequest, res: Response) => {
     }
 
     // 2. first message TIMESTAMP — from our synced chats (MIN created_at for this pair).
-    let firstMsgAt = null;
-    let lastMsgAt = null;
+    let firstMsgAt: string | Date | null = null;
+    let lastMsgAt: string | Date | null = null;
     let totalMsgs = 0;
     try {
-      const rows = await mysqlQuery(
+      const rows = await mysqlQuery<ChatTimestampsRow[]>(
         `SELECT MIN(created_at) AS first_msg_at, MAX(created_at) AS last_msg_at, COUNT(*) AS msgs
          FROM chats WHERE wa_id = ? AND receiver = ?`,
         [from, to], 'chats'
@@ -810,7 +811,7 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
     // Users active with this receiver in the range, with their FIRST-EVER message time.
     // is_new = that first message falls inside the range.
     // Fetch one extra row past the page so has_more needs no COUNT(*) query.
-    const rowsPlus = await mysqlQuery(`
+    const rowsPlus = await mysqlQuery<DepartmentUserRow[]>(`
       SELECT c.wa_id,
              MAX(c.wa_name) AS wa_name,
              f.first_at,
@@ -833,7 +834,7 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
     async function firstMsgText(from_: string) {
       try {
         const r = await fetch(`https://chathead.io/apis/wa/first_msg/?from=${encodeURIComponent(from_)}&to=${encodeURIComponent(receiver as string)}`, { signal: AbortSignal.timeout(12000) });
-        const b = await r.json();
+        const b = await r.json() as ChatHeadFirstMsgResponse | null;
         return b?.status === 'success' ? (b.msg ?? null) : null;
       } catch { return null; }
     }
@@ -868,11 +869,11 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
 // Powers the multiselect: an already-grouped department is marked so the UI disables it.
 router.get('/departments', async (_req: QueryRequest, res: Response) => {
   try {
-    const depts = await mysqlQuery(
+    const depts = await mysqlQuery<DepartmentCatalogRow[]>(
       `SELECT connection AS receiver, name FROM departments WHERE connection IS NOT NULL AND connection <> '' ORDER BY name`,
       [], 'chats'
     );
-    const { rows: members } = await db.query(
+    const { rows: members } = await db.query<GroupMemberAssignmentRow>(
       `SELECT m.receiver, m.group_id, g.name AS group_name
        FROM department_group_members m JOIN department_groups g ON g.id = m.group_id`
     );
@@ -899,12 +900,12 @@ router.get('/departments', async (_req: QueryRequest, res: Response) => {
 // GET /groups — all groups with their departments.
 router.get('/groups', async (_req: QueryRequest, res: Response) => {
   try {
-    const { rows: groups } = await db.query('SELECT id, name, created_at, updated_at FROM department_groups ORDER BY name');
-    const { rows: members } = await db.query('SELECT group_id, receiver, department_name FROM department_group_members ORDER BY department_name');
-    const byGroup = new Map();
+    const { rows: groups } = await db.query<DepartmentGroupRow>('SELECT id, name, created_at, updated_at FROM department_groups ORDER BY name');
+    const { rows: members } = await db.query<DepartmentGroupMemberRow>('SELECT group_id, receiver, department_name FROM department_group_members ORDER BY department_name');
+    const byGroup = new Map<number, GroupDepartmentEntry[]>();
     for (const m of members) {
       if (!byGroup.has(m.group_id)) byGroup.set(m.group_id, []);
-      byGroup.get(m.group_id).push({ receiver: m.receiver, name: m.department_name || null });
+      byGroup.get(m.group_id)!.push({ receiver: m.receiver, name: m.department_name || null });
     }
     res.json({
       success: true,
@@ -928,7 +929,7 @@ router.post('/groups', async (req: QueryRequest<DepartmentGroupInput>, res: Resp
 
     const receivers = departments.map(d => String(d.receiver));
     // Guard: any of these already in a group?
-    const { rows: taken } = await client.query(
+    const { rows: taken } = await client.query<TakenReceiverRow>(
       `SELECT m.receiver, g.name AS group_name FROM department_group_members m
        JOIN department_groups g ON g.id = m.group_id WHERE m.receiver = ANY($1)`, [receivers]
     );
@@ -937,7 +938,7 @@ router.post('/groups', async (req: QueryRequest<DepartmentGroupInput>, res: Resp
     }
 
     await client.query('BEGIN');
-    const { rows: [grp] } = await client.query('INSERT INTO department_groups (name) VALUES ($1) RETURNING id, name', [name]);
+    const { rows: [grp] } = await client.query<{ id: number; name: string }>('INSERT INTO department_groups (name) VALUES ($1) RETURNING id, name', [name]);
     for (const d of departments) {
       await client.query(
         'INSERT INTO department_group_members (group_id, receiver, department_name) VALUES ($1,$2,$3)',
@@ -968,7 +969,7 @@ router.put('/groups/:id', async (req: QueryRequest<DepartmentGroupInput>, res: R
 
     const receivers = departments.map(d => String(d.receiver));
     // Any receiver already in a DIFFERENT group?
-    const { rows: taken } = await client.query(
+    const { rows: taken } = await client.query<TakenReceiverRow>(
       `SELECT m.receiver, g.name AS group_name FROM department_group_members m
        JOIN department_groups g ON g.id = m.group_id WHERE m.receiver = ANY($1) AND m.group_id <> $2`,
       [receivers, id]

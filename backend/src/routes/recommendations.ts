@@ -25,6 +25,7 @@
 import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
+import type { RecTemplateRow, RecTestSendBody } from '../types/u6Services.js';
 import db from '../config/database.js';
 import { rankRecommendations } from '../services/RecommendationRankingService.js';
 import { renderRecommendationEmail } from '../services/RecommendationRenderer.js';
@@ -45,7 +46,7 @@ function _testAllowlist() {
 /** Load a content_templates row → { body, subject }.
  *  Falls back to email_html_templates.html_body if the row is linked. */
 async function _loadTemplate(templateId: string | number) {
-  const { rows } = await db.query(`
+  const { rows } = await db.query<RecTemplateRow>(`
     SELECT ct.id, ct.subject, ct.body, ct.name,
            COALESCE(NULLIF(eht.html_body, ''), ct.body) AS html_body
     FROM content_templates ct
@@ -113,7 +114,7 @@ router.get('/preview', async (req: QueryRequest, res: Response, next: NextFuncti
 // ── POST /test-send — allowlist-gated live send ──────────────────────────
 router.post('/test-send', async (req, res, next) => {
   try {
-    const to = String(req.body?.to || '').trim().toLowerCase();
+    const to = String((req.body as RecTestSendBody)?.to || '').trim().toLowerCase();
     if (!to) return res.status(400).json({ error: '`to` is required' });
 
     const allowlist = _testAllowlist();
@@ -124,27 +125,27 @@ router.post('/test-send', async (req, res, next) => {
       });
     }
 
-    const city = req.body?.city;
-    const templateId = parseInt(req.body?.templateId);
+    const city = (req.body as RecTestSendBody)?.city;
+    const templateId = parseInt((req.body as RecTestSendBody)?.templateId);
     if (!city) return res.status(400).json({ error: 'city is required' });
     if (!templateId) return res.status(400).json({ error: 'templateId is required' });
 
     const template = await _loadTemplate(templateId);
     if (!template) return res.status(404).json({ error: `Template ${templateId} not found` });
 
-    const excludeProductId = req.body?.excludeProductId || null;
-    const topN = Math.min(10, Math.max(1, parseInt(req.body?.topN) || 5));
+    const excludeProductId = (req.body as RecTestSendBody)?.excludeProductId || null;
+    const topN = Math.min(10, Math.max(1, parseInt((req.body as RecTestSendBody)?.topN) || 5));
 
     const ranking = await rankRecommendations({ destinationCity: city, excludeProductId, topN });
 
     const vars = {
-      customer_name:  req.body?.customerName || 'there',
-      destination:    req.body?.destination || city,
-      email_heading:  req.body?.emailHeading || `More to explore in ${city}`,
-      email_body:     req.body?.emailBody || `We picked ${topN} experiences we think you'll love while you're in ${city}.`,
-      coupon_code:    req.body?.couponCode || '',
-      coupon_discount:req.body?.couponDiscount || '',
-      coupon_expiry:  req.body?.couponExpiry || '',
+      customer_name:  (req.body as RecTestSendBody)?.customerName || 'there',
+      destination:    (req.body as RecTestSendBody)?.destination || city,
+      email_heading:  (req.body as RecTestSendBody)?.emailHeading || `More to explore in ${city}`,
+      email_body:     (req.body as RecTestSendBody)?.emailBody || `We picked ${topN} experiences we think you'll love while you're in ${city}.`,
+      coupon_code:    (req.body as RecTestSendBody)?.couponCode || '',
+      coupon_discount:(req.body as RecTestSendBody)?.couponDiscount || '',
+      coupon_expiry:  (req.body as RecTestSendBody)?.couponExpiry || '',
     };
 
     const { html, productsUsed } = await renderRecommendationEmail({

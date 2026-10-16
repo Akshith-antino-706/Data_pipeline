@@ -6,7 +6,11 @@ const ts = require('typescript');
 const fs = require('fs');
 const { execSync } = require('child_process');
 
-const args = process.argv.slice(2);
+// --vs-head: compare against the same path's committed version (for files that are already
+// .ts in HEAD and are only getting more types), instead of the original .js.
+const argv = process.argv.slice(2);
+const vsHead = argv.includes('--vs-head');
+const args = argv.filter(a => a !== '--vs-head');
 const files = args[0] === '--list'
   ? fs.readFileSync(args[1], 'utf8').split('\n').map(s => s.trim()).filter(Boolean)
   : args;
@@ -25,11 +29,11 @@ function norm(code, name) {
 let same = 0;
 const diffs = [];
 for (const f of files) {
-  const oldPath = f.replace(/\.ts$/, '.js');
+  const oldPath = vsHead ? f : f.replace(/\.ts$/, '.js');
   let oldSrc;
   try { oldSrc = execSync(`git show HEAD:backend/${oldPath}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
   catch { diffs.push(`${f}: no original ${oldPath} in HEAD (new file?)`); continue; }
-  const a = norm(oldSrc, 'a.js');
+  const a = norm(oldSrc, vsHead ? 'a.ts' : 'a.js');
   const b = norm(fs.readFileSync(f, 'utf8'), 'b.ts');
   if (a === b) { same++; continue; }
   let i = 0; while (i < a.length && a[i] === b[i]) i++;

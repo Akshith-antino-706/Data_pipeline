@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
 import type { ClaudeMessagesResponse, FallbackTemplate, GenerateContentArgs } from '../types/aiAgents.js';
+import type { U7AIGeneratedContent, U7SegmentContextRow, U7StrategyWithResultsRow } from '../types/u7AIService.js';
 
 /**
  * AI Service for content generation & strategy optimization.
@@ -12,7 +13,7 @@ export class AIService {
     const apiKey = process.env.ANTHROPIC_API_KEY;
 
     // Get segment context
-    const { rows } = await query(`
+    const { rows } = await query<U7SegmentContextRow>(`
       SELECT
         segment_label,
         COUNT(*) AS size,
@@ -74,7 +75,7 @@ Return JSON: { "subject": "...", "body": "...", "ctaText": "...", "ctaUrl": "htt
         // Parse JSON from response
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
+          const parsed = JSON.parse(jsonMatch[0]) as U7AIGeneratedContent;
           return { ...parsed, aiGenerated: true, aiModel: 'claude-sonnet-4-20250514', aiPrompt: prompt };
         }
       } catch (err) {
@@ -147,7 +148,7 @@ Return JSON: { "subject": "...", "body": "...", "ctaText": "...", "ctaUrl": "htt
   /** Analyze strategy performance and generate optimization suggestions */
   static async optimizeStrategy(strategyId: number | string) {
     // Get strategy + campaign performance
-    const { rows: [strategy] } = await query(`
+    const { rows: [strategy] } = await query<U7StrategyWithResultsRow>(`
       SELECT s.*,
         (SELECT json_agg(json_build_object(
           'id', c.id, 'channel', c.channel, 'sent', c.sent_count, 'delivered', c.delivered_count,

@@ -3,6 +3,7 @@ import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import SegmentEngine from '../services/SegmentEngine.js';
 import type { RedisCacheStub } from '../types/routesMisc.js';
+import type { GeneralCounts, CountNRow, GeneralJourneyRow } from '../types/u5Routes.js';
 const router = Router();
 
 // Get full funnel overview (7 stages with segments + customer counts)
@@ -24,7 +25,7 @@ router.get('/page-data', async (req, res, next) => {
 // Get summary stats
 router.get('/summary', async (req, res, next) => {
   try {
-    const data = await SegmentEngine.getSummaryStats();
+    const data: unknown = await SegmentEngine.getSummaryStats();
     res.json({ data });
   } catch (err) { next(err); }
 });
@@ -63,8 +64,8 @@ router.get('/general', async (req, res, next) => {
     // Try cache first
     const cached = await redis.get(cacheKey);
     if (cached) {
-      const counts = JSON.parse(cached);
-      const journeysRow = await query(`
+      const counts = JSON.parse(cached) as GeneralCounts;
+      const journeysRow = await query<GeneralJourneyRow>(`
         SELECT journey_id, name, description, status, audience,
                total_entries, total_conversions, total_exits,
                jsonb_array_length(nodes) AS node_count,
@@ -79,20 +80,20 @@ router.get('/general', async (req, res, next) => {
 
     // Cache miss — run all queries
     const [emailRow, waRow, totalRow, journeysRow] = await Promise.all([
-      query(`
+      query<CountNRow>(`
         SELECT COUNT(*)::int AS n FROM unified_contacts uc
          WHERE uc.email IS NOT NULL AND uc.email <> ''
            AND COALESCE(uc.email_unsubscribe,'No') <> 'Yes'
            AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$'
            ${btAnd}`, btParams),
-      query(`
+      query<CountNRow>(`
         SELECT COUNT(*)::int AS n FROM unified_contacts uc
          WHERE uc.mobile IS NOT NULL AND uc.mobile <> ''
            AND COALESCE(uc.wa_unsubscribe,'No') <> 'Yes'
            AND COALESCE(uc.is_indian,false) = true
            ${btAnd}`, btParams),
-      query(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),
-      query(`
+      query<CountNRow>(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),
+      query<GeneralJourneyRow>(`
         SELECT journey_id, name, description, status, audience,
                total_entries, total_conversions, total_exits,
                jsonb_array_length(nodes) AS node_count,
@@ -120,7 +121,7 @@ router.get('/general', async (req, res, next) => {
 // Get single segment detail
 router.get('/:id', async (req, res, next) => {
   try {
-    const data = await SegmentEngine.getSegmentDetail(parseInt(req.params.id));
+    const data: unknown = await SegmentEngine.getSegmentDetail(parseInt(req.params.id));
     if (!data) return res.status(404).json({ error: 'Segment not found' });
     res.json({ data });
   } catch (err) { next(err); }

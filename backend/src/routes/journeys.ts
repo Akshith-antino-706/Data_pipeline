@@ -6,6 +6,8 @@ import SkipLogService from '../services/SkipLogService.js';
 import { queueCounts } from '../services/queue/index.js';
 import { cached, del as cacheDel } from '../config/cache.js';
 import type { QueryParams, JourneyNode, DiagnoseReport, GtmEventStat } from '../types/routesJourneys.js';
+import type { CreateJourneyInput, JourneyFlowNode } from '../types/journeyService.js';
+import type { JourneyStatsMetaRow, JourneyNodesRow, JourneyNodesEdgesRow, JourneyNodeStatsRow, TestSendEntryRow, HtmlTemplateIdRow, ActiveEntryTimingRow, SnapshotStatusRow, CustomerIdRow, GtmNodeEventRow, NodeSentRow, EventTypeTotalRow, NodeConversionRow, JourneyIdRow, EntryIdRow, AddNodeBody, ResetEntriesBody } from '../types/u5Journeys.js';
 const router = Router();
 
 // ── Journey-detail cache (Phase 0) ──
@@ -170,7 +172,7 @@ router.get('/analytics/table', async (req, res, next) => {
        LEFT JOIN journey_flows jf ON jf.journey_id = s.journey_id
        WHERE ${where} ORDER BY s.entries DESC, s.journey_id DESC`, params
     );
-    const { rows: [meta] } = await db.query(
+    const { rows: [meta] } = await db.query<JourneyStatsMetaRow>(
       `SELECT last_run_at, last_run_ms, journeys_run FROM journey_stats_meta WHERE id = true`
     );
     res.json({ success: true, data: { journeys: rows, meta: meta || null } });
@@ -183,7 +185,7 @@ router.get('/analytics/table', async (req, res, next) => {
 // Map node_id → email template id from the journey's flow, so the analytics UI
 // can offer a QA-report (eye) button per action node. Reads journey_flows.nodes.
 async function nodeTemplateMap(jid: number) {
-  const { rows: [jf] } = await db.query('SELECT nodes FROM journey_flows WHERE journey_id = $1', [jid]);
+  const { rows: [jf] } = await db.query<JourneyNodesRow>('SELECT nodes FROM journey_flows WHERE journey_id = $1', [jid]);
   const map: Record<string, number> = {};
   for (const n of (jf?.nodes || []) as JourneyNode[]) {
     if (n.type !== 'action') continue;
@@ -203,7 +205,7 @@ router.get('/analytics/:id/nodes', async (req, res, next) => {
         ? await computeNodesForDate(jid as unknown as string, (req.query.date as string))
         : await cached(`journey:analytics-nodes:${jid}:${(req.query.date as string)}`, () => computeNodesForDate(jid as unknown as string, (req.query.date as string)), 300);
     } else {
-      const { rows } = await db.query(
+      const { rows } = await db.query<JourneyNodeStatsRow>(
         `SELECT * FROM journey_node_stats WHERE journey_id = $1 ORDER BY (node_id = '__ALL__') DESC, node_id`,
         [jid]
       );
@@ -290,7 +292,7 @@ router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
     const steps = [];
 
     // Step 1: get node config from journey
-    const { rows: [jf] } = await db.query('SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    const { rows: [jf] } = await db.query<JourneyNodesEdgesRow>('SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]);
     if (!jf) return res.status(404).json({ error: 'Journey not found' });
     const node = (jf.nodes || []).find((n: JourneyNode) => n.id === nodeId);
     if (!node) return res.status(404).json({ error: 'Node not found' });
@@ -301,7 +303,7 @@ router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
     if (!channel || !templateId) return res.json({ ok: false, steps, error: 'Node missing channel or templateId' });
 
     // Step 2: pick one active entry on this node (or any entry for this journey)
-    const { rows: entries } = await db.query(
+    const { rows: entries } = await db.query<TestSendEntryRow>(
       `SELECT je.entry_id, je.customer_id, uc.email, uc.name
          FROM journey_entries je
          JOIN unified_contacts uc ON uc.id = je.customer_id
@@ -317,7 +319,7 @@ router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
     const { renderDayHtml } = await import('../services/JourneyService.js');
     let html, subject;
     try {
-      const rendered = await renderDayHtml(parseInt(templateId), entry.customer_id);
+      const rendered = await renderDayHtml(parseInt(templateId as string), entry.customer_id);
       if (rendered?.html) {
         html = rendered.html; subject = rendered.subject;
         steps.push({ step: 'render_template', ok: true, method: 'renderDayHtml', subjectPreview: subject, htmlBytes: html.length });
@@ -332,7 +334,7 @@ router.post('/:id/nodes/:nodeId/test-send', async (req, res, next) => {
     if (!html) {
       try {
         const { default: EmailRenderer } = await import('../services/EmailRenderer.js');
-        const { rows: [ct] } = await db.query('SELECT html_template_id FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+        const { rows: [ct] } = await db.query<HtmlTemplateIdRow>('SELECT html_template_id FROM content_templates WHERE id = $1', [parseInt(templateId as string)]);
         const htmlTemplateId = ct?.html_template_id;
         steps.push({ step: 'resolve_html_template', ok: !!htmlTemplateId, htmlTemplateId });
         if (!htmlTemplateId) return res.json({ ok: false, steps, error: 'No html_template_id linked to this content_template — email will be action_blocked in worker' });
@@ -365,13 +367,13 @@ router.post('/:id/reset-fire-times', async (req, res, next) => {
   try {
     const journeyId = parseInt(req.params.id);
     const db = (await import('../config/database.js')).default;
-    const { rows: journey } = await db.query('SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    const { rows: journey } = await db.query<JourneyNodesEdgesRow>('SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]);
     if (!journey[0]) return res.status(404).json({ error: 'Journey not found' });
 
     const nodes = journey[0].nodes || [];
     const nodeMap = Object.fromEntries(nodes.map((n: JourneyNode) => [n.id, n]));
 
-    const { rows: entries } = await db.query(
+    const { rows: entries } = await db.query<ActiveEntryTimingRow>(
       `SELECT entry_id, current_node_id, last_event_at, entered_at FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
       [journeyId]
     );
@@ -420,7 +422,7 @@ router.get('/:id', async (req, res, next) => {
 // Create journey
 router.post('/', async (req, res, next) => {
   try {
-    const data = await JourneyService.create(req.body);
+    const data: unknown = await JourneyService.create(req.body as CreateJourneyInput);
     res.status(201).json({ data });
   } catch (err) { next(err); }
 });
@@ -432,7 +434,7 @@ router.post('/', async (req, res, next) => {
 router.get('/:id/snapshot-status', async (req, res, next) => {
   try {
     const pool = (await import('../config/database.js')).default;
-    const { rows: [row] } = await pool.query(
+    const { rows: [row] } = await pool.query<SnapshotStatusRow>(
       'SELECT journey_id, name, snapshot_count, status FROM journey_flows WHERE journey_id = $1',
       [parseInt(req.params.id)]
     );
@@ -453,7 +455,7 @@ router.get('/:id/snapshot-status', async (req, res, next) => {
 // Update journey
 router.put('/:id', async (req, res, next) => {
   try {
-    const data = await JourneyService.update(parseInt(req.params.id), req.body);
+    const data = await JourneyService.update(parseInt(req.params.id), req.body as Record<string, unknown>);
     res.json({ data });
   } catch (err) { next(err); }
 });
@@ -469,7 +471,7 @@ router.delete('/:id', async (req, res, next) => {
 // ── Node-level CRUD (used by the UI editor) ──
 router.post('/:id/nodes', async (req, res, next) => {
   try {
-    const { node, afterNodeId } = req.body;
+    const { node, afterNodeId } = req.body as AddNodeBody;
     const data = await JourneyService.addNode(parseInt(req.params.id), node, afterNodeId);
     res.status(201).json({ data });
   } catch (err) { next(err); }
@@ -477,7 +479,7 @@ router.post('/:id/nodes', async (req, res, next) => {
 
 router.patch('/:id/nodes/:nodeId', async (req, res, next) => {
   try {
-    const data = await JourneyService.updateNode(parseInt(req.params.id), req.params.nodeId, req.body);
+    const data = await JourneyService.updateNode(parseInt(req.params.id), req.params.nodeId, req.body as Partial<JourneyFlowNode>);
     res.json({ data });
   } catch (err) { next(err); }
 });
@@ -517,7 +519,7 @@ router.get('/:id/nodes/:nodeId/preview-dynamic', async (req, res) => {
     const nodeId    = req.params.nodeId;
     const db = (await import('../config/database.js')).default;
 
-    const { rows: [jf] } = await db.query('SELECT nodes FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    const { rows: [jf] } = await db.query<JourneyNodesRow>('SELECT nodes FROM journey_flows WHERE journey_id = $1', [journeyId]);
     if (!jf) return res.status(404).json({ success: false, error: 'Journey not found' });
     const node = (jf.nodes || []).find((n: JourneyNode) => n.id === nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
@@ -526,7 +528,7 @@ router.get('/:id/nodes/:nodeId/preview-dynamic', async (req, res) => {
     if (!templateId) return res.status(400).json({ success: false, error: 'Node has no email template' });
 
     // Use a real enrolled contact so personalization/tracking renders realistically
-    const { rows: [entry] } = await db.query(
+    const { rows: [entry] } = await db.query<CustomerIdRow>(
       `SELECT je.customer_id FROM journey_entries je
        JOIN unified_contacts uc ON uc.id = je.customer_id
        WHERE je.journey_id = $1 AND uc.email IS NOT NULL LIMIT 1`,
@@ -536,11 +538,11 @@ router.get('/:id/nodes/:nodeId/preview-dynamic', async (req, res) => {
 
     // Same stored email the worker sends — guarantees preview == sent (byte-identical)
     const { getOrGenerateNodeEmail } = await import('../services/JourneyService.js');
-    const rendered = await getOrGenerateNodeEmail({ journeyId, nodeId, templateId: parseInt(templateId), contactId });
+    const rendered = await getOrGenerateNodeEmail({ journeyId, nodeId, templateId: parseInt(templateId as string), contactId });
     if (!rendered?.html) {
       return res.status(500).json({ success: false, error: `Template ${templateId} is not a dynamic Day template (1-7)` });
     }
-    res.json({ success: true, data: { html: rendered.html, subject: rendered.subject, templateId: parseInt(templateId), rankingSource: rendered.source } });
+    res.json({ success: true, data: { html: rendered.html, subject: rendered.subject, templateId: parseInt(templateId as string), rankingSource: rendered.source } });
   } catch (err) {
     console.error('[preview-dynamic] failed:', (err as Error).message);
     res.status(500).json({ success: false, error: (err as Error).message });
@@ -550,7 +552,7 @@ router.get('/:id/nodes/:nodeId/preview-dynamic', async (req, res) => {
 // Auto-generate journey from strategy
 router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
   try {
-    const data = await JourneyService.generateFromStrategy(parseInt(req.params.strategyId));
+    const data: unknown = await JourneyService.generateFromStrategy(parseInt(req.params.strategyId));
     res.status(201).json({ data });
   } catch (err) { next(err); }
 });
@@ -559,7 +561,7 @@ router.post('/generate-from-strategy/:strategyId', async (req, res, next) => {
 router.post('/:id/reset-entries', async (req, res, next) => {
   try {
     const pool = (await import('../config/database.js')).default;
-    const nodeId = req.body?.nodeId || req.query?.nodeId;
+    const nodeId = (req.body as ResetEntriesBody | undefined)?.nodeId || req.query?.nodeId;
     if (nodeId) {
       const { rowCount } = await pool.query(
         `UPDATE journey_entries SET current_node_id = $2, last_run_id = NULL, last_enqueued_at = NULL WHERE journey_id = $1 AND status = 'active'`,
@@ -659,7 +661,7 @@ router.get('/:id/gtm-node-stats', async (req, res, next) => {
 
     const [{ rows: gtmRows }, { rows: sentRows }, { rows: allTypeRows }] = await Promise.all([
       // Per-node counts (only rows that exist)
-      db.query(`
+      db.query<GtmNodeEventRow>(`
         SELECT
           node_id,
           event_name,
@@ -673,7 +675,7 @@ router.get('/:id/gtm-node-stats', async (req, res, next) => {
       `, [journeyId]),
 
       // Sent counts per node from email_send_log
-      db.query(`
+      db.query<NodeSentRow>(`
         SELECT node_id, COUNT(*) AS sent_count
         FROM email_send_log
         WHERE journey_id = $1
@@ -683,7 +685,7 @@ router.get('/:id/gtm-node-stats', async (req, res, next) => {
       `, [journeyId]),
 
       // All distinct event types for this journey (used to fill zeros on nodes with no data)
-      db.query(`
+      db.query<EventTypeTotalRow>(`
         SELECT DISTINCT event_name,
           SUM(event_count) OVER (PARTITION BY event_name) AS journey_total
         FROM (
@@ -706,7 +708,7 @@ router.get('/:id/gtm-node-stats', async (req, res, next) => {
       nodeEventLookup[r.node_id][r.event_name] = {
         event_count:  parseInt(r.event_count)  || 0,
         unique_users: parseInt(r.unique_users) || 0,
-        total_value:  parseFloat(r.total_value) || 0,
+        total_value:  parseFloat(r.total_value!) || 0,
       };
     }
 
@@ -748,7 +750,7 @@ router.get('/:id/node-conversions', async (req, res, next) => {
     // and it grows with the data). It's a slow-moving analytics stat, so a cache keeps the
     // detail screen snappy without a live recompute each open. Bypass with ?fresh=1.
     const compute = async () => {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<NodeConversionRow>(`
       WITH node_windows AS (
         SELECT
           node_id,
@@ -841,7 +843,7 @@ router.post('/detect-conversions', async (_req, res, next) => {
 // Process all active journeys at once
 router.post('/process-all', async (_req, res, next) => {
   try {
-    const { rows: journeys } = await (await import('../config/database.js')).default.query(
+    const { rows: journeys } = await (await import('../config/database.js')).default.query<JourneyIdRow>(
       "SELECT journey_id FROM journey_flows WHERE status = 'active'"
     );
     const results = [];
@@ -860,7 +862,7 @@ router.post('/:id/nodes/:nodeId/retry-blocked', async (req, res, next) => {
     const nodeId = req.params.nodeId;
     const db = (await import('../config/database.js')).default;
 
-    const { rows: blocked } = await db.query(`
+    const { rows: blocked } = await db.query<EntryIdRow>(`
       SELECT DISTINCT je.entry_id
       FROM journey_events jev
       JOIN journey_entries je ON je.entry_id = jev.entry_id

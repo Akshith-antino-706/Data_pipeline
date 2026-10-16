@@ -323,7 +323,7 @@ async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
     d.nodeId !== d.firstActionNodeId &&
     (contact?.booking_status === 'ON_TRIP' || contact?.booking_status === 'FUTURE_TRAVEL')
   ) {
-    const { rows: [gtmRow] } = await (db as Pool).query(
+    const { rows: [gtmRow] } = await (db as Pool).query<{ "?column?": number }>(
       `SELECT 1 FROM gtm_events WHERE unified_id = $1 AND journey_id = $2 AND event_name = 'purchase' LIMIT 1`,
       [d.customerId, d.journeyId]
     );

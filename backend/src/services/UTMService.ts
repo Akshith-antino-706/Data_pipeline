@@ -1,13 +1,14 @@
 import crypto from 'crypto';
 import db from '../config/database.js';
+import type { UtmCampaignRow, UtmCampaignWithLinkRow, UtmIdRow, UtmSegmentLabelRow, UtmSegmentListRow, UtmTrackingRow, UtmChannelSummaryRow, UtmSegmentSummaryRow, UtmCustomerRow, UserUtmLinkRow, UserUtmLinkListRow, UserUtmLinkStatsRow, UserUtmCampaignStatsRow, UserUtmTotalsRow } from '../types/u6Services.js';
 
 type Id = number | string;
 
 interface BuildUTMInput {
   baseUrl?: string;
-  channel?: string;
-  campaignName?: string;
-  segmentLabel?: string;
+  channel?: string | null;
+  campaignName?: string | null;
+  segmentLabel?: string | null;
   campaignId?: Id;
   contentNumber?: number;
   journeyId?: Id;
@@ -79,7 +80,7 @@ class UTMService {
    * Generate UTM link for a single campaign
    */
   static async generateForCampaign(campaignId: Id, { journeyId, nodeId }: JourneyNodeRef = {}) {
-    const { rows: [campaign] } = await db.query(`
+    const { rows: [campaign] } = await db.query<UtmCampaignRow>(`
       SELECT c.*, ct.cta_url AS template_cta_url
       FROM campaigns c
       LEFT JOIN content_templates ct ON ct.id = c.template_id
@@ -103,7 +104,7 @@ class UTMService {
     if (journeyId) utmContent += `_j${journeyId}`;
     if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
-    const { rows: [utm] } = await db.query(`
+    const { rows: [utm] } = await db.query<UtmIdRow>(`
       INSERT INTO utm_tracking (campaign_id, template_id, segment_label, channel, utm_source, utm_medium, utm_campaign, utm_content, full_url, base_url, journey_id, node_id)
       VALUES ($1, $2, $3, $4, 'AI_marketer', $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT DO NOTHING
@@ -129,7 +130,7 @@ class UTMService {
    * Generate UTM links for ALL campaigns in a segment
    */
   static async generateForSegment(segmentLabel: string, { journeyId, nodeId }: JourneyNodeRef = {}) {
-    const { rows: campaigns } = await db.query(`
+    const { rows: campaigns } = await db.query<UtmCampaignRow>(`
       SELECT c.id, c.name, c.segment_label, c.channel::text AS channel, c.template_id,
         ct.cta_url AS template_cta_url
       FROM campaigns c
@@ -189,7 +190,7 @@ class UTMService {
    * Generate UTM links for ALL campaigns across ALL segments
    */
   static async generateForAllSegments({ journeyId, nodeId }: JourneyNodeRef = {}) {
-    const { rows: segments } = await db.query(`
+    const { rows: segments } = await db.query<UtmSegmentLabelRow>(`
       SELECT DISTINCT segment_label FROM campaigns
       WHERE segment_label IS NOT NULL
       ORDER BY segment_label
@@ -208,7 +209,7 @@ class UTMService {
    * Get all segments with campaign + UTM stats (for dropdown/table)
    */
   static async getSegmentsList() {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<UtmSegmentListRow>(`
       SELECT sd.segment_name,
         (SELECT COUNT(*) FROM campaigns c WHERE c.segment_label = sd.segment_name) AS campaign_count,
         (SELECT COUNT(*) FROM content_templates ct WHERE ct.name ILIKE '%' || sd.segment_name || '%' AND ct.status = 'approved') AS template_count,
@@ -237,7 +238,7 @@ class UTMService {
     if (dateFrom) { params.push(dateFrom); where += ` AND ut.created_at >= $${params.length}`; }
     if (dateTo) { params.push(dateTo); where += ` AND ut.created_at <= $${params.length}`; }
 
-    const { rows } = await db.query(`
+    const { rows } = await db.query<UtmTrackingRow>(`
       SELECT ut.*,
         ct.name AS template_name,
         c.name AS campaign_name,
@@ -251,7 +252,7 @@ class UTMService {
       LIMIT 200
     `, params);
 
-    const { rows: summary } = await db.query(`
+    const { rows: summary } = await db.query<UtmChannelSummaryRow>(`
       SELECT ut.channel::TEXT, COUNT(*) AS total_links,
         SUM(ut.clicks) AS total_clicks, SUM(ut.conversions) AS total_conversions,
         SUM(ut.revenue) AS total_revenue
@@ -259,7 +260,7 @@ class UTMService {
       GROUP BY ut.channel
     `, params);
 
-    const { rows: segmentSummary } = await db.query(`
+    const { rows: segmentSummary } = await db.query<UtmSegmentSummaryRow>(`
       SELECT ut.segment_label, COUNT(*) AS total_links,
         SUM(ut.clicks) AS total_clicks, SUM(ut.conversions) AS total_conversions,
         COUNT(DISTINCT ut.campaign_id) AS campaigns_tracked
@@ -294,7 +295,7 @@ class UTMService {
    */
   static async generateUserLinks(campaignId: Id, { baseUrl: overrideBaseUrl, journeyId, nodeId }: JourneyNodeRef & { baseUrl?: string } = {}) {
     // Get campaign + its UTM link
-    const { rows: [campaign] } = await db.query(`
+    const { rows: [campaign] } = await db.query<UtmCampaignWithLinkRow>(`
       SELECT c.*, ct.cta_url AS template_cta_url,
         ut.utm_id, ut.full_url AS utm_full_url, ut.utm_source, ut.utm_medium, ut.utm_campaign, ut.utm_content
       FROM campaigns c
@@ -312,7 +313,7 @@ class UTMService {
     }
 
     // Get all active customers in this segment
-    const { rows: customers } = await db.query(`
+    const { rows: customers } = await db.query<UtmCustomerRow>(`
       SELECT uc.unified_id, uc.name, uc.email
       FROM unified_contacts uc
       WHERE uc.segment_label = $1
@@ -378,7 +379,7 @@ class UTMService {
    * Records click → returns destination URL for redirect.
    */
   static async trackClick(token: string) {
-    const { rows: [link] } = await db.query(`
+    const { rows: [link] } = await db.query<UserUtmLinkRow>(`
       UPDATE user_utm_links
       SET click_count = click_count + 1,
           first_clicked_at = COALESCE(first_clicked_at, NOW()),
@@ -412,7 +413,7 @@ class UTMService {
 
     params.push(limit, offset);
 
-    const { rows } = await db.query(`
+    const { rows } = await db.query<UserUtmLinkListRow>(`
       SELECT ul.*,
         c.name AS campaign_name, c.segment_label, c.channel
       FROM user_utm_links ul
@@ -423,7 +424,7 @@ class UTMService {
     `, params);
 
     // Summary stats
-    const { rows: [stats] } = await db.query(`
+    const { rows: [stats] } = await db.query<UserUtmLinkStatsRow>(`
       SELECT
         COUNT(*) AS total_links,
         COUNT(*) FILTER (WHERE ul.click_count > 0) AS clicked_links,
@@ -441,7 +442,7 @@ class UTMService {
    * Get per-campaign user link stats (for the overview)
    */
   static async getUserLinkStats() {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<UserUtmCampaignStatsRow>(`
       SELECT
         ul.campaign_id,
         c.name AS campaign_name,
@@ -458,7 +459,7 @@ class UTMService {
       ORDER BY total_clicks DESC
     `);
 
-    const { rows: [totals] } = await db.query(`
+    const { rows: [totals] } = await db.query<UserUtmTotalsRow>(`
       SELECT
         COUNT(*) AS total_links,
         COUNT(*) FILTER (WHERE click_count > 0) AS total_clicked,

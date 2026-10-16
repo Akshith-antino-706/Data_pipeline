@@ -14,6 +14,7 @@
  */
 import db from '../config/database.js';
 import type { GupshupBulkResult, GupshupSendResult, GupshupTemplateRow, GupshupWebhookPayload, RcsTemplateButton, RcsTemplateSummary, SendRCSArgs, SendRcsBulkArgs, SendSMSArgs, SendWhatsAppArgs, TemplateId, TemplateSubmitResult, UnauthorizedError } from '../types/servicesGupshup.js';
+import type { GupshupRcsTemplateListResponse, GupshupRcsTemplateDetailResponse, GupshupWaResponse, GupshupEnterpriseResponse, TemplateApprovalEventRow } from '../types/u6Services.js';
 
 const WA_API_BASE = 'https://api.gupshup.io/wa/api/v1';
 const WA_TEMPLATE_BASE = 'https://api.gupshup.io/wa/app';
@@ -118,7 +119,7 @@ export class GupshupService {
         const e: UnauthorizedError = new Error('RCS_APP_KEY unauthorized — check GUPSHUP_RCS_APP_KEY / GUPSHUP_RCS_APP_ID.');
         e.unauthorized = true; throw e;
       }
-      const j = await r.json().catch(() => ({}));
+      const j = await r.json().catch(() => ({})) as GupshupRcsTemplateListResponse;
       // Surface API errors (e.g. 400 "Invalid App ID") instead of silently returning
       // 0 templates — otherwise a wrong GUPSHUP_RCS_APP_ID looks like an empty account.
       if (!r.ok || (j.status && Number(j.status) >= 400)) {
@@ -156,7 +157,7 @@ export class GupshupService {
     const url = `${RCS_TEMPLATE_API_BASE}/v2/app/${encodeURIComponent(c.appId)}/template/${enc}`;
     const r = await fetch(url, { headers: { accept: 'application/json', authorization: c.appKey } });
     if (r.status === 401 || r.status === 403) { const e: UnauthorizedError = new Error('RCS_APP_KEY unauthorized'); e.unauthorized = true; throw e; }
-    const j = await r.json().catch(() => ({}));
+    const j = await r.json().catch(() => ({})) as GupshupRcsTemplateDetailResponse;
     const td = j.templateDetails || {};
     const cards = Array.isArray(j.carouselDetails) ? j.carouselDetails : [];
     const texts: string[] = [], buttons: RcsTemplateButton[] = []; let image: string | null = null;
@@ -252,7 +253,7 @@ export class GupshupService {
         headers: { 'apikey': c.apiKey as string, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({})) as GupshupWaResponse;
       const status = (data?.status || '').toLowerCase() === 'success' ? 'pending' : 'error';
       return {
         simulated: false,
@@ -313,7 +314,7 @@ export class GupshupService {
         const res = await fetch(`${WA_TEMPLATE_BASE}/${c.appId}/template/${tpl.external_template_id}`, {
           headers: { 'apikey': c.apiKey as string },
         });
-        const data = await res.json().catch(() => ({}));
+        const data = await res.json().catch(() => ({})) as GupshupWaResponse;
         newStatus = this._mapGupshupStatus(data?.template?.status || data?.status);
         raw = data;
       } catch (err) {
@@ -406,7 +407,7 @@ export class GupshupService {
         headers: { 'apikey': c.apiKey as string, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({})) as GupshupWaResponse;
       const success = (data?.status || '').toLowerCase() === 'submitted';
       return {
         success, provider: 'gupshup-wa',
@@ -449,7 +450,7 @@ export class GupshupService {
 
     try {
       const res = await fetch(`${SMS_API_BASE}?${form.toString()}`);
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({})) as GupshupEnterpriseResponse;
       const success = data?.response?.status === 'success';
       return {
         success, provider: 'gupshup-sms',
@@ -519,7 +520,7 @@ export class GupshupService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({})) as GupshupEnterpriseResponse;
       const success = data?.response?.status === 'success';
       return {
         success, provider: 'gupshup-rcs',
@@ -563,7 +564,7 @@ export class GupshupService {
 
   /** List approval events for a template (most recent first) */
   static async getEvents(templateId: TemplateId, limit = 20) {
-    const { rows } = await db.query(
+    const { rows } = await db.query<TemplateApprovalEventRow>(
       `SELECT * FROM template_approval_events WHERE template_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [templateId, limit]
     );
@@ -652,7 +653,7 @@ export class GupshupService {
 
     try {
       const res = await fetch(RCS_API_BASE, { method: 'POST', body: form });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({})) as GupshupEnterpriseResponse;
       const success = data?.response?.status === 'success';
       return {
         success, provider: 'gupshup-rcs',

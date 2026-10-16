@@ -615,7 +615,7 @@ app.get('/api/track/email-send/click/:id', async (req, res) => {
 app.post('/api/v3/sync-first-messages', async (req, res) => {
   try {
     const { default: FirstMessageService } = await import('./src/services/FirstMessageService.js');
-    const limit = req.body?.limit;
+    const limit = (req.body as { limit?: number } | undefined)?.limit;
     if (limit) {
       const result = await FirstMessageService.testRun(limit);
       return res.json({ success: true, ...result });
@@ -1051,7 +1051,7 @@ console.log('[Cron] Continuous per-user re-enrollment scheduled: daily 4 AM (Asi
 // ── Journey auto-start — check every minute for scheduled journeys ──
 cron.schedule('* * * * *', async () => {
   try {
-    const { rows: due } = await pool.query(`
+    const { rows: due } = await pool.query<{ journey_id: number; name: string }>(`
       SELECT journey_id, name FROM journey_flows
       WHERE status = 'draft'
         AND scheduled_start_at IS NOT NULL

@@ -11,6 +11,7 @@
  * or it ages out (see syncPending).
  */
 import db from '../config/database.js';
+import type { ChatHeadReportGetResponse, ChatHeadReportListResponse, ChatHeadBroadcastCountersRow, DeliveryCounters } from '../types/u3WhatsAppDeliverySync.js';
 
 const BASE   = 'https://ser1.chathead.io/apis/v1/services';
 const CLIENT = 'rayna';
@@ -26,13 +27,13 @@ const STABLE_MINUTES = 60;
  */
 export async function syncBroadcast(broadcastId: string | number) {
   const bid = String(broadcastId);
-  let counters = null;
-  let reportStatus = null;
+  let counters: DeliveryCounters | null = null;
+  let reportStatus: string | null = null;
 
   // 1) Aggregate counters → chathead_broadcasts
   try {
     const r = await fetch(`${BASE}/broadcast/reports/get/?c=${CLIENT}&broadcast_id=${encodeURIComponent(bid)}`);
-    const j = await r.json().catch(() => null);
+    const j = await r.json().catch(() => null) as ChatHeadReportGetResponse | null;
     if (j?.status === 'success' && j.data) {
       const d = j.data;
       counters = {
@@ -42,7 +43,7 @@ export async function syncBroadcast(broadcastId: string | number) {
       };
 
       // Did anything move since last sync? Compare against the stored snapshot.
-      const { rows: [prev] } = await db.query(
+      const { rows: [prev] } = await db.query<ChatHeadBroadcastCountersRow>(
         `SELECT total_count,sent_count,failed_count,delivered_count,opened_count,clicked_count,
                 replied_count,soft_bounce,hard_bounce,complaints,counters_changed_at
            FROM chathead_broadcasts WHERE chathead_broadcast_id=$1`, [bid]
@@ -86,7 +87,7 @@ export async function syncBroadcast(broadcastId: string | number) {
   let perRecipient = 0;
   try {
     const r = await fetch(`${BASE}/broadcast/reports/list/?c=${CLIENT}&broadcast_id=${encodeURIComponent(bid)}&type=failed`);
-    const j = await r.json().catch(() => null);
+    const j = await r.json().catch(() => null) as ChatHeadReportListResponse | null;
     for (const row of (j?.data || [])) {
       const phone = String(row.number || '').replace(/\D/g, '');
       if (phone.length < 10) continue;                    // skip malformed rows (e.g. "r")
@@ -124,7 +125,7 @@ export async function syncBroadcast(broadcastId: string | number) {
 export async function syncPending({ maxAgeHours = 168, limit = 200 } = {}) {
   // Poll for up to 7 days (168h) — large broadcasts (7 lakh+) keep delivering for days.
   // We stop re-syncing a broadcast the moment its counters go 'finished' (stable/resolved).
-  const { rows } = await db.query(
+  const { rows } = await db.query<{ chathead_broadcast_id: string }>(
     `SELECT chathead_broadcast_id
        FROM chathead_broadcasts
       WHERE chathead_broadcast_id IS NOT NULL

@@ -38,7 +38,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/v2/campaigns
 router.post('/', async (req, res, next) => {
   try {
-    const { name, strategyId, segmentLabel, channel, templateId, filterCriteria, scheduledAt } = req.body;
+    const { name, strategyId, segmentLabel, channel, templateId, filterCriteria, scheduledAt } = req.body as Parameters<typeof CampaignService.create>[0];
     if (!name || !segmentLabel || !channel || !templateId) {
       return res.status(400).json({ success: false, error: 'name, segmentLabel, channel, templateId are required' });
     }

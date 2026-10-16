@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
+import type { GenerateEmailBody, GenerateWaBody } from '../types/u5Routes.js';
 import ProductService from '../services/ProductService.js';
 
 const router = Router();
@@ -49,7 +50,7 @@ router.get('/segment/:label', async (req: QueryRequest, res: Response) => {
 // POST /api/v3/products/generate-email — generate HTML email with products
 router.post('/generate-email', async (req, res) => {
   try {
-    const { segmentLabel, heading, subheading, ctaText, ctaUrl, couponCode, productCount } = req.body;
+    const { segmentLabel, heading, subheading, ctaText, ctaUrl, couponCode, productCount } = req.body as GenerateEmailBody;
     const products = await ProductService.getForSegment(segmentLabel, productCount || 3);
 
     const html = ProductService.generateProductEmailHTML({
@@ -77,7 +78,7 @@ router.post('/generate-email', async (req, res) => {
 // POST /api/v3/products/generate-wa — generate WhatsApp message with products
 router.post('/generate-wa', async (req, res) => {
   try {
-    const { segmentLabel, intro, couponCode, productCount } = req.body;
+    const { segmentLabel, intro, couponCode, productCount } = req.body as GenerateWaBody;
     const products = await ProductService.getForSegment(segmentLabel, productCount || 3);
 
     const message = ProductService.generateProductWAMessage({

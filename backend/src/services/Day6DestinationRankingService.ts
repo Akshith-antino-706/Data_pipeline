@@ -257,7 +257,7 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
   if (!m) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
 
   let parsed: ClaudeParsedJson;
-  try { parsed = JSON.parse(m[0]); }
+  try { parsed = JSON.parse(m[0]) as ClaudeParsedJson; }
   catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${m[0].slice(0, 200)}`); }
 
   return { parsed, usage: data.usage, model: data.model, webSearchCalls };

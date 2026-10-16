@@ -90,7 +90,7 @@ export class ChatHeadV1Service {
     try {
       const res = await fetch(UPLOAD_URL, { method: 'POST', body: form });
       resBody = await res.text();
-      try { parsed = JSON.parse(resBody); } catch { /* keep as text */ }
+      try { parsed = JSON.parse(resBody) as ChatHeadV1Response; } catch { /* keep as text */ }
 
       if (parsed?.status === 'success' && parsed?.data?.name) {
         status = 'uploaded';
@@ -159,7 +159,7 @@ export class ChatHeadV1Service {
     try {
       const res = await fetch(url);
       responseBody = await res.text().catch(() => '');
-      try { responseBody = JSON.parse(responseBody); } catch { /* keep as text */ }
+      try { responseBody = JSON.parse(responseBody) as ChatHeadV1Response; } catch { /* keep as text */ }
 
       const msg = (responseBody && (responseBody as ChatHeadV1Response).msg) || '';
       if (/Broadcast Added/i.test(msg)) {

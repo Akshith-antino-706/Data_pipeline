@@ -204,7 +204,7 @@ export class EmailChannel {
         };
       }
 
-      const errData: SendGridErrorResponse = await res.json().catch(() => ({}));
+      const errData: SendGridErrorResponse = await (res.json() as Promise<SendGridErrorResponse>).catch(() => ({}));
       return {
         success: false,
         error: errData.errors?.[0]?.message || `HTTP ${res.status}`,

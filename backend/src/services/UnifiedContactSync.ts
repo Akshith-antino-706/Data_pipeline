@@ -312,7 +312,7 @@ export default class UnifiedContactSync {
     console.log(`[UnifiedSync] B2B/B2C types set from profit_center: ${typesSet}`);
 
     // ── Part B: Find ALL unified_contacts with no user_id that have bookings or rayna source ──
-    const { rows: unmatched } = await query(`
+    const { rows: unmatched } = await query<{ unified_id: number; name: string | null; email: string | null; email_key: string | null; phone: string | null; phone_key: string | null; company_name: string | null; city: string | null; country: string | null; contact_type: string | null }>(`
       SELECT unified_id, name, email, email_key, phone, phone_key,
              company_name, city, country, contact_type
       FROM unified_contacts
@@ -337,11 +337,11 @@ export default class UnifiedContactSync {
     let usersCreated = 0, matched = 0, emailsLinked = 0, phonesLinked = 0;
 
     for (const uc of unmatched) {
-      let userId = null;
+      let userId: number | null = null;
 
       // Try match existing user by email
       if (uc.email_key) {
-        const { rows } = await query(
+        const { rows } = await query<{ user_id: number }>(
           `SELECT user_id FROM user_emails WHERE LOWER(email) = $1 LIMIT 1`,
           [uc.email_key]
         );
@@ -350,7 +350,7 @@ export default class UnifiedContactSync {
 
       // Try match existing user by phone
       if (!userId && uc.phone_key) {
-        const { rows } = await query(
+        const { rows } = await query<{ user_id: number }>(
           `SELECT user_id FROM user_phones
            WHERE RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $1
            LIMIT 1`,
@@ -363,7 +363,7 @@ export default class UnifiedContactSync {
         matched++;
       } else {
         // Create new user
-        const { rows: [newUser] } = await query(
+        const { rows: [newUser] } = await query<{ id: number }>(
           `INSERT INTO users (name, primary_email, mobile, city, country,
                               contact_type, contact_status, source, company_name,
                               created_at, updated_at)
@@ -914,7 +914,7 @@ export default class UnifiedContactSync {
         )
     `);
 
-    const { rows: [stats] } = await query(`
+    const { rows: [stats] } = await query<{ active: number; exited: number }>(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'active')::int as active,
         COUNT(*) FILTER (WHERE status = 'exited')::int as exited

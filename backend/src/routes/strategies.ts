@@ -24,7 +24,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /api/v2/strategies
 router.post('/', async (req, res, next) => {
   try {
-    const { name, description, segmentLabel, channels, flowSteps } = req.body;
+    const { name, description, segmentLabel, channels, flowSteps } = req.body as Partial<Parameters<typeof StrategyService.create>[0]>;
     if (!name || !segmentLabel) {
       return res.status(400).json({ success: false, error: 'name and segmentLabel are required' });
     }
@@ -36,7 +36,7 @@ router.post('/', async (req, res, next) => {
 // PUT /api/v2/strategies/:id
 router.put('/:id', async (req, res, next) => {
   try {
-    const data = await StrategyService.update(req.params.id, req.body);
+    const data = await StrategyService.update(req.params.id, req.body as Parameters<typeof StrategyService.update>[1]);
     if (!data) return res.status(404).json({ success: false, error: 'Strategy not found or nothing to update' });
     res.json({ success: true, data });
   } catch (err) { next(err); }

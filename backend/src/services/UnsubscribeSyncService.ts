@@ -30,7 +30,7 @@ export default class UnsubscribeSyncService {
     try {
       while (true) {
         // Fetch batch from MySQL
-        const rows = await mysqlQuery(
+        const rows = await mysqlQuery<{ email: string | null; unsubscribe: number }[]>(
           'SELECT email, unsubscribe FROM unsubscribed LIMIT ? OFFSET ?',
           [BATCH_SIZE, offset],
           'primary'

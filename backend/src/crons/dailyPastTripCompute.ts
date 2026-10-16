@@ -129,7 +129,7 @@ export async function runDailyPastTripCompute() {
   console.log(`[PastTripCron] Done — ${inserted} rows inserted/updated in ${(durMs / 1000).toFixed(1)}s`);
 
   // Coverage report
-  const { rows: cov } = await db.query(`
+  const { rows: cov } = await db.query<{ source: string; count: string }>(`
     SELECT source, COUNT(*) FROM user_product_recommendations
     WHERE recommendation_type = 'past_trip' AND expires_at > NOW()
     GROUP BY source ORDER BY 2 DESC

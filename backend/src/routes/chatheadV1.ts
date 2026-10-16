@@ -8,6 +8,8 @@ import ChatHeadV1Service from '../services/ChatHeadV1Service.js';
 import type { Response } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import type { ChatheadTemplateBody, ChatheadTemplateButton, ChatheadTemplatePayload, ChatheadJson } from '../types/routesChathead.js';
+import type { SendBroadcastResult } from '../types/servicesChatHead.js';
+import type { U2ChBroadcastBody, U2ChRegisterBody, U2ChDataFileBody, U2ChTestSendBody, U2DataFileRow } from '../types/u2Routes.js';
 
 const router = express.Router();
 
@@ -23,7 +25,7 @@ const APP_KEY = process.env.CHATHEAD_APP_KEY || '732f0e1d575de309e168c0d945db9bc
 router.get('/channels', async (_req, res) => {
   try {
     const r = await fetch(`${CH_BASE}/account/channels/list/?c=${CLIENT}`);
-    const j = await r.json();
+    const j = await r.json() as { data?: unknown[] };
     res.json({ success: true, data: j.data || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: (err as Error).message });
@@ -36,7 +38,7 @@ router.get('/templates', async (req: QueryRequest, res: Response) => {
   if (!channel) return res.status(400).json({ success: false, error: 'channel is required' });
   try {
     const r = await fetch(`${CH_BASE}/account/templates/list/?c=${CLIENT}&channel=${encodeURIComponent(channel as string)}`);
-    const j = await r.json();
+    const j = await r.json() as { data?: unknown[] };
     res.json({ success: true, data: j.data || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: (err as Error).message });
@@ -61,7 +63,7 @@ router.get('/templates/:id/preview', async (req, res) => {
     // when auth is missing/invalid — surface that instead of rendering it as content.
     if (body.trim().startsWith('{')) {
       try {
-        const j = JSON.parse(body);
+        const j = JSON.parse(body) as ChatheadJson;
         if (j?.status === 'error') return res.json({ success: false, error: j.msg || 'preview unavailable', data: { content: '', bytes: 0 } });
       } catch { /* not JSON — treat as HTML below */ }
     }
@@ -79,7 +81,7 @@ router.post('/broadcasts', async (req, res) => {
   const {
     contacts, dataFileId, filename, channelId, channelName,
     templateId, templateName, name, sendTime,
-  } = req.body || {};
+  } = req.body as U2ChBroadcastBody | undefined || {} as U2ChBroadcastBody;
 
   if (!channelId)  return res.status(400).json({ success: false, error: 'channelId required' });
   if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
@@ -93,10 +95,10 @@ router.post('/broadcasts', async (req, res) => {
   const when = sendTime ? new Date(sendTime) : new Date(Date.now() + 2 * 60 * 1000);
 
   try {
-    let result;
+    let result: (SendBroadcastResult & { reused?: boolean }) | undefined;
     if (useExisting) {
       // Look up the existing data file, skip build/upload
-      const { rows: [row] } = await db.query(
+      const { rows: [row] } = await db.query<U2DataFileRow>(
         'SELECT id, filename, chathead_filename FROM data_files WHERE id = $1', [dataFileId]
       );
       if (!row) return res.status(404).json({ success: false, error: `data_file ${dataFileId} not found` });
@@ -138,7 +140,7 @@ router.post('/broadcasts', async (req, res) => {
 // by ChatHead (data.name from upload response — usually timestamp-prefixed like
 // `1780488210ak_test.data`).
 router.post('/data-files/register', async (req, res) => {
-  const { filename, chatheadFilename, contacts, fileBytes, uploadResponse, notes } = req.body || {};
+  const { filename, chatheadFilename, contacts, fileBytes, uploadResponse, notes } = req.body as U2ChRegisterBody | undefined || {};
   if (!filename || !filename.endsWith('.data')) {
     return res.status(400).json({ success: false, error: 'filename ending in .data is required' });
   }
@@ -149,7 +151,7 @@ router.post('/data-files/register', async (req, res) => {
     return res.status(400).json({ success: false, error: 'contacts[] is required' });
   }
   try {
-    const { rows: [row] } = await db.query(
+    const { rows: [row] } = await db.query<{ id: number; filename: string; chathead_filename: string | null; contact_count: number; upload_status: string; uploaded_at: Date | null }>(
       `INSERT INTO data_files (filename, chathead_filename, contact_count, contacts, file_bytes,
                                upload_status, upload_response, uploaded_at, notes)
        VALUES ($1, $2, $3, $4::jsonb, $5, 'uploaded', $6, NOW(), $7)
@@ -176,7 +178,7 @@ router.post('/data-files/register', async (req, res) => {
 //   ⚠️ Known to silently drop files with non-`sample.data` filenames.
 //   Prefer the browser-XHR upload + /data-files/register flow.
 router.post('/data-files', async (req, res) => {
-  const { contacts, filename } = req.body || {};
+  const { contacts, filename } = req.body as U2ChDataFileBody | undefined || {};
   if (!Array.isArray(contacts) || !contacts.length) {
     return res.status(400).json({ success: false, error: 'contacts[] is required' });
   }
@@ -204,7 +206,7 @@ router.post('/data-files', async (req, res) => {
 router.get('/broadcasts', async (req, res) => {
   const limit = Math.min(200, Number(req.query.limit) || 50);
   try {
-    const { rows } = await db.query(
+    const { rows } = await db.query<Record<string, unknown>>(
       `SELECT b.id, b.name, b.channel_id, b.channel_name, b.template_id, b.template_name,
               b.subject, b.send_time, b.status, b.chathead_broadcast_id,
               b.response_payload->>'msg' AS chathead_msg,
@@ -227,7 +229,7 @@ router.get('/broadcasts', async (req, res) => {
 router.get('/data-files', async (req, res) => {
   const limit = Math.min(200, Number(req.query.limit) || 50);
   try {
-    const { rows } = await db.query(
+    const { rows } = await db.query<Record<string, unknown>>(
       `SELECT id, filename, contact_count, file_bytes, upload_status, uploaded_at, created_at
          FROM data_files ORDER BY id DESC LIMIT $1`, [limit]);
     res.json({ success: true, data: rows });
@@ -242,16 +244,16 @@ router.get('/data-files', async (req, res) => {
 // retry, or delay here can never affect any other send.
 // Body: { phone, name?, channelId, channelName?, templateId, templateName? }
 router.post('/test-send', async (req, res) => {
-  const { phone, name, channelId, channelName, templateId, templateName } = req.body || {};
+  const { phone, name, channelId, channelName, templateId, templateName } = req.body as U2ChTestSendBody | undefined || {};
   const digits = String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
   if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ success: false, error: 'valid phone required (10-15 digits, no +)' });
   if (!channelId)  return res.status(400).json({ success: false, error: 'channelId required' });
   if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
 
   // Best-effort contact identity (stays null for ad-hoc numbers not in unified_contacts).
-  let unifiedId = null;
+  let unifiedId: number | null = null;
   try {
-    const { rows: [c] } = await db.query(
+    const { rows: [c] } = await db.query<{ id: number }>(
       `SELECT id FROM unified_contacts
         WHERE regexp_replace(COALESCE(mobile, ''),        '\\D', '', 'g') = $1
            OR regexp_replace(COALESCE(actual_mobile, ''), '\\D', '', 'g') = $1
@@ -260,7 +262,7 @@ router.post('/test-send', async (req, res) => {
   } catch { /* identity is optional */ }
 
   const when = new Date(Date.now() + 60 * 1000); // ~1 min out (ChatHead schedules broadcasts)
-  let result;
+  let result: Partial<SendBroadcastResult> | undefined;
   try {
     result = await ChatHeadV1Service.sendBroadcast(<Parameters<typeof ChatHeadV1Service.sendBroadcast>[0]>{
       contacts:     [{ phone: digits, name: name || '' }],
@@ -327,10 +329,10 @@ router.post('/broadcasts/sync-delivery', async (_req, res) => {
 // JSON object even when noise precedes it, so we surface the real status/msg.
 function parseChatHeadJson(raw: string): ChatheadJson {
   if (!raw) return { status: 'error', msg: 'empty response from ChatHead' };
-  try { return JSON.parse(raw); } catch { /* fall through */ }
+  try { return JSON.parse(raw) as ChatheadJson; } catch { /* fall through */ }
   const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
   if (start >= 0 && end > start) {
-    try { return JSON.parse(raw.slice(start, end + 1)); } catch { /* fall through */ }
+    try { return JSON.parse(raw.slice(start, end + 1)) as ChatheadJson; } catch { /* fall through */ }
   }
   return { status: 'error', msg: `ChatHead returned a non-JSON response (${raw.slice(0, 200)})` };
 }
@@ -420,7 +422,7 @@ router.post('/templates/create', async (req: QueryRequest<ChatheadTemplateBody |
 
 // POST /api/v3/chathead/templates/status — { template_id } → Meta review status
 router.post('/templates/status', async (req, res) => {
-  const templateId = req.body?.template_id;
+  const templateId = (req.body as { template_id?: string | number } | undefined)?.template_id;
   if (!templateId) return res.status(400).json({ success: false, error: 'template_id is required' });
   try {
     const r = await fetch(`${CH_BASE}/account/templates/status/index.php?c=${CLIENT}`, {

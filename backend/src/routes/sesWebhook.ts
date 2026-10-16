@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../config/database.js';
 import type { SesEventMessage } from '../types/routesMisc.js';
+import type { U2SnsPayload } from '../types/u2Routes.js';
 
 const router = Router();
 
@@ -27,9 +28,9 @@ const EVENT_TYPES_TO_STORE_RAW = new Set(['Bounce', 'Complaint']);
  */
 router.post('/ses', async (req, res) => {
   try {
-    let payload = req.body;
+    let payload = req.body as U2SnsPayload | string;
     if (typeof payload === 'string') {
-      try { payload = JSON.parse(payload); } catch { return res.status(400).send('Invalid JSON'); }
+      try { payload = JSON.parse(payload) as U2SnsPayload; } catch { return res.status(400).send('Invalid JSON'); }
     }
 
     const messageType = req.headers['x-amz-sns-message-type'] || payload?.Type;
@@ -56,14 +57,14 @@ router.post('/ses', async (req, res) => {
     if (messageType === 'Notification') {
       let message = payload.Message;
       if (typeof message === 'string') {
-        try { message = JSON.parse(message); } catch { return res.status(400).send('Invalid Message JSON'); }
+        try { message = JSON.parse(message) as SesEventMessage; } catch { return res.status(400).send('Invalid Message JSON'); }
       }
       const eventType = message?.eventType || message?.notificationType;
       if (!eventType) return res.status(200).send('OK');
 
       // Ack SNS first; process in background.
       res.status(200).send('OK');
-      processEventAsync(message, eventType).catch(err =>
+      processEventAsync(message, eventType).catch((err: Error) =>
         console.error('[SES Webhook] async processing failed:', err.message)
       );
       return;

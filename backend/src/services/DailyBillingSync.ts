@@ -114,7 +114,7 @@ class DailyBillingSync {
       throw new Error(`API returned ${res.status}: ${await res.text()}`);
     }
 
-    const data = await res.json();
+    const data = await res.json() as BillingApiRecord[] | Record<string, unknown>;
     // An error object instead of an array used to pass through as "undefined records".
     if (!Array.isArray(data)) throw new Error('Billing API did not return an array');
     console.log(`[DailySync] Fetched ${data.length} records`);
@@ -266,7 +266,7 @@ class DailyBillingSync {
     }
 
     // 3D: Collect affected unified_ids (records updated today)
-    const { rows: affected } = await query(`
+    const { rows: affected } = await query<{ unified_id: number | string }>(`
       SELECT DISTINCT unified_id FROM (
         ${tables.filter(t => t !== 'rayna_flights').map(t =>
           `SELECT unified_id FROM ${t} WHERE unified_id IS NOT NULL AND (created_at >= CURRENT_DATE OR updated_date >= CURRENT_DATE)`

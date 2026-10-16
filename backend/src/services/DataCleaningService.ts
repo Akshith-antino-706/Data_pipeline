@@ -1,5 +1,6 @@
 import { query, transaction } from '../config/database.js';
 import type { CleanedPhone, CountryCodeInfo, Enrichment, EnrichmentUpdates } from '../types/syncC.js';
+import type { CustomerSegmentEnrichRow } from '../types/u6Services.js';
 
 // ── Country code → nationality/country mapping ─────────────
 const COUNTRY_CODE_MAP: Record<string, CountryCodeInfo> = {
@@ -149,7 +150,7 @@ export class DataCleaningService {
 
   /** Run full enrichment on all customer_segments rows */
   static async enrichAllCustomers() {
-    const { rows } = await query(`
+    const { rows } = await query<CustomerSegmentEnrichRow>(`
       SELECT email, full_name, phone, mobile, whatsapp_id, country, nationality, gender, phone_clean
       FROM customer_segments
       ORDER BY email

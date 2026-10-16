@@ -2,6 +2,7 @@ import pool from '../config/database.js';
 import { cached, invalidate } from '../config/cache.js';
 import { CONTACT_TYPES, normalizeContactType } from '../utils/contactTypes.js';
 import type { UnifiedContactListFilters, UnifiedContactFields, BusinessTypeFilter, SegmentationTreeFilters, SegmentDailyLogFilters, SegmentCustomerFilters, BookingBreakdownRow } from '../types/syncAUnifiedContact.js';
+import type { U7BookingDetailRow, U7BookingStatusRow, U7ContactBookingStatsRow, U7ContactListRow, U7ContactStatsRow, U7Conversations7dRow, U7CountIntRow, U7CountTextRow, U7CountryCountRow, U7DeletedIdRow, U7GeographyRow, U7ProductTierRow, U7RevenueBySourceRow, U7RevenueByStatusRow, U7RevenueTotalsRow, U7SegmentBreakdownRow, U7SegmentCountRevenueRow, U7SegmentCountRow, U7SegmentDailyLogRow, U7SegmentRevenueRow, U7SnapshotTimeRow, U7StatusCountRow, U7StatusRevenueRow, U7TreeSnapshotRow, U7TreeTotalsRow, U7UnifiedContactRow } from '../types/u7UnifiedContactService.js';
 
 /**
  * UnifiedContactService — updated for the new 18-column unified_contacts schema:
@@ -117,8 +118,8 @@ export default class UnifiedContactService {
     const offset = (page - 1) * limit;
 
     const [countRes, dataRes] = await Promise.all([
-      pool.query(`SELECT COUNT(*) AS total FROM unified_contacts uc ${where}`, params),
-      pool.query(
+      pool.query<U7CountTextRow>(`SELECT COUNT(*) AS total FROM unified_contacts uc ${where}`, params),
+      pool.query<U7ContactListRow>(
         `SELECT uc.id, uc.email, uc.mobile, uc.name, uc.country, uc.city, uc.sources, uc.contact_type,
                 uc.wa_unsubscribe, uc.email_unsubscribe,
                 uc.booking_status, uc.product_tier, uc.geography, uc.is_indian, uc.segments,
@@ -172,12 +173,12 @@ export default class UnifiedContactService {
   }
 
   static async getById(id: string | number) {
-    const { rows } = await pool.query('SELECT * FROM unified_contacts WHERE id = $1', [id]);
+    const { rows } = await pool.query<U7UnifiedContactRow>('SELECT * FROM unified_contacts WHERE id = $1', [id]);
     const contact = rows[0] || null;
     if (!contact) return null;
 
     // Get accurate counts & revenue via aggregation (not limited)
-    const statsRes = await pool.query(`
+    const statsRes = await pool.query<U7ContactBookingStatsRow>(`
       SELECT
         COUNT(*) FILTER (WHERE src = 'tours')::int AS tour_cnt,
         COUNT(*) FILTER (WHERE src = 'packages')::int AS pkg_cnt,
@@ -201,32 +202,32 @@ export default class UnifiedContactService {
 
     // Fetch booking detail rows (latest 500 per type for display)
     const [tours, packages, hotels, visas, others, flights] = await Promise.all([
-      pool.query(`
+      pool.query<U7BookingDetailRow>(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
         FROM rayna_tours WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
-      pool.query(`
+      pool.query<U7BookingDetailRow>(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
         FROM rayna_packages WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
-      pool.query(`
+      pool.query<U7BookingDetailRow>(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
         FROM rayna_hotels WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
-      pool.query(`
+      pool.query<U7BookingDetailRow>(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
         FROM rayna_visas WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
-      pool.query(`
+      pool.query<U7BookingDetailRow>(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
         FROM rayna_others WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
       `, [id]),
-      pool.query(`
+      pool.query<U7BookingDetailRow>(`
         SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
                selling_price, is_cancel, guest_name, nationality, booking_date
         FROM rayna_flights WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
@@ -258,7 +259,7 @@ export default class UnifiedContactService {
     const { name, email, mobile, city, country, contact_type, geography, wa_unsubscribe, email_unsubscribe } = fields;
     if (!name && !email && !mobile) throw new Error('At least one of name, email, or phone is required');
     if (contact_type && !normalizeContactType(contact_type)) throw new Error(`Contact type must be one of ${CONTACT_TYPES.join(', ')}`);
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query<U7UnifiedContactRow>(`
       INSERT INTO unified_contacts
         (name, email, mobile, city, country, contact_type, geography,
          wa_unsubscribe, email_unsubscribe, booking_status, sources, created_at)
@@ -284,7 +285,7 @@ export default class UnifiedContactService {
     }
     const setClause = entries.map(([k], i) => `${k} = $${i + 1}`).join(', ');
     const values = [...entries.map(([, v]) => v), id];
-    const { rows } = await pool.query(
+    const { rows } = await pool.query<U7UnifiedContactRow>(
       `UPDATE unified_contacts SET ${setClause} WHERE id = $${values.length} RETURNING *`,
       values
     );
@@ -292,7 +293,7 @@ export default class UnifiedContactService {
   }
 
   static async deleteContact(id: string | number) {
-    const { rows } = await pool.query(
+    const { rows } = await pool.query<U7DeletedIdRow>(
       'DELETE FROM unified_contacts WHERE id = $1 RETURNING id',
       [id]
     );
@@ -303,10 +304,10 @@ export default class UnifiedContactService {
     const btClause = businessType ? 'AND contact_type = $1' : '';
     const btParam = businessType ? [businessType] : [];
     const [countries, statuses, tiers, geos] = await Promise.all([
-      pool.query(`SELECT country, COUNT(*)::int as cnt FROM unified_contacts WHERE country IS NOT NULL AND country != '' ${btClause} GROUP BY country ORDER BY cnt DESC LIMIT 50`, btParam),
-      pool.query(`SELECT DISTINCT booking_status FROM unified_contacts WHERE booking_status IS NOT NULL ${btClause} ORDER BY booking_status`, btParam),
-      pool.query(`SELECT DISTINCT product_tier FROM unified_contacts WHERE product_tier IS NOT NULL ${btClause} ORDER BY product_tier`, btParam),
-      pool.query(`SELECT DISTINCT geography FROM unified_contacts WHERE geography IS NOT NULL ${btClause} ORDER BY geography`, btParam),
+      pool.query<U7CountryCountRow>(`SELECT country, COUNT(*)::int as cnt FROM unified_contacts WHERE country IS NOT NULL AND country != '' ${btClause} GROUP BY country ORDER BY cnt DESC LIMIT 50`, btParam),
+      pool.query<U7BookingStatusRow>(`SELECT DISTINCT booking_status FROM unified_contacts WHERE booking_status IS NOT NULL ${btClause} ORDER BY booking_status`, btParam),
+      pool.query<U7ProductTierRow>(`SELECT DISTINCT product_tier FROM unified_contacts WHERE product_tier IS NOT NULL ${btClause} ORDER BY product_tier`, btParam),
+      pool.query<U7GeographyRow>(`SELECT DISTINCT geography FROM unified_contacts WHERE geography IS NOT NULL ${btClause} ORDER BY geography`, btParam),
     ]);
     return {
       countries: countries.rows.map(r => r.country),
@@ -321,7 +322,7 @@ export default class UnifiedContactService {
   static async getStats({ businessType }: BusinessTypeFilter = {}) {
     const btClause = businessType ? 'WHERE contact_type = $1' : '';
     const btParam = businessType ? [businessType] : [];
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query<U7ContactStatsRow>(`
       SELECT
         COUNT(*)::int AS total_contacts,
         COUNT(*) FILTER (WHERE booking_status NOT IN ('PROSPECT'))::int AS with_travel,
@@ -335,7 +336,7 @@ export default class UnifiedContactService {
     const revenueSQL = RAYNA_TABLES.map(t =>
       `SELECT COALESCE(SUM(selling_price), 0) AS rev, COUNT(*) FILTER (WHERE ${cancelFilter()}) AS cnt FROM ${t}`
     ).join(' UNION ALL ');
-    const { rows: revRows } = await pool.query(
+    const { rows: revRows } = await pool.query<U7RevenueTotalsRow>(
       `SELECT SUM(rev)::numeric AS total_revenue, SUM(cnt)::int AS total_bookings FROM (${revenueSQL}) t`
     );
 
@@ -345,7 +346,7 @@ export default class UnifiedContactService {
     const convClause = businessType
       ? 'AND EXISTS (SELECT 1 FROM unified_contacts u WHERE u.id = c.unified_id AND u.contact_type = $1)'
       : '';
-    const { rows: convRows } = await pool.query(`
+    const { rows: convRows } = await pool.query<U7Conversations7dRow>(`
       SELECT COUNT(*)::int AS conversations_7d
       FROM chats c
       WHERE c.last_msg_at >= NOW() - INTERVAL '7 days'
@@ -394,7 +395,7 @@ export default class UnifiedContactService {
     return cached(cacheKey, async () => {
       // 1. Try snapshot table (single primary-key lookup, sub-millisecond)
       try {
-        const { rows } = await pool.query(
+        const { rows } = await pool.query<U7TreeSnapshotRow>(
           `SELECT total_contacts, segment_count, total_revenue,
                   status_counts, breakdown, revenue_by_type
            FROM segmentation_tree_snapshot
@@ -441,13 +442,13 @@ export default class UnifiedContactService {
         [
           data.totals.total,
           data.totals.segment_count,
-          parseFloat(data.totals.total_revenue || 0),
+          parseFloat((data.totals.total_revenue || 0) as unknown as string),
           JSON.stringify(data.statusCounts),
           JSON.stringify(data.breakdown),
           JSON.stringify(data.revenueByType),
           btKey,
         ]
-      ).catch(err => console.warn('[Snapshot] Auto-store failed:', err.message));
+      ).catch((err: Error) => console.warn('[Snapshot] Auto-store failed:', err.message));
 
       return data;
     }, 3600); // 1-hour Redis TTL — nightly cron invalidates after table refresh
@@ -490,7 +491,7 @@ export default class UnifiedContactService {
         [
           data.totals.total,
           data.totals.segment_count,
-          parseFloat(data.totals.total_revenue || 0),
+          parseFloat((data.totals.total_revenue || 0) as unknown as string),
           JSON.stringify(data.statusCounts),
           JSON.stringify(data.breakdown),
           JSON.stringify(data.revenueByType),
@@ -538,7 +539,7 @@ export default class UnifiedContactService {
        WHERE is_cancel <> '1' AND unified_id IS NOT NULL`
     ).join(' UNION ALL ');
 
-    const { rows: statusCounts } = await pool.query(`
+    const { rows: statusCounts } = await pool.query<U7StatusRevenueRow>(`
       SELECT uc.booking_status,
              COUNT(DISTINCT uc.id)::int AS count,
              COUNT(DISTINCT uc.id) FILTER (WHERE uc.is_indian = true)::int AS indian_count,
@@ -552,7 +553,7 @@ export default class UnifiedContactService {
         WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 ELSE 6 END
     `);
 
-    statusCounts.forEach(r => { r.revenue = parseFloat(r.revenue) || 0; });
+    statusCounts.forEach(r => { r.revenue = parseFloat(r.revenue as unknown as string) || 0; });
     const totalRevenue = statusCounts.reduce((s, r) => s + r.revenue, 0);
 
     return {
@@ -588,7 +589,7 @@ export default class UnifiedContactService {
       { rows: [ftBookings] },
     ] = await Promise.all([
       // 1. Booking status counts
-      pool.query(`
+      pool.query<U7StatusCountRow>(`
         SELECT booking_status, COUNT(*)::int AS count,
           COUNT(*) FILTER (WHERE is_indian = true)::int AS indian_count
         FROM unified_contacts ${btWhere}
@@ -601,7 +602,7 @@ export default class UnifiedContactService {
       //    FUTURE_TRAVEL → only upcoming bookings (travel_date > today)
       //    ON_TRIP       → only bookings travelling now (today-7 .. today)
       //    PAST_BOOKING / CANCELLED / PROSPECT → all confirmed bookings (their travel is all past / none)
-      pool.query(`
+      pool.query<U7SegmentBreakdownRow>(`
           WITH contact_rev AS (
             SELECT unified_id,
               SUM(selling_price) AS all_rev,
@@ -634,13 +635,13 @@ export default class UnifiedContactService {
           ORDER BY uc.booking_status, uc.product_tier NULLS LAST, uc.geography NULLS LAST
       `),
       // 3. Totals
-      pool.query(`
+      pool.query<U7TreeTotalsRow>(`
         SELECT COUNT(*)::int AS total, COUNT(*)::int AS segmented,
           COUNT(DISTINCT booking_status || COALESCE(product_tier,'') || COALESCE(geography,''))::int AS segment_count
         FROM unified_contacts ${btWhere}
       `),
       // 4. Revenue by type (with date filter + flights)
-      pool.query(`
+      pool.query<U7RevenueBySourceRow>(`
         SELECT 'tours' as source, COUNT(*)::int as bookings, COALESCE(SUM(selling_price),0)::numeric as revenue FROM rayna_tours WHERE is_cancel <> '1'${dateAnd}
         UNION ALL SELECT 'packages', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_packages WHERE is_cancel <> '1'${dateAnd}
         UNION ALL SELECT 'hotels', COUNT(*)::int, COALESCE(SUM(selling_price),0)::numeric FROM rayna_hotels WHERE is_cancel <> '1'${dateAnd}
@@ -650,7 +651,7 @@ export default class UnifiedContactService {
       `),
       // 5. Revenue per booking_status — SCOPED to each status's travel period (matches breakdown #2):
       //    FUTURE_TRAVEL → upcoming bookings only · ON_TRIP → this-week only · others → all confirmed
-      pool.query(`
+      pool.query<U7RevenueByStatusRow>(`
         SELECT uc.booking_status, COALESCE(SUM(
           CASE uc.booking_status
             WHEN 'FUTURE_TRAVEL' THEN CASE WHEN r.travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND r.travel_date::date > CURRENT_DATE THEN r.selling_price ELSE 0 END
@@ -671,7 +672,7 @@ export default class UnifiedContactService {
         GROUP BY uc.booking_status
       `),
       // 6. ON_TRIP breakdown (counts + revenue per type)
-      pool.query(`
+      pool.query<BookingBreakdownRow>(`
         SELECT
           (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::int as tours,
@@ -695,7 +696,7 @@ export default class UnifiedContactService {
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date BETWEEN CURRENT_DATE - 7 AND CURRENT_DATE)::numeric as others_revenue
       `),
       // 7. FUTURE_TRAVEL breakdown (counts + revenue per type)
-      pool.query(`
+      pool.query<BookingBreakdownRow>(`
         SELECT
           (SELECT COUNT(*) FROM rayna_tours WHERE unified_id IS NOT NULL AND is_cancel <> '1'
             AND travel_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND travel_date::date > CURRENT_DATE)::int as tours,
@@ -721,7 +722,7 @@ export default class UnifiedContactService {
     ]);
 
     // Merge revenue into totals
-    const totalRevenue = revenueByType.reduce((s, r) => s + parseFloat(r.revenue || 0), 0);
+    const totalRevenue = revenueByType.reduce((s, r) => s + parseFloat((r.revenue || 0) as string), 0);
     totals.total_revenue = totalRevenue;
 
     // Merge revenue per status into statusCounts
@@ -770,7 +771,7 @@ export default class UnifiedContactService {
     const snapshotTime = new Date();
 
     // 1. Current segment counts
-    const { rows: segments } = await pool.query(`
+    const { rows: segments } = await pool.query<U7SegmentCountRow>(`
       SELECT booking_status as segment_label, COUNT(*)::int as total_count
       FROM unified_contacts
       WHERE booking_status IS NOT NULL
@@ -778,7 +779,7 @@ export default class UnifiedContactService {
     `);
 
     // 2. Revenue per segment
-    const { rows: revenueRows } = await pool.query(`
+    const { rows: revenueRows } = await pool.query<U7SegmentRevenueRow>(`
       SELECT uc.booking_status AS segment_label, COALESCE(SUM(r.selling_price), 0)::numeric AS revenue
       FROM unified_contacts uc
       JOIN (
@@ -794,7 +795,7 @@ export default class UnifiedContactService {
     const revenueMap = Object.fromEntries(revenueRows.map(r => [r.segment_label, parseFloat(r.revenue)]));
 
     // 3. Previous snapshot for entered/exited calculation
-    const { rows: prevRows } = await pool.query(`
+    const { rows: prevRows } = await pool.query<U7SegmentCountRow>(`
       SELECT segment_label, total_count FROM segment_daily_log
       WHERE snapshot_time = (
         SELECT MAX(snapshot_time) FROM segment_daily_log
@@ -847,7 +848,7 @@ export default class UnifiedContactService {
       conditions.push(`segment_label = $${params.length}`);
     }
 
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query<U7SegmentDailyLogRow>(`
       SELECT *, log_date::text AS log_date FROM segment_daily_log
       WHERE ${conditions.join(' AND ')}
       ORDER BY snapshot_time DESC NULLS LAST, segment_label
@@ -856,7 +857,7 @@ export default class UnifiedContactService {
     // Live counts with revenue
     const btClause = businessType ? `AND uc.contact_type = $1` : '';
     const liveParams = businessType ? [businessType] : [];
-    const { rows: liveToday } = await pool.query(`
+    const { rows: liveToday } = await pool.query<U7SegmentCountRevenueRow>(`
       SELECT uc.booking_status AS segment_label,
         COUNT(*)::int AS total_count,
         COALESCE(rev.revenue, 0)::numeric AS revenue
@@ -890,7 +891,7 @@ export default class UnifiedContactService {
    */
   static async getSegmentChanges() {
     // Find the two most recent distinct snapshot_time values
-    const { rows: times } = await pool.query(`
+    const { rows: times } = await pool.query<U7SnapshotTimeRow>(`
       SELECT DISTINCT snapshot_time FROM segment_daily_log
       ORDER BY snapshot_time DESC LIMIT 2
     `);
@@ -902,11 +903,11 @@ export default class UnifiedContactService {
     const afterTime = times[0].snapshot_time;
     const beforeTime = times[1].snapshot_time;
 
-    const { rows: afterRows } = await pool.query(
+    const { rows: afterRows } = await pool.query<U7SegmentCountRevenueRow>(
       `SELECT segment_label, total_count, revenue FROM segment_daily_log WHERE snapshot_time = $1`,
       [afterTime]
     );
-    const { rows: beforeRows } = await pool.query(
+    const { rows: beforeRows } = await pool.query<U7SegmentCountRevenueRow>(
       `SELECT segment_label, total_count, revenue FROM segment_daily_log WHERE snapshot_time = $1`,
       [beforeTime]
     );
@@ -962,8 +963,8 @@ export default class UnifiedContactService {
       .join(' UNION ALL ');
 
     const [countRes, dataRes] = await Promise.all([
-      pool.query(`SELECT COUNT(*)::int AS total FROM unified_contacts uc ${where}`, params),
-      pool.query(
+      pool.query<U7CountIntRow>(`SELECT COUNT(*)::int AS total FROM unified_contacts uc ${where}`, params),
+      pool.query<U7ContactListRow>(
         `SELECT uc.id, uc.name, uc.email, uc.mobile, uc.country, uc.city, uc.contact_type, uc.sources,
                 uc.booking_status, uc.product_tier, uc.geography, uc.is_indian, uc.segments,
                 uc.wa_unsubscribe, uc.email_unsubscribe, uc.created_at, uc.updated_at,
@@ -981,9 +982,9 @@ export default class UnifiedContactService {
 
     return {
       data: dataRes.rows,
-      total: parseInt(countRes.rows[0].total, 10),
+      total: parseInt(countRes.rows[0].total as unknown as string, 10),
       page, limit,
-      totalPages: Math.ceil(parseInt(countRes.rows[0].total, 10) / limit),
+      totalPages: Math.ceil(parseInt(countRes.rows[0].total as unknown as string, 10) / limit),
     };
   }
 

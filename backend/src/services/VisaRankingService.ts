@@ -309,7 +309,7 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
 
   let parsed: ClaudeParsedJson;
   try {
-    parsed = JSON.parse(jsonMatch[0]);
+    parsed = JSON.parse(jsonMatch[0]) as ClaudeParsedJson;
   } catch (e) {
     throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${jsonMatch[0].slice(0, 200)}`);
   }

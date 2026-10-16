@@ -22,7 +22,7 @@ export default class LiquidRenderer {
   /** Render a Liquid template string with the given variable map. */
   static async render(template: string | null | undefined, vars: Record<string, unknown> = {}): Promise<string> {
     if (!template) return '';
-    return engine.parseAndRender(template, vars);
+    return engine.parseAndRender(template, vars) as Promise<string>;
   }
 
   /** Expose the underlying engine for advanced cases (e.g. adding filters). */

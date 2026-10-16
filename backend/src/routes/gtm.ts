@@ -34,7 +34,7 @@ router.get('/tracking-bundle', (req, res) => {
 // POST /api/v3/gtm/events — Record a GTM event
 router.post('/events', async (req, res) => {
   try {
-    const event = await GTMService.recordEvent(req.body);
+    const event: unknown = await GTMService.recordEvent(req.body as Parameters<typeof GTMService.recordEvent>[0]);
     res.status(201).json(event);
   } catch (err) {
     console.error('[GTM Events] Error recording event:', (err as Error).message);
@@ -144,7 +144,7 @@ router.get('/occasions', async (req, res) => {
 // POST /api/v3/gtm/occasions — Create special occasion
 router.post('/occasions', async (req, res) => {
   try {
-    const occasion = await GTMService.createSpecialOccasion(req.body);
+    const occasion: unknown = await GTMService.createSpecialOccasion(req.body as Parameters<typeof GTMService.createSpecialOccasion>[0]);
     res.status(201).json(occasion);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

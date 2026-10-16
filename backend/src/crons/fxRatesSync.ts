@@ -23,10 +23,10 @@ export async function runFxRatesSync() {
   const started = Date.now();
   console.log(`[FxRatesCron] Starting at ${new Date().toISOString()} — ${FX_URL}`);
 
-  let data;
+  let data: { result?: string; rates?: Record<string, unknown> } | undefined;
   try {
     const res = await fetch(FX_URL, { signal: AbortSignal.timeout(20000) });
-    data = await res.json();
+    data = await res.json() as { result?: string; rates?: Record<string, unknown> };
     if (data?.result !== 'success' || !data?.rates) throw new Error(`bad response: ${data?.result || 'no rates'}`);
   } catch (err) {
     console.error(`[FxRatesCron] fetch failed (${(err as Error).message}) — keeping existing rates`);
@@ -34,7 +34,7 @@ export async function runFxRatesSync() {
   }
 
   let updated = 0, skipped = 0;
-  for (const [cur, raw] of Object.entries(data.rates)) {
+  for (const [cur, raw] of Object.entries(data.rates!)) {
     if (!/^[A-Z]{3}$/.test(cur)) { skipped++; continue; }
     const rate = Number(raw);
     const [lo, hi] = BOUNDS[cur as keyof typeof BOUNDS] || [1e-9, Infinity];   // non-core: finite & positive

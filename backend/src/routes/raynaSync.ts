@@ -7,6 +7,7 @@ import { parseBusinessType } from '../utils/contactTypes.js';
 import DailyBillingSync from '../services/DailyBillingSync.js';
 import type { QueryResultRow } from 'pg';
 import type { CronJobCard } from '../types/routesRaynaSync.js';
+import type { U2SyncMetaRow, U2CountRow, U2CRow, U2LatestRow } from '../types/u2Routes.js';
 
 const router = Router();
 
@@ -36,7 +37,7 @@ router.get('/status', async (_req, res) => {
     // Current DailyBillingSync populates rayna_* directly and doesn't write here.
     const freshDates: Record<string, Date | null> = {};
     try {
-      const { rows } = await query(`
+      const { rows } = await query<{ t: string; latest: Date | null }>(`
         SELECT 'rayna_tours'    AS t, MAX(created_at) AS latest FROM rayna_tours
         UNION ALL SELECT 'rayna_hotels',   MAX(created_at) FROM rayna_hotels
         UNION ALL SELECT 'rayna_visas',    MAX(created_at) FROM rayna_visas
@@ -52,7 +53,7 @@ router.get('/status', async (_req, res) => {
     const aggregateMax = Object.values(freshDates).filter(Boolean)
       .sort((a, b) => (new Date(b!) as unknown as number) - (new Date(a!) as unknown as number))[0] || null;
 
-    const augmented = status.map((row: QueryResultRow) => {
+    const augmented = status.map((row: Record<string, unknown> & { table_name?: string }) => {
       if (!row.table_name?.startsWith('rayna_')) return row;
       const fresh = freshDates[row.table_name] || aggregateMax;
       return {
@@ -75,7 +76,7 @@ router.get('/status', async (_req, res) => {
 router.get('/mapping-stats', async (req, res) => {
   try {
     const bt = parseBusinessType(req.query.businessType);
-    let UC_FILTER, PROFIT_FILTER;
+    let UC_FILTER: string, PROFIT_FILTER: string;
     if (bt === 'B2B')      { UC_FILTER = "contact_type = 'B2B'"; PROFIT_FILTER = "is_b2b = '1'"; }
     else if (bt === 'B2C') { UC_FILTER = "contact_type = 'B2C'"; PROFIT_FILTER = "is_b2b = '0'"; }
     // Bookings carry no affiliate flag — count the bookings of Affiliate contacts
@@ -86,7 +87,7 @@ router.get('/mapping-stats', async (req, res) => {
     else                   { UC_FILTER = "1=1";                    PROFIT_FILTER = "1=1"; }
 
     // Overall stats from unified_contacts
-    const { rows: [overall] } = await query(`
+    const { rows: [overall] } = await query<{ total_mapped: string; customers_with_bookings: string; total_customers: string }>(`
       SELECT
         (SELECT COUNT(*) FROM unified_contacts WHERE booking_status NOT IN ('PROSPECT') AND ${UC_FILTER}) as total_mapped,
         (SELECT COUNT(*) FROM unified_contacts WHERE booking_status NOT IN ('PROSPECT') AND ${UC_FILTER}) as customers_with_bookings,
@@ -94,7 +95,7 @@ router.get('/mapping-stats', async (req, res) => {
     `);
 
     // Top customers by revenue (from unified_contacts + rayna_*)
-    const { rows: topCustomers } = await query(`
+    const { rows: topCustomers } = await query<Record<string, unknown>>(`
       SELECT uc.id, uc.name, uc.email, uc.mobile, uc.country, uc.contact_type,
         uc.booking_status, uc.product_tier, uc.geography, uc.sources,
         COALESCE(b.total_bookings, 0) as total_bookings,
@@ -118,7 +119,7 @@ router.get('/mapping-stats', async (req, res) => {
     `);
 
     // Booking coverage (rayna_* with unified_id linked)
-    const { rows: [unmatched] } = await query(`
+    const { rows: [unmatched] } = await query<Record<string, string>>(`
       SELECT
         (SELECT COUNT(*) FROM rayna_tours    WHERE ${PROFIT_FILTER}) as total_tours,
         (SELECT COUNT(*) FROM rayna_hotels   WHERE ${PROFIT_FILTER}) as total_hotels,
@@ -150,7 +151,7 @@ router.get('/mapping-stats', async (req, res) => {
     const { mysqlQuery } = await import('../config/mysql.js');
     const safeMax = async (sql: string, poolName: string) => {
       try {
-        const rows = await mysqlQuery(sql, [], poolName);
+        const rows = await mysqlQuery<U2LatestRow[]>(sql, [], poolName);
         return rows[0]?.latest || null;
       } catch (e) {
         console.warn(`[mapping-stats] source-latest fetch skipped (${poolName}):`, (e as Error).message);
@@ -166,9 +167,9 @@ router.get('/mapping-stats', async (req, res) => {
     // Daily Billing pulls from the Rayna Billing API (bdbizgulf.com) into
     // rayna_* Postgres tables. "Last update in source" = latest created_at
     // across those tables (when data last landed from the API).
-    let dailyBillingSourceLatestAt = null;
+    let dailyBillingSourceLatestAt: Date | null = null;
     try {
-      const { rows } = await query(`
+      const { rows } = await query<U2LatestRow>(`
         SELECT MAX(latest) AS latest FROM (
           SELECT MAX(created_at) AS latest FROM rayna_tours
           UNION ALL SELECT MAX(created_at) FROM rayna_hotels
@@ -192,7 +193,7 @@ router.get('/mapping-stats', async (req, res) => {
     // The frontend renders whatever fields exist per card — nothing else is affected.
     let cronJobs: CronJobCard[] = [];
     try {
-      const { rows: smRows } = await query("SELECT * FROM sync_metadata");
+      const { rows: smRows } = await query<U2SyncMetaRow>("SELECT * FROM sync_metadata");
       const sm = Object.fromEntries(smRows.map(r => [r.table_name, r]));
       // DailyBillingSync doesn't write to sync_metadata (legacy rows for rayna_*
       // are stale from May 2026 with a dead "billno" error from an older service).
@@ -248,24 +249,24 @@ router.get('/mapping-stats', async (req, res) => {
 
     // Data overview — only reads from the allowed tables (rayna_*, chats, unified_contacts).
     const dataOverviewQueries = [
-      query(`SELECT COUNT(*) as count FROM unified_contacts WHERE ${UC_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM unified_contacts WHERE email IS NOT NULL AND email <> '' AND ${UC_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM unified_contacts WHERE mobile IS NOT NULL AND mobile <> '' AND ${UC_FILTER}`),
-      query(`SELECT (SELECT COUNT(*) FROM rayna_tours WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_hotels WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_visas WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_flights WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_packages WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_others WHERE ${PROFIT_FILTER}) as count`),
-      query(`SELECT COUNT(*) as count FROM chats`),
-      query(`SELECT COUNT(*) as count FROM rayna_tours WHERE ${PROFIT_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM rayna_hotels WHERE ${PROFIT_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM rayna_visas WHERE ${PROFIT_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM rayna_flights WHERE ${PROFIT_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM rayna_packages WHERE ${PROFIT_FILTER}`),
-      query(`SELECT COUNT(*) as count FROM rayna_others WHERE ${PROFIT_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM unified_contacts WHERE ${UC_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM unified_contacts WHERE email IS NOT NULL AND email <> '' AND ${UC_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM unified_contacts WHERE mobile IS NOT NULL AND mobile <> '' AND ${UC_FILTER}`),
+      query<U2CountRow>(`SELECT (SELECT COUNT(*) FROM rayna_tours WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_hotels WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_visas WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_flights WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_packages WHERE ${PROFIT_FILTER}) + (SELECT COUNT(*) FROM rayna_others WHERE ${PROFIT_FILTER}) as count`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM chats`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM rayna_tours WHERE ${PROFIT_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM rayna_hotels WHERE ${PROFIT_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM rayna_visas WHERE ${PROFIT_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM rayna_flights WHERE ${PROFIT_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM rayna_packages WHERE ${PROFIT_FILTER}`),
+      query<U2CountRow>(`SELECT COUNT(*) as count FROM rayna_others WHERE ${PROFIT_FILTER}`),
     ];
     const [unifiedContactsR, emailsR, phonesR, bookingsR, chatsR, toursR, hotelsR, visasR, flightsR, packagesR, othersR] = await Promise.all(dataOverviewQueries);
 
     // Contact type breakdown (B2B vs B2C from unified_contacts)
     let deptBreakdown: QueryResultRow[] = [];
     try {
-      const { rows } = await query(`
+      const { rows } = await query<Record<string, unknown>>(`
         SELECT contact_type as name,
           COUNT(*) as customers,
           COUNT(*) FILTER (WHERE booking_status NOT IN ('PROSPECT')) as with_bookings
@@ -284,7 +285,7 @@ router.get('/mapping-stats', async (req, res) => {
         totalMapped: parseInt(overall.total_mapped),
         customersWithBookings: parseInt(overall.customers_with_bookings),
         totalCustomers: parseInt(overall.total_customers),
-        matchRate: overall.total_customers > 0
+        matchRate: (overall.total_customers as unknown as number) > 0
           ? ((parseInt(overall.customers_with_bookings) / parseInt(overall.total_customers)) * 100).toFixed(2)
           : 0,
       },
@@ -297,11 +298,11 @@ router.get('/mapping-stats', async (req, res) => {
         others: { total: parseInt(unmatched.total_others), mapped: parseInt(unmatched.mapped_others) },
       },
       dataOverview: {
-        firstMsgFetched: parseInt((await query(`SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NOT NULL`)).rows[0].c),
-        firstMsgPending: parseInt((await query(`SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NULL AND wa_id IS NOT NULL`)).rows[0].c),
+        firstMsgFetched: parseInt((await query<U2CRow>(`SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NOT NULL`)).rows[0].c),
+        firstMsgPending: parseInt((await query<U2CRow>(`SELECT COUNT(*) as c FROM chats WHERE first_msg_text IS NULL AND wa_id IS NOT NULL`)).rows[0].c),
         users: parseInt(unifiedContactsR.rows[0].count),
-        totalUsers: parseInt((await query("SELECT COUNT(*) as c FROM unified_contacts")).rows[0].c),
-        notSetUsers: parseInt((await query("SELECT COUNT(*) as c FROM unified_contacts WHERE contact_type IS NULL OR contact_type = ''")).rows[0].c),
+        totalUsers: parseInt((await query<U2CRow>("SELECT COUNT(*) as c FROM unified_contacts")).rows[0].c),
+        notSetUsers: parseInt((await query<U2CRow>("SELECT COUNT(*) as c FROM unified_contacts WHERE contact_type IS NULL OR contact_type = ''")).rows[0].c),
         uniqueEmails: parseInt(emailsR.rows[0].count),
         phones: parseInt(phonesR.rows[0].count),
         travelBookings: parseInt(bookingsR.rows[0].count),
@@ -343,7 +344,7 @@ router.post('/refresh-mapping', async (_req, res) => {
 // Body: [ { BillSerial, BillNo, BillType, ... }, ... ]
 router.post('/ingest', async (req, res) => {
   try {
-    const records = req.body;
+    const records = req.body as Parameters<typeof RaynaSyncService.ingestRecords>[0] | undefined;
     if (!Array.isArray(records) || records.length === 0) {
       return res.status(400).json({ success: false, error: 'Expected non-empty JSON array of billing records' });
     }
@@ -359,7 +360,7 @@ router.post('/ingest', async (req, res) => {
 // Body: [ { BillSerial, BillNo, BillType, ... }, ... ]
 router.post('/ingest-dedup', async (req, res) => {
   try {
-    const records = req.body;
+    const records = req.body as Parameters<typeof RaynaSyncService.ingestRecordsDedup>[0] | undefined;
     if (!Array.isArray(records) || records.length === 0) {
       return res.status(400).json({ success: false, error: 'Expected non-empty JSON array of billing records' });
     }

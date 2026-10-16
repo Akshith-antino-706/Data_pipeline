@@ -38,7 +38,7 @@ export function renderDay4Holidays(templateOrPath: string, data: Day4HolidaysDat
 
     // Group list into rows of 2
     const rows: Record<string, string>[][] = [];
-    for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2));
+    for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2) as Record<string, string>[]);
 
     return rows.map(row => {
       const eachRegex = /\{\{#each\s+row\}\}([\s\S]*?)\{\{\/each\}\}/g;
@@ -58,7 +58,7 @@ export function renderDay4Holidays(templateOrPath: string, data: Day4HolidaysDat
     const list = (data as Record<string, unknown>)[sectionName];
     if (!Array.isArray(list)) return '';
     const itemKeyRegex = /\{\{(\w+)\}\}/g;
-    return list.map(item =>
+    return (list as Record<string, string>[]).map(item =>
       content.replace(itemKeyRegex, (m: string, key: string) => (item[key] !== undefined ? item[key] : m))
     ).join('');
   });

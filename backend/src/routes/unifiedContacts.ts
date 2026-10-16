@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
-import type { QueryResultRow } from 'pg';
+import type { UnifiedContactFields } from '../types/syncAUnifiedContact.js';
+import type { SourceCountRow, SegmentDailyLogCsvRow, SegmentCustomerCsvRow, UserProductRecommendationRow, RecommendedProductRow, NodeEngagement, NodeEngagementRow, ContactJourneyRow } from '../types/u3UnifiedContactsRoutes.js';
 import type { QueryRequest } from '../types/routesCommon.js';
 import UnifiedContactService from '../services/UnifiedContactService.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
@@ -12,7 +13,7 @@ const router = Router();
 // POST /api/v3/unified-contacts — create a new contact (booking_status defaults to PROSPECT)
 router.post('/', async (req, res, next) => {
   try {
-    const contact = await UnifiedContactService.createContact(req.body);
+    const contact: unknown = await UnifiedContactService.createContact(req.body as UnifiedContactFields);
     res.status(201).json({ success: true, data: contact });
   } catch (err) { next(err); }
 });
@@ -51,7 +52,7 @@ router.get('/stats', async (req: QueryRequest, res: Response, next: NextFunction
     // getStats scans unified_contacts, the booking tables and chats on every call. The
     // dashboard passes ?cached=1 to read a 10-min cached copy instead; every other caller
     // (e.g. the Contacts page) still gets live numbers exactly as before.
-    const data = req.query.cached === '1'
+    const data: unknown = req.query.cached === '1'
       ? await cached(`contacts:stats:${businessType || 'all'}`, compute, 600)
       : await compute();
     res.json({ success: true, data });
@@ -85,7 +86,7 @@ router.get('/sources-breakdown', async (req: QueryRequest, res: Response, next: 
       if (from) { params.push(from); conds.push(`(created_at AT TIME ZONE 'Asia/Dubai')::date >= $${params.length}::date`); }
       if (to)   { params.push(to);   conds.push(`(created_at AT TIME ZONE 'Asia/Dubai')::date <= $${params.length}::date`); }
       const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-      const { rows } = await db.query(`
+      const { rows } = await db.query<SourceCountRow>(`
         SELECT COALESCE(NULLIF(TRIM(sources), ''), '(unknown)') AS source, COUNT(*)::int AS count
         FROM unified_contacts
         ${where}
@@ -164,7 +165,7 @@ router.get('/segment-activity/download', async (req: QueryRequest, res: Response
     const segment = req.query.segment || undefined;
     const businessType = parseBusinessType(req.query.businessType);
     const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType });
-    const rows = data.logs;
+    const rows = data.logs as SegmentDailyLogCsvRow[];
 
     const header = 'Date,Segment,Total,Entered,Exited,Converted,Emails Sent,WhatsApp Sent,Push Sent,Total Reached,Journey Active,Journey Completed,Revenue';
     const csv = [header, ...rows.map(r =>
@@ -187,7 +188,7 @@ router.get('/segment-customers/download', async (req: QueryRequest, res: Respons
     });
 
     const header = 'Name,Email,Mobile,Country,Contact Type,Status,Tier,Geography,Sources';
-    const csv = [header, ...result.data.map(c =>
+    const csv = [header, ...(result.data as SegmentCustomerCsvRow[]).map(c =>
       `"${(c.name||'').replace(/"/g,'""')}","${c.email||''}","${c.mobile||''}","${c.country||''}",${c.contact_type||''},${c.booking_status},${c.product_tier||''},${c.geography||''},"${c.sources||''}"`
     )].join('\n');
 
@@ -230,7 +231,7 @@ router.get('/segment-customers', async (req: QueryRequest, res: Response, next: 
 
 router.get('/:id', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const contact = await UnifiedContactService.getById(req.params.id);
+    const contact: unknown = await UnifiedContactService.getById(req.params.id);
     if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
     res.json({ success: true, data: contact });
   } catch (err) { next(err); }
@@ -246,7 +247,7 @@ router.get('/:id/recommendations', async (req: QueryRequest, res: Response, next
     if (!unifiedId) return res.status(400).json({ error: 'Invalid unified_id' });
 
     // Most recently computed row for this user (any recommendation_type).
-    const { rows: recRows } = await db.query(`
+    const { rows: recRows } = await db.query<UserProductRecommendationRow>(`
       SELECT unified_id, recommendation_type, based_on_booking_id, based_on_product_id,
              destination_city, product_ids, source, rationale,
              computed_at, expires_at
@@ -261,21 +262,21 @@ router.get('/:id/recommendations', async (req: QueryRequest, res: Response, next
 
     // Hydrate the ordered product_ids into full product rows.
     const ids: number[] = Array.isArray(rec.product_ids) ? rec.product_ids.map(Number) : [];
-    let products: QueryResultRow[] = [];
+    let products: RecommendedProductRow[] = [];
     if (ids.length > 0) {
-      const { rows: prodRows } = await db.query(`
+      const { rows: prodRows } = await db.query<RecommendedProductRow>(`
         SELECT product_id, name, category, city, image_url AS image, url,
                sale_price, normal_price, listing_rating
         FROM products WHERE product_id = ANY($1::int[])
       `, [ids]);
       const byId = new Map(prodRows.map(p => [p.product_id, p]));
-      products = ids.map(id => byId.get(id)).filter(Boolean);
+      products = ids.map(id => byId.get(id)).filter(Boolean) as RecommendedProductRow[];
     }
 
     // Look up the "based_on" product name (their original booking) for the meta line.
-    let basedOnName = null;
+    let basedOnName: string | null = null;
     if (rec.based_on_product_id) {
-      const { rows: [b] } = await db.query(
+      const { rows: [b] } = await db.query<{ name: string | null }>(
         `SELECT name FROM products WHERE product_id::text = $1 LIMIT 1`,
         [String(rec.based_on_product_id)]
       );
@@ -302,7 +303,7 @@ router.get('/:id/recommendations', async (req: QueryRequest, res: Response, next
 router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
     const db = (await import('../config/database.js')).default;
-    const { rows } = await db.query(`
+    const { rows } = await db.query<ContactJourneyRow>(`
       SELECT
         jf.journey_id,
         jf.name,
@@ -320,7 +321,7 @@ router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextF
 
     // Per-node email engagement (delivered / opened / clicked) for THIS contact,
     // pulled from email_send_log keyed by unified_id + journey_id + node_id.
-    const { rows: nodeRows } = await db.query(`
+    const { rows: nodeRows } = await db.query<NodeEngagementRow>(`
       SELECT
         journey_id,
         node_id,
@@ -340,7 +341,7 @@ router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextF
       ORDER BY journey_id, MIN(sent_at) NULLS LAST
     `, [req.params.id]);
 
-    const nodesByJourney: Record<string, QueryResultRow[]> = {};
+    const nodesByJourney: Record<string, NodeEngagement[]> = {};
     for (const n of nodeRows) {
       (nodesByJourney[n.journey_id] ||= []).push({
         node_id:    n.node_id,
@@ -364,7 +365,7 @@ router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextF
 // PATCH /api/v3/unified-contacts/:id — update editable contact fields
 router.patch('/:id', async (req, res, next) => {
   try {
-    const updated = await UnifiedContactService.updateContact(req.params.id, req.body);
+    const updated: unknown = await UnifiedContactService.updateContact(req.params.id, req.body as UnifiedContactFields);
     if (!updated) return res.status(404).json({ success: false, error: 'Contact not found' });
     res.json({ success: true, data: updated });
   } catch (err) { next(err); }
@@ -373,7 +374,7 @@ router.patch('/:id', async (req, res, next) => {
 // DELETE /api/v3/unified-contacts/:id — permanently delete a contact
 router.delete('/:id', async (req, res, next) => {
   try {
-    const deleted = await UnifiedContactService.deleteContact(req.params.id);
+    const deleted = await UnifiedContactService.deleteContact(req.params.id) as { id: number } | null;
     if (!deleted) return res.status(404).json({ success: false, error: 'Contact not found' });
     res.json({ success: true, id: deleted.id });
   } catch (err) { next(err); }

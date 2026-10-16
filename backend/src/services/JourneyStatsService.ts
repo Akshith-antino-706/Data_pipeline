@@ -18,6 +18,7 @@
  */
 import db from '../config/database.js';
 import type { StatsNodeDef, StatsNodeMeta, NodeStatsRow, DateNodeStatsRow, NodeStatsNumericKey } from '../types/services_C.js';
+import type { U2NodeCountRow, U2DistRow, U2JourneyFlowShell, U2LifecycleTotals, U2JourneyStalenessRow } from '../types/u2JourneyStats.js';
 
 const ROLLUP_KEY = '__ALL__'; // node_id sentinel for the per-journey summary row
 
@@ -35,7 +36,7 @@ export async function refreshJourney(journeyId: string) {
   const W = String(botWindowSec());
 
   // Journey shell (name/status/nodes for denormalized display fields)
-  const { rows: [jf] } = await db.query(
+  const { rows: [jf] } = await db.query<U2JourneyFlowShell>(
     `SELECT journey_id, name, status, journey_type, nodes FROM journey_flows WHERE journey_id = $1`,
     [journeyId]
   );
@@ -52,7 +53,7 @@ export async function refreshJourney(journeyId: string) {
   // 1) base: entries = distinct recipients that reached the node; sent = distinct recipients
   //    successfully sent to (so a node's Sent can never exceed its Entries — duplicate/resend
   //    rows collapse); failed = distinct recipients whose send failed; sends_today (Dubai day).
-  const { rows: baseRows } = await db.query(`
+  const { rows: baseRows } = await db.query<U2NodeCountRow<'entries' | 'sent' | 'failed' | 'sends_today'>>(`
     SELECT node_id,
       COUNT(DISTINCT unified_id)                                                     AS entries,
       COUNT(DISTINCT unified_id) FILTER (WHERE status NOT IN ('failed','queued'))    AS sent,
@@ -65,7 +66,7 @@ export async function refreshJourney(journeyId: string) {
   `, [journeyId]);
 
   // 2) opens + human_opens (idx_esl_journey_node_opened)
-  const { rows: openRows } = await db.query(`
+  const { rows: openRows } = await db.query<U2NodeCountRow<'opened' | 'human_opened'>>(`
     SELECT node_id,
       COUNT(DISTINCT unified_id) AS opened,
       COUNT(DISTINCT unified_id) FILTER (
@@ -77,7 +78,7 @@ export async function refreshJourney(journeyId: string) {
   `, [journeyId, W]);
 
   // 3) clicks + human_clicks (idx_esl_journey_node_clicked)
-  const { rows: clickRows } = await db.query(`
+  const { rows: clickRows } = await db.query<U2NodeCountRow<'clicked' | 'human_clicked'>>(`
     SELECT node_id,
       COUNT(DISTINCT unified_id) AS clicked,
       COUNT(DISTINCT unified_id) FILTER (
@@ -89,7 +90,7 @@ export async function refreshJourney(journeyId: string) {
   `, [journeyId, W]);
 
   // 4) landed clicks (clicked AND produced a real GTM event for this journey)
-  const { rows: landedRows } = await db.query(`
+  const { rows: landedRows } = await db.query<U2NodeCountRow<'landed'>>(`
     SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS landed
     FROM email_send_log esl
     WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL
@@ -98,7 +99,7 @@ export async function refreshJourney(journeyId: string) {
   `, [journeyId]);
 
   // 5) delivered + bounced (SES events) in one join
-  const { rows: sesRows } = await db.query(`
+  const { rows: sesRows } = await db.query<U2NodeCountRow<'delivered' | 'bounced'>>(`
     SELECT esl.node_id,
       COUNT(*) FILTER (WHERE se.event_type = 'Delivery') AS delivered,
       COUNT(*) FILTER (WHERE se.event_type = 'Bounce')   AS bounced
@@ -109,7 +110,7 @@ export async function refreshJourney(journeyId: string) {
   `, [journeyId]);
 
   // 6) GTM website events per node
-  const { rows: gtmRows } = await db.query(`
+  const { rows: gtmRows } = await db.query<U2NodeCountRow<'gtm_events'>>(`
     SELECT node_id, COUNT(*) AS gtm_events
     FROM gtm_events
     WHERE journey_id = $1 AND node_id IS NOT NULL
@@ -117,7 +118,7 @@ export async function refreshJourney(journeyId: string) {
   `, [journeyId]);
 
   // Unsubscribes PER NODE (which email drove the opt-out) from unsubscribe_log.
-  const { rows: unsubRows } = await db.query(`
+  const { rows: unsubRows } = await db.query<U2NodeCountRow<'unsubscribed'>>(`
     SELECT node_id, COUNT(*) AS unsubscribed
     FROM unsubscribe_log
     WHERE journey_id = $1 AND node_id IS NOT NULL
@@ -131,9 +132,9 @@ export async function refreshJourney(journeyId: string) {
   // entries live in gtm_journey_entries and are still read live in getById's gtm
   // branch. Uses idx_je_journey_status_node (no new index). exited/converted split
   // by reason to match getById's node_stats semantics (unsubscribed vs else=booked).
-  let distRows = [];
+  let distRows: U2DistRow[] = [];
   if ((jf.journey_type || 'normal') !== 'gtm') {
-    ({ rows: distRows } = await db.query(`
+    ({ rows: distRows } = await db.query<U2DistRow>(`
       SELECT current_node_id AS node_id,
         COUNT(*) FILTER (WHERE status='snapshot')::int                                                          AS dist_snapshot,
         COUNT(*) FILTER (WHERE status='active')::int                                                            AS dist_active,
@@ -153,9 +154,9 @@ export async function refreshJourney(journeyId: string) {
   // getById read it verbatim, preserving fields it can't otherwise derive from the
   // rollup (converted, pre_existing_unsub). Normal journeys only (GTM computes its
   // own entryStats live from gtm_journey_entries).
-  let entryStatsObj = null;
+  let entryStatsObj: Record<string, string> | null = null;
   if ((jf.journey_type || 'normal') !== 'gtm') {
-    const { rows: [es] } = await db.query(`
+    const { rows: [es] } = await db.query<Record<string, string>>(`
       WITH je AS (
         SELECT entry_id, status, exit_reason FROM journey_entries WHERE journey_id = $1
       ),
@@ -293,12 +294,12 @@ export async function refreshJourney(journeyId: string) {
  */
 export async function computeNodesForDate(journeyId: string, dateStr: string) {
   const W = String(botWindowSec());
-  const { rows: [jf] } = await db.query(`SELECT nodes FROM journey_flows WHERE journey_id = $1`, [journeyId]);
+  const { rows: [jf] } = await db.query<Pick<U2JourneyFlowShell, 'nodes'>>(`SELECT nodes FROM journey_flows WHERE journey_id = $1`, [journeyId]);
   const nodeDefs = Array.isArray(jf?.nodes) ? jf.nodes : [];
   const nodeMeta = new Map<string, StatsNodeMeta>(nodeDefs.map((n: StatsNodeDef) => [n.id, { label: n.data?.label || n.data?.title || n.id, type: n.type || 'unknown' }]));
 
   // Sequential (journey-scoped → small) to avoid the concurrent-scan cache thrash.
-  const base = (await db.query(`
+  const base = (await db.query<U2NodeCountRow<'entries' | 'sent' | 'failed'>>(`
     SELECT node_id,
       COUNT(DISTINCT unified_id) AS entries,
       COUNT(DISTINCT unified_id) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
@@ -306,36 +307,36 @@ export async function computeNodesForDate(journeyId: string, dateStr: string) {
     FROM email_send_log
     WHERE journey_id=$1 AND node_id IS NOT NULL AND (sent_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
     GROUP BY node_id`, [journeyId, dateStr])).rows;
-  const opens = (await db.query(`
+  const opens = (await db.query<U2NodeCountRow<'opened' | 'human_opened'>>(`
     SELECT node_id, COUNT(DISTINCT unified_id) AS opened,
       COUNT(DISTINCT unified_id) FILTER (WHERE opened_at - sent_at >= ($3 || ' seconds')::interval) AS human_opened
     FROM email_send_log
     WHERE journey_id=$1 AND node_id IS NOT NULL AND opened_at IS NOT NULL AND sent_at IS NOT NULL AND (sent_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
     GROUP BY node_id`, [journeyId, dateStr, W])).rows;
-  const clicks = (await db.query(`
+  const clicks = (await db.query<U2NodeCountRow<'clicked' | 'human_clicked'>>(`
     SELECT node_id, COUNT(DISTINCT unified_id) AS clicked,
       COUNT(DISTINCT unified_id) FILTER (WHERE clicked_at - sent_at >= ($3 || ' seconds')::interval) AS human_clicked
     FROM email_send_log
     WHERE journey_id=$1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL AND sent_at IS NOT NULL AND (sent_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
     GROUP BY node_id`, [journeyId, dateStr, W])).rows;
-  const landed = (await db.query(`
+  const landed = (await db.query<U2NodeCountRow<'landed'>>(`
     SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS landed
     FROM email_send_log esl
     WHERE esl.journey_id=$1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL AND esl.sent_at IS NOT NULL AND (esl.sent_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
       AND EXISTS (SELECT 1 FROM gtm_events g WHERE g.unified_id = esl.unified_id AND g.journey_id = $1)
     GROUP BY esl.node_id`, [journeyId, dateStr])).rows;
-  const ses = (await db.query(`
+  const ses = (await db.query<U2NodeCountRow<'delivered' | 'bounced'>>(`
     SELECT esl.node_id,
       COUNT(*) FILTER (WHERE se.event_type='Delivery') AS delivered,
       COUNT(*) FILTER (WHERE se.event_type='Bounce')   AS bounced
     FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
     WHERE esl.journey_id=$1 AND esl.node_id IS NOT NULL AND (esl.sent_at AT TIME ZONE 'Asia/Dubai')::date = $2::date AND se.event_type IN ('Delivery','Bounce')
     GROUP BY esl.node_id`, [journeyId, dateStr])).rows;
-  const gtm = (await db.query(`
+  const gtm = (await db.query<U2NodeCountRow<'gtm_events'>>(`
     SELECT node_id, COUNT(*) AS gtm_events FROM gtm_events
     WHERE journey_id=$1 AND node_id IS NOT NULL AND (created_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
     GROUP BY node_id`, [journeyId, dateStr])).rows;
-  const unsub = (await db.query(`
+  const unsub = (await db.query<U2NodeCountRow<'unsubscribed'>>(`
     SELECT node_id, COUNT(*) AS unsubscribed FROM unsubscribe_log
     WHERE journey_id=$1 AND node_id IS NOT NULL AND (unsubscribed_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
     GROUP BY node_id`, [journeyId, dateStr])).rows;
@@ -365,7 +366,7 @@ export async function computeNodesForDate(journeyId: string, dateStr: string) {
  */
 async function _lifecycleTotals(journeyId: string) {
   const q = async (table: string, exitCol: string) => {
-    const { rows: [r] } = await db.query(`
+    const { rows: [r] } = await db.query<U2LifecycleTotals>(`
       SELECT COUNT(*)::int AS entries,
         COUNT(*) FILTER (WHERE ${exitCol} = 'booked')::int      AS booked,
         COUNT(*) FILTER (WHERE status = 'exited' AND ${exitCol} = 'booked')::int      AS exited_booked,
@@ -409,7 +410,7 @@ export async function refreshAllJourneys({ maxMs = 25 * 60 * 1000, force = false
   };
 
   // Stalest first: journeys never computed (LEFT JOIN NULL) rank ahead of old ones.
-  const { rows: journeys } = await db.query(`
+  const { rows: journeys } = await db.query<U2JourneyStalenessRow>(`
     SELECT jf.journey_id, jf.status, st.computed_at
     FROM journey_flows jf
     LEFT JOIN LATERAL (

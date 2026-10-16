@@ -155,7 +155,7 @@ function validateRanking(ranking: Record<string, unknown>, { holidayMap, cruiseM
     if (!Array.isArray(arr)) throw new Error(`${slot} must be an array`);
     if (arr.length !== SLOT_COUNT) throw new Error(`${slot} has ${arr.length} keys, expected ${SLOT_COUNT}`);
     if (new Set(arr).size !== SLOT_COUNT) throw new Error(`${slot} has duplicate keys`);
-    for (const k of arr) {
+    for (const k of arr as string[]) {
       if (!map[k]) throw new Error(`${slot} contains unknown key: "${k}"`);
     }
   };
@@ -218,7 +218,7 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
   if (!m) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
 
   let parsed: ClaudeParsedJson;
-  try { parsed = JSON.parse(m[0]); }
+  try { parsed = JSON.parse(m[0]) as ClaudeParsedJson; }
   catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${m[0].slice(0, 200)}`); }
 
   return { parsed, usage: data.usage, model: data.model, webSearchCalls };

@@ -39,7 +39,7 @@ export async function runContactMarketRefresh() {
 
   // 1. PRIMARY: every distinct mobile_country value (derived from the phone number — far more
   //    reliable than the free-text country field) → resolve once → one batched UPDATE each.
-  const { rows: mobiles } = await db.query(
+  const { rows: mobiles } = await db.query<{ mobile_country: string }>(
     `SELECT DISTINCT mobile_country FROM unified_contacts WHERE COALESCE(TRIM(mobile_country), '') <> ''`
   );
   let changed = 0;
@@ -49,7 +49,7 @@ export async function runContactMarketRefresh() {
   }
 
   // 2. FALLBACK: rows with NO mobile_country → derive from the country field.
-  const { rows: countries } = await db.query(
+  const { rows: countries } = await db.query<{ country: string }>(
     `SELECT DISTINCT country FROM unified_contacts
      WHERE COALESCE(TRIM(mobile_country), '') = '' AND COALESCE(TRIM(country), '') <> ''`
   );

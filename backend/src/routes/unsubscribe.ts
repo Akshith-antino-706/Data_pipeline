@@ -43,13 +43,13 @@ async function resolveContact({ log, t }: { log?: string; t?: string }) {
   if (t) { uid = verifyUnsubToken(t); }
   if (!uid && log && /^\d+$/.test(String(log))) {
     logId = parseInt(log);
-    const { rows: [r] } = await db.query(
+    const { rows: [r] } = await db.query<{ unified_id: string | null; email: string; journey_id: number | null; node_id: string | null }>(
       'SELECT unified_id, email, journey_id, node_id FROM email_send_log WHERE id = $1', [logId]
     );
     if (r) { uid = r.unified_id; email = r.email; journeyId = r.journey_id; nodeId = r.node_id; }
   }
   if (!uid) return null;
-  const { rows: [c] } = await db.query('SELECT id, email, email_unsubscribe FROM unified_contacts WHERE id = $1', [uid]);
+  const { rows: [c] } = await db.query<{ id: string; email: string | null; email_unsubscribe: string | null }>('SELECT id, email, email_unsubscribe FROM unified_contacts WHERE id = $1', [uid]);
   if (!c) return null;
   return {
     uid: c.id, email: c.email || email,
@@ -172,7 +172,7 @@ router.post('/change-email', express.urlencoded({ extended: false }), async (req
     }
 
     // Guard against silently overwriting a DIFFERENT contact's email (would create a duplicate).
-    const { rows: [dup] } = await db.query(
+    const { rows: [dup] } = await db.query<{ id: string }>(
       'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = $1 AND id <> $2 LIMIT 1', [newEmail, c.uid]
     );
     if (dup) {

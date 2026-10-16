@@ -69,7 +69,7 @@ export async function runWeeklyProductUrlHealthCheck() {
   const startedAt = Date.now();
   console.log(`[UrlHealthCheck] Starting at ${new Date().toISOString()}`);
 
-  const { rows: candidates } = await db.query(`
+  const { rows: candidates } = await db.query<{ product_id: number; url: string }>(`
     SELECT product_id, url
     FROM products
     WHERE url IS NOT NULL AND url <> ''
@@ -79,7 +79,7 @@ export async function runWeeklyProductUrlHealthCheck() {
   console.log(`[UrlHealthCheck] ${candidates.length} products to check`);
 
   let ok = 0, dead = 0, transportError = 0, other = 0;
-  const deadIds = [];
+  const deadIds: number[] = [];
   for (let i = 0; i < candidates.length; i++) {
     const { product_id, url } = candidates[i];
     const status = await _probeWithRetry(url);

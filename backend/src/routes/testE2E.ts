@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'; // UTM tokens must not be guessable
 import { query } from '../config/database.js';
 import { EmailChannel } from '../services/channels/EmailChannel.js';
 import EmailRenderer from '../services/EmailRenderer.js';
+import type { TestE2EContactRow, TestE2ETemplateRow, TestE2ECampaignRow, TestE2EUtmRow, TestE2EUserLinkRow, TestE2EEntryRow, TestE2EJourneyRow, TestE2ECampaignUtmRow } from '../types/u6Services.js';
 
 const router = Router();
 
@@ -23,11 +24,11 @@ router.post('/send-journey-emails', async (_req, res, next) => {
 
     for (const user of TEST_USERS) {
       // Get user's segment
-      const { rows: [uc] } = await query('SELECT * FROM unified_contacts WHERE unified_id = $1', [user.unified_id]);
+      const { rows: [uc] } = await query<TestE2EContactRow>('SELECT * FROM unified_contacts WHERE unified_id = $1', [user.unified_id]);
       if (!uc) { results.push({ user: user.name, error: 'not found' }); continue; }
 
       // Find the first email template for this segment
-      const { rows: [tpl] } = await query(`
+      const { rows: [tpl] } = await query<TestE2ETemplateRow>(`
         SELECT ct.* FROM content_templates ct
         WHERE ct.name ILIKE '%' || $1 || '%' AND ct.channel = 'email' AND ct.html_template_id IS NOT NULL
         ORDER BY ct.id LIMIT 1
@@ -36,7 +37,7 @@ router.post('/send-journey-emails', async (_req, res, next) => {
       if (!tpl) { results.push({ user: user.name, segment: uc.booking_status, error: 'no email template' }); continue; }
 
       // Find campaign for this segment+channel
-      const { rows: [campaign] } = await query(
+      const { rows: [campaign] } = await query<TestE2ECampaignRow>(
         "SELECT * FROM campaigns WHERE segment_label = $1 AND channel = 'email' LIMIT 1",
         [uc.booking_status]
       );
@@ -45,10 +46,10 @@ router.post('/send-journey-emails', async (_req, res, next) => {
       let utmLink = 'https://www.raynatours.com/activities';
       if (campaign) {
         try {
-          const { rows: [utm] } = await query('SELECT * FROM utm_tracking WHERE campaign_id = $1 LIMIT 1', [campaign.id]);
+          const { rows: [utm] } = await query<TestE2EUtmRow>('SELECT * FROM utm_tracking WHERE campaign_id = $1 LIMIT 1', [campaign.id]);
           if (utm) {
             // Create or get user-level link
-            const { rows: [existing] } = await query(
+            const { rows: [existing] } = await query<TestE2EUserLinkRow>(
               'SELECT * FROM user_utm_links WHERE utm_id = $1 AND unified_id = $2',
               [utm.utm_id, user.unified_id]
             );
@@ -82,7 +83,7 @@ router.post('/send-journey-emails', async (_req, res, next) => {
       });
 
       // Log journey event if enrolled
-      const { rows: [entry] } = await query(
+      const { rows: [entry] } = await query<TestE2EEntryRow>(
         "SELECT entry_id FROM journey_entries WHERE customer_id = $1 AND status = 'active' LIMIT 1",
         [user.unified_id]
       );
@@ -124,11 +125,11 @@ router.post('/enroll-users', async (_req, res, next) => {
     const results = [];
 
     for (const user of TEST_USERS) {
-      const { rows: [uc] } = await query('SELECT booking_status FROM unified_contacts WHERE unified_id = $1', [user.unified_id]);
+      const { rows: [uc] } = await query<TestE2EContactRow>('SELECT booking_status FROM unified_contacts WHERE unified_id = $1', [user.unified_id]);
       if (!uc) { results.push({ user: user.name, error: 'not found' }); continue; }
 
       // Find journey for this segment
-      const { rows: [journey] } = await query(`
+      const { rows: [journey] } = await query<TestE2EJourneyRow>(`
         SELECT journey_id, name FROM journey_flows
         WHERE status = 'active' AND nodes->0->'data'->>'segmentLabel' = $1
         LIMIT 1
@@ -229,11 +230,11 @@ router.post('/generate-utm-links', async (_req, res, next) => {
     const results = [];
 
     for (const user of TEST_USERS) {
-      const { rows: [uc] } = await query('SELECT booking_status FROM unified_contacts WHERE unified_id = $1', [user.unified_id]);
+      const { rows: [uc] } = await query<TestE2EContactRow>('SELECT booking_status FROM unified_contacts WHERE unified_id = $1', [user.unified_id]);
       if (!uc) continue;
 
       // Get all campaigns for this segment
-      const { rows: campaigns } = await query(
+      const { rows: campaigns } = await query<TestE2ECampaignUtmRow>(
         'SELECT c.id, c.name, c.channel, ut.utm_id, ut.full_url FROM campaigns c JOIN utm_tracking ut ON ut.campaign_id = c.id WHERE c.segment_label = $1',
         [uc.booking_status]
       );

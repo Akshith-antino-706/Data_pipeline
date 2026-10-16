@@ -11,6 +11,7 @@
 
 import db from '../config/database.js';
 import AuthService from './AuthService.js';
+import type { U7TestSegmentScheduleRow, U7PrewarmResponse, U7DaySendResponse } from '../types/u7TestSendScheduler.js';
 
 type ScheduleId = number | string;
 
@@ -71,14 +72,14 @@ export function getPrewarmState(id: ScheduleId) {
 }
 
 export async function listSchedules() {
-  const { rows } = await db.query(
+  const { rows } = await db.query<U7TestSegmentScheduleRow>(
     'SELECT * FROM test_segment_schedule ORDER BY id DESC'
   );
   return rows.map(r => ({ ...r, prewarm: pw(r.id) }));
 }
 
 export async function getStatus(id: ScheduleId) {
-  const { rows: [row] } = await db.query(
+  const { rows: [row] } = await db.query<U7TestSegmentScheduleRow>(
     'SELECT * FROM test_segment_schedule WHERE id = $1', [id]
   );
   return row ? { ...row, prewarm: pw(id) } : null;
@@ -89,12 +90,12 @@ export async function start({
   loop = false,
   emails = [],
   baseUrl = `http://localhost:${process.env.PORT || 3001}`,
-} = {}) {
+}: { destinationKey?: string; loop?: boolean; emails?: string[]; baseUrl?: string } = {}) {
   if (!Array.isArray(emails) || emails.length === 0) {
     throw new Error('Select at least one recipient email before starting');
   }
 
-  const { rows: [row] } = await db.query(
+  const { rows: [row] } = await db.query<U7TestSegmentScheduleRow>(
     `INSERT INTO test_segment_schedule
        (is_running, started_at, next_day_to_send, last_sent_day, last_sent_at,
         destination_key, loop, emails, updated_at)
@@ -111,7 +112,7 @@ export async function start({
 
 export async function removeEmail(id: ScheduleId, email: unknown) {
   const clean = String(email).toLowerCase().trim();
-  const { rows: [row] } = await db.query(
+  const { rows: [row] } = await db.query<U7TestSegmentScheduleRow>(
     `UPDATE test_segment_schedule
         SET emails     = (SELECT COALESCE(jsonb_agg(e), '[]'::jsonb)
                             FROM jsonb_array_elements_text(emails::jsonb) AS e
@@ -133,7 +134,7 @@ export async function removeEmail(id: ScheduleId, email: unknown) {
 export async function stop(id: ScheduleId) {
   _clearTimer(id);
   prewarms.delete(id);
-  const { rows: [row] } = await db.query(
+  const { rows: [row] } = await db.query<U7TestSegmentScheduleRow>(
     `UPDATE test_segment_schedule
         SET is_running = FALSE, updated_at = NOW()
       WHERE id = $1
@@ -163,7 +164,7 @@ async function _prewarmThenSend({ id, destinationKey, baseUrl }: { id: ScheduleI
       headers: selfHeaders(),
       body: JSON.stringify({ destinationKey }),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await <Promise<U7PrewarmResponse>>res.json().catch(() => ({}));
     prewarms.set(id, {
       status:      'ready',
       startedAt:   prewarms.get(id)?.startedAt,
@@ -229,7 +230,7 @@ export async function tick(id: ScheduleId, {
     headers: selfHeaders(),
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await <Promise<U7DaySendResponse>>res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`Day-${day} send failed: HTTP ${res.status} ${data?.error || ''}`);
 
   // When >100 recipients, the day endpoint responds async (no results array yet)

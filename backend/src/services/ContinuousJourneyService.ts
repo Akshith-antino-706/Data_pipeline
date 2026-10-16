@@ -288,7 +288,7 @@ class ContinuousJourneyService {
     const { rows: [c] } = await db.query<{ email_unsubscribe: string | null }>('SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [unifiedId]);
     if (String(c?.email_unsubscribe || '').toLowerCase() === 'yes') return 'unsubscribed';
     if (itemId && itemId !== '_noitem') {
-      const { rows: [b] } = await db.query(
+      const { rows: [b] } = await db.query<{ '?column?': number }>(
         `SELECT 1 FROM gtm_events WHERE unified_id = $1 AND event_name = 'purchase'
            AND COALESCE(raw_payload->>'itemId','') = $2 LIMIT 1`,
         [unifiedId, String(itemId)]

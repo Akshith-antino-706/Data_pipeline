@@ -15,6 +15,8 @@ import { Router } from 'express';
 import GupshupService from '../services/GupshupService.js';
 import db from '../config/database.js';
 import type { SmsSendOutcome, RcsNode, RcsTemplate, RcsButton } from '../types/routesGupshup.js';
+import type { GupshupWebhookPayload } from '../types/servicesGupshup.js';
+import type { SetExternalIdBody, SmsTestSendBody, RcsTestSendBody, CtmTemplateListResponse } from '../types/u5Routes.js';
 
 const router = Router();
 
@@ -49,7 +51,7 @@ router.post('/templates/:id/check-status', async (req, res) => {
 // Used for SMS where DLT content-template-id is issued out-of-band and set manually
 router.post('/templates/:id/set-external-id', async (req, res) => {
   try {
-    const { externalId, status, category } = req.body;
+    const { externalId, status, category } = req.body as SetExternalIdBody;
     if (!externalId) throw new Error('externalId required');
     const data = await GupshupService.setExternalId(parseInt(req.params.id), externalId, { status, category });
     res.json({ success: true, data });
@@ -63,7 +65,7 @@ router.post('/templates/:id/set-external-id', async (req, res) => {
 router.post('/templates/:id/force-approve', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { rows: [before] } = await db.query('SELECT external_status, channel FROM content_templates WHERE id = $1', [id]);
+    const { rows: [before] } = await db.query<{ external_status: string | null; channel: string }>('SELECT external_status, channel FROM content_templates WHERE id = $1', [id]);
     if (!before) throw new Error('Template not found');
     if (!['whatsapp', 'sms'].includes(before.channel)) throw new Error('Only whatsapp/sms templates need Gupshup approval');
     await db.query(
@@ -106,7 +108,7 @@ router.post('/bulk-submit', async (_req, res) => {
 router.post('/webhook/wa', async (req, res) => {
   // TODO: verify Gupshup signature once GUPSHUP_CALLBACK_SECRET is set
   try {
-    const data = await GupshupService.handleWebhook(req.body);
+    const data = await GupshupService.handleWebhook(req.body as GupshupWebhookPayload);
     res.json({ received: true, ...data });
   } catch (err) {
     console.error('[Gupshup WA webhook] error:', err);
@@ -146,7 +148,7 @@ router.get('/sms/templates', async (_req, res) => {
 
 // POST /sms/test-send — send ONE SMS to a test number. Body: { phone, templateId, name? }.
 router.post('/sms/test-send', async (req, res) => {
-  const { phone, templateId, name } = req.body || {};
+  const { phone, templateId, name } = req.body as SmsTestSendBody | undefined || {};
   const digits = String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
   if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ success: false, error: 'valid phone required (10-15 digits, no +)' });
   if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
@@ -154,7 +156,7 @@ router.post('/sms/test-send', async (req, res) => {
   // Best-effort contact identity (stays null for ad-hoc numbers).
   let unifiedId = null;
   try {
-    const { rows: [u] } = await db.query(
+    const { rows: [u] } = await db.query<{ id: number }>(
       `SELECT id FROM unified_contacts WHERE regexp_replace(COALESCE(mobile,''),'\\D','','g') = $1 LIMIT 1`, [digits]);
     unifiedId = u?.id ?? null;
   } catch { /* identity is optional */ }
@@ -162,7 +164,7 @@ router.post('/sms/test-send', async (req, res) => {
   // Render {{first_name}} the same way the SMS worker does, so the preview matches the send.
   let messageBody = null;
   try {
-    const { rows: [tpl] } = await db.query('SELECT body FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+    const { rows: [tpl] } = await db.query<{ body: string | null }>('SELECT body FROM content_templates WHERE id = $1', [parseInt(templateId)]);
     const firstName = name ? String(name).split(' ')[0] : 'there';
     messageBody = (tpl?.body || '').replace(/\{\{first_name\}\}/g, firstName) || null;
   } catch { /* sendSMS falls back to tpl.body */ }
@@ -266,7 +268,7 @@ router.get('/rcs/templates', async (_req, res) => {
     if (r.status === 401 || r.status === 403) {
       return res.status(200).json({ success: false, error: 'CTM token expired/invalid — paste a fresh console token into GUPSHUP_CTM_TOKEN.', data: [] });
     }
-    const j = await r.json().catch(() => ({}));
+    const j = await r.json().catch(() => ({})) as CtmTemplateListResponse;
     const templates = (j.templates || []).map(parseRcsTemplate);
     res.json({ success: true, data: templates, source: 'ctm' });
   } catch (err) {
@@ -287,7 +289,7 @@ router.get('/rcs/templates/:code/preview', async (req, res) => {
 
 // POST /rcs/test-send — Body: { phone, templateCode, name?, customParams?, smsFallback? }
 router.post('/rcs/test-send', async (req, res) => {
-  const { phone, templateCode, name, customParams, smsFallback } = req.body || {};
+  const { phone, templateCode, name, customParams, smsFallback } = req.body as RcsTestSendBody | undefined || {};
   const digits = String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
   if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ success: false, error: 'valid phone required (10-15 digits, no +)' });
   if (!templateCode) return res.status(400).json({ success: false, error: 'templateCode required (issued by Gupshup after RCS template approval)' });
@@ -295,7 +297,7 @@ router.post('/rcs/test-send', async (req, res) => {
   // Best-effort contact identity (stays null for ad-hoc numbers).
   let unifiedId = null;
   try {
-    const { rows: [u] } = await db.query(
+    const { rows: [u] } = await db.query<{ id: number }>(
       `SELECT id FROM unified_contacts WHERE regexp_replace(COALESCE(mobile,''),'\\D','','g') = $1 LIMIT 1`, [digits]);
     unifiedId = u?.id ?? null;
   } catch { /* identity is optional */ }

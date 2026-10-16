@@ -18,6 +18,7 @@ import type {
   JourneyFlowGraph, JourneyForecastItem, JourneyRunningGroup,
 } from '../types/journeyService.js';
 import type { SegmentCondition } from '../types/services_B_segments.js';
+import type { U1SubjectHtmlRow, U1JourneyListRow, U1GtmFanoutRow, U1NodeCampaignRow, U1StrategyRow, U1EntryNodeRow, U1ActiveEntryRow, U1NodeStatsRollupRow, U1JourneyEntryListRow, U1JourneyCampaignRow, U1EnrollmentRow, U1DueEntryRow, U1NodeSendAggRow } from '../types/u1JourneyService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -76,12 +77,12 @@ async function _rankWithRetry(fetchFn: RankingFetchFn): Promise<RankingFetchResu
  * Falls back to the in-memory global cache when journeyId/nodeId aren't provided
  * (e.g. generic content previews).
  */
-async function _getFrozenRanking(journeyId: JourneyId | null | undefined, nodeId: string | null | undefined, rankingType: string, fetchFn: RankingFetchFn) {
+async function _getFrozenRanking<R>(journeyId: JourneyId | null | undefined, nodeId: string | null | undefined, rankingType: string, fetchFn: RankingFetchFn): Promise<R> {
   if (!journeyId || !nodeId) {
-    return _getCachedRanking(rankingType, fetchFn);
+    return _getCachedRanking(rankingType, fetchFn) as Promise<R>;
   }
   // 1. Return frozen ranking if it exists
-  const { rows: [existing] } = await db.query(
+  const { rows: [existing] } = await db.query<{ ranking: R | null }>(
     'SELECT ranking FROM journey_node_rankings WHERE journey_id = $1 AND node_id = $2 AND ranking_type = $3',
     [journeyId, nodeId, rankingType]
   );
@@ -98,11 +99,11 @@ async function _getFrozenRanking(journeyId: JourneyId | null | undefined, nodeId
   );
   // Re-read in case a concurrent worker won the INSERT race — guarantees all
   // workers for this node use the exact same frozen ranking.
-  const { rows: [frozen] } = await db.query(
+  const { rows: [frozen] } = await db.query<{ ranking: R | null }>(
     'SELECT ranking FROM journey_node_rankings WHERE journey_id = $1 AND node_id = $2 AND ranking_type = $3',
     [journeyId, nodeId, rankingType]
   );
-  return frozen?.ranking || ranking;
+  return frozen?.ranking || ranking as R;
 }
 
 // Day6 destination list — module-level so render + prewarm agree.
@@ -140,7 +141,7 @@ export async function renderDayHtml(templateId: string | number, contactId: stri
     const { default: rankTrendingWelcome }    = await import('./Day1WelcomeRankingService.js');
     const { buildDay1WelcomeData }            = await import('./Day1WelcomeDataService.js');
     const { renderDay1Welcome }               = await import('./Day1WelcomeRenderer.js');
-    const ranking = await _getFrozenRanking(journeyId, nodeId, 'welcome', rankTrendingWelcome);
+    const ranking = await _getFrozenRanking<Parameters<typeof buildDay1WelcomeData>[0]['ranking']>(journeyId, nodeId, 'welcome', rankTrendingWelcome);
     const data = await buildDay1WelcomeData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay1Welcome(tplFile('day1-welcome-dynamic.html'), data), subject: 'Your Rayna Tours Journey Starts Here' });
   }
@@ -148,7 +149,7 @@ export async function renderDayHtml(templateId: string | number, contactId: stri
     const { default: rankTrendingCruises }    = await import('./Day2CruiseRankingService.js');
     const { buildDay2CruiseData }             = await import('./Day2CruiseDataService.js');
     const { renderDay2Cruise }                = await import('./Day2CruiseRenderer.js');
-    const ranking = await _getFrozenRanking(journeyId, nodeId, 'cruise', rankTrendingCruises);
+    const ranking = await _getFrozenRanking<Parameters<typeof buildDay2CruiseData>[0]['ranking']>(journeyId, nodeId, 'cruise', rankTrendingCruises);
     const data    = await buildDay2CruiseData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay2Cruise(tplFile('day2-cruise-dynamic.html'), data), subject: 'Set Sail: Cruise Highlights from Rayna Tours' });
   }
@@ -156,7 +157,7 @@ export async function renderDayHtml(templateId: string | number, contactId: stri
     const { rankTrendingVisas }             = await import('./VisaRankingService.js');
     const { buildDay3VisaData }             = await import('./Day3VisaDataService.js');
     const { renderDay3Visa }                = await import('./Day3VisaRenderer.js');
-    const ranking = await _getFrozenRanking(journeyId, nodeId, 'visa', rankTrendingVisas);
+    const ranking = await _getFrozenRanking<Parameters<typeof buildDay3VisaData>[0]['ranking']>(journeyId, nodeId, 'visa', rankTrendingVisas);
     if (!ranking.ratings_keys) ranking.ratings_keys = ['rayna', 'trustpilot', 'tripadvisor', 'google'];
     const data = await buildDay3VisaData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay3Visa(tplFile('day3-visa-dynamic.html'), data), subject: 'Your Visa, Sorted | Rayna Tours' });
@@ -165,7 +166,7 @@ export async function renderDayHtml(templateId: string | number, contactId: stri
     const { default: rankTrendingHolidays } = await import('./Day4HolidaysRankingService.js');
     const { buildDay4HolidaysData } = await import('./Day4HolidaysDataService.js');
     const { renderDay4Holidays }    = await import('./Day4HolidaysRenderer.js');
-    const ranking = await _getFrozenRanking(journeyId, nodeId, 'holidays', rankTrendingHolidays);
+    const ranking = await _getFrozenRanking<Parameters<typeof buildDay4HolidaysData>[0]['ranking']>(journeyId, nodeId, 'holidays', rankTrendingHolidays);
     const data    = await buildDay4HolidaysData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay4Holidays(tplFile('day4-holidays-dynamic.html'), data), subject: 'Curated Trips Selected for You | Rayna Tours' });
   }
@@ -173,7 +174,7 @@ export async function renderDayHtml(templateId: string | number, contactId: stri
     const { default: rankTrendingActivities } = await import('./Day5ActivitiesRankingService.js');
     const { buildDay5ActivitiesData } = await import('./Day5ActivitiesDataService.js');
     const { renderDay5Activities }    = await import('./Day5ActivitiesRenderer.js');
-    const ranking = await _getFrozenRanking(journeyId, nodeId, 'activities', rankTrendingActivities);
+    const ranking = await _getFrozenRanking<Parameters<typeof buildDay5ActivitiesData>[0]['ranking']>(journeyId, nodeId, 'activities', rankTrendingActivities);
     const data    = await buildDay5ActivitiesData({ contactId, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay5Activities(tplFile('day5-activities-dynamic.html'), data), subject: 'Top Activities in Dubai | Rayna Tours' });
   }
@@ -184,7 +185,7 @@ export async function renderDayHtml(templateId: string | number, contactId: stri
     // ONE destination per node (deterministic) — same for every contact + preview,
     // so Claude is called once and all users at this node get the identical email.
     const destKey = _day6DestKey(journeyId, nodeId);
-    const ranking = await _getFrozenRanking(journeyId, nodeId, `destination_${destKey}`, () => rankDestinationSpotlight({ destinationKey: destKey }));
+    const ranking = await _getFrozenRanking<NonNullable<Parameters<typeof buildDay6DestinationData>[0]['ranking']>>(journeyId, nodeId, `destination_${destKey}`, () => rankDestinationSpotlight({ destinationKey: destKey }));
     const data    = await buildDay6DestinationData({ contactId, destinationKey: destKey, ranking, journeyId, nodeId });
     return applyExtraVars({ html: renderDay6Destination(tplFile('day6-destination-dynamic.html'), data), subject: 'Your Next Destination Awaits | Rayna Tours' });
   }
@@ -211,7 +212,7 @@ export async function getDailyAITemplate(templateId: string | number, dateStr: s
   // day, so a UTC key filed the master under the wrong day and 04:00 sends missed it.
   const day = dateStr || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 
-  const { rows: [existing] } = await db.query(
+  const { rows: [existing] } = await db.query<U1SubjectHtmlRow>(
     'SELECT subject, html, source FROM daily_ai_templates WHERE template_id = $1 AND render_date = $2',
     [tid, day]
   );
@@ -230,7 +231,7 @@ export async function getDailyAITemplate(templateId: string | number, dateStr: s
      VALUES ($1, $2, $3, $4, $5) ON CONFLICT (template_id, render_date) DO NOTHING`,
     [tid, day, rendered.subject, rendered.html, source]
   );
-  const { rows: [frozen] } = await db.query(
+  const { rows: [frozen] } = await db.query<U1SubjectHtmlRow>(
     'SELECT subject, html, source FROM daily_ai_templates WHERE template_id = $1 AND render_date = $2',
     [tid, day]
   );
@@ -269,7 +270,7 @@ export async function getOrGenerateNodeEmail({ journeyId, nodeId, templateId }: 
   if (!journeyId || !nodeId) return null;
 
   // 1. Return the node's frozen snapshot if it exists
-  const { rows: [stored] } = await db.query(
+  const { rows: [stored] } = await db.query<U1SubjectHtmlRow>(
     'SELECT subject, html, source FROM journey_node_emails WHERE journey_id = $1 AND node_id = $2',
     [journeyId, nodeId]
   );
@@ -288,7 +289,7 @@ export async function getOrGenerateNodeEmail({ journeyId, nodeId, templateId }: 
     [journeyId, nodeId, parseInt(templateId as string), master.subject, master.html, master.source]
   );
   // Re-read so concurrent first-callers all return the exact same frozen snapshot
-  const { rows: [frozen] } = await db.query(
+  const { rows: [frozen] } = await db.query<U1SubjectHtmlRow>(
     'SELECT subject, html, source FROM journey_node_emails WHERE journey_id = $1 AND node_id = $2',
     [journeyId, nodeId]
   );
@@ -334,11 +335,11 @@ class JourneyService {
     // visible so it can be fixed or deleted.
     where += ' AND jf.snapshot_count IS DISTINCT FROM -1';
 
-    const { rows: [{ count }] } = await db.query(
+    const { rows: [{ count }] } = await db.query<{ count: string }>(
       `SELECT COUNT(*) FROM journey_flows jf WHERE ${where}`, params
     );
 
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U1JourneyListRow>(`
       SELECT jf.*,
         COALESCE(sd.segment_name, cs.name) AS segment_name, sd.segment_number, sd.priority,
         fs.stage_name, fs.stage_color,
@@ -386,7 +387,7 @@ class JourneyService {
     let rollupAll: JourneyNodeStatsRow | null = null;    // the __ALL__ summary row
     let usedRollup = false;
     if (!fresh && journey.journey_type !== 'gtm') {
-      const { rows } = await db.query(
+      const { rows } = await db.query<JourneyNodeStatsRow>(
         `SELECT * FROM journey_node_stats WHERE journey_id = $1 AND distribution_computed_at IS NOT NULL`,
         [journeyId]
       );
@@ -411,7 +412,7 @@ class JourneyService {
     const [entryStatsRes, unsubLogRes, nodeUnsubLogRes] = await Promise.all([
       usedRollup
         ? Promise.resolve({ rows: [ rollupAll?.entry_stats || {} ] })
-        : db.query(`
+        : db.query<Record<string, unknown>>(`
         WITH je AS (
           SELECT entry_id, status, exit_reason
           FROM journey_entries
@@ -436,13 +437,13 @@ class JourneyService {
         LEFT JOIN sent s ON s.entry_id = je.entry_id
       `, [journeyId]),
       // Header total: distinct users who unsubscribed from this journey (any source)
-      db.query(
+      db.query<{ unsubscribed_from_journey: string }>(
         `SELECT COUNT(DISTINCT unified_id) AS unsubscribed_from_journey
          FROM unsubscribe_log WHERE journey_id = $1`,
         [journeyId]
       ),
       // Per-node unsub counts: how many users unsubscribed attributed to each node
-      db.query(
+      db.query<{ node_id: string; unsub_count: string }>(
         `SELECT node_id, COUNT(DISTINCT unified_id) AS unsub_count
          FROM unsubscribe_log
          WHERE journey_id = $1 AND node_id IS NOT NULL
@@ -513,7 +514,7 @@ class JourneyService {
         completed: +r.dist_completed || 0, exited_booked: +r.dist_exited_booked || 0, exited_unsub: +r.dist_exited_unsub || 0,
       };
     } else if (journey.journey_type !== 'gtm') {
-      const { rows } = await db.query(`
+      const { rows } = await db.query<{ node_id: string } & JourneyNodeDistribution>(`
         SELECT current_node_id AS node_id,
           COUNT(*) FILTER (WHERE status='snapshot')::int                                                          AS snapshot,
           COUNT(*) FILTER (WHERE status='active')::int                                                            AS active,
@@ -539,7 +540,7 @@ class JourneyService {
       // processedSet = nodes an entry has ever reached. FAST PATH: derive from the
       //   rollup (a node with sends OR any distribution has been processed) — no
       //   journey_events scan. Live DISTINCT query otherwise.
-      let processedSet;
+      let processedSet: Set<string>;
       if (usedRollup) {
         processedSet = new Set(Object.keys(rollupByNode).filter(nid => {
           const r = rollupByNode[nid];
@@ -547,7 +548,7 @@ class JourneyService {
             || (+r.dist_completed || 0) > 0 || (+r.dist_exited_booked || 0) > 0 || (+r.dist_exited_unsub || 0) > 0;
         }));
       } else {
-        const { rows: processedNodes } = await db.query(
+        const { rows: processedNodes } = await db.query<{ node_id: string }>(
           `SELECT DISTINCT je.node_id
            FROM journey_events je
            WHERE je.journey_id = $1
@@ -610,14 +611,14 @@ class JourneyService {
       db.query(
         `UPDATE journey_flows SET node_statuses = $1 WHERE journey_id = $2`,
         [JSON.stringify(node_statuses), journeyId]
-      ).catch(err => console.warn(`[getById] node_statuses persist failed for ${journeyId}: ${err.message}`));
+      ).catch((err: Error) => console.warn(`[getById] node_statuses persist failed for ${journeyId}: ${err.message}`));
     }
 
     // Per-node triggered (unique entries) and exited (converted at that node) counts.
     // FAST PATH: derive from the rollup — triggered ≈ distinct recipients that reached
     // the node (rollup `entries`), exited ≈ per-node exits. The frontend only displays
     // `triggered` ("N contacts reached this step"). Live query otherwise.
-    let nodeEntryCounts;
+    let nodeEntryCounts: { node_id: string; triggered: number | string; exited: number | string }[];
     if (usedRollup) {
       nodeEntryCounts = Object.entries(rollupByNode).map(([nid, r]) => ({
         node_id: nid,
@@ -625,7 +626,7 @@ class JourneyService {
         exited: (+r.dist_exited_booked || 0) + (+r.dist_exited_unsub || 0),
       }));
     } else {
-      ({ rows: nodeEntryCounts } = await db.query(`
+      ({ rows: nodeEntryCounts } = await db.query<{ node_id: string; triggered: string; exited: string }>(`
         SELECT node_id,
           COUNT(DISTINCT je.entry_id) AS triggered,
           COUNT(DISTINCT je.entry_id) FILTER (WHERE je.event_type = 'converted') AS exited
@@ -654,7 +655,7 @@ class JourneyService {
 
     // Per-node ranking source ('claude' | 'fallback' | 'fallback_no_api_key')
     // so the UI can flag nodes that fell back instead of AI-ranking.
-    const { rows: rankingRows } = await db.query(
+    const { rows: rankingRows } = await db.query<{ node_id: string; sources: string[] | null }>(
       `SELECT node_id, ARRAY_AGG(DISTINCT source) AS sources
        FROM journey_node_rankings WHERE journey_id = $1 GROUP BY node_id`,
       [journeyId]
@@ -671,7 +672,7 @@ class JourneyService {
     //    so the SAME frontend node UI shows real sent/opened/clicked. Normal journeys
     //    keep the engine-derived values untouched. ──
     let nodeAnalyticsOut = nodeAnalytics;
-    let entryStatsOut = entryStats;
+    let entryStatsOut: Record<string, unknown> = entryStats;
     if (journey.journey_type === 'gtm') {
       // ── CONTINUOUS journey: live state from gtm_journey_entries (the conveyor belt) ──
       // There is NO "completed" node status — the journey is always-on; new users keep
@@ -679,7 +680,7 @@ class JourneyService {
       // complete or exit, but a NODE never finishes.) Counts reflect the REAL live position.
 
       // Where every active entry currently sits (current_node_id distribution)
-      const { rows: dist } = await db.query(
+      const { rows: dist } = await db.query<{ node: string; active: number }>(
         `SELECT current_node_id AS node, COUNT(*)::int active
          FROM gtm_journey_entries WHERE journey_id = $1 AND status = 'active'
          GROUP BY current_node_id`, [journeyId]
@@ -687,7 +688,7 @@ class JourneyService {
       const activeAt: Record<string, number> = {}; dist.forEach(r => { activeAt[r.node] = r.active; });
 
       // Where every EXITED entry left the belt (current_node_id) + why (purchased / unsubscribed)
-      const { rows: exDist } = await db.query(
+      const { rows: exDist } = await db.query<GtmExitDistRow>(
         `SELECT current_node_id AS node,
                 COUNT(*)::int exited,
                 COUNT(*) FILTER (WHERE exit_reason='purchased')::int purchased,
@@ -698,7 +699,7 @@ class JourneyService {
       const exitedAt: Record<string, GtmExitDistRow> = {}; exDist.forEach(r => { exitedAt[r.node] = r; });
 
       // Journey-wide entry totals
-      const { rows: [tot] } = await db.query(
+      const { rows: [tot] } = await db.query<{ total: number; active: number; completed: number; exited: number }>(
         `SELECT COUNT(*)::int total,
                 COUNT(*) FILTER (WHERE status='active')::int active,
                 COUNT(*) FILTER (WHERE status='completed')::int completed,
@@ -707,7 +708,7 @@ class JourneyService {
       );
 
       // Cumulative sends per node (for sent/opened/clicked analytics + the passed-through count)
-      const { rows: sends } = await db.query(
+      const { rows: sends } = await db.query<{ node_id: string; sent: number; opened: number; clicked: number }>(
         `SELECT node_id,
                 COUNT(*) FILTER (WHERE status NOT IN ('failed','queued'))::int sent,
                 COUNT(*) FILTER (WHERE status IN ('opened','clicked'))::int opened,
@@ -719,7 +720,7 @@ class JourneyService {
 
       nodeAnalyticsOut = [];
       sends.forEach(r => {
-        for (const [et, v] of [['action_sent', r.sent], ['action_read', r.opened], ['action_clicked', r.clicked]])
+        for (const [et, v] of [['action_sent', r.sent], ['action_read', r.opened], ['action_clicked', r.clicked]] as [string, number][])
           if (v > 0) nodeAnalyticsOut.push({ node_id: r.node_id, event_type: et, channel: 'email', event_count: v });
       });
 
@@ -922,7 +923,7 @@ class JourneyService {
     const { sql, params } = segRows;
     if (!events.length) {
       // PER-USER mode (no GTM event) → one entry per segment user, minus unsubscribed.
-      const { rows: [pc] } = await db.query(`
+      const { rows: [pc] } = await db.query<{ n: number }>(`
         SELECT COUNT(*)::int AS n
         FROM   (${sql}) seg
         JOIN   unified_contacts uc ON uc.id = seg.id
@@ -933,7 +934,7 @@ class JourneyService {
     // PER-ITEM mode (GTM event) → DISTINCT (segment user × item), after exit conditions.
     // Same cutoff as _gtmFanout: trigger_from_date set → on/after it; blank → ALL history.
     const fromDate = journey.trigger_from_date || null;
-    const { rows: [pc] } = await db.query(`
+    const { rows: [pc] } = await db.query<{ n: number }>(`
       SELECT COUNT(*)::int AS n FROM (
         SELECT DISTINCT g.unified_id, COALESCE(g.raw_payload->>'itemId', '')
         FROM   gtm_events g
@@ -963,11 +964,11 @@ class JourneyService {
     }
     const events = await this._gtmTriggerEvents(journey);
     const { sql, params } = segRows;
-    let rows;
+    let rows: U1GtmFanoutRow[];
     if (!events.length) {
       // PER-USER mode (no GTM event selected) → ONE entry per segment user (item=_noitem),
       // excluding unsubscribed. Snapshot = segment size (e.g. 2), not per item.
-      ({ rows } = await db.query(`
+      ({ rows } = await db.query<U1GtmFanoutRow>(`
         SELECT seg.id AS "unifiedId", NULL::text AS "eventId", '_noitem' AS "itemId"
         FROM   (${sql}) seg
         JOIN   unified_contacts uc ON uc.id = seg.id
@@ -980,7 +981,7 @@ class JourneyService {
       // picker), only enroll events fired ON/AFTER it. If BLANK (null) → NO cutoff → enroll
       // ALL historical events. Compared against gtm_events.created_at (idx_gtm_created).
       const fromDate = journey.trigger_from_date || null;
-      ({ rows } = await db.query(`
+      ({ rows } = await db.query<U1GtmFanoutRow>(`
         WITH seg AS (${sql})
         SELECT DISTINCT ON (g.unified_id, COALESCE(g.raw_payload->>'itemId', ''))
                g.unified_id        AS "unifiedId",
@@ -1048,7 +1049,7 @@ class JourneyService {
     await db.query(
       `UPDATE journey_flows SET node_synced_at = COALESCE(node_synced_at, '{}'::jsonb) || $2::jsonb WHERE journey_id = $1`,
       [journeyId, JSON.stringify(stamps)]
-    ).catch(e => console.error(`[Journey ${journeyId}] refresh stamp failed: ${e.message}`));
+    ).catch((e: Error) => console.error(`[Journey ${journeyId}] refresh stamp failed: ${e.message}`));
   }
 
   /**
@@ -1078,7 +1079,7 @@ class JourneyService {
 
     // Cohort's current node = first node (in flow order) that still has active entries.
     const ordered = (journey.nodes || []).map(n => n.id);
-    const { rows: act } = await db.query(
+    const { rows: act } = await db.query<{ current_node_id: string }>(
       `SELECT DISTINCT current_node_id FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
       [jid]
     );
@@ -1163,7 +1164,7 @@ class JourneyService {
     // Continuous-journey trigger source ('gtm' GTM events | 'giveaway' giveaway events).
     const trigSource = triggerSource === 'giveaway' ? 'giveaway' : 'gtm';
 
-    const { rows: [journey] } = await db.query(`
+    const { rows: [journey] } = await db.query<JourneyFlowRow>(`
       INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *
@@ -1197,7 +1198,7 @@ class JourneyService {
 
       setImmediate(() => build()
         .then(() => console.log(`[Journey ${journeyId}] snapshot complete`))
-        .catch((err) => {
+        .catch((err: Error) => {
           console.error(`[Journey ${journeyId}] snapshot FAILED: ${err.message}`);
           return db.query('UPDATE journey_flows SET snapshot_count = -2 WHERE journey_id = $1', [journeyId]).catch(() => {});
         })
@@ -1316,7 +1317,7 @@ class JourneyService {
   }
 
   static async getNodeSendLog(journeyId: JourneyId, nodeId: string) {
-    const { rows: [camp] } = await db.query(
+    const { rows: [camp] } = await db.query<U1NodeCampaignRow>(
       `SELECT id, name, sent_count, fail_count, target_count, started_at, completed_at, updated_at,
               delivered_count, read_count, click_count, bounce_count
        FROM campaigns WHERE journey_id = $1 AND journey_node_id = $2`,
@@ -1342,7 +1343,7 @@ class JourneyService {
   // ── Auto-generate journey from strategy flow_steps ──────────
 
   static async generateFromStrategy(strategyId: string | number) {
-    const { rows: [strategy] } = await db.query(
+    const { rows: [strategy] } = await db.query<U1StrategyRow>(
       'SELECT * FROM omnichannel_strategies WHERE id = $1', [strategyId]
     );
     if (!strategy) throw new Error('Strategy not found');
@@ -1411,7 +1412,7 @@ class JourneyService {
     edges.push({ id: `edge_${edges.length}`, source: prevNodeId, target: goalNode.id });
 
     // Find segment_id for this strategy
-    const { rows: [seg] } = await db.query(
+    const { rows: [seg] } = await db.query<{ segment_id: number }>(
       'SELECT segment_id FROM segment_definitions WHERE segment_name = $1 LIMIT 1',
       [strategy.segment_label]
     );
@@ -1454,7 +1455,7 @@ class JourneyService {
       'alok@antino.io',
     ]);
 
-    const { rows: [journey] } = await db.query(
+    const { rows: [journey] } = await db.query<JourneyFlowRow>(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
     if (!journey) throw new Error('Journey not found');
@@ -1534,7 +1535,7 @@ class JourneyService {
     else if (journey.audience === 'rest')   audienceFilter = 'AND uc.is_indian = false';
 
     const firstNodeId = journey.nodes?.[0]?.id || 'node_0';
-    let rows;
+    let rows: { entry_id: number }[];
 
     if (journey.custom_segment_id) {
       // Custom segment — paginated batch enroll (handles 1 M+ without memory/array-size issues)
@@ -1552,10 +1553,10 @@ class JourneyService {
             if (journey.audience === 'rest'   &&  c.is_indian) return false;
             return true;
           })
-          .map(c => c.id);
+          .map(c => c.id as number);
 
         if (ids.length > 0) {
-          const { rows: inserted } = await db.query(`
+          const { rows: inserted } = await db.query<{ entry_id: number }>(`
             INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
             SELECT $1, uc.id, $2,
                    CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
@@ -1577,7 +1578,7 @@ class JourneyService {
       }
     } else {
       // Standard segment — query segment_customers
-      ({ rows } = await db.query(`
+      ({ rows } = await db.query<{ entry_id: number }>(`
         INSERT INTO journey_entries (journey_id, customer_id, current_node_id, track)
         SELECT $1, sc.customer_id, $2, CASE WHEN uc.is_indian THEN 'indian' ELSE 'rest' END
         FROM segment_customers sc
@@ -1676,7 +1677,7 @@ class JourneyService {
     // This avoids N individual queries for exit conditions.
     if (journey.exit_on_conversion !== false) {
       // Bulk exit: booked users
-      const { rows: bookedExits } = await db.query(`
+      const { rows: bookedExits } = await db.query<U1EntryNodeRow>(`
         UPDATE journey_entries je
         SET status = 'exited', exit_reason = 'booked', completed_at = NOW(), next_fire_at = NULL
         FROM unified_contacts uc
@@ -1693,7 +1694,7 @@ class JourneyService {
       }
 
       // Bulk exit: unsubscribed users
-      const { rows: unsubExits } = await db.query(`
+      const { rows: unsubExits } = await db.query<U1EntryNodeRow>(`
         UPDATE journey_entries je
         SET status = 'exited', exit_reason = 'unsubscribed', completed_at = NOW(), next_fire_at = NULL
         FROM unified_contacts uc
@@ -1705,7 +1706,7 @@ class JourneyService {
 
       // Bulk exit: purchased users (ON_TRIP or FUTURE_TRAVEL + gtm purchase event)
       // Only applies to entries past the first action node — first email always sends
-      const { rows: purchasedExits } = await db.query(`
+      const { rows: purchasedExits } = await db.query<U1EntryNodeRow>(`
         UPDATE journey_entries je
         SET status = 'exited', exit_reason = 'purchased', completed_at = NOW(), next_fire_at = NULL
         FROM unified_contacts uc
@@ -1757,7 +1758,7 @@ class JourneyService {
     let firstEntry = true;
 
     while (hasMore) {
-      const { rows: activeEntries } = await db.query(`
+      const { rows: activeEntries } = await db.query<U1ActiveEntryRow>(`
         SELECT je.*, uc.name, uc.email, uc.mobile AS phone,
           uc.booking_status, uc.email_unsubscribe, uc.is_indian
         FROM journey_entries je
@@ -1974,7 +1975,7 @@ class JourneyService {
 
         if (condition === 'booked' || condition === 'booked_activity') {
           // Check if customer has any new booking since entering the journey
-          const { rows: [bookCheck] } = await db.query(`
+          const { rows: [bookCheck] } = await db.query<{ has_booking: boolean }>(`
             SELECT EXISTS (
               SELECT 1 FROM rayna_tours WHERE unified_id = $1 AND bill_date > $2
               UNION ALL
@@ -1988,7 +1989,7 @@ class JourneyService {
           result = bookCheck.has_booking;
         } else if (condition === 'clicked_link' || condition === 'clicked') {
           // Check if customer clicked any UTM link for this journey's campaigns
-          const { rows: [clickCheck] } = await db.query(`
+          const { rows: [clickCheck] } = await db.query<{ has_clicked: boolean }>(`
             SELECT EXISTS (
               SELECT 1 FROM user_utm_links uul
               JOIN utm_tracking ut ON ut.utm_id = uul.utm_id
@@ -2000,7 +2001,7 @@ class JourneyService {
           result = clickCheck.has_clicked;
         } else if (condition === 'opened_email') {
           // Check journey_events for email open
-          const { rows: [openCheck] } = await db.query(`
+          const { rows: [openCheck] } = await db.query<{ has_opened: boolean }>(`
             SELECT EXISTS (
               SELECT 1 FROM journey_events
               WHERE entry_id = $1 AND event_type = 'email_opened'
@@ -2165,7 +2166,7 @@ class JourneyService {
     `, [journeyId]);
 
     // ── Auto-complete journey when all entries are done (no active entries left) ──
-    const { rows: [{ active_cnt }] } = await db.query(
+    const { rows: [{ active_cnt }] } = await db.query<{ active_cnt: string }>(
       `SELECT COUNT(*) AS active_cnt FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
       [journeyId]
     );
@@ -2192,7 +2193,7 @@ class JourneyService {
    */
   static async _prewarmRankingCache(journeyId: JourneyId, nodeMap: JourneyFlowNodeMap) {
     // Find distinct action nodes that have active+due entries right now
-    const { rows: activeNodes } = await db.query(`
+    const { rows: activeNodes } = await db.query<{ current_node_id: string }>(`
       SELECT DISTINCT current_node_id
       FROM journey_entries
       WHERE journey_id = $1 AND status = 'active'
@@ -2287,7 +2288,7 @@ class JourneyService {
 
       // Active entries + when their last journey event happened (used to compute
       // when their current wait will elapse).
-      const { rows: entries } = await db.query(
+      const { rows: entries } = await db.query<{ entry_id: number; current_node_id: string; entered_at: Date; last_event: Date | null }>(
         `SELECT je.entry_id, je.current_node_id, je.entered_at,
                 (SELECT MAX(created_at) FROM journey_events WHERE entry_id = je.entry_id) AS last_event
            FROM journey_entries je
@@ -2361,7 +2362,7 @@ class JourneyService {
    * dynamic content" a literal invariant of the code, not an emergent property.
    */
   static async _ensureNodeSnapshotted({ journeyId, runId, nodeId, contentTemplateId }: { journeyId: JourneyId; runId: string; nodeId: string; contentTemplateId: number }) {
-    const { rows: [cfg] } = await db.query(
+    const { rows: [cfg] } = await db.query<{ uses_popular_products: boolean | null; product_type: string | null; product_limit: number | null; html_body: string | null }>(
       `SELECT eht.uses_popular_products, eht.product_type, eht.product_limit,
               eht.html_body
          FROM content_templates ct
@@ -2409,7 +2410,7 @@ class JourneyService {
 
   static async _resolveHtmlTemplateId(contentTemplateId: number): Promise<string | number | null> {
     if (!contentTemplateId) return null;
-    const { rows: [r] } = await db.query(
+    const { rows: [r] } = await db.query<{ html_template_id: number | null }>(
       'SELECT html_template_id FROM content_templates WHERE id = $1',
       [contentTemplateId]
     );
@@ -2547,7 +2548,7 @@ class JourneyService {
    * Returns: { converted: bool, reason: 'booked' | 'unsubscribed' | null, details?: {...} }
    */
   static async checkConversion(entry: { customer_id: string | number }) {
-    const { rows: [uc] } = await db.query(
+    const { rows: [uc] } = await db.query<{ booking_status: string | null; email_unsubscribe: string | null }>(
       `SELECT booking_status, email_unsubscribe FROM unified_contacts WHERE id = $1`,
       [entry.customer_id]
     );
@@ -2624,11 +2625,11 @@ class JourneyService {
       where += ` AND je.status = $${params.length}`;
     }
 
-    const { rows: [{ count }] } = await db.query(
+    const { rows: [{ count }] } = await db.query<{ count: string }>(
       `SELECT COUNT(*) FROM journey_entries je WHERE ${where}`, params
     );
 
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U1JourneyEntryListRow>(`
       SELECT je.entry_id, je.customer_id, je.current_node_id, je.status,
              je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
              je.next_fire_at, je.track,
@@ -2647,7 +2648,7 @@ class JourneyService {
 
   static async getJourneyCampaignAnalytics(journeyId: JourneyId) {
     // Get all campaigns linked to this journey's segment
-    const { rows: journey } = await db.query(
+    const { rows: journey } = await db.query<JourneyFlowRow>(
       `SELECT jf.*, sd.segment_name, cs.name AS custom_segment_name FROM journey_flows jf
        LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
        LEFT JOIN custom_segments cs ON cs.id = jf.custom_segment_id
@@ -2672,7 +2673,7 @@ class JourneyService {
           return seg ? (await CustomSegmentService.getCountPreview(seg.conditions || [])) : 0;
         }
         if (journey[0].segment_id) {
-          const { rows: [segCount] } = await db.query(
+          const { rows: [segCount] } = await db.query<{ cnt: string }>(
             `SELECT COUNT(*) AS cnt FROM segment_customers WHERE segment_id = $1 AND is_active = true`,
             [journey[0].segment_id]
           );
@@ -2686,7 +2687,7 @@ class JourneyService {
     })();
 
     // Get campaign metrics — prefer direct journey_id match, fallback to segment_label
-    const { rows: campaigns } = await db.query(`
+    const { rows: campaigns } = await db.query<U1JourneyCampaignRow>(`
       SELECT c.id, c.name, c.channel::text, c.status, c.template_id,
         c.sent_count, c.delivered_count, c.read_count, c.click_count,
         c.bounce_count, c.fail_count, c.conversion_count, c.revenue_total,
@@ -2710,9 +2711,9 @@ class JourneyService {
 
     let openMap: Record<string, number>, gtmClickMap: Record<string, number>, humanOpenMap: Record<string, number>, humanClickMap: Record<string, number>, landedClickMap: Record<string, number>,
         deliveredByNodeMap: Record<string, number>, bouncedByNodeMap: Record<string, number>;
-    let statsAsOf = null, rollupTargetCount = null;
+    let statsAsOf: Date | null = null, rollupTargetCount: number | null = null;
 
-    const { rows: statRows } = await db.query(
+    const { rows: statRows } = await db.query<U1NodeStatsRollupRow>(
       `SELECT * FROM journey_node_stats WHERE journey_id = $1`, [journeyId]
     );
     const perNode = statRows.filter(r => r.node_id !== '__ALL__');
@@ -2729,11 +2730,11 @@ class JourneyService {
       bouncedByNodeMap   = Object.fromEntries(perNode.map(r => [r.node_id, num(r.bounced)]));
       const allRow = statRows.find(r => r.node_id === '__ALL__');
       rollupTargetCount = allRow ? num(allRow.target_count) : null;
-      statsAsOf = perNode.reduce((m, r) => (!m || r.computed_at > m ? r.computed_at : m), null);
+      statsAsOf = perNode.reduce<Date | null>((m, r) => (!m || r.computed_at > m ? r.computed_at : m), null);
     } else {
       // FALLBACK — live compute for journeys not yet in the rollup (sequential partial-index
       // scans; small journeys only, so fast). Mirrors what the cron aggregator computes.
-      const { rows: openRows } = await db.query(`
+      const { rows: openRows } = await db.query<{ node_id: string; c: string; h: string }>(`
         SELECT node_id,
           COUNT(DISTINCT unified_id) AS c,
           COUNT(DISTINCT unified_id) FILTER (
@@ -2743,7 +2744,7 @@ class JourneyService {
         WHERE journey_id = $1 AND node_id IS NOT NULL AND opened_at IS NOT NULL
         GROUP BY node_id
       `, [journeyId, String(BOT_WINDOW_SEC)]);
-      const { rows: clickRows } = await db.query(`
+      const { rows: clickRows } = await db.query<{ node_id: string; c: string; h: string }>(`
         SELECT node_id,
           COUNT(DISTINCT unified_id) AS c,
           COUNT(DISTINCT unified_id) FILTER (
@@ -2753,20 +2754,20 @@ class JourneyService {
         WHERE journey_id = $1 AND node_id IS NOT NULL AND clicked_at IS NOT NULL
         GROUP BY node_id
       `, [journeyId, String(BOT_WINDOW_SEC)]);
-      const { rows: landedRows } = await db.query(`
+      const { rows: landedRows } = await db.query<{ node_id: string; c: string }>(`
         SELECT esl.node_id, COUNT(DISTINCT esl.unified_id) AS c
         FROM email_send_log esl
         WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND esl.clicked_at IS NOT NULL
           AND EXISTS (SELECT 1 FROM gtm_events g WHERE g.unified_id = esl.unified_id AND g.journey_id = $1)
         GROUP BY esl.node_id
       `, [journeyId]);
-      const { rows: deliveredRows } = await db.query(`
+      const { rows: deliveredRows } = await db.query<{ node_id: string; delivered_count: string }>(`
         SELECT esl.node_id, COUNT(*) AS delivered_count
         FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
         WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Delivery'
         GROUP BY esl.node_id
       `, [journeyId]);
-      const { rows: bounceRows } = await db.query(`
+      const { rows: bounceRows } = await db.query<{ node_id: string; bounce_count: string }>(`
         SELECT esl.node_id, COUNT(*) AS bounce_count
         FROM email_send_log esl JOIN ses_events se ON se.message_id = esl.external_id
         WHERE esl.journey_id = $1 AND esl.node_id IS NOT NULL AND se.event_type = 'Bounce'
@@ -2787,7 +2788,7 @@ class JourneyService {
     //    stay untouched; this is a separate overlay keyed by node_id. ──
     let whatsappByNode = {};
     try {
-      const { rows: waRows } = await db.query(`
+      const { rows: waRows } = await db.query<{ node_id: string; sent: string; failed: string; delivered: string; opened: string; clicked: string }>(`
         WITH wsl AS (
           SELECT node_id, external_id, status
             FROM whatsapp_send_log
@@ -2943,7 +2944,7 @@ class JourneyService {
   // ── Get Enrollments ────────────────────────────────────────
 
   static async getEnrollments(journeyId: JourneyId) {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U1EnrollmentRow>(`
       SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id, je.status,
         je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
         uc.name, uc.email, uc.mobile AS phone, uc.country,
@@ -2955,7 +2956,7 @@ class JourneyService {
       LIMIT 100
     `, [journeyId]);
 
-    const { rows: [stats] } = await db.query(`
+    const { rows: [stats] } = await db.query<{ total: number; active: number; completed: number; converted: number; exited: number }>(`
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE status = 'active')::int AS active,
@@ -3074,7 +3075,7 @@ class JourneyService {
     }
 
     // ── Check snapshot entries exist (snapshotted at creation time) ──
-    const { rows: [{ cnt: snapshotCount }] } = await db.query(
+    const { rows: [{ cnt: snapshotCount }] } = await db.query<{ cnt: string }>(
       `SELECT COUNT(*) AS cnt FROM journey_entries WHERE journey_id = $1 AND status = 'snapshot'`,
       [journeyId]
     );
@@ -3151,7 +3152,7 @@ class JourneyService {
     if (newStatus === 'active') {
       const nodes = journey.nodes || [];
       const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]));
-      const { rows: activeEntries } = await db.query(
+      const { rows: activeEntries } = await db.query<{ entry_id: number; current_node_id: string }>(
         `SELECT entry_id, current_node_id FROM journey_entries WHERE journey_id = $1 AND status = 'active'`,
         [journeyId]
       );
@@ -3183,7 +3184,7 @@ class JourneyService {
    * next_fire_at <= NOW().
    */
   static async processDueEntries() {
-    const { rows: dueEntries } = await db.query(`
+    const { rows: dueEntries } = await db.query<U1DueEntryRow>(`
       SELECT je.entry_id, je.journey_id, je.customer_id, je.current_node_id,
              je.entered_at, je.track, je.last_run_id,
              uc.booking_status, uc.name, uc.email, uc.mobile AS phone, uc.is_indian,
@@ -3317,7 +3318,7 @@ class JourneyService {
     const nodes = journey.nodes || [];
 
     // ── 1. Actual fire times from journey_events (completed nodes) ──
-    const { rows: eventRows } = await db.query(`
+    const { rows: eventRows } = await db.query<{ node_id: string; first_fired_at: Date; last_fired_at: Date; entry_count: string }>(`
       SELECT je.node_id,
              MIN(je.created_at) AS first_fired_at,
              MAX(je.created_at) AS last_fired_at,
@@ -3330,7 +3331,7 @@ class JourneyService {
     const eventMap = Object.fromEntries(eventRows.map(r => [r.node_id, r]));
 
     // ── 2. next_fire_at for currently active entries ──
-    const { rows: entryRows } = await db.query(`
+    const { rows: entryRows } = await db.query<{ current_node_id: string; earliest_fire: Date; latest_fire: Date; entry_count: string }>(`
       SELECT current_node_id,
              MIN(next_fire_at) AS earliest_fire,
              MAX(next_fire_at) AS latest_fire,
@@ -3350,10 +3351,10 @@ class JourneyService {
 
     // Seed rolling time from the earliest active next_fire_at, or NOW for draft
     if (entryRows.length > 0) {
-      const minFire = entryRows.reduce((min, r) => (!min || r.earliest_fire < min) ? r.earliest_fire : min, null);
+      const minFire = entryRows.reduce<Date | null>((min, r) => (!min || r.earliest_fire < min) ? r.earliest_fire : min, null);
       rollingTime = minFire ? new Date(minFire) : new Date();
     } else if (eventRows.length > 0) {
-      const maxEvent = eventRows.reduce((max, r) => (!max || r.last_fired_at > max) ? r.last_fired_at : max, null);
+      const maxEvent = eventRows.reduce<Date | null>((max, r) => (!max || r.last_fired_at > max) ? r.last_fired_at : max, null);
       rollingTime = maxEvent ? new Date(maxEvent) : new Date();
     } else {
       rollingTime = journey.scheduled_start_at ? new Date(journey.scheduled_start_at) : new Date();
@@ -3481,7 +3482,7 @@ class JourneyService {
       queuedRow, stuckAgg, fallbackRows, failureRows, unsubAgg, journeyStatRows,
     ] = await Promise.all([
       // Forecast: active entries grouped by journey, current node, Dubai-date (next 7 days)
-      db.query(`
+      db.query<{ journey_id: number; current_node_id: string; fire_date: Date; cnt: number }>(`
         SELECT journey_id, current_node_id,
                (next_fire_at AT TIME ZONE 'Asia/Dubai')::date AS fire_date,
                COUNT(*)::int AS cnt
@@ -3491,7 +3492,7 @@ class JourneyService {
         GROUP BY journey_id, current_node_id, fire_date
       `),
       // Running now: where every active cohort currently sits
-      db.query(`
+      db.query<{ journey_id: number; current_node_id: string; cnt: number; next_fire: Date | null }>(`
         SELECT journey_id, current_node_id, COUNT(*)::int AS cnt,
                MIN(next_fire_at) AS next_fire
         FROM journey_entries
@@ -3499,7 +3500,7 @@ class JourneyService {
         GROUP BY journey_id, current_node_id
       `),
       // Engagement timeseries (journey sends, trailing 30 days, Dubai date)
-      db.query(`
+      db.query<{ d: Date; delivered: number; opened: number; clicked: number }>(`
         SELECT (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date AS d,
                COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
                COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)::int AS opened,
@@ -3509,7 +3510,7 @@ class JourneyService {
         GROUP BY d ORDER BY d
       `),
       // KPIs: active journeys + active entries + conversions(7d)
-      db.query(`
+      db.query<{ active_journeys: number; active_entries: number; conversions_7d: number }>(`
         SELECT
           (SELECT COUNT(*) FROM journey_flows WHERE status = 'active')::int AS active_journeys,
           (SELECT COUNT(*) FROM journey_entries WHERE status = 'active')::int AS active_entries,
@@ -3517,16 +3518,16 @@ class JourneyService {
              WHERE status = 'converted' AND converted_at >= NOW() - INTERVAL '7 days')::int AS conversions_7d
       `),
       // Open rate (7d) from journey sends
-      db.query(`
+      db.query<{ delivered: number; opened: number }>(`
         SELECT
           COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
           COUNT(*) FILTER (WHERE opened_at IS NOT NULL)::int AS opened
         FROM email_send_log
         WHERE source = 'journey' AND created_at >= NOW() - INTERVAL '7 days'
       `),
-      db.query(`SELECT COUNT(*)::int AS n FROM email_send_log WHERE source = 'journey' AND status = 'queued'`),
+      db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM email_send_log WHERE source = 'journey' AND status = 'queued'`),
       // Health: stuck entries (overdue >1h) grouped by journey
-      db.query(`
+      db.query<{ journey_id: number; cnt: number; oldest: Date | null }>(`
         SELECT journey_id, COUNT(*)::int AS cnt, MIN(next_fire_at) AS oldest
         FROM journey_entries
         WHERE status = 'active' AND next_fire_at IS NOT NULL
@@ -3534,14 +3535,14 @@ class JourneyService {
         GROUP BY journey_id ORDER BY cnt DESC
       `),
       // Health: today's daily AI templates that fell back to non-Claude content
-      db.query(`
+      db.query<{ template_id: number; source: string }>(`
         SELECT template_id, source FROM daily_ai_templates
         WHERE render_date = (NOW() AT TIME ZONE 'Asia/Dubai')::date
           AND source LIKE 'fallback%'
         ORDER BY template_id
       `),
       // Health: recent failed journey sends (last 24h)
-      db.query(`
+      db.query<{ journey_id: number; node_id: string | null; email: string | null; subject: string | null; error_message: string | null; created_at: Date }>(`
         SELECT esl.journey_id, esl.node_id, esl.email, esl.subject, esl.error_message, esl.created_at
         FROM email_send_log esl
         WHERE esl.source = 'journey' AND esl.status = 'failed'
@@ -3549,14 +3550,14 @@ class JourneyService {
         ORDER BY esl.created_at DESC LIMIT 25
       `),
       // Unsubscribes by journey + node
-      db.query(`
+      db.query<{ journey_id: number; node_id: string | null; cnt: number }>(`
         SELECT journey_id, node_id, COUNT(*)::int AS cnt
         FROM unsubscribe_log
         WHERE journey_id IS NOT NULL
         GROUP BY journey_id, node_id ORDER BY cnt DESC
       `),
       // Per-journey today's sends + open rate (last 7d)
-      db.query(`
+      db.query<{ journey_id: number; sends_today: number; opened_7d: number; delivered_7d: number }>(`
         SELECT journey_id,
                COUNT(*) FILTER (WHERE (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date
                                         = (NOW() AT TIME ZONE 'Asia/Dubai')::date)::int AS sends_today,
@@ -3641,9 +3642,9 @@ class JourneyService {
 
     // ── Per-journey table ──
     const statById = new Map(journeyStatRows.rows.map(r => [Number(r.journey_id), r]));
-    const activeCountByJourney = new Map();
+    const activeCountByJourney = new Map<number, number>();
     for (const r of runningAgg.rows) activeCountByJourney.set(Number(r.journey_id), (activeCountByJourney.get(Number(r.journey_id)) || 0) + r.cnt);
-    const nextFireByJourney = new Map();
+    const nextFireByJourney = new Map<number, Date>();
     for (const r of runningAgg.rows) {
       if (!r.next_fire) continue;
       const cur = nextFireByJourney.get(Number(r.journey_id));
@@ -3658,7 +3659,7 @@ class JourneyService {
         activeEntries: activeCountByJourney.get(jid) || 0,
         nextFire: nextFireByJourney.get(jid) || null,
         sendsToday: st?.sends_today || 0,
-        openRate: delivered > 0 ? Math.round((st.opened_7d / delivered) * 1000) / 10 : 0,
+        openRate: delivered > 0 ? Math.round((st!.opened_7d / delivered) * 1000) / 10 : 0,
         conversions: Number(j.total_conversions) || 0,
       };
     }).sort((a, b) => b.activeEntries - a.activeEntries);
@@ -3674,9 +3675,9 @@ class JourneyService {
       queue = { email, whatsapp, sms };
     } catch { queue = null; }
 
-    const kpi = kpiRow.rows[0] || {};
-    const open = openRow.rows[0] || {};
-    const openRate7d = open.delivered > 0 ? Math.round((open.opened / open.delivered) * 1000) / 10 : 0;
+    const kpi = kpiRow.rows[0] || ({} as Partial<typeof kpiRow.rows[0]>);
+    const open = openRow.rows[0] || ({} as Partial<typeof openRow.rows[0]>);
+    const openRate7d = open.delivered! > 0 ? Math.round((open.opened! / open.delivered!) * 1000) / 10 : 0;
 
     return {
       generatedAt: new Date().toISOString(),
@@ -3726,7 +3727,7 @@ class JourneyService {
     let dateClause = '';
     if (useDate) { sendParams.push(useDate); dateClause = `AND (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date = $2::date`; }
     const [sendAgg, activeAgg, schedAgg] = await Promise.all([
-      db.query(`
+      db.query<U1NodeSendAggRow>(`
         SELECT node_id,
           COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
           COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)::int AS opened,
@@ -3737,19 +3738,19 @@ class JourneyService {
         WHERE journey_id = $1 AND node_id IS NOT NULL ${dateClause}
         GROUP BY node_id
       `, sendParams),
-      db.query(`
+      db.query<{ node_id: string; active: number }>(`
         SELECT current_node_id AS node_id, COUNT(*)::int AS active
         FROM journey_entries WHERE journey_id = $1 AND status = 'active'
         GROUP BY current_node_id
       `, [journeyId]),
       // Entries scheduled to fire on the chosen date, grouped by the node they sit on
-      useDate ? db.query(`
+      useDate ? db.query<{ node_id: string; scheduled: number }>(`
         SELECT current_node_id AS node_id, COUNT(*)::int AS scheduled
         FROM journey_entries
         WHERE journey_id = $1 AND status = 'active' AND next_fire_at IS NOT NULL
           AND (next_fire_at AT TIME ZONE 'Asia/Dubai')::date = $2::date
         GROUP BY current_node_id
-      `, [journeyId, useDate]) : Promise.resolve({ rows: [] }),
+      `, [journeyId, useDate]) : Promise.resolve({ rows: [] as { node_id: string; scheduled: number }[] }),
     ]);
 
     const sendBy = new Map(sendAgg.rows.map(r => [r.node_id, r]));
@@ -3757,7 +3758,7 @@ class JourneyService {
     const schedBy = new Map(schedAgg.rows.map(r => [r.node_id, r.scheduled]));
 
     const nodeList = nodes.map(n => {
-      const s = sendBy.get(n.id) || {};
+      const s = sendBy.get(n.id) || ({} as Partial<U1NodeSendAggRow>);
       const templateId = n.data?.emailTemplateId ?? n.data?.templateId ?? null;
       const dayNumber = ((templateId as number) >= 1 && (templateId as number) <= 7) ? templateId : null;
       const delivered = s.delivered || 0;
@@ -3779,8 +3780,8 @@ class JourneyService {
         clicked: s.clicked || 0,
         failed: s.failed || 0,
         total: s.total || 0,
-        openRate: delivered > 0 ? Math.round((s.opened / delivered) * 1000) / 10 : 0,
-        clickRate: delivered > 0 ? Math.round((s.clicked / delivered) * 1000) / 10 : 0,
+        openRate: delivered > 0 ? Math.round((s.opened! / delivered) * 1000) / 10 : 0,
+        clickRate: delivered > 0 ? Math.round((s.clicked! / delivered) * 1000) / 10 : 0,
       };
     });
 
@@ -3810,7 +3811,7 @@ class JourneyService {
     `);
 
     const [sendAgg, schedAgg, activeAgg] = await Promise.all([
-      db.query(`
+      db.query<U1NodeSendAggRow & { journey_id: number }>(`
         SELECT journey_id, node_id,
           COUNT(*) FILTER (WHERE sent_at IS NOT NULL OR status IN ('sent','opened','clicked'))::int AS delivered,
           COUNT(*) FILTER (WHERE opened_at  IS NOT NULL)::int AS opened,
@@ -3822,7 +3823,7 @@ class JourneyService {
           AND (COALESCE(sent_at, created_at) AT TIME ZONE 'Asia/Dubai')::date = $1::date
         GROUP BY journey_id, node_id
       `, [date]),
-      db.query(`
+      db.query<{ journey_id: number; node_id: string; scheduled: number }>(`
         SELECT journey_id, current_node_id AS node_id, COUNT(*)::int AS scheduled
         FROM journey_entries
         WHERE status = 'active' AND next_fire_at IS NOT NULL
@@ -3830,11 +3831,11 @@ class JourneyService {
         GROUP BY journey_id, current_node_id
       `, [date]),
       // Live "running" positions — only relevant when the date is today
-      isToday ? db.query(`
+      isToday ? db.query<{ journey_id: number; node_id: string; active: number }>(`
         SELECT journey_id, current_node_id AS node_id, COUNT(*)::int AS active
         FROM journey_entries WHERE status = 'active'
         GROUP BY journey_id, current_node_id
-      `) : Promise.resolve({ rows: [] }),
+      `) : Promise.resolve({ rows: [] as { journey_id: number; node_id: string; active: number }[] }),
     ]);
 
     const key = (j: string | number, n: string) => `${j}|${n}`;
@@ -3850,7 +3851,7 @@ class JourneyService {
       let sentOnDate = 0, scheduledOnDate = 0;
       const relevant = [];
       for (const n of nodes) {
-        const s = sendBy.get(key(jid, n.id)) || {};
+        const s = sendBy.get(key(jid, n.id)) || ({} as Partial<U1NodeSendAggRow>);
         const scheduled = schedBy.get(key(jid, n.id)) || 0;
         const active = activeBy.get(key(jid, n.id)) || 0;
         const fired = (s.total || 0) > 0;
@@ -3883,8 +3884,8 @@ class JourneyService {
           clicked: s.clicked || 0,
           failed: s.failed || 0,
           total: s.total || 0,
-          openRate: delivered > 0 ? Math.round((s.opened / delivered) * 1000) / 10 : 0,
-          clickRate: delivered > 0 ? Math.round((s.clicked / delivered) * 1000) / 10 : 0,
+          openRate: delivered > 0 ? Math.round((s.opened! / delivered) * 1000) / 10 : 0,
+          clickRate: delivered > 0 ? Math.round((s.clicked! / delivered) * 1000) / 10 : 0,
         });
       }
       if (relevant.length === 0) continue; // journey has nothing on this date → drop it

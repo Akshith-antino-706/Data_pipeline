@@ -64,7 +64,7 @@ const pool = new Proxy({} as PgPool, {
   get(_, prop: string | symbol) {
     const p = getPool();
     const val: unknown = p[prop as keyof PgPool];
-    return typeof val === 'function' ? val.bind(p) : val;
+    return typeof val === 'function' ? (val as (this: PgPool, ...args: unknown[]) => unknown).bind(p) : val;
   },
 });
 

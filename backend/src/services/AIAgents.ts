@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import type { ClaudeMessagesResponse, CopyContent, FlowNode, FlowResult } from '../types/aiAgents.js';
+import type { CopywriterSegmentRow, SegmentDistributionRow, CustomerTotalsRow, CntRow, AgentSuggestion, CampaignStatsRow, SegmentPerfRow, ChannelPerfRow, InsightsResult, StrategyPerfRow } from '../types/u5AIAgents.js';
 
 /**
  * AI Decision Agents — MoEngage/CleverTap-level AI Layer
@@ -52,7 +53,7 @@ async function logAgent(agentType: string, actionType: string, targetType: strin
 const Copywriter = {
 
   async generateForSegment(segmentId: number | string, channel: string, tone: string = 'professional') {
-    const { rows: [seg] } = await db.query(`
+    const { rows: [seg] } = await db.query<CopywriterSegmentRow>(`
       SELECT sd.*, fs.stage_name,
         (SELECT COUNT(*) FROM segment_customers WHERE segment_id = sd.segment_id AND is_active = true) AS audience_size
       FROM segment_definitions sd
@@ -83,12 +84,12 @@ Key Strategy Points: ${JSON.stringify(seg.key_points)}
 Return JSON: { "subject": "...", "body": "...", "cta_text": "...", "cta_url": "..." }`;
 
     const aiResponse = await callClaude(systemPrompt, userPrompt);
-    let result;
+    let result: CopyContent;
 
     if (aiResponse) {
       try {
         const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
-        result = jsonMatch ? JSON.parse(jsonMatch[0]) : { body: aiResponse };
+        result = jsonMatch ? JSON.parse(jsonMatch[0]) as CopyContent : { body: aiResponse };
         result.ai_generated = true;
         result.model = 'claude-sonnet-4-20250514';
       } catch {
@@ -102,7 +103,7 @@ Return JSON: { "subject": "...", "body": "...", "cta_text": "...", "cta_url": ".
     }
 
     await logAgent('copywriter', 'generate', 'segment', String(segmentId),
-      { segment: seg.segment_name, channel, tone }, result, result.ai_generated ? 0.9 : 0.6, false, result.model);
+      { segment: seg.segment_name, channel, tone }, result, result.ai_generated ? 0.9 : 0.6, false, result.model!);
 
     return result;
   },
@@ -144,7 +145,7 @@ const SegmentAssist = {
 
   async analyzeAndSuggest() {
     // Get current segment distribution
-    const { rows: segments } = await db.query(`
+    const { rows: segments } = await db.query<SegmentDistributionRow>(`
       SELECT sd.segment_name, sd.priority, sd.customer_type,
         COUNT(sc.customer_id) AS customer_count
       FROM segment_definitions sd
@@ -153,7 +154,7 @@ const SegmentAssist = {
       ORDER BY sd.segment_number
     `);
 
-    const { rows: [totals] } = await db.query(`
+    const { rows: [totals] } = await db.query<CustomerTotalsRow>(`
       SELECT COUNT(*) AS total,
         COUNT(*) FILTER (WHERE total_bookings = 0) AS never_booked,
         COUNT(*) FILTER (WHERE days_since_last_booking > 180) AS dormant,
@@ -161,7 +162,7 @@ const SegmentAssist = {
       FROM customers
     `);
 
-    const unsegmented = await db.query(`
+    const unsegmented = await db.query<CntRow>(`
       SELECT COUNT(*) AS cnt FROM customers c
       WHERE NOT EXISTS (SELECT 1 FROM segment_customers sc WHERE sc.customer_id = c.customer_id AND sc.is_active = true)
     `);
@@ -179,12 +180,12 @@ Frequent (4+): ${totals.frequent}
 Unsegmented: ${unsegmented.rows[0].cnt}`;
 
     const aiResponse = await callClaude(systemPrompt, userPrompt);
-    let suggestions;
+    let suggestions: AgentSuggestion[];
 
     if (aiResponse) {
       try {
         const match = aiResponse.match(/\[[\s\S]*\]/);
-        suggestions = match ? JSON.parse(match[0]) : [{ type: 'info', title: 'AI Analysis', description: aiResponse, impact: 'medium' }];
+        suggestions = match ? JSON.parse(match[0]) as AgentSuggestion[] : [{ type: 'info', title: 'AI Analysis', description: aiResponse, impact: 'medium' }];
       } catch {
         suggestions = [{ type: 'info', title: 'AI Analysis', description: aiResponse, impact: 'medium' }];
       }
@@ -232,12 +233,12 @@ Analytics: ${JSON.stringify(analytics)}
 Entries: ${journey.total_entries}, Conversions: ${journey.total_conversions}, Rate: ${journey.conversion_rate}%`;
 
     const aiResponse = await callClaude(systemPrompt, userPrompt);
-    let result;
+    let result: FlowResult;
 
     if (aiResponse) {
       try {
         const match = aiResponse.match(/\{[\s\S]*\}/);
-        result = match ? JSON.parse(match[0]) : { suggestions: [], overall_score: 50 };
+        result = match ? JSON.parse(match[0]) as FlowResult : { suggestions: [], overall_score: 50 };
       } catch {
         result = { suggestions: [{ type: 'info', title: 'AI Analysis', description: aiResponse, impact: 'medium' }], overall_score: 50 };
       }
@@ -297,7 +298,7 @@ const AnalyticsInsights = {
 
   async generateInsights() {
     // Gather platform-wide metrics
-    const { rows: [campaignStats] } = await db.query(`
+    const { rows: [campaignStats] } = await db.query<CampaignStatsRow>(`
       SELECT
         COUNT(*) AS total_campaigns,
         SUM(sent_count) AS total_sent,
@@ -311,7 +312,7 @@ const AnalyticsInsights = {
       FROM campaigns WHERE status = 'completed'
     `);
 
-    const { rows: segmentPerf } = await db.query(`
+    const { rows: segmentPerf } = await db.query<SegmentPerfRow>(`
       SELECT sd.segment_name, sd.priority,
         COALESCE(sc_agg.customers, 0) AS customers,
         COALESCE(ct_agg.conversions, 0) AS conversions,
@@ -329,7 +330,7 @@ const AnalyticsInsights = {
       LIMIT 10
     `);
 
-    const { rows: channelPerf } = await db.query(`
+    const { rows: channelPerf } = await db.query<ChannelPerfRow>(`
       SELECT channel,
         COUNT(*) AS campaigns,
         SUM(sent_count) AS sent,
@@ -349,12 +350,12 @@ Top segments by conversion: ${JSON.stringify(segmentPerf)}
 Channel performance: ${JSON.stringify(channelPerf)}`;
 
     const aiResponse = await callClaude(systemPrompt, userPrompt);
-    let result;
+    let result: InsightsResult;
 
     if (aiResponse) {
       try {
         const match = aiResponse.match(/\{[\s\S]*\}/);
-        result = match ? JSON.parse(match[0]) : { insights: [{ type: 'info', title: 'Analysis', description: aiResponse }], recommendations: [] };
+        result = match ? JSON.parse(match[0]) as InsightsResult : { insights: [{ type: 'info', title: 'Analysis', description: aiResponse }], recommendations: [] };
       } catch {
         result = { insights: [{ type: 'info', title: 'Analysis', description: aiResponse }], recommendations: [] };
       }
@@ -401,7 +402,7 @@ Channel performance: ${JSON.stringify(channelPerf)}`;
    * This is the "Claude itself should be able to do it. I did not put any human to it" feature
    */
   async autoOptimizeStrategies() {
-    const { rows: strategies } = await db.query(`
+    const { rows: strategies } = await db.query<StrategyPerfRow>(`
       SELECT os.*,
         COUNT(c.id) AS campaign_count,
         AVG(CASE WHEN c.sent_count > 0 THEN c.delivered_count::NUMERIC / c.sent_count * 100 END) AS avg_delivery,
@@ -420,13 +421,13 @@ Channel performance: ${JSON.stringify(channelPerf)}`;
       const suggestions = [];
 
       // Auto-detect issues and apply fixes
-      if (strategy.avg_delivery < 70) {
+      if ((strategy.avg_delivery as unknown as number) < 70) {
         suggestions.push({ type: 'channel_change', description: 'Low delivery — switching primary to WhatsApp', auto_applied: true });
       }
-      if (strategy.avg_open < 15 && strategy.channels?.includes('email')) {
+      if ((strategy.avg_open as unknown as number) < 15 && strategy.channels?.includes('email')) {
         suggestions.push({ type: 'content_change', description: 'Low open rate — regenerating email subject lines', auto_applied: true });
       }
-      if (strategy.avg_click < 3) {
+      if ((strategy.avg_click as unknown as number) < 3) {
         suggestions.push({ type: 'flow_change', description: 'Low click rate — adding Day 3 follow-up with stronger CTA', auto_applied: true });
       }
 

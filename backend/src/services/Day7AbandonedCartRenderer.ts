@@ -90,7 +90,7 @@ function processBlocks(str: string, ctx: TemplateCtx): string {
 
       if (type === 'list') {
         if (Array.isArray(data)) {
-          result += data.map(item => {
+          result += data.map((item: unknown) => {
             const itemCtx = (item !== null && typeof item === 'object')
               ? { ...item, _parent: ctx }
               : { '.': item, _parent: ctx };

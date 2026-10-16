@@ -10,6 +10,8 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
+import type { GiveawayMessage } from '../types/giveaway.js';
+import type { GiveawayTestBody } from '../types/u6Services.js';
 import { enqueueGiveawayEmail, giveawayQueueCounts, recentGiveawayJobs } from '../services/giveaway/giveawayQueue.js';
 import { getConnection } from '../services/queue/index.js';
 
@@ -23,11 +25,11 @@ const MQ_EVENTS_KEY = 'giveaway:mq:events';
 // §3-contract validation. We do NOT send here.
 router.post('/email', async (req, res) => {
   try {
-    const p = req.body;
+    const p = req.body as GiveawayMessage | undefined;
     if (!p?.id || !p?.to?.email) {
       return res.status(400).json({ ok: false, error: 'id and to.email are required' });
     }
-    const job = await enqueueGiveawayEmail(p);
+    const job = await enqueueGiveawayEmail(p!);
     res.json({ ok: true, queued: true, jobId: job.id });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
@@ -37,7 +39,7 @@ router.post('/email', async (req, res) => {
 // Quick trigger — enqueue a sample message so you can watch the worker logs immediately.
 // Body (all optional): { id, type, email, name }
 router.post('/email/test', async (req, res) => {
-  const b = req.body || {};
+  const b = req.body as GiveawayTestBody || {};
   const type = b.type || 'winner';
   const name = b.name || 'Test User';
   const sample = {
@@ -84,7 +86,7 @@ router.get('/mq-log', async (req: QueryRequest, res: Response) => {
   try {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
     const rows = await getConnection().lrange(MQ_EVENTS_KEY, 0, limit - 1);
-    const events = rows.map(r => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
+    const events = rows.map(r => { try { return JSON.parse(r) as GiveawayMessage; } catch { return null; } }).filter(Boolean);
     res.json({ ok: true, events });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });

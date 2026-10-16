@@ -219,8 +219,8 @@ export class SendTrackService {
     // unified_contacts when a subscription-status filter actually needs it.
     const needsUc = subscriptionStatus === 'unsubscribed' || subscriptionStatus === 'active';
     const countQ = conditions.length === 0
-      ? db.query(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'email_send_log'`)
-      : db.query(`
+      ? db.query<{ total: string }>(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'email_send_log'`)
+      : db.query<{ total: string }>(`
           SELECT COUNT(*) AS total
           FROM email_send_log esl
           ${needsUc ? 'LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id' : ''}
@@ -291,7 +291,7 @@ export class SendTrackService {
         LIMIT $${idx} OFFSET $${idx + 1}
       `, [...params, limit, offset]),
 
-      db.query(`
+      db.query<{ total: string }>(`
         SELECT COUNT(*) AS total
         FROM whatsapp_send_log wsl
         LEFT JOIN unified_contacts uc ON uc.id = wsl.unified_id
@@ -306,7 +306,7 @@ export class SendTrackService {
    * All sends to a single contact (most recent first).
    */
   static async getByUnifiedId(unifiedId: Id, { limit = 30 }: { limit?: number } = {}) {
-    const { rows } = await db.query(`
+    const { rows } = await db.query<Record<string, unknown>>(`
       SELECT id, email, subject, template_label, day_number, source,
              status, external_id, error_message,
              sent_at, opened_at, clicked_at, duration_ms, created_at
@@ -400,7 +400,7 @@ export class SendTrackService {
         LIMIT $${idx} OFFSET $${idx + 1}
       `, [...params, limit, offset]),
 
-      db.query(`SELECT COUNT(*) AS total FROM utm_visits uv ${where}`, params),
+      db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM utm_visits uv ${where}`, params),
     ]);
 
     return { rows, total: parseInt(countRows[0].total), page, limit };

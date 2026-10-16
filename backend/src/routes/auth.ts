@@ -11,7 +11,7 @@ const router = Router();
  */
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body as { email: string; password: string };
     const result = await AuthService.login(email, password);
     res.json({ success: true, data: result });
   } catch (err) {
@@ -27,7 +27,7 @@ router.post('/login', async (req, res, next) => {
  */
 router.post('/refresh', async (req, res, next) => {
   try {
-    const result = await AuthService.refresh(req.body?.refreshToken);
+    const result = await AuthService.refresh((req.body as { refreshToken: string } | undefined)?.refreshToken as string);
     res.json({ success: true, data: result });
   } catch (err) {
     next(err);
@@ -39,7 +39,7 @@ router.post('/refresh', async (req, res, next) => {
  * Body: { refreshToken } — revokes it so it can't be used again.
  */
 router.post('/logout', async (req, res) => {
-  await AuthService.logout(req.body?.refreshToken);
+  await AuthService.logout((req.body as { refreshToken?: string } | undefined)?.refreshToken);
   res.json({ success: true });
 });
 

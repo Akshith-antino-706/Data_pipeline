@@ -25,7 +25,7 @@ const SYNC_KEY = 'wa_unsubscribe_sync';
 const BATCH = 5000;
 
 async function readWatermark() {
-  const { rows } = await db.query(
+  const { rows } = await db.query<{ last_synced_at: Date | string }>(
     `SELECT last_synced_at FROM sync_metadata WHERE table_name = $1`,
     [SYNC_KEY]
   );

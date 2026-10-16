@@ -7,7 +7,7 @@
  * (the base currency), so a price is NEVER mislabeled or dropped.
  */
 
-const MAP: Record<string, string> = Object.create(null);
+const MAP: Record<string, string> = Object.create(null) as Record<string, string>;
 const reg = (code: string, ...names: string[]): void => { for (const n of names) MAP[n] = code; };
 
 // ── Gulf / Middle East ──

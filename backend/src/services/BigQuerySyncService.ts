@@ -24,7 +24,7 @@ class BigQuerySyncService {
   // ── Sync Metadata ─────────────────────────────────────────
 
   static async getLastSyncTime() {
-    const { rows } = await query(
+    const { rows } = await query<{ last_synced_at: Date | null }>(
       "SELECT last_synced_at FROM sync_metadata WHERE table_name = 'ga4_events'"
     );
     if (!rows.length || !rows[0].last_synced_at || rows[0].last_synced_at.getTime() < 1000) {
@@ -71,7 +71,7 @@ class BigQuerySyncService {
         const dayStart = new Date(d).toISOString();
         const dayEnd = new Date(d + dayMs).toISOString();
 
-        const [rows] = await bq.query({
+        const [rows]: [Ga4BqRow[], ...unknown[]] = await bq.query({
           query: `
             SELECT
               event_date, event_ts, event_name, user_pseudo_id, user_id,

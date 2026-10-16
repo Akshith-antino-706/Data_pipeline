@@ -17,6 +17,7 @@
 import db from '../config/database.js';
 import type { GiveawayEventInput } from '../types/services_C.js';
 import type { JourneyNode } from '../types/queueJobs.js';
+import type { GtmJourneyFlowRow } from '../types/servicesGtmJourney.js';
 
 class GiveawayJourneyService {
   /**
@@ -32,7 +33,7 @@ class GiveawayJourneyService {
   static async onEvent({ giveawayType, unifiedId, eventId }: GiveawayEventInput) {
     if (!giveawayType || !unifiedId) return 0;
 
-    const { rows: journeys } = await db.query(
+    const { rows: journeys } = await db.query<GtmJourneyFlowRow>(
       `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
          FROM journey_flows
         WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = 'giveaway'

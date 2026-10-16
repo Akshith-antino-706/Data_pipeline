@@ -4,6 +4,8 @@
 
 import { Router } from 'express';
 import { BaseTemplateService } from '../services/BaseTemplateService.js';
+import type { Request } from 'express';
+import type { BaseTemplateData, BaseTemplateProduct } from '../types/emailRender.js';
 
 const router = Router();
 
@@ -39,7 +41,7 @@ router.get('/:id/preview', (req, res) => {
 });
 
 /** POST /:id/render — Render template with provided data */
-router.post('/:id/render', (req, res) => {
+router.post('/:id/render', (req: Request<{ id: string }, unknown, BaseTemplateData>, res) => {
   try {
     const html = BaseTemplateService.render(req.params.id, req.body);
     const subject = BaseTemplateService.renderSubject(req.params.id, req.body);
@@ -50,7 +52,7 @@ router.post('/:id/render', (req, res) => {
 });
 
 /** POST /:id/use — Create a content_template from a base template */
-router.post('/:id/use', async (req, res) => {
+router.post('/:id/use', async (req: Request<{ id: string }, unknown, { name?: string; data?: BaseTemplateData & { cta_url?: string } }>, res) => {
   try {
     const meta = BaseTemplateService.getTemplate(req.params.id);
     if (!meta) return res.status(404).json({ success: false, error: 'Template not found' });
@@ -119,7 +121,7 @@ router.get('/segments/:name/preview', (req, res) => {
 });
 
 /** POST /segments/:name/render — Render segment email with real data */
-router.post('/segments/:name/render', (req, res) => {
+router.post('/segments/:name/render', (req: Request<{ name: string }, unknown, { customerName?: string | null; products?: BaseTemplateProduct[] | null }>, res) => {
   try {
     const { customerName, products } = req.body;
     const result = BaseTemplateService.renderForSegment(
@@ -133,7 +135,7 @@ router.post('/segments/:name/render', (req, res) => {
 });
 
 /** POST /segments/:name/use — Create content_template for a segment */
-router.post('/segments/:name/use', async (req, res) => {
+router.post('/segments/:name/use', async (req: Request<{ name: string }, unknown, { name?: string }>, res) => {
   try {
     const segmentName = decodeURIComponent(req.params.name);
     const result = BaseTemplateService.previewForSegment(segmentName);

@@ -27,9 +27,10 @@
 
 import db from '../config/database.js';
 import JourneyService from '../services/JourneyService.js';
+import type { JourneyFlowRow } from '../types/journeyService.js';
 
 export async function runDailyContinuousReEnroll() {
-  const { rows: journeys } = await db.query(
+  const { rows: journeys } = await db.query<JourneyFlowRow>(
     `SELECT * FROM journey_flows WHERE status = 'active' AND journey_type = 'gtm'`
   );
 

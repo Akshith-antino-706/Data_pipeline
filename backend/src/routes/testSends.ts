@@ -25,6 +25,7 @@ import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js'
 import { reserveSend, releaseSend } from '../utils/emailFrequencyCap.js';
 import { SAMPLE_AFFINITY_VARS } from '../services/affinityVars.js';
 import type { PlaceholderContext } from '../types/utilsPlaceholder.js';
+import type { U4TestSendRequest, U4ContentTemplateBodyRow, U4EmailHtmlTemplateRow, U4ContentTemplateFullRow, U4ValRow, U4CountryRow, U4IdNameRow, U4TotalRow, U4ContactListRow, U4ContactSearchRow, U4QaReportRow, U4SendLogRow } from '../types/u4TestSends.js';
 import type { QueryParams, Recipient, EmailTransport, SendAttemptResult, SendAndLogArgs, SendOutcome, ParallelFailure, BatchJob, ResolvedTemplate } from '../types/routesTestSends.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -116,13 +117,13 @@ export async function resolveTemplateHtml(templateId: number | string, ctx: Plac
   const dyn = await getDailyAITemplate(tid).catch(() => null);
   if (dyn?.html) return { html: dyn.html, subject: dyn.subject, dynamic: true };
 
-  const { rows: [t] } = await db.query(
+  const { rows: [t] } = await db.query<U4ContentTemplateBodyRow>(
     'SELECT subject, body, html_template_id FROM content_templates WHERE id = $1', [tid]
   );
   if (!t) return null;
   let body = t.body, subject = t.subject;
   if (!body && t.html_template_id) {
-    const { rows: [h] } = await db.query(
+    const { rows: [h] } = await db.query<U4EmailHtmlTemplateRow>(
       'SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [t.html_template_id]
     ).catch(() => ({ rows: [] }));
     body = h?.html_body; subject = subject || h?.subject_line;
@@ -217,13 +218,13 @@ async function sendAndLog({ EmailChannel, recipient, subject, html, templateLabe
 router.get('/contacts/filter-options', async (req, res, next) => {
   try {
     const [bs, ct, geo, pt, countries, segments, customSegs] = await Promise.all([
-      db.query(`SELECT DISTINCT booking_status AS val FROM unified_contacts WHERE booking_status IS NOT NULL ORDER BY 1`),
-      db.query(`SELECT DISTINCT contact_type AS val FROM unified_contacts WHERE contact_type IS NOT NULL ORDER BY 1`),
-      db.query(`SELECT DISTINCT geography AS val FROM unified_contacts WHERE geography IS NOT NULL ORDER BY 1`),
-      db.query(`SELECT DISTINCT product_tier AS val FROM unified_contacts WHERE product_tier IS NOT NULL ORDER BY 1`),
-      db.query(`SELECT country AS val, COUNT(*)::int AS cnt FROM unified_contacts WHERE country IS NOT NULL AND country <> '' GROUP BY country ORDER BY cnt DESC LIMIT 50`),
-      db.query(`SELECT segment_id AS id, segment_name AS name FROM segment_definitions ORDER BY segment_number`),
-      db.query(`SELECT id, name FROM custom_segments WHERE status = 'active' ORDER BY id`),
+      db.query<U4ValRow>(`SELECT DISTINCT booking_status AS val FROM unified_contacts WHERE booking_status IS NOT NULL ORDER BY 1`),
+      db.query<U4ValRow>(`SELECT DISTINCT contact_type AS val FROM unified_contacts WHERE contact_type IS NOT NULL ORDER BY 1`),
+      db.query<U4ValRow>(`SELECT DISTINCT geography AS val FROM unified_contacts WHERE geography IS NOT NULL ORDER BY 1`),
+      db.query<U4ValRow>(`SELECT DISTINCT product_tier AS val FROM unified_contacts WHERE product_tier IS NOT NULL ORDER BY 1`),
+      db.query<U4CountryRow>(`SELECT country AS val, COUNT(*)::int AS cnt FROM unified_contacts WHERE country IS NOT NULL AND country <> '' GROUP BY country ORDER BY cnt DESC LIMIT 50`),
+      db.query<U4IdNameRow>(`SELECT segment_id AS id, segment_name AS name FROM segment_definitions ORDER BY segment_number`),
+      db.query<U4IdNameRow>(`SELECT id, name FROM custom_segments WHERE status = 'active' ORDER BY id`),
     ]);
     res.json({
       data: {
@@ -248,7 +249,7 @@ router.get('/contacts', async (req, res, next) => {
 
     // Build filter conditions
     const conditions = ["uc.email IS NOT NULL AND uc.email <> ''"];
-    const params = [];
+    const params: unknown[] = [];
 
     if (hasQ) {
       // Email-prefix search only. Reasons:
@@ -313,11 +314,11 @@ router.get('/contacts', async (req, res, next) => {
       && (req.query.is_indian === undefined || req.query.is_indian === '');
 
     const countQuery = isUnfiltered
-      ? db.query(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'unified_contacts'`)
-      : db.query(`SELECT COUNT(*)::int AS total FROM unified_contacts uc ${segmentJoin} WHERE ${where}`, params);
+      ? db.query<U4TotalRow>(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'unified_contacts'`)
+      : db.query<U4TotalRow>(`SELECT COUNT(*)::int AS total FROM unified_contacts uc ${segmentJoin} WHERE ${where}`, params);
 
     const [{ rows }, countRes] = await Promise.all([
-      db.query(
+      db.query<U4ContactListRow>(
         `SELECT DISTINCT ON (uc.email) uc.id, uc.email, uc.name, uc.contact_type, uc.booking_status, uc.country, uc.is_indian
          FROM unified_contacts uc ${segmentJoin}
          WHERE ${where}
@@ -340,7 +341,7 @@ router.get('/contacts', async (req, res, next) => {
 // shows, or the journey would send). Day 1-7 use the AI master; other templates render
 // content_templates.body / linked email_html_templates.html_body per recipient.
 // Body: { templateId, emails }
-router.post('/send-daily-ai', async (req, res) => {
+router.post('/send-daily-ai', async (req: U4TestSendRequest, res) => {
   try {
     const templateId = parseInt(req.body?.templateId);
     if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
@@ -378,14 +379,14 @@ router.post('/send-daily-ai', async (req, res) => {
 // pulls the stored `body` HTML and runs it through the same sendAndLog
 // machinery (click rewrite + open pixel + email_send_log row).
 // Body: { templateId, emails }
-router.post('/send-template', async (req, res) => {
+router.post('/send-template', async (req: U4TestSendRequest, res) => {
   try {
     const templateId = parseInt(req.body?.templateId);
     if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
 
-    const { rows: [tpl] } = await db.query(
+    const { rows: [tpl] } = await db.query<U4ContentTemplateFullRow>(
       `SELECT id, name, channel, subject, body, status, html_template_id FROM content_templates WHERE id = $1`,
       [templateId]
     );
@@ -396,7 +397,7 @@ router.post('/send-template', async (req, res) => {
     // (most HTML templates keep content_templates.body empty). Fall back before failing.
     let bodyHtml = tpl.body, subject = tpl.subject || tpl.name;
     if (!bodyHtml && tpl.html_template_id) {
-      const { rows: [h] } = await db.query('SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [tpl.html_template_id]);
+      const { rows: [h] } = await db.query<U4EmailHtmlTemplateRow>('SELECT html_body, subject_line FROM email_html_templates WHERE id = $1', [tpl.html_template_id]);
       bodyHtml = h?.html_body; subject = tpl.subject || h?.subject_line || tpl.name;
     }
     if (!bodyHtml)          return res.status(400).json({ success: false, error: `Template ${templateId} has no body` });
@@ -448,7 +449,7 @@ router.post('/send-template', async (req, res) => {
 //   • any other content template → content_templates.body, or its linked
 //     email_html_templates.html_body, rendered with sample data so placeholders
 //     resolve (same resolution journey/GTM sends use) — so the scan matches the email.
-router.post('/analyze-email', async (req, res) => {
+router.post('/analyze-email', async (req: U4TestSendRequest, res) => {
   try {
     const templateId = parseInt(req.body?.templateId);
     if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
@@ -483,7 +484,7 @@ router.post('/analyze-email', async (req, res) => {
 // GET /qa-report/:templateId — fetch the stored QA report (for the (i) button)
 router.get('/qa-report/:templateId', async (req, res) => {
   try {
-    const { rows: [row] } = await db.query(
+    const { rows: [row] } = await db.query<U4QaReportRow>(
       'SELECT report, placement, updated_at FROM email_qa_reports WHERE template_id = $1',
       [parseInt(req.params.templateId)]
     );
@@ -496,7 +497,7 @@ router.get('/qa-report/:templateId', async (req, res) => {
 
 // POST /check-placement — real inbox placement (Inbox/Spam) of a sent email,
 // read via IMAP on the seed inbox. Body: { subject }.
-router.post('/check-placement', async (req, res) => {
+router.post('/check-placement', async (req: U4TestSendRequest, res) => {
   try {
     const subject = req.body?.subject || '';
     const templateId = req.body?.templateId ? parseInt(req.body.templateId) : null;
@@ -525,7 +526,7 @@ router.get('/search-contacts', async (req, res, next) => {
 
     // UNION: prefix matches come first (fast, index-friendly),
     // then substring fallback for mid-string / name hits.
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U4ContactSearchRow>(`
       (
         SELECT id, email, name, contact_type, 0 AS rank
           FROM unified_contacts
@@ -561,7 +562,7 @@ router.get('/schedule/list', async (_req, res, next) => {
 });
 
 // Create + start a new schedule
-router.post('/schedule/start', async (req, res, next) => {
+router.post('/schedule/start', async (req: U4TestSendRequest, res, next) => {
   try {
     const { start } = await import('../services/TestSendScheduler.js');
     const status = await start({
@@ -575,21 +576,21 @@ router.post('/schedule/start', async (req, res, next) => {
 });
 
 // Per-schedule operations — :id must come after all static sub-paths
-router.post('/schedule/:id/stop', async (req, res, next) => {
+router.post('/schedule/:id/stop', async (req: U4TestSendRequest, res, next) => {
   try {
     const { stop } = await import('../services/TestSendScheduler.js');
     res.json({ data: await stop(parseInt(req.params.id)) });
   } catch (err) { next(err); }
 });
 
-router.post('/schedule/:id/tick', async (req, res, next) => {
+router.post('/schedule/:id/tick', async (req: U4TestSendRequest, res, next) => {
   try {
     const { tick } = await import('../services/TestSendScheduler.js');
     res.json({ data: await tick(parseInt(req.params.id)) });
   } catch (err) { next(err); }
 });
 
-router.post('/schedule/:id/remove-email', async (req, res, next) => {
+router.post('/schedule/:id/remove-email', async (req: U4TestSendRequest, res, next) => {
   try {
     const { removeEmail } = await import('../services/TestSendScheduler.js');
     const email = req.body?.email;
@@ -602,7 +603,7 @@ router.post('/schedule/:id/remove-email', async (req, res, next) => {
 router.get('/schedule/:id/queue', async (req, res, next) => {
   try {
     const limit = Math.min(200, parseInt((req.query.limit as string | undefined) || '100'));
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U4SendLogRow>(`
       SELECT
         esl.id, esl.email, esl.contact_name, esl.day_number, esl.template_label,
         esl.source, esl.status, esl.error_message,
@@ -621,7 +622,7 @@ router.get('/schedule/:id/queue', async (req, res, next) => {
 router.get('/schedule/:id/logs', async (req, res, next) => {
   try {
     const scheduleId = parseInt(req.params.id);
-    const { rows } = await db.query(`
+    const { rows } = await db.query<U4SendLogRow>(`
       SELECT DISTINCT ON (email, day_number)
         id, email, contact_name, day_number, template_label, source,
         status, error_message, sent_at, opened_at, clicked_at, duration_ms, created_at
@@ -637,7 +638,7 @@ router.get('/schedule/:id/logs', async (req, res, next) => {
 
 // ── DAY 1: Welcome ────────────────────────────────────────────────────────
 
-router.post('/day1', async (req, res, next) => {
+router.post('/day1', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -702,7 +703,7 @@ router.post('/day1', async (req, res, next) => {
 
 // ── DAY 2: Cruise Spotlight ───────────────────────────────────────────────
 
-router.post('/day2', async (req, res, next) => {
+router.post('/day2', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -741,7 +742,7 @@ router.post('/day2', async (req, res, next) => {
 
 // ── DAY 3: Visa Hub ───────────────────────────────────────────────────────
 
-router.post('/day3', async (req, res, next) => {
+router.post('/day3', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -785,7 +786,7 @@ router.post('/day3', async (req, res, next) => {
 
 // ── DAY 4: Holidays ───────────────────────────────────────────────────────
 
-router.post('/day4', async (req, res, next) => {
+router.post('/day4', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -824,7 +825,7 @@ router.post('/day4', async (req, res, next) => {
 
 // ── DAY 5: Activities ─────────────────────────────────────────────────────
 
-router.post('/day5', async (req, res, next) => {
+router.post('/day5', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -863,7 +864,7 @@ router.post('/day5', async (req, res, next) => {
 
 // ── DAY 6: Destination Spotlight (per-destination) ────────────────────────
 
-router.post('/day6', async (req, res, next) => {
+router.post('/day6', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -917,7 +918,7 @@ router.post('/day6', async (req, res, next) => {
 
 // ── DAY 7: Abandoned Cart ─────────────────────────────────────────────────
 
-router.post('/day7', async (req, res, next) => {
+router.post('/day7', async (req: U4TestSendRequest, res, next) => {
   try {
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
@@ -1065,7 +1066,7 @@ router.get('/utm-log/summary', async (_req, res, next) => {
 
 // ── Pre-warm: generate all 7 day rankings in parallel before schedule starts ──
 
-router.post('/prewarm', async (req, res, next) => {
+router.post('/prewarm', async (req: U4TestSendRequest, res, next) => {
   try {
     const destinationKey = req.body?.destinationKey || 'singapore';
     console.log('[Prewarm] Starting pre-generation of all 7 day rankings in parallel...');
@@ -1103,7 +1104,7 @@ router.post('/prewarm', async (req, res, next) => {
       label:  ['Welcome','Cruise Spotlight','Visa Hub','Holidays','Activities','Destination Spotlight','Abandoned Cart'][i],
       status: r.status === 'fulfilled' ? 'ready' : 'failed',
       source: r.status === 'fulfilled' ? (r.value?.source || 'cache') : null,
-      error:  r.status === 'rejected'  ? r.reason?.message : null,
+      error:  r.status === 'rejected'  ? (r.reason as Error | undefined)?.message : null,
     }));
 
     console.log('[Prewarm] Complete:', summary.map(s => `Day${s.day}(${s.status})`).join(' '));
