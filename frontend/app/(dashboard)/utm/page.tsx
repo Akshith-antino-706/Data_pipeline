@@ -845,7 +845,7 @@ export default function UTMTracking() {
                               style={{ color: 'var(--brand-primary)', textDecoration: 'none', fontSize: 11 }}
                               title={v.destination_url}>
                               <ExternalLink size={10} style={{ marginRight: 4 }} />
-                              {v.destination_url ? new URL(v.destination_url).pathname : '—'}
+                              {v.destination_url ? (() => { try { return new URL(v.destination_url).pathname; } catch { return v.destination_url; } })() : '—'}
                             </a>
                           </td>
                           <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>

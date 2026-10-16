@@ -222,7 +222,7 @@ export default function ContactProfile() {
                   <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'ticket' ? 'badge-orange' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 10 }}>{s}</span>
                 ))}
                 {contact.booking_status && (
-                  <span className="badge" style={{ fontSize: 10, background: `${STATUS_COLOR[contact.booking_status]}20`, color: STATUS_COLOR[contact.booking_status] }}>
+                  <span className="badge" style={{ fontSize: 10, background: `${STATUS_COLOR[contact.booking_status] ?? '#64748b'}20`, color: STATUS_COLOR[contact.booking_status] ?? '#64748b' }}>
                     {contact.booking_status}
                   </span>
                 )}

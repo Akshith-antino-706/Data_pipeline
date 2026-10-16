@@ -88,7 +88,7 @@ export default class CustomSegmentService {
           }
           case 'email': {
             const emails = Array.isArray(cond.value) ? cond.value : [cond.value];
-            const placeholders = emails.map((v: SegmentScalar | undefined) => { params.push((v as string).toLowerCase()); return `$${idx++}`; });
+            const placeholders = emails.map((v: SegmentScalar | undefined) => { params.push(String(v).toLowerCase()); return `$${idx++}`; });
             sub.push(`LOWER(uc.email) IN (${placeholders.join(',')})`);
             break;
           }
@@ -117,10 +117,10 @@ export default class CustomSegmentService {
           }
           case 'country': {
             if (Array.isArray(cond.value)) {
-              const placeholders = cond.value.map((v: SegmentScalar) => { params.push((v as string).toUpperCase()); return `$${idx++}`; });
+              const placeholders = cond.value.map((v: SegmentScalar) => { params.push(String(v).toUpperCase()); return `$${idx++}`; });
               sub.push(`UPPER(TRIM(uc.country)) IN (${placeholders.join(',')})`);
             } else {
-              params.push((cond.value as string).toUpperCase());
+              params.push(String(cond.value).toUpperCase());
               sub.push(`UPPER(TRIM(uc.country)) = $${idx++}`);
             }
             break;

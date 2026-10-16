@@ -2561,7 +2561,8 @@ class JourneyService {
     }
 
     // 2. Unsubscribe-based exit
-    if (uc.email_unsubscribe === 'Yes') {
+    // Stored as 'Yes', 'yes' or 'YES' depending on which sync wrote it — compare case-insensitively.
+    if (String(uc.email_unsubscribe || '').toLowerCase() === 'yes') {
       return { converted: true, reason: 'unsubscribed', details: {} };
     }
 

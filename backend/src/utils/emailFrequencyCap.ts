@@ -67,7 +67,7 @@ export async function reserveSend(target?: CapTarget): Promise<CapResult> {
   // Bypass allowlist wins over ENABLED — QA inboxes never get capped.
   if (_isBypassed(target?.email)) return { allowed: true, count: 0, capped: false, bypassed: true };
   if (!ENABLED) return { allowed: true, count: 0, capped: false };
-  const key = capKey(target);
+  const key = capKey(target ?? undefined);
   if (!key) return { allowed: true, count: 0, capped: false };
   const redis = getRedis();
   if (!redis) return { allowed: true, count: 0, capped: false }; // fail-open
@@ -84,7 +84,7 @@ export async function reserveSend(target?: CapTarget): Promise<CapResult> {
 export async function releaseSend(target?: CapTarget): Promise<void> {
   if (_isBypassed(target?.email)) return; // Nothing was reserved for bypassed users.
   if (!ENABLED) return;
-  const key = capKey(target);
+  const key = capKey(target ?? undefined);
   if (!key) return;
   const redis = getRedis();
   if (!redis) return;
@@ -123,7 +123,7 @@ export function waCapLimit(): number { return WA_CAP; }
 export async function reserveWaSend(target?: CapTarget): Promise<CapResult> {
   if (_isWaBypassed(target?.email)) return { allowed: true, count: 0, capped: false, bypassed: true };
   if (!WA_ENABLED) return { allowed: true, count: 0, capped: false };
-  const key = waCapKey(target);
+  const key = waCapKey(target ?? undefined);
   if (!key) return { allowed: true, count: 0, capped: false };
   const redis = getRedis();
   if (!redis) return { allowed: true, count: 0, capped: false }; // fail-open
@@ -141,7 +141,7 @@ export async function reserveWaSend(target?: CapTarget): Promise<CapResult> {
 export async function releaseWaSend(target?: CapTarget): Promise<void> {
   if (_isWaBypassed(target?.email)) return;
   if (!WA_ENABLED) return;
-  const key = waCapKey(target);
+  const key = waCapKey(target ?? undefined);
   if (!key) return;
   const redis = getRedis();
   if (!redis) return;

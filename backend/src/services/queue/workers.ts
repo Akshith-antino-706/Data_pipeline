@@ -749,7 +749,7 @@ async function processRCS(job: Job<JourneySendJobData>): Promise<void> {
   const { rows: [contact] } = await (db as Pool).query<RcsUnsubscribeRow>(
     'SELECT wa_unsubscribe, email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
   );
-  if (String(contact?.wa_unsubscribe || '').toLowerCase() === 'yes') {
+  if (isYes(contact?.wa_unsubscribe)) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'unsubscribed' }, false);
   }
 

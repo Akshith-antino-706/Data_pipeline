@@ -208,7 +208,8 @@ window.addEventListener('scroll', function() {
       const m = /[?&]rid=(\d+)/.exec(pageUrl);
       if (m) resolvedUnifiedId = parseInt(m[1]);
     }
-    if (!resolvedUnifiedId && customerId && customerId.includes('@')) {
+    // customerId comes from the client and may be a number; .includes would throw on it.
+    if (!resolvedUnifiedId && customerId && String(customerId).includes('@')) {
       const { rows: [uc] } = await db.query<U4IdRow>(
         'SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) LIMIT 1',
         [customerId]

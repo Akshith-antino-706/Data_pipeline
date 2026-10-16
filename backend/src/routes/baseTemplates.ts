@@ -69,9 +69,10 @@ router.post('/:id/use', async (req: Request<{ id: string }, unknown, { name?: st
       subject,
       body: html,
       variables: meta.variables,
-      cta_url: data?.cta_url || 'https://www.raynatours.com',
-      cta_text: 'Book Now',
-    } as Parameters<typeof ContentService.create>[0]);
+      // ContentService.create reads ctaUrl / ctaText — snake_case keys were silently dropped.
+      ctaUrl: data?.cta_url || 'https://www.raynatours.com',
+      ctaText: 'Book Now',
+    });
 
     res.json({ success: true, data: template });
   } catch (err) {
@@ -149,9 +150,9 @@ router.post('/segments/:name/use', async (req: Request<{ name: string }, unknown
       subject: result.subject,
       body: result.html,
       variables: ['customer_name'],
-      cta_url: config.cta_url || 'https://www.raynatours.com',
-      cta_text: config.cta_text || 'Book Now',
-    } as Parameters<typeof ContentService.create>[0]);
+      ctaUrl: config.cta_url || 'https://www.raynatours.com',
+      ctaText: config.cta_text || 'Book Now',
+    });
 
     res.json({ success: true, data: template });
   } catch (err) {

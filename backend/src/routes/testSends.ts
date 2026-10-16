@@ -709,11 +709,20 @@ router.post('/day2', async (req: U4TestSendRequest, res, next) => {
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
     const { rankTrendingCruises, _internals: rankInternals } = await import('../services/Day2CruiseRankingService.js');
-    const { buildDay2CruiseData } = await import('../services/Day2CruiseDataService.js');
+    const { buildDay2CruiseData, _internals: day2Data } = await import('../services/Day2CruiseDataService.js');
     const { renderDay2Cruise } = await import('../services/Day2CruiseRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await cachedRanking('day2', rankTrendingCruises) : { ranking: (rankInternals.buildFallbackRanking as () => ReturnType<typeof rankInternals.buildFallbackRanking>)(), source: 'fallback' };
+    // The fallback needs the same inputs the real ranking uses; it used to be called with none
+    // and crashed on `cruiseProducts.map`.
+    const ranking = useClaude ? await cachedRanking('day2', rankTrendingCruises) : {
+      ranking: rankInternals.buildFallbackRanking(
+        await rankInternals.loadCruiseProducts(),
+        Object.keys(day2Data.DEPARTURE_CITIES),
+        Object.keys(day2Data.CRUISE_LINES),
+      ),
+      source: 'fallback',
+    };
 
     const template = fs.readFileSync(path.join(TEMPLATE_DIR, 'day2-cruise-dynamic.html'), 'utf8');
     const subject  = req.body?.subject || 'Set Sail: Cruise Highlights from Rayna Tours';
@@ -752,7 +761,11 @@ router.post('/day3', async (req: U4TestSendRequest, res, next) => {
     const { renderDay3Visa } = await import('../services/Day3VisaRenderer.js');
 
     const useClaude = req.body?.noClaude !== true;
-    const ranking = useClaude ? await cachedRanking('day3', rankTrendingVisas) : { ranking: (rankInternals.buildFallbackRanking as () => ReturnType<typeof rankInternals.buildFallbackRanking>)(), source: 'fallback' };
+    // Same as day2: the fallback needs the visa catalog (it crashed iterating `undefined`).
+    const ranking = useClaude ? await cachedRanking('day3', rankTrendingVisas) : {
+      ranking: rankInternals.buildFallbackRanking(await rankInternals.loadVisaCatalog()),
+      source: 'fallback',
+    };
 
     // Day3VisaDataService expects ratings_keys but VisaRankingService doesn't produce it
     if (!ranking.ranking.ratings_keys) {

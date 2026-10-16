@@ -413,12 +413,13 @@ export default function CampaignDetail() {
                 : allEventTypes.map(name => ({ event_name: name, event_count: 0, unique_users: 0, total_value: 0 }));
 
               // Sent: email_send_log (via gtm-node-stats) is source of truth
-              const sent      = nodeGtm.sent ?? parseInt(ns.action_sent as unknown as string) ?? parseInt(camp?.sent_count as string) ?? 0;
+              const toNum = (v: unknown): number | undefined => { const n = parseInt(String(v ?? ''), 10); return Number.isFinite(n) ? n : undefined; };
+              const sent      = nodeGtm.sent ?? toNum(ns.action_sent) ?? toNum(camp?.sent_count) ?? 0;
               const target    = parseInt(camp?.target_count as string) || globalTarget;
               const opened    = opens[node.id]           || parseInt(ns.action_read as unknown as string)    || 0;
               const clicked   = gtmClicks[node.id]       || parseInt(ns.action_clicked as unknown as string) || 0;
               const delivered = deliveredByNode[node.id] ?? 0;
-              const bounced   = bouncedByNode[node.id]   ?? parseInt(camp?.bounce_count as string) ?? 0;
+              const bounced   = bouncedByNode[node.id]   ?? toNum(camp?.bounce_count) ?? 0;
               const failed    = parseInt(camp?.fail_count as string) || parseInt(ns.action_failed as unknown as string) || 0;
               const inQueue = funnel.active || 0;
 

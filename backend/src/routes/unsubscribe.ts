@@ -34,7 +34,10 @@ function verifyUnsubToken(token: string | undefined): string | null {
   const [b64, sig] = token.split('.');
   let uid; try { uid = Buffer.from(b64, 'base64url').toString('utf8'); } catch { return null; }
   const expected = crypto.createHmac('sha256', SECRET).update(uid).digest('base64url');
-  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) ? uid : null;
+  // timingSafeEqual throws on different lengths, which turned a tampered token into a 500.
+  const got = Buffer.from(sig || '');
+  const want = Buffer.from(expected);
+  return got.length === want.length && crypto.timingSafeEqual(got, want) ? uid : null;
 }
 
 // Resolve the contact from ?log= (send-log id) or ?t= (signed token). → { uid, email } | null

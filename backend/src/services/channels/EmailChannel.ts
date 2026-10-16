@@ -59,6 +59,13 @@ function getTransporter(): Transporter<SMTPTransport.SentMessageInfo> | null {
   return _transporter;
 }
 
+const isProduction = (): boolean => process.env.NODE_ENV === 'production';
+
+function notConfigured(error: string): EmailSendResult {
+  console.error(`[EMAIL] Not sent: ${error}`);
+  return { success: false, error, provider: 'none' };
+}
+
 export class EmailChannel {
 
   static get config() {
@@ -108,6 +115,11 @@ export class EmailChannel {
     if (provider === 'sendgrid' && sendgridKey) {
       return this._sendViaSendGrid({ to, subject, html, text, replyTo });
     }
+    // SendGrid selected without a key used to fall through to a simulated "success", so mail
+    // silently went nowhere. Outside development that is now a real failure.
+    if (provider === 'sendgrid' && isProduction()) {
+      return notConfigured('SENDGRID_API_KEY is not set (EMAIL_PROVIDER=sendgrid)');
+    }
 
     // SMTP path
     if (provider === 'smtp') {
@@ -130,7 +142,9 @@ export class EmailChannel {
     const transporter = getTransporter();
 
     if (!transporter) {
-      // Fall back to simulated if SMTP not configured
+      // In production a missing SMTP config must fail loudly instead of pretending to send.
+      if (isProduction()) return notConfigured('SMTP is not configured (SMTP_HOST / SMTP_USER / SMTP_PASS)');
+      // Fall back to simulated if SMTP not configured (development only)
       console.log(`[EMAIL] SMTP not configured — simulating → To: ${to}`);
       return {
         success: true,

@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import MySQLSyncService from '../services/MySQLSyncService.js';
-import type { PythonSyncResult, MissingMySQLSyncMethods } from '../types/routesMisc.js';
+import type { PythonSyncResult } from '../types/routesMisc.js';
 
 const router = Router();
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,25 +38,13 @@ function runPythonSync(args: string[] = [], timeoutMs = 480000): Promise<PythonS
 }
 
 // GET /api/v3/mysql-sync/status — check sync status for all MySQL tables
-router.get('/status', async (_req, res) => {
-  try {
-    const status = await (MySQLSyncService as unknown as MissingMySQLSyncMethods).getSyncStatus();
-    res.json({ success: true, tables: status });
-  } catch (err) {
-    console.error('[mysql-sync] status error:', (err as Error).message);
-    res.status(500).json({ success: false, error: 'Failed to fetch sync status' });
-  }
+router.get('/status', (_req, res) => {
+  res.status(501).json({ success: false, error: 'Sync status is not implemented' });
 });
 
 // GET /api/v3/mysql-sync/discover-schema — inspect remote MySQL table schemas
-router.get('/discover-schema', async (_req, res) => {
-  try {
-    const schemas = await (MySQLSyncService as unknown as MissingMySQLSyncMethods).discoverSchema();
-    res.json({ success: true, schemas });
-  } catch (err) {
-    console.error('[mysql-sync] schema error:', (err as Error).message);
-    res.status(500).json({ success: false, error: 'Failed to discover schema' });
-  }
+router.get('/discover-schema', (_req, res) => {
+  res.status(501).json({ success: false, error: 'Schema discovery is not implemented' });
 });
 
 // POST /api/v3/mysql-sync/trigger — run incremental_sync.py for all tables

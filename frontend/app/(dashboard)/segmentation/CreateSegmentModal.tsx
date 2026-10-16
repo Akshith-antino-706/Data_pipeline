@@ -508,12 +508,12 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
           </select>
           {opVal === 'between' ? (
             <>
-              <input type="number" placeholder="Min" value={(condition.value as string[] | null)?.[0] || ''}
-                onChange={e => onChange({ ...condition, value: [e.target.value, (condition.value as string[] | null)?.[1] || ''] })}
+              <input type="number" placeholder="Min" value={(condition.value as string[] | null)?.[0] ?? ''}
+                onChange={e => onChange({ ...condition, value: [e.target.value, (condition.value as string[] | null)?.[1] ?? ''] })}
                 style={{ ...inputStyle, maxWidth: 110 }} />
               <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>–</span>
-              <input type="number" placeholder="Max" value={(condition.value as string[] | null)?.[1] || ''}
-                onChange={e => onChange({ ...condition, value: [(condition.value as string[] | null)?.[0] || '', e.target.value] })}
+              <input type="number" placeholder="Max" value={(condition.value as string[] | null)?.[1] ?? ''}
+                onChange={e => onChange({ ...condition, value: [(condition.value as string[] | null)?.[0] ?? '', e.target.value] })}
                 style={{ ...inputStyle, maxWidth: 110 }} />
             </>
           ) : (

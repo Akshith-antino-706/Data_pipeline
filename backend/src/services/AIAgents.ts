@@ -420,14 +420,21 @@ Channel performance: ${JSON.stringify(channelPerf)}`;
     for (const strategy of strategies) {
       const suggestions = [];
 
+      // AVG() is NULL when a strategy has no measurable sends; `null < 70` is true in JS, so such
+      // strategies used to get every "low rate" suggestion. Only judge rates that exist.
+      const rate = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+      const delivery = rate(strategy.avg_delivery);
+      const open = rate(strategy.avg_open);
+      const click = rate(strategy.avg_click);
+
       // Auto-detect issues and apply fixes
-      if ((strategy.avg_delivery as unknown as number) < 70) {
+      if (delivery !== null && delivery < 70) {
         suggestions.push({ type: 'channel_change', description: 'Low delivery — switching primary to WhatsApp', auto_applied: true });
       }
-      if ((strategy.avg_open as unknown as number) < 15 && strategy.channels?.includes('email')) {
+      if (open !== null && open < 15 && strategy.channels?.includes('email')) {
         suggestions.push({ type: 'content_change', description: 'Low open rate — regenerating email subject lines', auto_applied: true });
       }
-      if ((strategy.avg_click as unknown as number) < 3) {
+      if (click !== null && click < 3) {
         suggestions.push({ type: 'flow_change', description: 'Low click rate — adding Day 3 follow-up with stronger CTA', auto_applied: true });
       }
 

@@ -4,7 +4,6 @@ import type { QueryRequest } from '../types/routesCommon.js';
 import cors from 'cors';
 import db from '../config/database.js';
 import GTMService from '../services/GTMService.js';
-import type { MissingGTMMethods } from '../types/routesMisc.js';
 
 const router = Router();
 
@@ -27,8 +26,8 @@ router.get('/datalayer', (req, res) => {
 });
 
 // GET /api/v3/gtm/tracking-bundle — Get ready-to-deploy tracking bundle for raynatours.com
-router.get('/tracking-bundle', (req, res) => {
-  res.json((GTMService as unknown as MissingGTMMethods).getTrackingBundle());
+router.get('/tracking-bundle', (_req, res) => {
+  res.status(501).json({ success: false, error: 'Tracking bundle is not implemented' });
 });
 
 // POST /api/v3/gtm/events — Record a GTM event

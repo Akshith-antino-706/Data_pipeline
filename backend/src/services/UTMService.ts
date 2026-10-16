@@ -123,7 +123,18 @@ class UTMService {
       nodeId || null
     ]);
 
-    return { campaign_id: campaign.id, campaign_name: campaign.name, segment: campaign.segment_label, channel: campaign.channel, utm_url: fullUrl, utm_id: utm?.utm_id };
+    // ON CONFLICT DO NOTHING returns no row when a matching link already exists; reuse that link's
+    // id instead of returning undefined (which made generateUserLinks store a null utm_id).
+    let utmId = utm?.utm_id;
+    if (utmId === undefined) {
+      const { rows: [existing] } = await db.query<UtmIdRow>(
+        `SELECT utm_id FROM utm_tracking WHERE campaign_id = $1 AND full_url = $2 ORDER BY utm_id DESC LIMIT 1`,
+        [campaign.id, fullUrl],
+      );
+      utmId = existing?.utm_id;
+    }
+
+    return { campaign_id: campaign.id, campaign_name: campaign.name, segment: campaign.segment_label, channel: campaign.channel, utm_url: fullUrl, utm_id: utmId };
   }
 
   /**

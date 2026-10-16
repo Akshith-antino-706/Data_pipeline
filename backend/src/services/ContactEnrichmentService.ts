@@ -220,9 +220,13 @@ export default class ContactEnrichmentService {
       try {
         const domainPart = cleaned.split('@')[1];
         if (domainPart) {
-          const suggested = (suggestDomain as unknown as (domain: string) => string | null)(domainPart);
-          if (suggested && suggested !== domainPart) {
-            cleaned = cleaned.split('@')[0] + '@' + suggested;
+          // suggestDomain takes { domain } and returns { suggested, confidence } | null. It used to be
+          // called with a bare string, which always returned null, so typos were never fixed.
+          // Only apply confident matches: e.g. gmial.com → gmail.com is 0.95, but yaho.co.in →
+          // yahoo.com is 0.71 and would wrongly change the domain.
+          const suggestion = suggestDomain({ domain: domainPart });
+          if (suggestion && suggestion.confidence >= 0.9 && suggestion.suggested !== domainPart) {
+            cleaned = cleaned.split('@')[0] + '@' + suggestion.suggested;
           }
         }
       } catch {}

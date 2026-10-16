@@ -141,7 +141,7 @@ export default function DailyReport() {
     setDownloading(prev => ({ ...prev, all: true }));
     try {
       await downloadReportAll(fromDate, toDate);
-      showToast('ZIP downloaded with all 8 data files');
+      showToast('ZIP downloaded with all data files');
     } catch (err) {
       showToast(`ZIP download failed: ${(err as Error).message}`, 'error');
     } finally {

@@ -42,7 +42,7 @@ const staggerContainer: Variants = { hidden: {}, visible: { transition: { stagge
 const PAGE_SIZE_OPTIONS = [20, 30, 50];
 
 function formatNum(n?: number) { return (n || 0).toLocaleString(); }
-function formatAED(n?: number | string) { return `AED ${((n || 0) as number).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+function formatAED(n?: number | string) { return `AED ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 
 const COLUMNS = [
   { key: 'name', label: 'Name', sortable: true },

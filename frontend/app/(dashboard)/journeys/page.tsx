@@ -1251,7 +1251,7 @@ export default function Journeys() {
       // with the real count once the snapshot lands (the journey is not listed until then).
       showToast(`Journey "${res.data?.name}" is being created — building audience…`, 'info', { sticky: true });
       if (res.data?.journey_id) pollSnapshotBuild(res.data.journey_id, res.data.name);
-      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' });
+      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       setShowCreate(false);       // ← close/navigate only AFTER the API succeeds
@@ -1364,7 +1364,7 @@ export default function Journeys() {
 
     // Validation
     if (nodeForm.type === 'action' && !resolvedTemplateId) {
-      return showToast(`Email template is required for action nodes`, 'error');
+      return showToast(`${(nodeForm.channel || 'email').toUpperCase()} template is required for action nodes`, 'error');
     }
     const newNode = {
       id: newId,
@@ -2565,7 +2565,7 @@ export default function Journeys() {
                                   // WhatsApp node reads from whatsapp_by_node instead of the email maps below.
                                   const isWa      = (node.data?.channel || '').toLowerCase() === 'whatsapp';
                                   const wa        = isWa ? (campaignData?.whatsapp_by_node?.[node.id] || {}) : null;
-                                  const sent      = wa ? (wa.sent || 0)      : (campaignData?.sent_by_node?.[node.id] ?? camp?.sent ?? parseInt(nodeStats?.action_sent as unknown as string) ?? 0);
+                                  const sent      = wa ? (wa.sent || 0)      : (campaignData?.sent_by_node?.[node.id] ?? camp?.sent ?? (Number.isFinite(parseInt(String(nodeStats?.action_sent ?? ''), 10)) ? parseInt(String(nodeStats?.action_sent), 10) : 0));
                                   const read      = wa ? (wa.opened || 0)    : (campaignData?.opens?.[node.id] ?? camp?.read ?? (parseInt(nodeStats?.action_read as unknown as string) || 0));
                                   const clicked   = wa ? (wa.clicked || 0)   : (campaignData?.clicks?.[node.id] ?? campaignData?.gtm_clicks?.[node.id] ?? camp?.clicked ?? (parseInt(nodeStats?.action_clicked as unknown as string) || 0));
                                   // Bot-filtered (Phase 1): human_* = ≥bot_window_sec after send; landed = real GTM website hit
@@ -3762,7 +3762,7 @@ export default function Journeys() {
         <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}
+              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' }); }}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
               <ArrowLeft size={15} /> Back
             </button>
@@ -3781,7 +3781,7 @@ export default function Journeys() {
             {createForm.name.trim() && (
               <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
             )}
-            <button className="btn btn-ghost" disabled={creating} onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '' }); }}>
+            <button className="btn btn-ghost" disabled={creating} onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' }); }}>
               Cancel
             </button>
             <button className="btn btn-primary" onClick={handleCreate}
