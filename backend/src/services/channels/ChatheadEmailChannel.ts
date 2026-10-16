@@ -8,6 +8,7 @@
  */
 
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import type { ChatheadApiResponse, ChatheadSendArgs, EmailSendResult } from '../../types/channels.js';
 
 const DEFAULT_API_URL  = 'http://95.211.169.194/apis/aws/send/index.php';
 const DEFAULT_FROM     = 'Rayna Tours <explore@promotions.raynatours.com>';
@@ -17,12 +18,12 @@ function campaignId() { return process.env.AWS_EMAIL_CAMPAIGN_ID || '1'; }
 
 export class ChatheadEmailChannel {
 
-  static isConfigured() {
+  static isConfigured(): boolean {
     // Always configured — we have hardcoded defaults for API URL and from email
     return true;
   }
 
-  static async send({ to, subject, html, fromAddress = null } = {}) {
+  static async send({ to, subject, html, fromAddress = null }: ChatheadSendArgs = {}): Promise<EmailSendResult> {
     if (!to)      return { success: false, error: 'recipient (to) required' };
     if (!subject) return { success: false, error: 'subject required' };
     if (!html)    return { success: false, error: 'html body required' };
@@ -50,7 +51,7 @@ export class ChatheadEmailChannel {
     };
 
     const start = Date.now();
-    let res, text;
+    let res: Response, text: string;
     try {
       res = await fetch(apiUrl, {
         method: 'POST',
@@ -61,10 +62,10 @@ export class ChatheadEmailChannel {
       });
       text = await res.text();
     } catch (err) {
-      return { success: false, error: `aws email network error: ${err.message}`, durationMs: Date.now() - start };
+      return { success: false, error: `aws email network error: ${(err as Error).message}`, durationMs: Date.now() - start };
     }
 
-    let body = null;
+    let body: ChatheadApiResponse | null = null;
     try { body = JSON.parse(text); } catch { /* keep raw text */ }
     const ok = res.ok && body?.status === 'success';
     if (!ok) {

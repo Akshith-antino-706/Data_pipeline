@@ -9,19 +9,20 @@
  * Fail-safe: if a rate is missing/unavailable, we fall back to AED (never blank/crash).
  */
 import db from '../config/database.js';
+import type { FxRates, FxRateRow } from '../types/utilsCurrency.js';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;   // 1h
-let _rates = null;         // { AED:1, INR:26.1, SAR:1.02, USD:0.27 }
+let _rates: FxRates | null = null;         // { AED:1, INR:26.1, SAR:1.02, USD:0.27 }
 let _ratesAt = 0;
 
-const SYMBOL = { AED: 'AED ', INR: '₹', SAR: 'SAR ', USD: '$' };
+const SYMBOL: Record<string, string> = { AED: 'AED ', INR: '₹', SAR: 'SAR ', USD: '$' };
 
 /** Load AED→currency rates (cached). Never throws — returns at least { AED: 1 }. */
-export async function getRates() {
+export async function getRates(): Promise<FxRates> {
   if (_rates && Date.now() - _ratesAt < CACHE_TTL_MS) return _rates;
   try {
-    const { rows } = await db.query('SELECT currency, aed_to_currency FROM fx_rates');
-    const map = { AED: 1 };
+    const { rows }: { rows: FxRateRow[] } = await db.query('SELECT currency, aed_to_currency FROM fx_rates');
+    const map: FxRates = { AED: 1 };
     for (const r of rows) map[String(r.currency).toUpperCase()] = Number(r.aed_to_currency);
     _rates = map; _ratesAt = Date.now();
   } catch {
@@ -31,7 +32,7 @@ export async function getRates() {
 }
 
 /** Convert an AED amount to `currency`. Falls back to the AED amount if no rate. */
-export async function convertFromAed(amountAed, currency = 'AED') {
+export async function convertFromAed(amountAed: unknown, currency: string | null | undefined = 'AED'): Promise<number | null> {
   const amt = Number(amountAed);
   if (!Number.isFinite(amt)) return null;
   const cur = String(currency || 'AED').toUpperCase();
@@ -43,7 +44,7 @@ export async function convertFromAed(amountAed, currency = 'AED') {
 }
 
 /** Format an amount + currency for display, e.g. "₹3,526", "SAR 138", "AED 128", "$35". */
-export function format(amount, currency = 'AED') {
+export function format(amount: unknown, currency: string | null | undefined = 'AED'): string {
   const n = Number(amount);
   if (!Number.isFinite(n)) return '';
   const cur = String(currency || 'AED').toUpperCase();
@@ -52,7 +53,7 @@ export function format(amount, currency = 'AED') {
 }
 
 /** Convenience: AED amount → fully formatted local string in one call. */
-export async function priceInCurrency(amountAed, currency = 'AED') {
+export async function priceInCurrency(amountAed: unknown, currency: string | null | undefined = 'AED'): Promise<string> {
   const converted = await convertFromAed(amountAed, currency);
   return converted == null ? '' : format(converted, currency);
 }

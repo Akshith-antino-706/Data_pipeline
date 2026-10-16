@@ -15,6 +15,7 @@
  * by ';'. Data source: the rayna_* billing tables, joined by unified_id.
  */
 import db from '../config/database.js';
+import type { ReviewBookingRow, ReviewContactRow } from '../types/utilsReviewUrl.js';
 
 const REVIEW_BASE = (process.env.REVIEW_SITE_URL || 'https://feedback.raynatours.com').replace(/\/+$/, '');
 
@@ -46,13 +47,13 @@ const enc = encodeURIComponent;
  * Returns the bare feedback base (still a working button) when the contact has
  * no eligible bookings, so the CTA is never a dead/relative link.
  */
-export async function buildReviewUrl(unifiedId) {
+export async function buildReviewUrl(unifiedId: string | number | null | undefined): Promise<string> {
   if (!unifiedId) return REVIEW_BASE + '/';
-  let rows;
+  let rows: ReviewBookingRow[];
   try {
     ({ rows } = await db.query(QUERY, [unifiedId]));
   } catch (err) {
-    console.error(`[reviewUrl] booking query failed for unified_id=${unifiedId}: ${err.message}`);
+    console.error(`[reviewUrl] booking query failed for unified_id=${unifiedId}: ${(err as Error).message}`);
     return REVIEW_BASE + '/';
   }
   if (!rows.length) return REVIEW_BASE + '/';
@@ -63,14 +64,14 @@ export async function buildReviewUrl(unifiedId) {
 
   let name = '', email = '', audience = '';
   try {
-    const { rows: [uc] } = await db.query(
+    const { rows: [uc] }: { rows: ReviewContactRow[] } = await db.query(
       'SELECT name, email, contact_type FROM unified_contacts WHERE id = $1', [unifiedId]
     );
     name = uc?.name || '';
     email = uc?.email || '';
     audience = (uc?.contact_type || '').toLowerCase();
   } catch (err) {
-    console.error(`[reviewUrl] contact lookup failed for unified_id=${unifiedId}: ${err.message}`);
+    console.error(`[reviewUrl] contact lookup failed for unified_id=${unifiedId}: ${(err as Error).message}`);
   }
 
   return `${REVIEW_BASE}/?ref=${enc(billNo)}&name=${enc(name)}&email=${enc(email)}&audience=${enc(audience)}&items=${enc(items)}`;

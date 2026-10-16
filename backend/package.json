@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "giveaway:consumer": "node src/giveaway-consumer.js",
+    "start": "tsx server.js",
+    "dev": "tsx watch server.js",
+    "giveaway:consumer": "tsx src/giveaway-consumer.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
@@ -33,11 +34,21 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.2",
     "pg": "^8.20.0",
-    "sequelize": "^6.37.8"
+    "sequelize": "^6.37.8",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.43",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "eslint": "^9.39.5",
+    "globals": "^17.13.0",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.2",
     "vitest": "^3.2.7"
   }
 }

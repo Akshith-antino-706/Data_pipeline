@@ -6,6 +6,8 @@
  *   - injectOpenPixel()      — appends a 1×1 open-tracking pixel before </body>
  */
 
+import type { ClickTrackingOptions } from '../types/utilsEmail.js';
+
 /**
  * Replace every href link in the HTML with a click-tracking redirect that:
  *  1. Records the click against the send-log row
@@ -24,13 +26,13 @@
  * @param {number|string} [opts.journeyId] - journey ID to append to utm_content
  * @param {string}        [opts.nodeId]    - node ID (e.g. "trigger-1") to append to utm_content
  */
-export function injectClickTracking(html, { logId, baseUrl, campaign, content, source = 'AI_marketer', medium = 'email', unifiedId, journeyId, nodeId }) {
+export function injectClickTracking(html: string, { logId, baseUrl, campaign, content, source = 'AI_marketer', medium = 'email', unifiedId, journeyId, nodeId }: ClickTrackingOptions): string {
   // Build utm_content with journey info if provided
   let utmContent = content;
   if (journeyId) utmContent += `_j${journeyId}`;
   if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
-  return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, originalUrl) => {
+  return html.replace(/href="(https?:\/\/[^"]+)"/g, (match: string, originalUrl: string) => {
     // Skip our own tracking URLs and mailto links
     if (
       originalUrl.includes('/api/track/') ||
@@ -64,7 +66,7 @@ export function injectClickTracking(html, { logId, baseUrl, campaign, content, s
  * @param {string} baseUrl  - Backend base URL for tracking endpoints
  * @returns {string} HTML with pixel injected
  */
-export function injectOpenPixel(html, logId, baseUrl) {
+export function injectOpenPixel(html: string, logId: number | string, baseUrl: string): string {
   const pixel = `<img src="${baseUrl}/api/track/email-send/open/${logId}" width="1" height="1" style="display:none" alt="" />`;
   if (html.includes('</body>')) {
     return html.replace('</body>', `${pixel}</body>`);

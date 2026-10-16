@@ -13,18 +13,20 @@
  *   - transient error     → throw → BullMQ retries (attempts:3) → then lands in 'failed' (DLQ analogue)
  */
 import { Worker } from 'bullmq';
+import type { Job } from 'bullmq';
 import { getConnection } from '../queue/index.js';
 import { GIVEAWAY_EMAIL_QUEUE } from './giveawayQueue.js';
+import type { RedisSetNxEx, GiveawayMessage, GiveawayValidation, GiveawayJobResult } from '../../types/giveaway.js';
 
 const DEDUPE_TTL = parseInt(process.env.GIVEAWAY_DEDUPE_TTL_SEC || '604800', 10); // 7 days
 const CONCURRENCY = parseInt(process.env.GIVEAWAY_PREFETCH || '10', 10);
-const VALID_TYPES = new Set(['participation', 'eligible', 'winner', 'loser']);
+const VALID_TYPES = new Set<string | undefined>(['participation', 'eligible', 'winner', 'loser']);
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-let _worker = null;
+let _worker: Worker<GiveawayMessage, GiveawayJobResult> | null = null;
 
 /** Validate the §3 contract. Returns { ok } or { ok:false, reason }. */
-function validate(p) {
+function validate(p: GiveawayMessage | null | undefined): GiveawayValidation {
   if (!p || typeof p !== 'object')          return { ok: false, reason: 'not_an_object' };
   if (p.version !== 1)                        return { ok: false, reason: `unknown_version:${p.version}` };
   if (!p.id)                                  return { ok: false, reason: 'missing_id' };
@@ -35,8 +37,8 @@ function validate(p) {
   return { ok: true };
 }
 
-async function processGiveawayEmail(job) {
-  const p = job.data || {};
+async function processGiveawayEmail(job: Job<GiveawayMessage, GiveawayJobResult>): Promise<GiveawayJobResult> {
+  const p: GiveawayMessage = job.data || {};
   const tag = `[Giveaway] job=${job.id} id=${p.id ?? '?'} type=${p.type ?? '?'}`;
 
   // 1. Contract validation — poison → log + complete (never requeue).
@@ -48,7 +50,7 @@ async function processGiveawayEmail(job) {
 
   // 2. Idempotency — claim the id BEFORE we "send"; a duplicate redelivery is a no-op.
   const redis = getConnection();
-  const claimed = await redis.set(`giveaway:email:${p.id}`, '1', 'NX', 'EX', DEDUPE_TTL);
+  const claimed = await (redis.set as unknown as RedisSetNxEx)(`giveaway:email:${p.id}`, '1', 'NX', 'EX', DEDUPE_TTL);
   if (claimed === null) {
     console.log(`${tag} 🔁 DUPLICATE — already processed, skipping`);
     return { duplicate: true };
@@ -57,9 +59,9 @@ async function processGiveawayEmail(job) {
   // 3. "Send" — NOT wired. Just log the fully-rendered email we received.
   const preview = String(p.body).replace(/\s+/g, ' ').slice(0, 140);
   console.log(`${tag} ✅ RECEIVED (would send — SMTP not wired yet)`);
-  console.log(`         to:      ${p.to.name || ''} <${p.to.email}>`);
+  console.log(`         to:      ${p.to!.name || ''} <${p.to!.email}>`);
   console.log(`         subject: ${p.subject}`);
-  console.log(`         body:    ${preview}${p.body.length > 140 ? '…' : ''}`);
+  console.log(`         body:    ${preview}${p.body!.length > 140 ? '…' : ''}`);
   console.log(`         meta:    tenant=${p.tenantId || '-'} giveaway=${p.giveawayId || '-'} createdAt=${p.createdAt || '-'}`);
   return { logged: true };
 }

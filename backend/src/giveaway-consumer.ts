@@ -16,7 +16,7 @@ import { startGiveawayRabbitConsumer, stopGiveawayRabbitConsumer } from './servi
 console.log('[GiveawayMQ] starting standalone consumer…');
 await startGiveawayRabbitConsumer();
 
-const shutdown = async (sig) => {
+const shutdown = async (sig: NodeJS.Signals) => {
   console.log(`[GiveawayMQ] ${sig} — shutting down`);
   await stopGiveawayRabbitConsumer();
   process.exit(0);

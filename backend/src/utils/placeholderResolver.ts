@@ -17,6 +17,8 @@
  *                         callers attach it when the template uses those keys)
  */
 
+import type { EcomItem, EcomRoot, PlaceholderContext, PlaceholderScalar, PlaceholderValues } from '../types/utilsPlaceholder.js';
+
 const SITE = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
 
 // Fallback header image for WhatsApp templates that REQUIRE an `img` (header media) but the
@@ -25,13 +27,13 @@ const SITE = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').repla
 // or unreachable. This default is only used when nothing better resolves.
 const WA_DEFAULT_IMG = process.env.WA_DEFAULT_IMG || `${SITE}/rayna-og.jpg`;
 
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch as '&' | '<' | '>' | '"']));
 
 // Legacy / template-specific lowercase keys → canonical UPPER_SNAKE key.
 // (Plain lowercase keys that already match a canonical name — e.g. destination_city,
 //  coupon_code — resolve automatically via rawKey.toUpperCase(); only non-matching
 //  names need an explicit alias here.)
-const ALIASES = {
+const ALIASES: Record<string, string> = {
   customer_name: 'USER_FIRST_NAME',
   first_name:    'USER_FIRST_NAME',
   user_name:     'USER_NAME',
@@ -77,26 +79,26 @@ const ALIASES = {
 };
 
 // Per-key defaults when the resolved value is empty (otherwise → blank, never literal {{}})
-const DEFAULTS = { USER_FIRST_NAME: 'there' };
+const DEFAULTS: Record<string, string> = { USER_FIRST_NAME: 'there' };
 
 // Some product/visa image URLs contain raw spaces (e.g. ".../Saudi Arabia Visa New_309/Saudi-Arabia.jpg")
 // which break in email/WhatsApp unless percent-encoded. Encode spaces only (never double-encode an
 // already-escaped URL). Applied to the image URL so every template/channel renders it.
-const encImgUrl = (u) => (u == null || u === '' ? u : String(u).replace(/ /g, '%20'));
+const encImgUrl = (u: PlaceholderScalar): PlaceholderScalar => (u == null || u === '' ? u : String(u).replace(/ /g, '%20'));
 
 /** Build the full {KEY: value} map for one (contact, event) pair. */
-function buildValues(ctx = {}) {
+function buildValues(ctx: PlaceholderContext = {}): PlaceholderValues {
   const c  = ctx.contact || {};
   const ev = ctx.event   || {};
   const p  = ctx.payload || ev.raw_payload || {};
   const a  = ctx.affinity || {};
-  const ecomRoot = p.ecommerceData || p.ecommerce || {};
-  const ecom = (Array.isArray(ecomRoot.items) && ecomRoot.items[0]) || {};
+  const ecomRoot: EcomRoot = p.ecommerceData || p.ecommerce || {};
+  const ecom: EcomItem = (Array.isArray(ecomRoot.items) && ecomRoot.items[0]) || {};
 
   // Strip leading honorifics ("Mr. Vaibhav Gupta" → "Vaibhav Gupta", "Mrs  Priya" → "Priya")
   // so greetings never read "Hi Mr." / "Dear Mrs.". Repeated titles are stripped too.
   const HONORIFIC_RE = /^(?:(?:mr|mrs|ms|miss|mistress|master|dr|prof|professor|sir|madam|mdm|mx|shri|smt|capt|captain|er|eng)\.?,?\s+)+/i;
-  const cleanName = (n) => String(n ?? '').trim().replace(HONORIFIC_RE, '').trim();
+  const cleanName = (n: unknown): string => String(n ?? '').trim().replace(HONORIFIC_RE, '').trim();
   const fullName  = cleanName(c.name ?? p.name);
   const firstName = fullName.split(/\s+/)[0] || '';
   const pageUrl   = ev.page_url || p.pageUrl || '';
@@ -213,13 +215,13 @@ function buildValues(ctx = {}) {
  * Replace every {{KEY}} in `html` with its resolved, HTML-escaped value.
  * Unknown / empty keys → blank (never leak a literal {{KEY}}).
  */
-export function renderTemplate(html, ctx = {}) {
+export function renderTemplate(html: string | null | undefined, ctx: PlaceholderContext = {}): string {
   if (!html) return '';
   const values = buildValues(ctx);
-  const missing = new Set();
+  const missing = new Set<string>();
   // Matches {{ KEY }} and the Liquid-style {{ KEY | default: 'fallback' }}.
   const RE = /\{\{\s*([A-Za-z0-9_]+)\s*(?:\|\s*default\s*:\s*(['"])([\s\S]*?)\2\s*)?\}\}/g;
-  const out = String(html).replace(RE, (_m, rawKey, _q, inlineDefault) => {
+  const out = String(html).replace(RE, (_m: string, rawKey: string, _q: string | undefined, inlineDefault: string | undefined) => {
     const key = ALIASES[rawKey] || ALIASES[rawKey.toLowerCase()] || rawKey.toUpperCase();
     let v = values[key];
     if (v === undefined || v === null || v === '') {
@@ -240,7 +242,7 @@ export function renderTemplate(html, ctx = {}) {
  * (the regex renderTemplate only ever exposes items[0]). Affinity keys are also given
  * in lowercase ({{ product_affinity_1 }}) since Liquid is case-sensitive.
  */
-export function buildLiquidVars(ctx = {}) {
+export function buildLiquidVars(ctx: PlaceholderContext = {}) {
   const p = ctx.payload || ctx.event?.raw_payload || {};
   const items = Array.isArray(p.ecommerceData?.items) ? p.ecommerceData.items
               : Array.isArray(p.ecommerce?.items)     ? p.ecommerce.items : [];
@@ -263,7 +265,7 @@ export const RCS_DATA_KEYS = ['item_name', 'item_price', 'destination_city', 'ct
 const ITEM_EVENTS = new Set(['view_item', 'add_to_cart', 'begin_checkout', 'add_to_wishlist', 'add_payment_info', 'purchase']);
 
 /** Is this send product/item-based? (a real itemId OR a product event). */
-export function isItemBased(eventName, itemId) {
+export function isItemBased(eventName: string, itemId: unknown): boolean {
   const hasItem = itemId != null && String(itemId).trim() !== '' && String(itemId) !== '_noitem';
   return hasItem || ITEM_EVENTS.has(eventName);
 }
@@ -278,19 +280,19 @@ export function isItemBased(eventName, itemId) {
  * field labels ([] = complete). NOTE: the image is checked via item_image_url / ITEM_IMAGE_URL —
  * NOT the WhatsApp `img` key, which carries a default placeholder and would mask a missing image.
  */
-export function missingItemFields(v = {}) {
-  const blank = (x) => {
+export function missingItemFields(v: Record<string, unknown> = {}): string[] {
+  const blank = (x: unknown): boolean => {
     const s = String(x ?? '').trim();
     return s === '' || /^(na|n\/a|null|undefined|none|-)$/i.test(s);
   };
-  const pick = (...keys) => { for (const k of keys) { if (!blank(v[k])) return v[k]; } return ''; };
+  const pick = (...keys: string[]): unknown => { for (const k of keys) { if (!blank(v[k])) return v[k]; } return ''; };
 
   // Category-aware exemption: VISA products have no destination city (you apply for a
   // country's visa, there's no "city"), so a missing DESTINATION_CITY must NOT skip them.
   const category = String(pick('ITEM_CATEGORY', 'item_category', 'service_type')).toLowerCase();
   const isVisa = /visa/.test(category);
 
-  const missing = [];
+  const missing: string[] = [];
   if (blank(pick('ITEM_NAME', 'item_name')))                      missing.push('ITEM_NAME');
   if (blank(pick('ITEM_PRICE', 'item_price')))                    missing.push('ITEM_PRICE');
   if (blank(pick('ITEM_IMAGE_URL', 'item_image_url', 'item_image'))) missing.push('ITEM_IMAGE_URL');
@@ -312,10 +314,10 @@ const WA_DATA_EXCLUDE = new Set(['RAW_PAYLOAD']);
  *   keys = []   → emit only those specific lowercase keys (lean mode).
  * `name` is always USER_NAME, falling back to USER_FIRST_NAME (matches the email templates).
  */
-export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
+export function buildWaVars(ctx: PlaceholderContext = {}, keys: string | readonly string[] = WA_DATA_KEYS): PlaceholderValues {
   const values = buildValues(ctx);
-  const out = {};
-  const put = (k, v) => { if (v != null && String(v).trim() !== '') out[k] = String(v).trim(); };
+  const out: PlaceholderValues = {};
+  const put = (k: string, v: PlaceholderScalar) => { if (v != null && String(v).trim() !== '') out[k] = String(v).trim(); };
 
   if (keys === '*' || keys === 'all') {
     for (const [canon, v] of Object.entries(values)) {

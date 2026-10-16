@@ -11,9 +11,12 @@
 import nodemailer from 'nodemailer';
 import ChatheadEmailChannel from './ChatheadEmailChannel.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import type { Transporter } from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport/index.js';
+import type { EmailSendResult, JourneyEmailArgs } from '../../types/channels.js';
 
-let _giveawayTx = null;
-function giveawayTransport() {
+let _giveawayTx: Transporter<SMTPTransport.SentMessageInfo> | null = null;
+function giveawayTransport(): Transporter<SMTPTransport.SentMessageInfo> {
   if (_giveawayTx) return _giveawayTx;
   _giveawayTx = nodemailer.createTransport({
     host: process.env.GIVEAWAY_SMTP_HOST,
@@ -24,7 +27,7 @@ function giveawayTransport() {
   return _giveawayTx;
 }
 
-async function sendViaGiveawaySmtp({ to, subject, html }) {
+async function sendViaGiveawaySmtp({ to, subject, html }: Omit<JourneyEmailArgs, 'emailCredential'>): Promise<EmailSendResult> {
   // Same allow-list backstop the AWS channel enforces.
   if (!isEmailAllowed(to)) {
     console.log(`[Giveaway SMTP] Skipped — ${to} not in WELCOME_EMAILS allow-list`);
@@ -41,7 +44,7 @@ async function sendViaGiveawaySmtp({ to, subject, html }) {
     });
     return { success: true, provider: 'giveaway-smtp', externalId: info.messageId, durationMs: Date.now() - start };
   } catch (err) {
-    return { success: false, provider: 'giveaway-smtp', error: err.message, durationMs: Date.now() - start };
+    return { success: false, provider: 'giveaway-smtp', error: (err as Error).message, durationMs: Date.now() - start };
   }
 }
 
@@ -49,7 +52,7 @@ async function sendViaGiveawaySmtp({ to, subject, html }) {
  * Send a journey email through the transport selected by `emailCredential`.
  * @param {{ emailCredential?: string, to: string, subject: string, html: string }} args
  */
-export async function sendJourneyEmail({ emailCredential, to, subject, html }) {
+export async function sendJourneyEmail({ emailCredential, to, subject, html }: JourneyEmailArgs): Promise<EmailSendResult> {
   if (emailCredential === 'giveaway') {
     return sendViaGiveawaySmtp({ to, subject, html });
   }

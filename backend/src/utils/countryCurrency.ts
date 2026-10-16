@@ -7,8 +7,8 @@
  * (the base currency), so a price is NEVER mislabeled or dropped.
  */
 
-const MAP = Object.create(null);
-const reg = (code, ...names) => { for (const n of names) MAP[n] = code; };
+const MAP: Record<string, string> = Object.create(null);
+const reg = (code: string, ...names: string[]): void => { for (const n of names) MAP[n] = code; };
 
 // ── Gulf / Middle East ──
 reg('AED', 'united arab emirates', 'uae', 'ae', 'are', 'emirates');
@@ -176,12 +176,12 @@ reg('VUV', 'vanuatu', 'vu', 'vut');
 reg('SBD', 'solomon islands', 'sb', 'slb');
 
 /** Normalize a country string for lookup: lowercase, trim, strip dots, collapse spaces. */
-export function normalizeCountry(country) {
+export function normalizeCountry(country: unknown): string {
   return String(country || '').toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
 }
 
 /** ISO currency code for a country (name/code/variant), or null when unknown/blank. */
-export function currencyForCountry(country) {
+export function currencyForCountry(country: unknown): string | null {
   const n = normalizeCountry(country);
   return n ? (MAP[n] || null) : null;
 }

@@ -15,6 +15,7 @@
  * The feed's market_prices are AED for every plan; utils/currency.js converts the chosen
  * plan's AED price into the display currency at send time (fx_rates, refreshed daily).
  */
+import type { MarketContact, MarketResolution } from '../types/utilsMarket.js';
 import { currencyForCountry, normalizeCountry } from './countryCurrency.js';
 
 const INDIA = new Set(['india', 'in', 'ind', 'bharat', 'republic of india']);
@@ -23,7 +24,7 @@ const UAE   = new Set(['united arab emirates', 'uae', 'ae', 'are', 'emirates', '
 
 const VALID_PLANS = new Set(['IN', 'SA', 'AE', 'default']);
 
-export function resolveMarket(contact = {}) {
+export function resolveMarket(contact: MarketContact = {}): MarketResolution {
   // Stored per-user values win (set by the backfill / nightly refresh).
   const storedPlan = String(contact.market_plan || '').trim();
   const storedCur  = String(contact.currency_code || '').trim().toUpperCase();

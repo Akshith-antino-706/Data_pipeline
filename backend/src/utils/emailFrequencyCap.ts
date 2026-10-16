@@ -16,6 +16,8 @@
  * outage must never silently block real mail).
  */
 import IORedis from 'ioredis';
+import type { Redis } from 'ioredis';
+import type { CapResult, CapTarget } from '../types/utilsEmail.js';
 
 const REDIS_URL  = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const ENABLED    = process.env.EMAIL_CAP_ENABLED === 'true';
@@ -31,15 +33,15 @@ const BYPASS_EMAILS = new Set(
     .map(e => e.trim().toLowerCase())
     .filter(Boolean)
 );
-function _isBypassed(email) {
+function _isBypassed(email: string | null | undefined): boolean {
   return !!email && BYPASS_EMAILS.has(String(email).trim().toLowerCase());
 }
 
-let _redis;
-function getRedis() {
+let _redis: Redis | null | undefined;
+function getRedis(): Redis | null {
   if (_redis === null) return null;
   if (!_redis) {
-    _redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false, lazyConnect: true });
+    _redis = new (IORedis as unknown as typeof Redis)(REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false, lazyConnect: true });
     _redis.connect().catch(() => { _redis = null; });
     _redis.on('error', () => {});
   }
@@ -47,21 +49,21 @@ function getRedis() {
 }
 
 // Prefer the stable contact id; fall back to the raw email (e.g. ad-hoc test sends).
-function capKey({ unifiedId, email } = {}) {
+function capKey({ unifiedId, email }: CapTarget = {}): string | null {
   if (unifiedId !== undefined && unifiedId !== null && `${unifiedId}` !== '') return `cap:u:${unifiedId}`;
   if (email) return `cap:e:${String(email).trim().toLowerCase()}`;
   return null;
 }
 
-export function isCapEnabled() { return ENABLED; }
-export function capLimit() { return CAP; }
+export function isCapEnabled(): boolean { return ENABLED; }
+export function capLimit(): number { return CAP; }
 
 /**
  * Atomically reserve a send slot for this recipient in the current window.
  * Returns { allowed, count, capped }. INCR creates the key (=1) on the first email
  * and we start the TTL then; over the cap → not allowed.
  */
-export async function reserveSend(target) {
+export async function reserveSend(target?: CapTarget): Promise<CapResult> {
   // Bypass allowlist wins over ENABLED — QA inboxes never get capped.
   if (_isBypassed(target?.email)) return { allowed: true, count: 0, capped: false, bypassed: true };
   if (!ENABLED) return { allowed: true, count: 0, capped: false };
@@ -70,7 +72,7 @@ export async function reserveSend(target) {
   const redis = getRedis();
   if (!redis) return { allowed: true, count: 0, capped: false }; // fail-open
   try {
-    const [[, n]] = await redis.multi().incr(key).expire(key, WINDOW_SEC, 'NX').exec();
+    const [[, n]] = await redis.multi().incr(key).expire(key, WINDOW_SEC, 'NX').exec() as [error: Error | null, result: number][];
     if (n > CAP) return { allowed: false, count: n, capped: true };
     return { allowed: true, count: n, capped: false };
   } catch {
@@ -79,7 +81,7 @@ export async function reserveSend(target) {
 }
 
 /** Release a previously-reserved slot (call when the send itself failed). */
-export async function releaseSend(target) {
+export async function releaseSend(target?: CapTarget): Promise<void> {
   if (_isBypassed(target?.email)) return; // Nothing was reserved for bypassed users.
   if (!ENABLED) return;
   const key = capKey(target);
@@ -104,21 +106,21 @@ const _WA_BYPASS = new Set(
   ((process.env.EMAIL_CAP_BYPASS_EMAILS || '') + ',' + (process.env.WHATSAPP_CAP_BYPASS_EMAILS || ''))
     .split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
 );
-const _isWaBypassed = (email) => !!email && _WA_BYPASS.has(String(email).trim().toLowerCase());
+const _isWaBypassed = (email: string | null | undefined): boolean => !!email && _WA_BYPASS.has(String(email).trim().toLowerCase());
 
 // Prefer the stable contact id; fall back to email, then phone (WA-only contacts).
-function waCapKey({ unifiedId, email, phone } = {}) {
+function waCapKey({ unifiedId, email, phone }: CapTarget = {}): string | null {
   if (unifiedId !== undefined && unifiedId !== null && `${unifiedId}` !== '') return `capwa:u:${unifiedId}`;
   if (email) return `capwa:e:${String(email).trim().toLowerCase()}`;
   if (phone) return `capwa:p:${String(phone).replace(/\D/g, '')}`;
   return null;
 }
 
-export function isWaCapEnabled() { return WA_ENABLED; }
-export function waCapLimit() { return WA_CAP; }
+export function isWaCapEnabled(): boolean { return WA_ENABLED; }
+export function waCapLimit(): number { return WA_CAP; }
 
 /** Reserve a WhatsApp send slot. Returns { allowed, count, capped }. */
-export async function reserveWaSend(target) {
+export async function reserveWaSend(target?: CapTarget): Promise<CapResult> {
   if (_isWaBypassed(target?.email)) return { allowed: true, count: 0, capped: false, bypassed: true };
   if (!WA_ENABLED) return { allowed: true, count: 0, capped: false };
   const key = waCapKey(target);
@@ -136,7 +138,7 @@ export async function reserveWaSend(target) {
 }
 
 /** Release a reserved WhatsApp slot (call when the send itself failed). */
-export async function releaseWaSend(target) {
+export async function releaseWaSend(target?: CapTarget): Promise<void> {
   if (_isWaBypassed(target?.email)) return;
   if (!WA_ENABLED) return;
   const key = waCapKey(target);

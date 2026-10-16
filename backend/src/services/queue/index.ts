@@ -1,5 +1,8 @@
 import { Queue, QueueEvents } from 'bullmq';
+import type { DefaultJobOptions, Job } from 'bullmq';
 import IORedis from 'ioredis';
+import type { Redis } from 'ioredis';
+import type { BatchJobInput, GtmJourneyJobData, JourneyQueues, WelcomeJobData } from '../../types/queueJobs.js';
 
 /**
  * BullMQ infrastructure for journey-driven mass send.
@@ -15,33 +18,33 @@ import IORedis from 'ioredis';
 
 const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 
-function buildConnection() {
+function buildConnection(): Redis {
   const url = process.env.REDIS_URL || DEFAULT_REDIS_URL;
-  return new IORedis(url, {
+  return new (IORedis as unknown as typeof Redis)(url, {
     maxRetriesPerRequest: null,   // BullMQ requires this
     enableReadyCheck: false,
     connectTimeout: 5000,         // fail fast if Redis is down
-    retryStrategy: (times) => Math.min(times * 500, 3000),
+    retryStrategy: (times: number) => Math.min(times * 500, 3000),
   });
 }
 
 // Lazily build so importing this module doesn't open a Redis socket if the
 // app doesn't actually use the queue (cron-only mode, scripts, etc.).
-let _connection;
-export function getConnection() {
+let _connection: Redis | null | undefined;
+export function getConnection(): Redis {
   if (!_connection) _connection = buildConnection();
   return _connection;
 }
 
-const QUEUE_DEFAULTS = {
+const QUEUE_DEFAULTS: DefaultJobOptions = {
   attempts: 3,
   backoff: { type: 'exponential', delay: 5_000 },
   removeOnComplete: { age: 86_400, count: 50_000 },
   removeOnFail:     { age: 7 * 86_400, count: 50_000 },
 };
 
-let _queues;
-function _initQueues() {
+let _queues: JourneyQueues | null | undefined;
+function _initQueues(): JourneyQueues {
   if (_queues) return _queues;
   const conn = getConnection();
   _queues = {
@@ -55,7 +58,7 @@ function _initQueues() {
   return _queues;
 }
 
-export function getQueue(channel) {
+export function getQueue(channel: string): Queue {
   const q = _initQueues();
   if (channel === 'email')      return q.email;
   if (channel === 'whatsapp')   return q.wa;
@@ -70,12 +73,12 @@ export function getQueue(channel) {
  * Enqueue a DELAYED welcome-email job. Durable (survives restarts) — this replaces
  * the old in-memory setTimeout. The welcome worker processes it after `delayMs`.
  */
-export async function enqueueWelcome(data, delayMs = 0) {
+export async function enqueueWelcome(data: WelcomeJobData, delayMs: number = 0): Promise<Job> {
   return getQueue('welcome').add('welcome-send', data, { delay: Math.max(0, delayMs) });
 }
 
 /** Enqueue a DELAYED gtm-journey send (event-triggered per-user email). */
-export async function enqueueGtmJourney(data, delayMs = 0) {
+export async function enqueueGtmJourney(data: GtmJourneyJobData, delayMs: number = 0): Promise<Job> {
   return getQueue('gtmJourney').add('gtm-journey-send', data, { delay: Math.max(0, delayMs) });
 }
 
@@ -84,7 +87,7 @@ export async function enqueueGtmJourney(data, delayMs = 0) {
  * thousand jobs efficiently in a single round-trip; producers should chunk
  * large recipient lists into batches of ~1000 before calling this.
  */
-export async function enqueueBatch(channel, jobs) {
+export async function enqueueBatch(channel: string, jobs: BatchJobInput[] | null | undefined): Promise<Job[]> {
   if (!jobs || jobs.length === 0) return [];
   const queue = getQueue(channel);
   return queue.addBulk(
@@ -93,15 +96,15 @@ export async function enqueueBatch(channel, jobs) {
 }
 
 /** Pause / resume / drain helpers — wired up to a route or CLI for incident response. */
-export async function pauseQueue(channel)  { return getQueue(channel).pause(); }
-export async function resumeQueue(channel) { return getQueue(channel).resume(); }
-export async function drainQueue(channel)  { return getQueue(channel).drain(true); }
+export async function pauseQueue(channel: string): Promise<void>  { return getQueue(channel).pause(); }
+export async function resumeQueue(channel: string): Promise<void> { return getQueue(channel).resume(); }
+export async function drainQueue(channel: string): Promise<void>  { return getQueue(channel).drain(true); }
 
-export async function queueCounts(channel) {
+export async function queueCounts(channel: string): Promise<Record<string, number>> {
   return getQueue(channel).getJobCounts('waiting','active','delayed','completed','failed','paused');
 }
 
-export async function closeQueues() {
+export async function closeQueues(): Promise<void> {
   if (!_queues) return;
   await Promise.all([
     _queues.email.close(),
@@ -119,7 +122,7 @@ export async function closeQueues() {
 }
 
 /** QueueEvents subscription — useful for the API to stream live progress to the UI. */
-export function getQueueEvents(channel) {
+export function getQueueEvents(channel: string): QueueEvents {
   const conn = getConnection();
   if (channel === 'email')    return new QueueEvents('journey-email', { connection: conn });
   if (channel === 'whatsapp') return new QueueEvents('journey-wa',    { connection: conn });

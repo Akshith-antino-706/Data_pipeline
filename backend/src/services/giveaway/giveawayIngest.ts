@@ -8,13 +8,15 @@
  * insert is ON CONFLICT (id) DO NOTHING. Storing happens regardless of GIVEAWAY_SEND_ENABLED.
  */
 import pool from '../../config/database.js';
+import type { PoolClient } from 'pg';
+import type { GiveawayMessage, GiveawayEventData } from '../../types/giveaway.js';
 
-const str = (v) => (v === '' || v == null) ? null : String(v);
-const int = (v) => { const m = String(v ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : null; };
+const str = (v: unknown): string | null => (v === '' || v == null) ? null : String(v);
+const int = (v: unknown): number | null => { const m = String(v ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : null; };
 
 // Find-or-create the contact; append 'giveaway' to sources if missing. Returns unified_id (or null).
 // Giveaway contacts are tagged contact_type = 'B2C'.
-async function upsertContact(client, { email, name }) {
+async function upsertContact(client: PoolClient, { email, name }: { email?: string; name?: string }): Promise<number | null> {
   if (!email) return null;
 
   // NO DUPLICATES: serialize concurrent giveaway ingests for the SAME email with a
@@ -24,7 +26,7 @@ async function upsertContact(client, { email, name }) {
   // row the first one inserted.
   await client.query(`SELECT pg_advisory_xact_lock(hashtext(lower(trim($1))))`, [email]);
 
-  const { rows: [found] } = await client.query(
+  const { rows: [found] } = await client.query<{ id: number; sources: string | null }>(
     `SELECT id, sources FROM unified_contacts WHERE lower(trim(email)) = lower(trim($1)) LIMIT 1`,
     [email]
   );
@@ -45,7 +47,7 @@ async function upsertContact(client, { email, name }) {
     }
     return found.id;
   }
-  const { rows: [created] } = await client.query(
+  const { rows: [created] } = await client.query<{ id: number }>(
     `INSERT INTO unified_contacts (email, name, sources, contact_type, created_at, updated_at)
      VALUES ($1, $2, 'giveaway', 'B2C', NOW(), NOW())
      RETURNING id`,
@@ -57,10 +59,10 @@ async function upsertContact(client, { email, name }) {
 /**
  * Ingest one validated §3 giveaway message. Returns { unifiedId, stored }.
  */
-export async function ingestGiveawayEvent(p) {
+export async function ingestGiveawayEvent(p: GiveawayMessage): Promise<{ unifiedId: number | null; stored: boolean }> {
   // Nested data: { user{name}, giveaway{title,image,mechanic}, prize{name,image,type,value},
   //               winner{rank,code}, offer{name,code,expiry}, participant{position,points} }.
-  const d = p.data || {};
+  const d: GiveawayEventData = p.data || {};
   const u = d.user || {}, g = d.giveaway || {}, pr = d.prize || {}, w = d.winner || {}, of = d.offer || {}, pa = d.participant || {};
   const client = await pool.connect();
   try {
@@ -87,7 +89,7 @@ export async function ingestGiveawayEvent(p) {
       ]
     );
     await client.query('COMMIT');
-    return { unifiedId, stored: res.rowCount > 0 };
+    return { unifiedId, stored: res.rowCount! > 0 };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;

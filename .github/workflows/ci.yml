@@ -26,6 +26,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      - run: npm run lint        # fails on any use of `any` in TypeScript files
       - run: npm run typecheck
       # tests/setup.js forces local dummy DB/Redis hosts, so no real service is ever reached.
       - run: npm test
@@ -43,8 +44,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npx eslint .
-        continue-on-error: true   # existing code has known lint warnings; tighten once cleaned up
+      # TypeScript files are linted strictly (no `any`). The .jsx pages still being converted
+      # have pre-existing lint errors, so they're linted without failing the job until then.
+      - run: npx eslint "**/*.{ts,tsx}"
+      - run: npx eslint "**/*.{js,jsx}"
+        continue-on-error: true
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

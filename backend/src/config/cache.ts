@@ -1,13 +1,14 @@
 import IORedis from 'ioredis';
+import type { Redis } from 'ioredis';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const PREFIX = 'dp:';          // data-pipeline namespace
 const DEFAULT_TTL = 3600;      // 1 hour
 
-let _redis;
-function getRedis() {
+let _redis: Redis | undefined;
+function getRedis(): Redis {
   if (!_redis) {
-    _redis = new IORedis(REDIS_URL, {
+    _redis = new (IORedis as unknown as typeof Redis)(REDIS_URL, {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
       lazyConnect: true,
@@ -27,14 +28,14 @@ function getRedis() {
  * Get cached value or compute & store it.
  * Falls back to computing without cache if Redis is down.
  */
-export async function cached(key, computeFn, ttl = DEFAULT_TTL) {
+export async function cached<T>(key: string, computeFn: () => T | Promise<T>, ttl: number | ((result: T) => number) = DEFAULT_TTL): Promise<T> {
   const redis = getRedis();
   if (!redis) return computeFn();
 
   const fullKey = PREFIX + key;
   try {
     const hit = await redis.get(fullKey);
-    if (hit) return JSON.parse(hit);
+    if (hit) return JSON.parse(hit) as T;
   } catch { /* miss or parse error — compute fresh */ }
 
   const result = await computeFn();
@@ -54,13 +55,13 @@ export async function cached(key, computeFn, ttl = DEFAULT_TTL) {
 /**
  * Delete exact cache keys (no KEYS scan — safe on a shared Redis).
  */
-export async function del(...keys) {
+export async function del(...keys: string[]): Promise<void> {
   const redis = getRedis();
   if (!redis || keys.length === 0) return;
   try {
     await redis.del(...keys.map(k => PREFIX + k));
   } catch (err) {
-    console.warn('[Cache] del error:', err.message);
+    console.warn('[Cache] del error:', (err as Error).message);
   }
 }
 
@@ -69,7 +70,7 @@ export async function del(...keys) {
  */
 // Incremental SCAN + UNLINK. KEYS is O(N) over the whole keyspace and blocks Redis,
 // which BullMQ shares — long blocks expire worker locks and re-run jobs.
-async function scanDelete(redis, match) {
+async function scanDelete(redis: Redis, match: string): Promise<number> {
   let cursor = '0';
   let total = 0;
   do {
@@ -80,7 +81,7 @@ async function scanDelete(redis, match) {
   return total;
 }
 
-export async function invalidate(pattern) {
+export async function invalidate(pattern: string): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
 
@@ -88,7 +89,7 @@ export async function invalidate(pattern) {
     const n = await scanDelete(redis, PREFIX + pattern);
     if (n > 0) console.log(`[Cache] Invalidated ${n} keys matching "${pattern}"`);
   } catch (err) {
-    console.warn('[Cache] Invalidation error:', err.message);
+    console.warn('[Cache] Invalidation error:', (err as Error).message);
   }
 }
 
@@ -96,7 +97,7 @@ export async function invalidate(pattern) {
  * Flush all cached keys under the dp: namespace.
  * Called on server startup to ensure fresh data.
  */
-export async function flushAll() {
+export async function flushAll(): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
 
@@ -108,7 +109,7 @@ export async function flushAll() {
       console.log('[Cache] Startup flush — no cached keys to clear');
     }
   } catch (err) {
-    console.warn('[Cache] Startup flush error:', err.message);
+    console.warn('[Cache] Startup flush error:', (err as Error).message);
   }
 }
 

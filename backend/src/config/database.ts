@@ -1,4 +1,5 @@
 import pg from 'pg';
+import type { Pool as PgPool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 const { Pool } = pg;
 
@@ -14,29 +15,32 @@ const CONFIG = {
   connectionTimeoutMillis: 30000,
 };
 
-let _pool = null;
+let _pool: PgPool | null = null;
 
-function getPool() {
+/** pg.Pool marks `ending` publicly; `_ending` is the internal flag read here. */
+type PoolWithEnding = PgPool & { _ending?: boolean };
+
+function getPool(): PgPool {
   // Recreate if never created, or if pool.end() was called (sets _ending = true)
-  if (!_pool || _pool._ending) {
+  if (!_pool || (_pool as PoolWithEnding)._ending) {
     console.warn('[DB] Creating new connection pool...');
     _pool = new Pool(CONFIG);
-    _pool.on('error', (err) => console.error('[DB] Unexpected pool error:', err));
+    _pool.on('error', (err: Error) => console.error('[DB] Unexpected pool error:', err));
   }
   return _pool;
 }
 
 /** Run a query, auto-healing if the pool was ended */
-export async function query(text, params) {
+export async function query<R extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<QueryResult<R>> {
   const start = Date.now();
-  const result = await getPool().query(text, params);
+  const result = await getPool().query<R>(text, params);
   const duration = Date.now() - start;
   if (duration > 500) console.warn(`[DB] Slow query (${duration}ms):`, text.slice(0, 100));
   return result;
 }
 
 /** Transaction helper: fn receives a client */
-export async function transaction(fn) {
+export async function transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
@@ -56,10 +60,10 @@ export async function transaction(fn) {
  * If pool.end() was called (e.g. during a graceful-reload that didn't fully exit),
  * the next access recreates the pool transparently.
  */
-const pool = new Proxy({}, {
-  get(_, prop) {
+const pool = new Proxy({} as PgPool, {
+  get(_, prop: string | symbol) {
     const p = getPool();
-    const val = p[prop];
+    const val: unknown = p[prop as keyof PgPool];
     return typeof val === 'function' ? val.bind(p) : val;
   },
 });

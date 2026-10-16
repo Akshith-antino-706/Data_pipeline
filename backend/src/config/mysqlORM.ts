@@ -1,17 +1,18 @@
 import { Sequelize, DataTypes } from 'sequelize';
+import type { Model, ModelStatic } from 'sequelize';
 import defineContact from '../models/Contact.js';
 import defineTicket from '../models/Ticket.js';
 import { definePrimaryDepartment, defineChatsDepartment } from '../models/Department.js';
 import defineDepartmentEmail from '../models/DepartmentEmail.js';
 import defineChat from '../models/Chat.js';
 
-const instances = {};
+const instances: Record<string, Sequelize> = {};
 
 /**
  * Get a named Sequelize instance for MySQL.
  * @param {string} name - 'primary' (MYSQL_*) or 'chats' (MYSQL2_*)
  */
-export function getSequelizeInstance(name = 'primary') {
+export function getSequelizeInstance(name: string = 'primary'): Sequelize {
   if (!instances[name]) {
     const config = name === 'chats'
       ? {
@@ -29,7 +30,7 @@ export function getSequelizeInstance(name = 'primary') {
           database: process.env.MYSQL_DB,
         };
 
-    instances[name] = new Sequelize(config.database, config.username, config.password, {
+    instances[name] = new Sequelize(config.database as string, config.username as string, config.password, {
       host: config.host,
       port: config.port,
       dialect: 'mysql',
@@ -47,12 +48,22 @@ export function getSequelizeInstance(name = 'primary') {
 
 // ── Model Registry ───────────────────────────────────────
 
-const models = {};
+type MySQLModel = ModelStatic<Model>;
 
-function defineModels(sequelize, name) {
+export interface MySQLModels {
+  Contact?: MySQLModel;
+  Ticket?: MySQLModel;
+  Department?: MySQLModel;
+  DepartmentEmail?: MySQLModel;
+  Chat?: MySQLModel;
+}
+
+const models: Record<string, MySQLModels> = {};
+
+function defineModels(sequelize: Sequelize, name: string): MySQLModels {
   if (models[name]) return models[name];
 
-  const m = {};
+  const m: MySQLModels = {};
 
   if (name === 'primary') {
     m.Contact = defineContact(sequelize);
@@ -74,7 +85,7 @@ function defineModels(sequelize, name) {
  * Get Sequelize models for a named MySQL connection.
  * @param {string} name - 'primary' or 'chats'
  */
-export function getMySQLModels(name = 'primary') {
+export function getMySQLModels(name: string = 'primary'): MySQLModels {
   const sequelize = getSequelizeInstance(name);
   return defineModels(sequelize, name);
 }

@@ -29,12 +29,12 @@ export const BLOCKED_CITIES = new Set([
 ]);
 
 /** Test whether a destination KEY (e.g. 'dubai', 'abu_dhabi') is blocked. */
-export function isKeyBlocked(key) {
+export function isKeyBlocked(key: string | null | undefined): boolean {
   return BLOCKED_DESTINATION_KEYS.has(String(key || '').toLowerCase());
 }
 
 /** Test whether a CITY (e.g. 'Dubai', 'Abu Dhabi') is blocked. */
-export function isCityBlocked(city) {
+export function isCityBlocked(city: string | null | undefined): boolean {
   return BLOCKED_CITIES.has(String(city || '').trim().toLowerCase());
 }
 
@@ -45,7 +45,7 @@ export function isCityBlocked(city) {
  *   filterMapByKey({ dubai: {...}, singapore: {...} })
  *      → { singapore: {...} }
  */
-export function filterMapByKey(map) {
+export function filterMapByKey<T>(map: Record<string, T>): Record<string, T> {
   return Object.fromEntries(
     Object.entries(map).filter(([key]) => !isKeyBlocked(key))
   );
@@ -55,7 +55,7 @@ export function filterMapByKey(map) {
  * Filter an activity-style map where each entry has a `city` field.
  * Removes entries whose city is blocked.
  */
-export function filterMapByCity(map) {
+export function filterMapByCity<T extends { city?: string | null }>(map: Record<string, T | null | undefined>): Record<string, T | null | undefined> {
   return Object.fromEntries(
     Object.entries(map).filter(([, entry]) => !isCityBlocked(entry?.city))
   );

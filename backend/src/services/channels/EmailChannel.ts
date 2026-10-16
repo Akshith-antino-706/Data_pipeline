@@ -16,14 +16,17 @@
 import nodemailer from 'nodemailer';
 import { query } from '../../config/database.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import type { Transporter } from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport/index.js';
+import type { EmailSendArgs, EmailSendResult, SendGridErrorResponse, SendGridWebhookEvent } from '../../types/channels.js';
 
-let _transporter = null;
+let _transporter: Transporter<SMTPTransport.SentMessageInfo> | null = null;
 
 // 5-minute in-memory cache for isBlocked — unsubscribe list changes rarely
-const _blockCache = new Map(); // email → { blocked: bool, expiresAt: number }
+const _blockCache = new Map<string, { blocked: boolean; expiresAt: number }>(); // email → { blocked: bool, expiresAt: number }
 const BLOCK_CACHE_TTL = 5 * 60 * 1000;
 
-function getTransporter() {
+function getTransporter(): Transporter<SMTPTransport.SentMessageInfo> | null {
   if (_transporter) return _transporter;
 
   const host = process.env.SMTP_HOST;
@@ -51,7 +54,7 @@ function getTransporter() {
   // Verify connection on first use
   _transporter.verify()
     .then(() => console.log(`[EMAIL] SMTP connected: ${host}:${port} as ${user}`))
-    .catch(err => console.error(`[EMAIL] SMTP verify failed: ${err.message}`));
+    .catch((err: Error) => console.error(`[EMAIL] SMTP verify failed: ${err.message}`));
 
   return _transporter;
 }
@@ -68,7 +71,7 @@ export class EmailChannel {
   }
 
   /** Check if email is unsubscribed or hard bounced (cached 5 min) */
-  static async isBlocked(email) {
+  static async isBlocked(email: string | null | undefined): Promise<boolean> {
     if (!email) return true;
     const key = email.toLowerCase().trim();
     const cached = _blockCache.get(key);
@@ -84,7 +87,7 @@ export class EmailChannel {
   }
 
   /** Send a single email */
-  static async send({ to, subject, html, text, replyTo }) {
+  static async send({ to, subject, html, text, replyTo }: EmailSendArgs): Promise<EmailSendResult> {
     // WELCOME_EMAILS allow-list gate — only configured addresses may receive mail.
     // Disabled when WELCOME_EMAILS is unset/empty (allows all). Universal backstop:
     // every send path that reaches this transport is validated here.
@@ -122,7 +125,7 @@ export class EmailChannel {
   }
 
   /** Send via SMTP using Nodemailer */
-  static async _sendViaSMTP({ to, subject, html, text, replyTo }) {
+  static async _sendViaSMTP({ to, subject, html, text, replyTo }: EmailSendArgs): Promise<EmailSendResult> {
     const { fromEmail, fromName } = this.config;
     const transporter = getTransporter();
 
@@ -154,17 +157,17 @@ export class EmailChannel {
         provider: 'smtp',
       };
     } catch (err) {
-      console.error(`[EMAIL] SMTP send failed → To: ${to} | Error: ${err.message}`);
+      console.error(`[EMAIL] SMTP send failed → To: ${to} | Error: ${(err as Error).message}`);
       return {
         success: false,
-        error: err.message,
+        error: (err as Error).message,
         provider: 'smtp',
       };
     }
   }
 
   /** Send via SendGrid API */
-  static async _sendViaSendGrid({ to, subject, html, text, replyTo }) {
+  static async _sendViaSendGrid({ to, subject, html, text, replyTo }: EmailSendArgs): Promise<EmailSendResult> {
     const { sendgridKey, fromEmail, fromName } = this.config;
 
     const body = {
@@ -201,20 +204,20 @@ export class EmailChannel {
         };
       }
 
-      const errData = await res.json().catch(() => ({}));
+      const errData: SendGridErrorResponse = await res.json().catch(() => ({}));
       return {
         success: false,
         error: errData.errors?.[0]?.message || `HTTP ${res.status}`,
         providerResponse: errData,
       };
     } catch (err) {
-      return { success: false, error: err.message };
+      return { success: false, error: (err as Error).message };
     }
   }
 
   /** Send bulk emails (batch) — auto-filters unsubscribed */
-  static async sendBulk(messages) {
-    const results = [];
+  static async sendBulk(messages: EmailSendArgs[]): Promise<Array<EmailSendResult & { to: string }>> {
+    const results: Array<EmailSendResult & { to: string }> = [];
     for (const msg of messages) {
       const result = await this.send(msg);
       results.push({ to: msg.to, ...result });
@@ -223,9 +226,9 @@ export class EmailChannel {
   }
 
   /** Filter a list of emails, removing unsubscribed/bounced */
-  static async filterBlockedEmails(emails) {
+  static async filterBlockedEmails(emails: string[]): Promise<string[]> {
     if (!emails.length) return [];
-    const { rows } = await query(
+    const { rows } = await query<{ email: string }>(
       `SELECT LOWER(TRIM(email)) as email FROM unsubscribed WHERE unsubscribe = 1 OR hard_bounces::int > 0`
     );
     const blocked = new Set(rows.map(r => r.email));
@@ -233,7 +236,7 @@ export class EmailChannel {
   }
 
   /** Parse SendGrid webhook event */
-  static parseWebhook(events) {
+  static parseWebhook(events: SendGridWebhookEvent[]) {
     return events.map(event => ({
       externalId: event.sg_message_id,
       email: event.email,

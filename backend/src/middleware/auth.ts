@@ -1,3 +1,5 @@
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import type { AuthUser } from '../types/express.js';
 import AuthService from '../services/AuthService.js';
 
 /**
@@ -5,7 +7,7 @@ import AuthService from '../services/AuthService.js';
  * Expects: Authorization: Bearer <token>
  * Sets: req.user = { userId, email, role }
  */
-export function requireAuth(req, res, next) {
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
@@ -16,7 +18,7 @@ export function requireAuth(req, res, next) {
 
   try {
     const decoded = AuthService.verifyToken(token);
-    req.user = decoded;
+    req.user = decoded as AuthUser;
     next();
   } catch {
     return res.status(401).json({ success: false, error: 'Invalid or expired token' });
@@ -25,7 +27,7 @@ export function requireAuth(req, res, next) {
 
 // Routes reachable without a login, matched against req.path under the /api mount.
 // Everything else under /api requires a valid access token.
-const PUBLIC_API_ROUTES = [
+const PUBLIC_API_ROUTES: Array<[string, RegExp]> = [
   // Login flow
   ['POST', /^\/auth\/(login|refresh|logout)$/],
   ['GET', /^\/health$/],
@@ -43,13 +45,13 @@ const PUBLIC_API_ROUTES = [
   ['DELETE', /^\/v3\/chat-leads\/groups\/[^/]+$/],
 ];
 
-function isPublicApiRoute(req) {
+function isPublicApiRoute(req: Request): boolean {
   const reqMethod = req.method === 'HEAD' ? 'GET' : req.method;
   return PUBLIC_API_ROUTES.some(([method, re]) => (method === '*' || method === reqMethod) && re.test(req.path));
 }
 
 /** Mount with app.use('/api', apiAuthGate) — protects every /api route not in PUBLIC_API_ROUTES. */
-export function apiAuthGate(req, res, next) {
+export function apiAuthGate(req: Request, res: Response, next: NextFunction) {
   if (req.method === 'OPTIONS' || isPublicApiRoute(req)) return next();
   return requireAuth(req, res, next);
 }
@@ -58,8 +60,8 @@ export function apiAuthGate(req, res, next) {
  * Role-based guard (for future use).
  * Usage: router.use(requireRole('admin'))
  */
-export function requireRole(...roles) {
-  return (req, res, next) => {
+export function requireRole(...roles: string[]): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }

@@ -18,6 +18,13 @@
  * per journey via getJourneyGraph() and cache it in-process (see below).
  */
 import { Worker } from 'bullmq';
+import type { Job } from 'bullmq';
+import type { Pool } from 'pg';
+import type {
+  ChannelSendResult, GtmJourneyJobData, JourneyEdge, JourneyNode, JourneyNodeMap,
+  JourneySendJobData, JourneyWorkers, WelcomeJobData,
+} from '../../types/queueJobs.js';
+import type { PlaceholderAffinity } from '../../types/utilsPlaceholder.js';
 import { getConnection } from './index.js';
 import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
@@ -36,29 +43,50 @@ import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 import { reserveSend, releaseSend, reserveWaSend, releaseWaSend } from '../../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../../utils/reviewUrl.js';
 
+interface JourneyGraph { edges: JourneyEdge[]; nodeMap: JourneyNodeMap }
+interface CachedJourneyGraph extends JourneyGraph { at: number }
+interface JourneyFlowGraphRow { nodes: JourneyNode[] | null; edges: JourneyEdge[] | null }
+interface EntryStateRow { current_node_id: string | null; status: string }
+interface ContactStatusRow { email_unsubscribe: string | null; booking_status: string | null }
+interface RecommendationTypeRow { recommendation_type: string | null }
+interface LiquidContactRow { id: string | number; name: string | null; email: string | null; city: string | null }
+interface WaUnsubscribeRow { wa_unsubscribe: string | null }
+interface EmailUnsubscribeRow { email_unsubscribe: string | null }
+interface RcsUnsubscribeRow { wa_unsubscribe: string | null; email_unsubscribe: string | null }
+interface TemplateBodyRow { body: string | null }
+interface HtmlTemplateIdRow { html_template_id: number | null }
+interface HasActiveRow { has_active: boolean }
+interface HasAnyRow { has_any: boolean }
+/** Shape returned by RecommendationRenderer.injectPerUserProducts that this file reads. */
+interface InjectedProductsResult { html?: string; productsUsed?: unknown[]; source?: string; fromCache?: boolean }
+/** JourneyService.calculateNextFireAt as invoked here (third arg passed by _logAndAdvance). */
+interface NextFireAtCalculator {
+  calculateNextFireAt(node: JourneyNode | undefined, fromTime: Date, testIntervalMin?: number | null): ReturnType<typeof JourneyService.calculateNextFireAt>;
+}
+
 // ── Per-journey graph cache ──
 // Workers need the journey's nodes+edges only to advance an entry after a send.
 // We no longer ship the full graph inside every job payload — that bloated Redis
 // (~8 KB × ~1.3M jobs ≈ 6–10 GB, well over the 3 GB cap, causing OOM during big
 // broadcasts). Instead load the graph once per journey and cache it in-process
 // with a short TTL so structural edits still propagate within a minute.
-const _graphCache = new Map(); // journeyId → { at, edges, nodeMap }
+const _graphCache = new Map<string, CachedJourneyGraph>(); // journeyId → { at, edges, nodeMap }
 const GRAPH_TTL_MS = 60_000;
-async function getJourneyGraph(journeyId) {
+async function getJourneyGraph(journeyId: string): Promise<JourneyGraph> {
   const hit = _graphCache.get(journeyId);
   if (hit && (Date.now() - hit.at) < GRAPH_TTL_MS) return hit;
-  const { rows: [jf] } = await db.query(
+  const { rows: [jf] } = await (db as Pool).query<JourneyFlowGraphRow>(
     'SELECT nodes, edges FROM journey_flows WHERE journey_id = $1', [journeyId]
   );
-  const nodeMap = {};
+  const nodeMap: JourneyNodeMap = {};
   for (const n of (jf?.nodes || [])) nodeMap[n.id] = n;
-  const entry = { at: Date.now(), edges: jf?.edges || [], nodeMap };
+  const entry: CachedJourneyGraph = { at: Date.now(), edges: jf?.edges || [], nodeMap };
   _graphCache.set(journeyId, entry);
   return entry;
 }
 // Prefer the graph embedded in legacy in-flight jobs (during a rolling deploy);
 // otherwise load+cache from the DB. New jobs no longer carry edges/nodes.
-async function _resolveGraph(d) {
+async function _resolveGraph(d: JourneySendJobData): Promise<JourneyGraph> {
   if (d.edges && d.nodes) return { edges: d.edges, nodeMap: d.nodes };
   return getJourneyGraph(d.journeyId);
 }
@@ -76,8 +104,8 @@ const SMS_ENABLED       = process.env.JOURNEY_SMS_ENABLED === 'true';
 const RCS_ENABLED       = process.env.JOURNEY_RCS_ENABLED === 'true';
 
 // Throttle auto-processJourney calls: one trigger per journey per 20 seconds max
-const _processThrottle = new Map(); // journeyId → lastTriggerMs
-function _scheduleProcess(journeyId, nextNodeType) {
+const _processThrottle = new Map<string, number>(); // journeyId → lastTriggerMs
+function _scheduleProcess(journeyId: string, nextNodeType: string | undefined): void {
   // Wait nodes handle their own timing via next_fire_at — no need to trigger immediately
   if (nextNodeType === 'wait') return;
   const now = Date.now();
@@ -87,43 +115,43 @@ function _scheduleProcess(journeyId, nextNodeType) {
   // Fire async after a short settle delay so concurrent workers can finish advancing
   setTimeout(() => {
     JourneyService.processJourney(journeyId)
-      .catch(e => console.error(`[Worker] Auto-process j${journeyId} failed: ${e.message}`));
+      .catch((e: Error) => console.error(`[Worker] Auto-process j${journeyId} failed: ${e.message}`));
   }, 2000);
 }
 
-let _workers = null;
+let _workers: JourneyWorkers | null = null;
 
 // Opt-out flags are stored as 'Yes', 'yes', 'YES' or 'Y' depending on which sync wrote
 // them. Treat all of those as opted out.
-function isYes(v) {
+function isYes(v: unknown): boolean {
   const s = String(v ?? '').trim().toLowerCase();
   return s === 'yes' || s === 'y';
 }
 
 /** Start all journey workers in this process. Idempotent — safe to call once at boot. */
-export function startWorkers() {
+export function startWorkers(): JourneyWorkers {
   if (_workers) return _workers;
   const connection = getConnection();
 
-  const email = new Worker('journey-email', processEmail, {
+  const email = new Worker<JourneySendJobData>('journey-email', processEmail, {
     connection,
     concurrency: EMAIL_CONCURRENCY,
     limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
   });
 
-  const wa = new Worker('journey-wa', processWA, {
+  const wa = new Worker<JourneySendJobData>('journey-wa', processWA, {
     connection,
     concurrency: WA_CONCURRENCY,
     limiter: { max: WA_RATE_MAX, duration: WA_RATE_WINDOW },
   });
 
-  const sms = new Worker('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled, {
+  const sms = new Worker<JourneySendJobData>('journey-sms', SMS_ENABLED ? processSMS : processSMSDisabled, {
     connection,
     concurrency: 5,
     limiter: { max: 10, duration: 1000 },
   });
 
-  const rcs = new Worker('journey-rcs', RCS_ENABLED ? processRCS : processRCSDisabled, {
+  const rcs = new Worker<JourneySendJobData>('journey-rcs', RCS_ENABLED ? processRCS : processRCSDisabled, {
     connection,
     concurrency: 5,
     limiter: { max: 10, duration: 1000 },
@@ -131,14 +159,14 @@ export function startWorkers() {
 
   // GTM event → welcome email (delayed job; durable replacement for setTimeout).
   // Rate-limited so a traffic spike can't blast the email provider.
-  const welcome = new Worker('welcome-email', processWelcome, {
+  const welcome = new Worker<WelcomeJobData>('welcome-email', processWelcome, {
     connection,
     concurrency: 3,
     limiter: { max: 5, duration: 1000 },   // ≤5 welcome emails/sec
   });
 
   // GTM (event-triggered) journey → per-user welcome-style email (delayed, rate-limited)
-  const gtmJourney = new Worker('gtm-journey', processGtmJourney, {
+  const gtmJourney = new Worker<GtmJourneyJobData>('gtm-journey', processGtmJourney, {
     connection,
     concurrency: EMAIL_CONCURRENCY,
     limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
@@ -146,23 +174,23 @@ export function startWorkers() {
 
   // After all retries exhausted: advance the entry so it doesn't block forever.
   // Shared handler used by email, wa, and sms queues.
-  const _onExhausted = (channel) => async (job, err) => {
+  const _onExhausted = (channel: string) => async (job: Job<JourneySendJobData> | undefined, err: Error): Promise<void> => {
     const attempts = job?.opts?.attempts || 3;
     console.error(`[Worker:${channel}] job ${job?.id} EXHAUSTED (${job?.attemptsMade}/${attempts}): ${err.message}`);
-    if (job?.attemptsMade >= attempts && job?.data?.entryId) {
-      const d = job.data;
+    if ((job?.attemptsMade as number) >= attempts && job?.data?.entryId) {
+      const d = (job as Job<JourneySendJobData>).data;
       try {
-        await db.query(
+        await (db as Pool).query(
           `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
            VALUES ($1, $2, 'action_failed', $3, $4)`,
           [d.entryId, d.nodeId, channel, JSON.stringify({ reason: 'all_retries_exhausted', error: err.message })]
         );
         const { edges, nodeMap } = await _resolveGraph(d);
-        const outEdge = edges.find(e => e.source === d.nodeId);
+        const outEdge = edges.find((e: JourneyEdge) => e.source === d.nodeId);
         if (outEdge) {
           const nextNode = nodeMap[outEdge.target];
           const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date());
-          const { rowCount } = await db.query(
+          const { rowCount } = await (db as Pool).query(
             `UPDATE journey_entries
              SET current_node_id = $1, bullmq_job_id = NULL,
                  last_run_id = NULL, last_enqueued_at = NULL,
@@ -174,16 +202,16 @@ export function startWorkers() {
             console.log(`[Worker:${channel}] Stale exhausted job skipped for entry=${d.entryId} node=${d.nodeId}`);
           }
         } else {
-          const { rowCount } = await db.query(
+          const { rowCount } = await (db as Pool).query(
             `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL
              WHERE entry_id = $1 AND current_node_id = $2`,
             [d.entryId, d.nodeId]
           );
-          if (rowCount > 0) await _checkJourneyCompletion(d.journeyId);
+          if ((rowCount as number) > 0) await _checkJourneyCompletion(d.journeyId);
         }
         console.log(`[Worker:${channel}] entry=${d.entryId} advanced after all retries exhausted`);
       } catch (advErr) {
-        console.error(`[Worker:${channel}] failed to advance entry ${d.entryId}: ${advErr.message}`);
+        console.error(`[Worker:${channel}] failed to advance entry ${d.entryId}: ${(advErr as Error).message}`);
       }
     }
   };
@@ -193,9 +221,9 @@ export function startWorkers() {
   sms.on('failed',   _onExhausted('sms'));
   rcs.on('failed',   _onExhausted('rcs'));
 
-  welcome.on('error', (err) => console.error(`[Worker:welcome] worker error: ${err.message}`));
+  welcome.on('error', (err: Error) => console.error(`[Worker:welcome] worker error: ${err.message}`));
   welcome.on('failed', (job, err) => console.error(`[Worker:welcome] job ${job?.id} failed: ${err.message}`));
-  gtmJourney.on('error', (err) => console.error(`[Worker:gtmJourney] worker error: ${err.message}`));
+  gtmJourney.on('error', (err: Error) => console.error(`[Worker:gtmJourney] worker error: ${err.message}`));
   gtmJourney.on('failed', (job, err) => console.error(`[Worker:gtmJourney] job ${job?.id} failed: ${err.message}`));
 
   for (const w of [email, wa, sms, rcs]) {
@@ -210,9 +238,9 @@ export function startWorkers() {
 }
 
 /** Live worker set (null when stopped). Used by /api/health. */
-export function getWorkers() { return _workers; }
+export function getWorkers(): JourneyWorkers | null { return _workers; }
 
-export async function stopWorkers() {
+export async function stopWorkers(): Promise<void> {
   if (!_workers) return;
   await Promise.all([_workers.email.close(), _workers.wa.close(), _workers.sms.close(), _workers.rcs.close(), _workers.welcome.close(), _workers.gtmJourney.close()]);
   // Flush any buffered send-log rows so a graceful restart doesn't lose them.
@@ -221,17 +249,17 @@ export async function stopWorkers() {
 }
 
 /** Welcome-email worker: runs the (delayed) send for a GTM-triggered welcome. */
-async function processWelcome(job) {
-  const { unifiedId, eventName, eventId } = job.data || {};
+async function processWelcome(job: Job<WelcomeJobData>): Promise<{ ok: boolean }> {
+  const { unifiedId, eventName, eventId } = job.data || ({} as WelcomeJobData);
   await WelcomeEmailService.processJob({ unifiedId, eventName, eventId });
   return { ok: true };
 }
 
 /** GTM-journey worker: per-user welcome-style email for an event-triggered journey. */
-async function processGtmJourney(job) {
+async function processGtmJourney(job: Job<GtmJourneyJobData>): Promise<{ ok: boolean }> {
   // Pass the FULL payload (entryId, nodeId, itemId, …) so the continuous engine can
   // send the right node and advance the right state row.
-  await GtmJourneyService.processJob(job.data || {});
+  await GtmJourneyService.processJob((job.data || {}) as Parameters<typeof GtmJourneyService.processJob>[0]);
   return { ok: true };
 }
 
@@ -241,14 +269,14 @@ async function processGtmJourney(job) {
  * Returns true if the current Dubai calendar date is past the date the job was enqueued.
  * Jobs enqueued on Jun 4 must not be processed on Jun 5+ — advance the entry without sending.
  */
-function _isDayCrossed(d) {
+function _isDayCrossed(d: JourneySendJobData): boolean {
   if (!d.enqueuedDubaiDate) return false; // legacy jobs without the field — let them through
   const dubaiNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Dubai' }));
   const todayDubai = `${dubaiNow.getFullYear()}-${String(dubaiNow.getMonth()+1).padStart(2,'0')}-${String(dubaiNow.getDate()).padStart(2,'0')}`;
   return todayDubai !== d.enqueuedDubaiDate;
 }
 
-async function processEmail(job) {
+async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
   const d = job.data;
   const recipientEmail = d.email;
   if (!recipientEmail) return _logAndAdvance(d, 'action_blocked', { reason: 'no_email' }, /*sent=*/false);
@@ -266,7 +294,7 @@ async function processEmail(job) {
   }
 
   // Stale-job guard: skip send if entry already advanced past this node
-  const { rows: [entryRow] } = await db.query(
+  const { rows: [entryRow] } = await (db as Pool).query<EntryStateRow>(
     'SELECT current_node_id, status FROM journey_entries WHERE entry_id = $1', [d.entryId]
   );
   if (!entryRow || entryRow.current_node_id !== d.nodeId || entryRow.status !== 'active') {
@@ -275,13 +303,13 @@ async function processEmail(job) {
   }
 
   // Re-check unsubscribe + purchased status at send time
-  const { rows: [contact] } = await db.query(
+  const { rows: [contact] } = await (db as Pool).query<ContactStatusRow>(
     'SELECT email_unsubscribe, booking_status FROM unified_contacts WHERE id = $1', [d.customerId]
   );
 
   if (isYes(contact?.email_unsubscribe)) {
     console.log(`[Worker:email] UNSUBSCRIBED — skipping send for entry=${d.entryId} customer=${d.customerId}`);
-    await db.query(
+    await (db as Pool).query(
       `INSERT INTO unsubscribe_log (unified_id, email, journey_id, node_id, campaign)
        VALUES ($1, $2, $3, $4, 'pre_send_check')
        ON CONFLICT DO NOTHING`,
@@ -295,7 +323,7 @@ async function processEmail(job) {
     d.nodeId !== d.firstActionNodeId &&
     (contact?.booking_status === 'ON_TRIP' || contact?.booking_status === 'FUTURE_TRAVEL')
   ) {
-    const { rows: [gtmRow] } = await db.query(
+    const { rows: [gtmRow] } = await (db as Pool).query(
       `SELECT 1 FROM gtm_events WHERE unified_id = $1 AND journey_id = $2 AND event_name = 'purchase' LIMIT 1`,
       [d.customerId, d.journeyId]
     );
@@ -311,10 +339,10 @@ async function processEmail(job) {
   // Stored node email first — the SAME rendered HTML for every contact at this node,
   // so the preview is byte-identical to what's sent. First touch renders (Claude/
   // fallback) + stores; all subsequent sends read the stored HTML.
-  let html, subject;
+  let html: string, subject: string;
   const dayRendered = await getOrGenerateNodeEmail({
     journeyId: d.journeyId, nodeId: d.nodeId, templateId: d.templateId, contactId: d.customerId,
-  }).catch(err => {
+  } as Parameters<typeof getOrGenerateNodeEmail>[0]).catch((err: Error) => {
     console.log(`[Worker] getOrGenerateNodeEmail failed for templateId=${d.templateId}, entry=${d.entryId}: ${err.message}`);
     return null;
   });
@@ -334,13 +362,13 @@ async function processEmail(job) {
         nodeId: d.nodeId,
         runId: d.runId,
         extraVars: d.templateVariables || {},
-      });
+      } as unknown as Parameters<typeof EmailRenderer.renderForJourneyNode>[0]);
       html    = rendered.html;
       subject = rendered.subject || 'Rayna Tours';
       console.log(`[Worker:email]   rendered via EmailRenderer.renderForJourneyNode → subject="${subject}" html=${html.length} bytes`);
     } else {
       // Fallback 2: template has HTML stored directly in content_templates.body (user-uploaded)
-      const rendered = await EmailRenderer.render(d.templateId, d.customerId, d.templateVariables || {});
+      const rendered = await EmailRenderer.render(d.templateId as unknown as number, d.customerId as number, d.templateVariables || {});
       if (!rendered?.html) {
         return _logAndAdvance(d, 'action_blocked', { reason: 'no_html_template' }, false);
       }
@@ -367,9 +395,9 @@ async function processEmail(job) {
   // {{product_affinity_1..3}} / {{service_affinity_1..3}} = this contact's top booked
   // products / business lines. Like the review link, the shared node HTML can't carry
   // them, so fill them here per recipient; the guard keeps the lookup off other sends.
-  let affinity = null;
+  let affinity: PlaceholderAffinity | null = null;
   if (usesAffinity(html, subject)) {
-    affinity = await getAffinityVars(d.customerId);
+    affinity = await getAffinityVars(d.customerId) as PlaceholderAffinity;
     html    = fillAffinityVars(html, affinity);
     subject = fillAffinityVars(subject, affinity, { html: false });
   }
@@ -383,7 +411,7 @@ async function processEmail(job) {
   //    have their send SKIPPED (not just downgraded). Safety switch for test-only
   //    rollout.
   try {
-    const { rows: [jf] } = await db.query(
+    const { rows: [jf] } = await (db as Pool).query<RecommendationTypeRow>(
       `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
       [d.journeyId]
     );
@@ -403,7 +431,7 @@ async function processEmail(job) {
         try {
           const { default: LiquidRenderer } = await import('../LiquidRenderer.js');
           const { buildLiquidVars } = await import('../../utils/placeholderResolver.js');
-          const { rows: [c] } = await db.query(
+          const { rows: [c] } = await (db as Pool).query<LiquidContactRow>(
             `SELECT id, name, email, city FROM unified_contacts WHERE id = $1`,
             [d.customerId]
           );
@@ -411,12 +439,12 @@ async function processEmail(job) {
           html = await LiquidRenderer.render(html, buildLiquidVars(ctx));
           console.log(`[Worker:email]   Liquid rendered for rec journey (contact_id=${d.customerId})`);
         } catch (liqErr) {
-          console.warn(`[Worker:email]   Liquid render failed (using raw html): ${liqErr.message}`);
+          console.warn(`[Worker:email]   Liquid render failed (using raw html): ${(liqErr as Error).message}`);
         }
       }
 
       if (html && html.includes('{{#products}}')) {
-        const injected = await injectPerUserProducts({
+        const injected: InjectedProductsResult = await injectPerUserProducts({
           templateHtml:       html,
           unifiedId:          d.customerId,
           recommendationType: jf.recommendation_type,
@@ -424,7 +452,7 @@ async function processEmail(job) {
             customer_name: d.name || '',
             ...(d.templateVariables || {}),
           },
-        });
+        } as Parameters<typeof injectPerUserProducts>[0]);
         if (injected?.html) {
           html = injected.html;
           console.log(`[Worker:email]   AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
@@ -432,7 +460,7 @@ async function processEmail(job) {
       }
     }
   } catch (recErr) {
-    console.warn(`[Worker:email]   AI rec injection failed (falling back to un-injected html): ${recErr.message}`);
+    console.warn(`[Worker:email]   AI rec injection failed (falling back to un-injected html): ${(recErr as Error).message}`);
     // Fall through — html stays as-is, send proceeds without rec cards.
   }
 
@@ -470,7 +498,7 @@ async function processEmail(job) {
         source: 'journey',
         journeyId: d.journeyId || null,
         nodeId: d.nodeId || null,
-      });
+      } as Parameters<typeof SendTrackService.logSend>[0]);
 
   const campaignSlug = `j${d.journeyId}_${(d.nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_')}`;
   let trackedHtml = injectClickTracking(html, {
@@ -521,9 +549,9 @@ async function processEmail(job) {
       sentAt: new Date(),
     });
   } else if (sendResult.success) {
-    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null }).catch(() => {});
+    SendTrackService.markSent(logId, { externalId: sendResult.externalId || null, provider: sendResult.provider || null } as Parameters<typeof SendTrackService.markSent>[1]).catch(() => {});
   } else {
-    SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' }).catch(() => {});
+    SendTrackService.markFailed(logId, { error: sendResult.error || 'send_failed' } as Parameters<typeof SendTrackService.markFailed>[1]).catch(() => {});
   }
 
   if (!sendResult.success) {
@@ -532,7 +560,7 @@ async function processEmail(job) {
     releaseSend({ unifiedId: d.customerId, email: recipientEmail });
     // Log the failure but do NOT advance the entry — let BullMQ retry.
     // Only advance after all retries are exhausted (handled by the failed event below).
-    await db.query(
+    await (db as Pool).query(
       `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
        VALUES ($1, $2, 'action_failed', $3, $4)`,
       [d.entryId, d.nodeId, 'email', JSON.stringify({
@@ -554,7 +582,7 @@ async function processEmail(job) {
   }, true);
 }
 
-async function processWA(job) {
+async function processWA(job: Job<JourneySendJobData>): Promise<void> {
   const d = job.data;
   if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
 
@@ -563,7 +591,7 @@ async function processWA(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
   }
 
-  const { rows: [contactWA] } = await db.query(
+  const { rows: [contactWA] } = await (db as Pool).query<WaUnsubscribeRow>(
     'SELECT wa_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
   );
   if (isYes(contactWA?.wa_unsubscribe)) {
@@ -579,7 +607,7 @@ async function processWA(job) {
   }
 
   let approvalBlocked = false;
-  let sendResult;
+  let sendResult: ChannelSendResult;
   try {
     if (d.waChannelId && d.waTemplateId) {
       // ── ChatHead send ── the node carries a ChatHead channel + template. We fire a
@@ -587,7 +615,7 @@ async function processWA(job) {
       // (matches the email per-message model). Targets unified_contacts.mobile (d.phone).
       // NOTE: at very high volume this is the per-message path; the batched collector
       // (one broadcast per due-cohort chunk) is the throughput-optimized variant.
-      const affinity = await getAffinityVars(d.customerId);
+      const affinity = await getAffinityVars(d.customerId) as PlaceholderAffinity;
       const r = await ChatHeadV1Service.sendBroadcast({
         contacts:     [{ phone: d.phone, name: d.name || '',
                          vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity }) }],
@@ -597,7 +625,7 @@ async function processWA(job) {
         templateName: d.waTemplateName || null,
         name:         `journey ${d.journeyId} ${d.nodeId} ${d.phone}`,
         sendTime:     new Date(Date.now() + 60 * 1000),
-      });
+      } as Parameters<typeof ChatHeadV1Service.sendBroadcast>[0]);
       sendResult = {
         success:    !!r.success,
         provider:   'chathead',
@@ -612,11 +640,11 @@ async function processWA(job) {
         to: d.phone,
         templateId: parseInt(d.templateId),
         params: [firstName],
-      });
+      } as Parameters<typeof GupshupService.sendWhatsApp>[0]);
     }
   } catch (err) {
-    approvalBlocked = /not approved/i.test(err.message);
-    sendResult = { success: false, error: err.message, blocked: approvalBlocked };
+    approvalBlocked = /not approved/i.test((err as Error).message);
+    sendResult = { success: false, error: (err as Error).message, blocked: approvalBlocked };
   }
   if (!sendResult?.success) releaseWaSend({ unifiedId: d.customerId, email: d.email, phone: d.phone }); // failed send doesn't consume a slot
 
@@ -624,7 +652,7 @@ async function processWA(job) {
   // failure must never fail the send or the entry advance. Each row is independent.
   try {
     const waStatus = sendResult.success ? 'sent' : (approvalBlocked ? 'blocked' : 'failed');
-    await db.query(
+    await (db as Pool).query(
       `INSERT INTO whatsapp_send_log
          (unified_id, phone, contact_name, template_id, journey_id, node_id,
           external_id, status, source, error, sent_at)
@@ -639,7 +667,7 @@ async function processWA(job) {
       ]
     );
   } catch (logErr) {
-    console.warn(`[Worker:wa] whatsapp_send_log write failed entry=${d.entryId}: ${logErr.message}`);
+    console.warn(`[Worker:wa] whatsapp_send_log write failed entry=${d.entryId}: ${(logErr as Error).message}`);
   }
 
   await _logAndAdvance(d,
@@ -656,7 +684,7 @@ async function processWA(job) {
   }
 }
 
-async function processSMS(job) {
+async function processSMS(job: Job<JourneySendJobData>): Promise<void> {
   const d = job.data;
   if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
 
@@ -665,7 +693,7 @@ async function processSMS(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
   }
 
-  const { rows: [contactSMS] } = await db.query(
+  const { rows: [contactSMS] } = await (db as Pool).query<EmailUnsubscribeRow>(
     'SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
   );
   if (isYes(contactSMS?.email_unsubscribe)) {
@@ -674,18 +702,18 @@ async function processSMS(job) {
   }
 
   let approvalBlocked = false;
-  let sendResult;
+  let sendResult: ChannelSendResult;
   try {
     await GupshupService.assertApproved(parseInt(d.templateId));
-    const { rows: [tpl] } = await db.query('SELECT body FROM content_templates WHERE id = $1', [parseInt(d.templateId)]);
+    const { rows: [tpl] } = await (db as Pool).query<TemplateBodyRow>('SELECT body FROM content_templates WHERE id = $1', [parseInt(d.templateId)]);
     const firstName = d.name ? d.name.split(' ')[0] : 'there';
     const messageBody = (tpl?.body || '').replace(/\{\{first_name\}\}/g, firstName);
     sendResult = await GupshupService.sendSMS({
       to: d.phone, templateId: parseInt(d.templateId), messageBody,
     });
   } catch (err) {
-    approvalBlocked = /not approved/i.test(err.message);
-    sendResult = { success: false, error: err.message, blocked: approvalBlocked };
+    approvalBlocked = /not approved/i.test((err as Error).message);
+    sendResult = { success: false, error: (err as Error).message, blocked: approvalBlocked };
   }
 
   await _logAndAdvance(d,
@@ -700,7 +728,7 @@ async function processSMS(job) {
   }
 }
 
-async function processSMSDisabled(job) {
+async function processSMSDisabled(job: Job<JourneySendJobData>): Promise<void> {
   await _logAndAdvance(job.data, 'action_blocked', { reason: 'sms_channel_disabled' }, false);
 }
 
@@ -710,7 +738,7 @@ async function processSMSDisabled(job) {
 // (d.phone), with per-recipient customParams resolved from placeholderResolver. Each
 // entry stays an independent, retriable unit. Also writes sms_send_log (provider
 // gupshup-rcs) for observability, mirroring the WhatsApp per-message log.
-async function processRCS(job) {
+async function processRCS(job: Job<JourneySendJobData>): Promise<void> {
   const d = job.data;
   if (!d.phone) return _logAndAdvance(d, 'action_blocked', { reason: 'no_phone' }, false);
 
@@ -718,7 +746,7 @@ async function processRCS(job) {
     return _logAndAdvance(d, 'action_blocked', { reason: 'day_crossed', enqueuedDate: d.enqueuedDubaiDate }, false);
   }
 
-  const { rows: [contact] } = await db.query(
+  const { rows: [contact] } = await (db as Pool).query<RcsUnsubscribeRow>(
     'SELECT wa_unsubscribe, email_unsubscribe FROM unified_contacts WHERE id = $1', [d.customerId]
   );
   if (String(contact?.wa_unsubscribe || '').toLowerCase() === 'yes') {
@@ -732,20 +760,20 @@ async function processRCS(job) {
   const customParams = d.rcsCustomParams
     || buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {} }, RCS_DATA_KEYS);
 
-  let sendResult;
+  let sendResult: ChannelSendResult;
   try {
     sendResult = await GupshupService.sendRCS({
       to: d.phone, templateCode, customParams: Object.keys(customParams || {}).length ? customParams : null,
-    });
+    } as Parameters<typeof GupshupService.sendRCS>[0]);
   } catch (err) {
-    sendResult = { success: false, error: err.message };
+    sendResult = { success: false, error: (err as Error).message };
   }
 
   const ok = !!sendResult?.success;
   // Independent per-message log — a logging failure must never fail the send.
   try {
     const status = sendResult?.simulated ? 'simulated' : (ok ? 'sent' : 'failed');
-    await db.query(
+    await (db as Pool).query(
       `INSERT INTO sms_send_log
          (unified_id, phone, contact_name, template_id, journey_id, node_id, provider, external_id,
           status, source, error, message_body, sent_at)
@@ -756,7 +784,7 @@ async function processRCS(job) {
        ok ? null : String(sendResult?.error || 'send failed').slice(0, 500),
        `RCS templateCode=${templateCode}`]
     );
-  } catch (logErr) { console.warn('[Worker:rcs] log write failed:', logErr.message); }
+  } catch (logErr) { console.warn('[Worker:rcs] log write failed:', (logErr as Error).message); }
 
   await _logAndAdvance(d,
     ok ? 'action_sent' : 'action_failed',
@@ -770,15 +798,15 @@ async function processRCS(job) {
   }
 }
 
-async function processRCSDisabled(job) {
+async function processRCSDisabled(job: Job<JourneySendJobData>): Promise<void> {
   await _logAndAdvance(job.data, 'action_blocked', { reason: 'rcs_channel_disabled' }, false);
 }
 
 // ── helpers ───────────────────────────────────────────────────
 
-async function _resolveHtmlTemplateId(contentTemplateId) {
+async function _resolveHtmlTemplateId(contentTemplateId: string): Promise<number | null> {
   if (!contentTemplateId) return null;
-  const { rows: [r] } = await db.query(
+  const { rows: [r] } = await (db as Pool).query<HtmlTemplateIdRow>(
     'SELECT html_template_id FROM content_templates WHERE id = $1',
     [parseInt(contentTemplateId)]
   );
@@ -790,8 +818,8 @@ async function _resolveHtmlTemplateId(contentTemplateId) {
  *  - insert a journey_events row
  *  - advance the journey_entry to the next track-matched edge (or complete it)
  */
-async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
-  await db.query(
+async function _logAndAdvance(d: JourneySendJobData, eventType: string, details: Record<string, unknown>, _sendSucceeded: boolean): Promise<void> {
+  await (db as Pool).query(
     `INSERT INTO journey_events (entry_id, node_id, event_type, channel, details)
      VALUES ($1, $2, $3, $4, $5)`,
     [d.entryId, d.nodeId, eventType, d.channel, JSON.stringify(details || {})]
@@ -799,22 +827,22 @@ async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
 
   const { edges, nodeMap } = await _resolveGraph(d);
   const entryTrack = d.track || 'all';
-  const matchesTrack = (nodeId) => {
+  const matchesTrack = (nodeId: string): boolean => {
     const n = nodeMap[nodeId];
     if (!n) return false;
     const t = n?.data?.track || 'all';
     return t === 'all' || t === entryTrack;
   };
 
-  const outEdges = edges.filter(e => e.source === d.nodeId);
-  const trackEdges = outEdges.filter(e => matchesTrack(e.target));
+  const outEdges = edges.filter((e: JourneyEdge) => e.source === d.nodeId);
+  const trackEdges = outEdges.filter((e: JourneyEdge) => matchesTrack(e.target));
   const chosen = trackEdges[0] || outEdges[0];
 
   if (chosen) {
     const nextNode = nodeMap[chosen.target];
-    const nextFireAt = JourneyService.calculateNextFireAt(nextNode, new Date(), d.testIntervalMin || null);
+    const nextFireAt = (JourneyService as NextFireAtCalculator).calculateNextFireAt(nextNode, new Date(), d.testIntervalMin || null);
     // Guard: only advance if entry is still at this node (stale job protection).
-    const { rowCount } = await db.query(
+    const { rowCount } = await (db as Pool).query(
       `UPDATE journey_entries
        SET current_node_id = $1, bullmq_job_id = NULL,
            last_run_id = NULL, last_enqueued_at = NULL,
@@ -829,44 +857,44 @@ async function _logAndAdvance(d, eventType, details, _sendSucceeded) {
       _scheduleProcess(d.journeyId, nextNode?.type);
     }
   } else {
-    const { rowCount } = await db.query(
+    const { rowCount } = await (db as Pool).query(
       `UPDATE journey_entries SET status = 'completed', completed_at = NOW(), bullmq_job_id = NULL
        WHERE entry_id = $1 AND current_node_id = $2`,
       [d.entryId, d.nodeId]
     );
-    if (rowCount > 0) await _checkJourneyCompletion(d.journeyId);
+    if ((rowCount as number) > 0) await _checkJourneyCompletion(d.journeyId);
   }
 }
 
-async function _checkJourneyCompletion(journeyId) {
+async function _checkJourneyCompletion(journeyId: string): Promise<void> {
   try {
     // Cheap existence check — short-circuits at the FIRST active row instead of
     // counting all (potentially millions of) entries. During an active send this
     // returns instantly, so the per-send completion check costs ~nothing. The old
     // COUNT(*) over 1.3M rows ran on every send completion and, under concurrent
     // sends, caused LWLock:BufferMapping thrash that stalled the whole DB.
-    const { rows: [r] } = await db.query(
+    const { rows: [r] } = await (db as Pool).query<HasActiveRow>(
       `SELECT EXISTS(SELECT 1 FROM journey_entries WHERE journey_id = $1 AND status = 'active') AS has_active`,
       [journeyId]
     );
     if (r.has_active) return;
 
-    const { rows: [total] } = await db.query(
+    const { rows: [total] } = await (db as Pool).query<HasAnyRow>(
       `SELECT EXISTS(SELECT 1 FROM journey_entries WHERE journey_id = $1) AS has_any`,
       [journeyId]
     );
     if (!total.has_any) return;
 
-    const { rowCount } = await db.query(
+    const { rowCount } = await (db as Pool).query(
       `UPDATE journey_flows SET status = 'completed', updated_at = NOW()
        WHERE journey_id = $1 AND status = 'active'`,
       [journeyId]
     );
-    if (rowCount > 0) {
+    if ((rowCount as number) > 0) {
       console.log(`[Worker] Journey ${journeyId} auto-completed — all entries done.`);
     }
   } catch (err) {
-    console.error(`[Worker] Journey completion check failed for ${journeyId}: ${err.message}`);
+    console.error(`[Worker] Journey completion check failed for ${journeyId}: ${(err as Error).message}`);
   }
 }
 

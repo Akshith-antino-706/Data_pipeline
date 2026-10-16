@@ -16,6 +16,10 @@
  * and declare topology (unblocking the producer) before we flip real sending on.
  */
 import amqp from 'amqplib';
+import type { Channel, ChannelModel, ConsumeMessage, SocketOptions } from 'amqplib';
+import type { Transporter } from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport/index.js';
+import type { RedisSetNxEx, GiveawayMessage, GiveawayValidation } from '../../types/giveaway.js';
 import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
 import { ingestGiveawayEvent } from './giveawayIngest.js';
@@ -37,10 +41,10 @@ const MAX_RETRIES  = parseInt(process.env.GIVEAWAY_MAX_SEND_RETRIES || '3', 10);
 const SEND_ENABLED = process.env.GIVEAWAY_SEND_ENABLED === 'true';
 const CONN_NAME    = process.env.GIVEAWAY_CONNECTION_NAME || 'rayna-giveaway-consumer';
 
-const VALID_TYPES = new Set(['participation', 'eligible', 'winner', 'loser']);
+const VALID_TYPES = new Set<string | undefined>(['participation', 'eligible', 'winner', 'loser']);
 const EMAIL_RE    = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-let _conn = null, _ch = null, _transporter = null, _stopped = false, _reconnectMs = 1000;
+let _conn: ChannelModel | null = null, _ch: Channel | null = null, _transporter: Transporter<SMTPTransport.SentMessageInfo> | null = null, _stopped = false, _reconnectMs = 1000;
 
 // ── SMTP transport (lazy) ──
 function smtp() {
@@ -55,7 +59,7 @@ function smtp() {
 }
 
 // ── §3 contract validation ──
-function validate(p) {
+function validate(p: GiveawayMessage | null | undefined): GiveawayValidation {
   if (!p || typeof p !== 'object')                return { ok: false, reason: 'not_an_object' };
   if (p.version !== 1)                             return { ok: false, reason: `unknown_version:${p.version}` };
   if (!p.id)                                       return { ok: false, reason: 'missing_id' };
@@ -67,17 +71,30 @@ function validate(p) {
 }
 
 // plain body → HTML part (escape, then newlines → <br>). body is admin-authored → treat as untrusted.
-function bodyToHtml(body) {
-  const esc = String(body).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+function bodyToHtml(body: string | undefined): string {
+  const esc = String(body).replace(/[&<>"]/g, ch => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as Record<string, string>)[ch]));
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222">${esc.replace(/\r?\n/g, '<br>')}</div>`;
 }
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
 
 // Recent captured events → a capped Redis list, so the web API (a different process) can
 // read them and the frontend can toast them. Recording must NEVER break the consumer.
 const EVENTS_KEY = 'giveaway:mq:events';
-async function record(evt) {
+
+interface GiveawayMqEvent {
+  outcome: string;
+  reason?: string;
+  msgId?: string;
+  id?: string | number | null;
+  type?: string | null;
+  email?: string | null;
+  name?: string | null;
+  subject?: string | null;
+  payload?: GiveawayMessage | null;
+  raw?: string;
+}
+async function record(evt: GiveawayMqEvent): Promise<void> {
   try {
     await getConnection().multi()
       .lpush(EVENTS_KEY, JSON.stringify({ ...evt, ts: Date.now() }))
@@ -90,9 +107,9 @@ async function record(evt) {
 // ── message handler ──
 // ch = the channel this message was delivered on. After a reconnect the module-level
 // _ch is a NEW channel, and acking an old delivery tag on it closes that channel.
-async function handle(msg, ch) {
+async function handle(msg: ConsumeMessage, ch: Channel): Promise<void> {
   const raw = msg.content.toString();
-  let p;
+  let p: GiveawayMessage;
   try { p = JSON.parse(raw); }
   catch {
     console.warn('[GiveawayMQ] ⛔ malformed JSON — ack+drop');
@@ -117,7 +134,7 @@ async function handle(msg, ch) {
   // Runs for EVERY valid message, independent of send-enabled, and safe on redelivery
   // (contact upsert + event insert + journey entry are all idempotent).
   let journeyHandled = 0;
-  let unifiedId = null;
+  let unifiedId: number | null = null;
   try {
     ({ unifiedId } = await ingestGiveawayEvent(p));
     if (unifiedId) {
@@ -125,7 +142,7 @@ async function handle(msg, ch) {
       journeyHandled = (await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id })) || 0;
     }
   } catch (e) {
-    console.error(`${tag} ⚠️ ingest/journey failed (continuing): ${e.message}`);
+    console.error(`${tag} ⚠️ ingest/journey failed (continuing): ${(e as Error).message}`);
   }
 
   // 1c. DEDUP THE EMAIL: when a giveaway JOURNEY handles this contact (active journey for this
@@ -141,7 +158,7 @@ async function handle(msg, ch) {
 
   // 2. idempotency — claim BEFORE sending; duplicate redelivery is a no-op
   const redis = getConnection();
-  const claimed = await redis.set(`giveaway:email:${p.id}`, '1', 'NX', 'EX', DEDUPE_TTL);
+  const claimed = await (redis.set as unknown as RedisSetNxEx)(`giveaway:email:${p.id}`, '1', 'NX', 'EX', DEDUPE_TTL);
   if (claimed === null) {
     console.log(`${tag} 🔁 DUPLICATE — ack`);
     await record({ ...meta, outcome: 'duplicate' });
@@ -150,39 +167,39 @@ async function handle(msg, ch) {
 
   // 3. send (or log-only), with transient-failure retries → DLQ
   if (!SEND_ENABLED) {
-    console.log(`${tag} ✅ RECEIVED (GIVEAWAY_SEND_ENABLED!=true → log-only) <${p.to.email}> subject="${p.subject}"`);
+    console.log(`${tag} ✅ RECEIVED (GIVEAWAY_SEND_ENABLED!=true → log-only) <${p.to!.email}> subject="${p.subject}"`);
     await record({ ...meta, outcome: 'received' });
     return ch.ack(msg);
   }
 
   // Log the direct send to email_send_log too (not just the Redis events list), so giveaway
   // emails are visible in the Send Log screen like every other channel. source='giveaway'.
-  let logId = null;
+  let logId: number | null = null;
   const _started = Date.now();
   try {
     logId = await SendTrackService.logSend({
-      unifiedId, email: p.to.email, contactName: p.to.name || null,
+      unifiedId, email: p.to!.email, contactName: p.to!.name || null,
       subject: p.subject, templateLabel: `Giveaway: ${p.type}`, source: 'giveaway',
-    });
+    } as Parameters<typeof SendTrackService.logSend>[0]);
   } catch { /* logging must never block the send */ }
 
-  let lastErr = null;
+  let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const info = await smtp().sendMail({
         from: process.env.GIVEAWAY_FROM,
-        to: p.to.name ? `${p.to.name} <${p.to.email}>` : p.to.email,
+        to: p.to!.name ? `${p.to!.name} <${p.to!.email}>` : p.to!.email,
         subject: p.subject,
         text: p.body,                       // verbatim
         html: bodyToHtml(p.body),           // escaped + nl2br
         headers: { 'X-Giveaway-Email-Id': String(p.id) },  // for bounce reconciliation
       });
-      console.log(`${tag} ✅ SENT <${p.to.email}> msgId=${info.messageId}`);
+      console.log(`${tag} ✅ SENT <${p.to!.email}> msgId=${info.messageId}`);
       if (logId) await SendTrackService.markSent(logId, { externalId: info.messageId, provider: 'giveaway-smtp', durationMs: Date.now() - _started }).catch(() => {});
       await record({ ...meta, outcome: 'sent', msgId: info.messageId });
       return ch.ack(msg);
     } catch (err) {
-      lastErr = err;
+      lastErr = err as Error;
       if (attempt < MAX_RETRIES) await sleep(500 * attempt + Math.floor(Math.random() * 300)); // jittered backoff
     }
   }
@@ -195,7 +212,7 @@ async function handle(msg, ch) {
 }
 
 // ── topology (idempotent; re-asserted on every connect) ──
-async function assertTopology(ch) {
+async function assertTopology(ch: Channel): Promise<void> {
   await ch.assertExchange(EXCHANGE, 'topic', { durable: true });
   await ch.assertExchange(DLX, 'fanout', { durable: true });
   await ch.assertQueue(DLQ, { durable: true });
@@ -210,8 +227,8 @@ async function connect() {
   if (!url) { console.warn('[GiveawayMQ] GIVEAWAY_RABBITMQ_URL not set — consumer idle (set it to connect).'); return; }
 
   try {
-    _conn = await amqp.connect(url, { heartbeat: 30, clientProperties: { connection_name: CONN_NAME } });
-    _conn.on('error', (e) => console.error(`[GiveawayMQ] connection error: ${e.message}`));
+    _conn = await amqp.connect(url, { heartbeat: 30, clientProperties: { connection_name: CONN_NAME } } as SocketOptions & { heartbeat: number });
+    _conn.on('error', (e: Error) => console.error(`[GiveawayMQ] connection error: ${e.message}`));
     _conn.on('close', () => { if (!_stopped) scheduleReconnect('connection closed'); });
 
     _ch = await _conn.createChannel();
@@ -220,9 +237,9 @@ async function connect() {
     const ch = _ch;
     // A channel-level close (e.g. a 406) used to stop consumption silently. Closing the
     // connection routes it through the normal reconnect path.
-    ch.on('error', (e) => console.error(`[GiveawayMQ] channel error: ${e.message}`));
+    ch.on('error', (e: Error) => console.error(`[GiveawayMQ] channel error: ${e.message}`));
     ch.on('close', () => { if (!_stopped && _ch === ch) _conn?.close().catch(() => {}); });
-    await ch.consume(QUEUE, (msg) => { if (msg) handle(msg, ch).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
+    await ch.consume(QUEUE, (msg) => { if (msg) handle(msg, ch).catch((e: Error) => { console.error('[GiveawayMQ] handler crash:', e.message); try { ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
 
     _reconnectMs = 1000;
     console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
@@ -230,13 +247,13 @@ async function connect() {
     // connect() can succeed and createChannel/assertTopology fail — close that connection
     // so each retry doesn't leak one (CloudAMQP caps connections).
     const stale = _conn;
-    scheduleReconnect(`connect failed: ${err.message}`);
+    scheduleReconnect(`connect failed: ${(err as Error).message}`);
     try { await stale?.close(); } catch { /* already closed */ }
   }
 }
 
-let _reconnectTimer = null;
-function scheduleReconnect(why) {
+let _reconnectTimer: NodeJS.Timeout | null = null;
+function scheduleReconnect(why: string): void {
   _ch = null; _conn = null;
   // One pending reconnect at a time: a connection close and a failed connect can both
   // land here, which used to start two parallel reconnect loops.

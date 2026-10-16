@@ -9,14 +9,16 @@
  * the worker adds a Redis SET-NX guard on top for at-least-once redelivery safety.
  */
 import { Queue } from 'bullmq';
+import type { Job, JobType } from 'bullmq';
 import { getConnection } from '../queue/index.js';
+import type { GiveawayMessage, GiveawayJobResult } from '../../types/giveaway.js';
 
 export const GIVEAWAY_EMAIL_QUEUE = 'giveaway-email';
 
-let _queue = null;
+let _queue: Queue<GiveawayMessage, GiveawayJobResult> | null = null;
 export function getGiveawayQueue() {
   if (!_queue) {
-    _queue = new Queue(GIVEAWAY_EMAIL_QUEUE, {
+    _queue = new Queue<GiveawayMessage, GiveawayJobResult>(GIVEAWAY_EMAIL_QUEUE, {
       connection: getConnection(),
       defaultJobOptions: {
         attempts: 3,
@@ -30,7 +32,7 @@ export function getGiveawayQueue() {
 }
 
 /** Enqueue one giveaway email (the §3 contract payload). id → jobId for idempotency. */
-export async function enqueueGiveawayEmail(payload) {
+export async function enqueueGiveawayEmail(payload: GiveawayMessage) {
   return getGiveawayQueue().add('giveaway.email', payload, {
     jobId: payload?.id ? String(payload.id) : undefined,
   });
@@ -55,7 +57,7 @@ export async function recentGiveawayJobs(limit = 50) {
     q.getJobs(['delayed'],   0, limit - 1, false),
   ]);
 
-  const outcome = (state, rv, failedReason) => {
+  const outcome = (state: JobType, rv: GiveawayJobResult | undefined, failedReason: string | undefined) => {
     if (state === 'failed')  return { label: 'failed',    detail: failedReason || 'error' };
     if (state === 'active')  return { label: 'processing', detail: '' };
     if (state === 'waiting' || state === 'delayed') return { label: 'queued', detail: '' };
@@ -65,7 +67,7 @@ export async function recentGiveawayJobs(limit = 50) {
     return { label: 'completed', detail: '' };
   };
 
-  const map = (j, state) => ({
+  const map = (j: Job<GiveawayMessage, GiveawayJobResult>, state: JobType) => ({
     jobId: j.id, id: j.data?.id, type: j.data?.type,
     email: j.data?.to?.email, name: j.data?.to?.name,
     subject: j.data?.subject, tenantId: j.data?.tenantId, giveawayId: j.data?.giveawayId,

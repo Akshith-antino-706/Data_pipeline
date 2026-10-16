@@ -1,14 +1,15 @@
 import mysql from 'mysql2/promise';
+import type { Pool, PoolOptions } from 'mysql2/promise';
 
-const pools = {};
+const pools: Record<string, Pool> = {};
 
 /**
  * Get a named MySQL connection pool. Supports multiple remote MySQL servers.
  * @param {string} name - Pool name: 'primary' (MYSQL_*) or 'chats' (MYSQL2_*)
  */
-export function getMySQLPool(name = 'primary') {
+export function getMySQLPool(name: string = 'primary'): Pool {
   if (!pools[name]) {
-    const config = name === 'chats'
+    const config: PoolOptions = name === 'chats'
       ? {
           host: process.env.MYSQL2_HOST,
           port: parseInt(process.env.MYSQL2_PORT || '3306'),
@@ -41,8 +42,8 @@ export function getMySQLPool(name = 'primary') {
  * @param {Array} params
  * @param {string} poolName - 'primary' or 'chats'
  */
-export async function mysqlQuery(sql, params = [], poolName = 'primary') {
+export async function mysqlQuery<R = mysql.RowDataPacket[]>(sql: string, params: unknown[] = [], poolName: string = 'primary'): Promise<R> {
   const p = getMySQLPool(poolName);
   const [rows] = await p.query(sql, params);
-  return rows;
+  return rows as R;
 }

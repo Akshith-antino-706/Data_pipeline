@@ -19,7 +19,7 @@
  */
 
 /** The configured allow-list as a lowercased Set, or null when the gate is disabled. */
-export function allowedEmailSet() {
+export function allowedEmailSet(): Set<string> | null {
   const raw = process.env.WELCOME_EMAILS;
   if (raw == null) return null;                       // not configured → gate disabled
   const set = new Set(
@@ -29,7 +29,7 @@ export function allowedEmailSet() {
 }
 
 /** True when WELCOME_EMAILS is set and non-empty (i.e. the safelist is enforced). */
-export function allowlistActive() {
+export function allowlistActive(): boolean {
   return allowedEmailSet() !== null;
 }
 
@@ -40,7 +40,7 @@ export function allowlistActive() {
  *   - gate enabled & off list  → false (skip the send)
  *   - empty/blank address      → false when gate enabled
  */
-export function isEmailAllowed(email) {
+export function isEmailAllowed(email: unknown): boolean {
   const set = allowedEmailSet();
   if (!set) return true;                              // gate disabled → allow all
   if (!email) return false;

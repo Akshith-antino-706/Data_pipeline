@@ -6,15 +6,15 @@
  */
 export const CONTACT_TYPES = ['B2C', 'B2B', 'Affiliate'];
 
-const BY_LOWER = Object.fromEntries(CONTACT_TYPES.map(t => [t.toLowerCase(), t]));
+const BY_LOWER: Record<string, string> = Object.fromEntries(CONTACT_TYPES.map(t => [t.toLowerCase(), t]));
 
 /** Any spelling ('b2b', 'AFFILIATE', ' B2C ') → the stored value, or null when it isn't a contact type. */
-export function normalizeContactType(value) {
+export function normalizeContactType(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return BY_LOWER[String(value).trim().toLowerCase()] || null;
 }
 
 /** Scope filter from a query string: a contact type, or undefined for "All" / unknown values. */
-export function parseBusinessType(value) {
+export function parseBusinessType(value: unknown): string | undefined {
   return normalizeContactType(value) || undefined;
 }
