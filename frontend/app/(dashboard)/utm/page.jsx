@@ -31,6 +31,8 @@ export default function UTMTracking() {
   // User Links tab
   const [userLinkStats, setUserLinkStats] = useState({ campaigns: [], totals: {} });
   const [userLinks, setUserLinks] = useState({ links: [], stats: {} });
+  // loadUserLinkData() toggles this; it was never declared, so that call threw a ReferenceError.
+  const [, setUserLinksLoading] = useState(false);
   const [userLinkFilter, setUserLinkFilter] = useState({ campaignId: '', clicked: '', search: '' });
   const [campaigns, setCampaigns] = useState([]);
   const [generatingUserLinks, setGeneratingUserLinks] = useState(null);

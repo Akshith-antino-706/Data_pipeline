@@ -1,4 +1,14 @@
-const STATUS_MAP = {
+export type BookingStatus = 'ON_TRIP' | 'FUTURE_TRAVEL' | 'ACTIVE_ENQUIRY' | 'PAST_BOOKING' | 'PAST_ENQUIRY' | 'PROSPECT';
+export type ProductTier = 'LUXURY' | 'STANDARD';
+export type Geography = 'LOCAL' | 'INTERNATIONAL';
+
+export interface SegmentCombo {
+  bookingStatus: BookingStatus | null;
+  productTier: ProductTier | null;
+  geography: Geography | null;
+}
+
+const STATUS_MAP: Record<string, BookingStatus> = {
   'on-trip': 'ON_TRIP',
   'future-travel': 'FUTURE_TRAVEL',
   'active-enquiry': 'ACTIVE_ENQUIRY',
@@ -7,7 +17,7 @@ const STATUS_MAP = {
   'prospect': 'PROSPECT',
 };
 
-const STATUS_LABELS = {
+const STATUS_LABELS: Record<BookingStatus, string> = {
   ON_TRIP: 'On Trip',
   FUTURE_TRAVEL: 'Future Travel',
   ACTIVE_ENQUIRY: 'Active Enquiry',
@@ -16,18 +26,18 @@ const STATUS_LABELS = {
   PROSPECT: 'Prospect',
 };
 
-export function comboToSlug({ bookingStatus, productTier, geography }) {
-  const parts = [];
+export function comboToSlug({ bookingStatus, productTier, geography }: Partial<SegmentCombo>): string {
+  const parts: string[] = [];
   parts.push(bookingStatus ? bookingStatus.toLowerCase().replace(/_/g, '-') : 'general');
   if (productTier) parts.push(productTier.toLowerCase());
   if (geography) parts.push(geography.toLowerCase());
   return parts.join('-');
 }
 
-export function slugToCombo(slug) {
+export function slugToCombo(slug: string): SegmentCombo & { label: string } {
   const parts = slug.split('-');
 
-  let bookingStatus = null;
+  let bookingStatus: BookingStatus | null = null;
   let rest = parts;
 
   // Try matching status (may be 1-2 word slugs like "on-trip", "future-travel", "active-enquiry")
@@ -44,8 +54,8 @@ export function slugToCombo(slug) {
     rest = parts.slice(1);
   }
 
-  let productTier = null;
-  let geography = null;
+  let productTier: ProductTier | null = null;
+  let geography: Geography | null = null;
 
   for (const p of rest) {
     if (p === 'luxury') productTier = 'LUXURY';

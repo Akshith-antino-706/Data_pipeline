@@ -1,8 +1,23 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import type { AuthData, AuthUser } from '@/types/api';
 
-const AuthContext = createContext({
+export interface AuthContextValue {
+  user: AuthUser | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  login: (email: string, password: string) => Promise<AuthUser | void>;
+  logout: () => void;
+}
+
+interface LoginResponse {
+  success?: boolean;
+  error?: string;
+  data: { token: string; refreshToken?: string; user: AuthUser };
+}
+
+const AuthContext = createContext<AuthContextValue>({
   user: null,
   token: null,
   isAuthenticated: false,
@@ -14,17 +29,17 @@ const AUTH_KEY = 'rayna-auth';
 const LAST_ACTIVITY_KEY = 'rayna-last-activity';
 const INACTIVITY_LIMIT_MS = 30 * 60 * 1000; // auto-logout after 30 min of inactivity
 
-export function AuthProvider({ children }) {
-  const [auth, setAuth] = useState(null);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [auth, setAuth] = useState<AuthData | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem(AUTH_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored);
+        const parsed = JSON.parse(stored) as Partial<AuthData> | null;
         if (parsed?.token && parsed?.user) {
-          setAuth(parsed);
+          setAuth(parsed as AuthData);
           document.cookie = 'rayna-auth=1; path=/; max-age=604800; SameSite=Lax';
         }
       }
@@ -36,20 +51,20 @@ export function AuthProvider({ children }) {
   const token = auth?.token || null;
   const isAuthenticated = !!token;
 
-  const login = useCallback(async (email, password) => {
+  const login = useCallback(async (email: string, password: string): Promise<AuthUser> => {
     const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     const res = await fetch(`${BASE}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const data = await res.json();
+    const data = (await res.json()) as LoginResponse;
 
     if (!res.ok || !data.success) {
       throw new Error(data.error || 'Login failed');
     }
 
-    const authData = { token: data.data.token, refreshToken: data.data.refreshToken, user: data.data.user };
+    const authData: AuthData = { token: data.data.token, refreshToken: data.data.refreshToken, user: data.data.user };
     localStorage.setItem(AUTH_KEY, JSON.stringify(authData));
     document.cookie = 'rayna-auth=1; path=/; max-age=604800; SameSite=Lax';
     setAuth(authData);
@@ -60,8 +75,8 @@ export function AuthProvider({ children }) {
     const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     // Read the refresh token straight from storage (state may be stale) and revoke it
     // server-side. keepalive lets the request finish even though we navigate away below.
-    let refreshToken = null;
-    try { refreshToken = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null')?.refreshToken || null; } catch { /* ignore */ }
+    let refreshToken: string | null = null;
+    try { refreshToken = (JSON.parse(localStorage.getItem(AUTH_KEY) || 'null') as Partial<AuthData> | null)?.refreshToken || null; } catch { /* ignore */ }
     if (refreshToken) {
       fetch(`${BASE}/api/auth/logout`, {
         method: 'POST',
@@ -91,7 +106,7 @@ export function AuthProvider({ children }) {
   // is persisted so a refresh can't be used to bypass the idle window.
   useEffect(() => {
     if (!isAuthenticated) return;
-    let timer;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const reset = () => {
       try { localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now())); } catch { /* ignore */ }
@@ -146,6 +161,6 @@ export function AuthProvider({ children }) {
   );
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextValue {
   return useContext(AuthContext);
 }

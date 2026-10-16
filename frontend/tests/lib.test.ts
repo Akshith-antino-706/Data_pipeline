@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { safeEqual, createLeadsAccessCookie, readLeadsAccessCookie } from '@/lib/leadsAccess';
-import { comboToSlug, slugToCombo } from '@/lib/segmentSlug';
+import { comboToSlug, slugToCombo, type BookingStatus, type ProductTier, type Geography } from '@/lib/segmentSlug';
 import { contactTypeColor, CONTACT_TYPES } from '@/lib/contactTypes';
 
 describe('leadsAccess (S-A2)', () => {
@@ -24,9 +24,9 @@ describe('leadsAccess (S-A2)', () => {
 
 describe('segmentSlug', () => {
   it('round-trips every real combo through its slug', () => {
-    for (const bookingStatus of ['ON_TRIP', 'FUTURE_TRAVEL', 'ACTIVE_ENQUIRY', 'PAST_BOOKING', 'PAST_ENQUIRY', 'PROSPECT', null])
-      for (const productTier of ['LUXURY', 'STANDARD', null])
-        for (const geography of ['LOCAL', 'INTERNATIONAL', null]) {
+    for (const bookingStatus of ['ON_TRIP', 'FUTURE_TRAVEL', 'ACTIVE_ENQUIRY', 'PAST_BOOKING', 'PAST_ENQUIRY', 'PROSPECT', null] as (BookingStatus | null)[])
+      for (const productTier of ['LUXURY', 'STANDARD', null] as (ProductTier | null)[])
+        for (const geography of ['LOCAL', 'INTERNATIONAL', null] as (Geography | null)[]) {
           const combo = { bookingStatus, productTier, geography };
           expect(slugToCombo(comboToSlug(combo))).toMatchObject(combo);
         }

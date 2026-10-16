@@ -13,8 +13,12 @@
 import { useEffect, useRef } from 'react';
 import hotToast from 'react-hot-toast';
 import { getGiveawayLog, getGiveawayMqLog } from '@/lib/api';
+import type { GiveawayEvent } from '@/types/api';
 
-const OUTCOME = {
+interface Outcome { icon: string; bg: string; label: string }
+type KeyedEvent = GiveawayEvent & { _key: string };
+
+const OUTCOME: Record<string, Outcome> = {
   received:   { icon: '🎁', bg: '#16a34a', label: 'received' },
   sent:       { icon: '📧', bg: '#16a34a', label: 'sent' },
   duplicate:  { icon: '🔁', bg: '#475569', label: 'duplicate' },
@@ -26,7 +30,7 @@ const OUTCOME = {
   completed:  { icon: '✅', bg: '#16a34a', label: 'completed' },
 };
 
-function toastEvent(e) {
+function toastEvent(e: GiveawayEvent) {
   const status = e.outcome || e.label || 'received';
   const o = OUTCOME[status] || OUTCOME.received;
   const who = `${e.name ? e.name + ' ' : ''}<${e.email || ''}>`;
@@ -37,8 +41,8 @@ function toastEvent(e) {
   );
 }
 
-export default function GiveawayToaster({ intervalMs = 5000 }) {
-  const seen = useRef(new Set());
+export default function GiveawayToaster({ intervalMs = 5000 }: { intervalMs?: number }) {
+  const seen = useRef(new Set<string>());
   const seeded = useRef(false);
 
   useEffect(() => {
@@ -53,7 +57,7 @@ export default function GiveawayToaster({ intervalMs = 5000 }) {
         if (!alive) return;
 
         // Normalise both feeds into one keyed list (mq uses id+ts, bullmq uses jobId).
-        const events = [];
+        const events: KeyedEvent[] = [];
         (mq?.events || []).forEach(e => events.push({ ...e, _key: `mq:${e.id}:${e.outcome}:${e.ts || ''}` }));
         (bq?.events || []).forEach(e => events.push({ ...e, _key: `bq:${e.jobId}` }));
 

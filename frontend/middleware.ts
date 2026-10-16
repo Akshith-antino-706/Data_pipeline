@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { LEADS_ACCESS_COOKIE, readLeadsAccessCookie } from './lib/leadsAccess';
 
 const PUBLIC_PATHS = ['/', '/login', '/landing', '/leads', '/leads-access', '/rayna-logo.webp', '/favicon.ico', '/icon.svg', '/apple-icon.png'];
 
-export async function middleware(request) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   // Auth cookie, set by AuthContext on login
   const hasAuth = request.cookies.get('rayna-auth');

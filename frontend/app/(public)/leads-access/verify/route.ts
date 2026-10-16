@@ -1,19 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { LEADS_ACCESS_COOKIE, createLeadsAccessCookie, readLeadsAccessCookie } from '@/lib/leadsAccess';
 
 const ACCESS_DURATION_MS = 30 * 60 * 1000;
 
-export async function GET(request) {
+export async function GET(request: NextRequest) {
   const expectedToken = process.env.LEADS_ACCESS_TOKEN || 'RAYNA-DATA-321';
   const access = await readLeadsAccessCookie(request.cookies.get(LEADS_ACCESS_COOKIE)?.value, expectedToken);
   if (!access) return NextResponse.json({ valid: false }, { status: 401 });
   return NextResponse.json({ valid: true, expiresAt: access.expiresAt });
 }
 
-export async function POST(request) {
+export async function POST(request: NextRequest) {
   let submittedToken = '';
   try {
-    const body = await request.json();
+    const body = (await request.json()) as { token?: unknown } | null;
     submittedToken = String(body?.token || '').trim();
   } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
