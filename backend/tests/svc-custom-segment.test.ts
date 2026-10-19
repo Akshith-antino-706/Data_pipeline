@@ -32,8 +32,10 @@ describe('CustomSegmentService.buildWhereClause — field operators', () => {
     expect(r.params).toEqual(['a@b.com', 'üser@x.de']);
   });
 
-  it('email undefined becomes the string "undefined" (current behaviour)', () => {
-    expect(one({ field: 'email' }).params).toEqual(['undefined']);
+  it('email with no value is skipped (no "undefined" search)', () => {
+    const r = one({ field: 'email' });
+    expect(r.params).toEqual([]);
+    expect(r.clauseItems).toHaveLength(0);
   });
 
   it.each(['booking_status', 'product_tier', 'geography'])('%s builds IN list with raw params', (field) => {
@@ -101,9 +103,11 @@ describe('CustomSegmentService.buildWhereClause — field operators', () => {
     expect(one({ field: 'travel_date_within', value: 'abc' }).clauseItems).toHaveLength(0);
   });
 
-  it('booking_date_within accepts negative / zero numbers', () => {
+  it('booking_date_within accepts zero and uses the absolute value of negatives', () => {
     expect(one({ field: 'booking_date_within', value: '0' }).clauseItems[0].clause).toContain('(CURRENT_DATE - 0)');
-    expect(one({ field: 'booking_date_within', value: '-5' }).clauseItems[0].clause).toContain('(CURRENT_DATE - -5)');
+    const neg = one({ field: 'booking_date_within', value: '-5' }).clauseItems[0].clause;
+    expect(neg).toContain('(CURRENT_DATE - 5)');
+    expect(neg).not.toContain('- -');
   });
 
   it('last_booking_age presets and explicit pairs', () => {
@@ -124,8 +128,11 @@ describe('CustomSegmentService.buildWhereClause — field operators', () => {
     expect(one({ field: 'revenue', value: 10 }).clauseItems).toHaveLength(0);
   });
 
-  it('revenue with non-numeric value pushes NaN (current behaviour)', () => {
-    expect(one({ field: 'revenue', operator: 'gte', value: 'abc' }).params[0]).toBeNaN();
+  it('revenue with non-numeric value is skipped (no NaN param)', () => {
+    const r = one({ field: 'revenue', operator: 'gte', value: 'abc' });
+    expect(r.params).toEqual([]);
+    expect(r.clauseItems).toHaveLength(0);
+    expect(one({ field: 'revenue', operator: 'between', value: ['x', 100] }).params).toEqual([100]);
   });
 
   it('top_service / top_product: top1 vs top3, empty filtered', () => {
@@ -173,9 +180,11 @@ describe('CustomSegmentService.buildWhereClause — gtm / giveaway', () => {
     expect(one({ type: 'giveaway' }).clauseItems).toHaveLength(0);
   });
 
-  it('giveaway windowDays only (no type/name/count) leaves dangling param (current behaviour)', () => {
+  it('giveaway windowDays only applies the window via EXISTS (params match placeholders)', () => {
     const r = one({ type: 'giveaway', windowDays: 5 });
-    expect(r.clauseItems).toHaveLength(0);
+    expect(r.clauseItems).toHaveLength(1);
+    expect(r.clauseItems[0].clause).toContain('EXISTS (SELECT 1 FROM giveaway_events gv');
+    expect(r.clauseItems[0].clause).toContain('$1');
     expect(r.params).toEqual([5]);
   });
 });

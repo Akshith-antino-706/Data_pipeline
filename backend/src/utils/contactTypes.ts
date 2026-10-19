@@ -11,7 +11,8 @@ const BY_LOWER: Record<string, string> = Object.fromEntries(CONTACT_TYPES.map(t 
 /** Any spelling ('b2b', 'AFFILIATE', ' B2C ') → the stored value, or null when it isn't a contact type. */
 export function normalizeContactType(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  return BY_LOWER[String(value).trim().toLowerCase()] || null;
+  const key = String(value).trim().toLowerCase();
+  return Object.hasOwn(BY_LOWER, key) ? BY_LOWER[key] : null;
 }
 
 /** Scope filter from a query string: a contact type, or undefined for "All" / unknown values. */

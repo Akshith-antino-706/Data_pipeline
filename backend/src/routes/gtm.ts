@@ -17,7 +17,11 @@ router.use('/events', cors({
 // GET /api/v3/gtm/snippet — Get GTM container snippet
 router.get('/snippet', (req: QueryRequest, res: Response) => {
   const containerId = req.query.containerId || process.env.GTM_CONTAINER_ID || 'GTM-RAYNA001';
-  res.json(GTMService.getContainerSnippet(containerId));
+  try {
+    res.json(GTMService.getContainerSnippet(containerId));
+  } catch (err) {
+    res.status(400).json({ success: false, error: (err as Error).message });
+  }
 });
 
 // GET /api/v3/gtm/datalayer — Get all dataLayer scripts

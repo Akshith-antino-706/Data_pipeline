@@ -94,7 +94,7 @@ describe.each(impls)('%s callClaude', (_name, callClaude, maxUses) => {
   // BUG: the greedy /\{[\s\S]*\}/ spans from the first "{" to the LAST "}", so any brace in
   // trailing prose breaks parsing of an otherwise valid JSON reply (e.g. Day1WelcomeRankingService.ts:217,
   // same pattern in Day2/4/5/6/7).
-  it.fails('parses JSON followed by prose containing braces', async () => {
+  it('parses JSON followed by prose containing braces', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(textMsg('{"a":1}\nNote: see {sources}')));
     await expect(callClaude({ system: 's', user: 'u' })).resolves.toMatchObject({ parsed: { a: 1 } });
   });

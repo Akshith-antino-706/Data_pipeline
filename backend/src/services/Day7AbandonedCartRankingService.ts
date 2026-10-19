@@ -15,6 +15,7 @@ import { isCityBlocked } from '../config/blockedDestinations.js';
 import type { ClaudeCallArgs, ClaudeCallResult, ClaudeMessageResponse, ClaudeParsedJson, ClaudeRequestBody, RankOptions } from '../types/dayTemplates.js';
 import type { ProductCandidate, VisaProductRow } from '../types/dayTemplates.js';
 import type { Day7Ranking } from './Day7AbandonedCartDataService.js';
+import { extractFirstJsonObject } from '../utils/extractJsonObject.js';
 
 type VisaKeyRow = Pick<VisaProductRow, 'key' | 'country_label'>;
 interface Day7Pools {
@@ -211,12 +212,12 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
   if (!text) throw new Error('Claude returned no text content');
 
   const webSearchCalls = (data.content || []).filter(b => b.type === 'server_tool_use').length;
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
+  const json = extractFirstJsonObject(text);
+  if (json === null) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
 
   let parsed: ClaudeParsedJson;
-  try { parsed = JSON.parse(m[0]) as ClaudeParsedJson; }
-  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${m[0].slice(0, 200)}`); }
+  try { parsed = JSON.parse(json) as ClaudeParsedJson; }
+  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${json.slice(0, 200)}`); }
 
   return { parsed, usage: data.usage, model: data.model, webSearchCalls };
 }
@@ -232,7 +233,7 @@ function buildFallbackRanking({ activities, holidays, cruises, visas }: Day7Pool
       activities[0]?.product_id ?? null,
       holidays[0]?.product_id   ?? null,
       cruises[0]?.product_id    ?? null,
-    ].filter(Number.isFinite),
+    ],
     fallback_visa_key:      visas[0]?.key || null,
     hero_variant_key:       'still_thinking',
     urgency_variant_key:    'high_demand',

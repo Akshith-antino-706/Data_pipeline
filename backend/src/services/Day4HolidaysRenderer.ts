@@ -76,7 +76,8 @@ export function renderDay4Holidays(templateOrPath: string, data: Day4HolidaysDat
         return match; // leave the placeholder so we can detect issues
       }
     }
-    return value as unknown as string;
+    const v: unknown = value;
+    return v === null || typeof v === 'object' || typeof v === 'function' ? '' : String(v);
   });
 
   return result;

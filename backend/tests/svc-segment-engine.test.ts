@@ -78,10 +78,18 @@ describe('SegmentEngine.getSegmentCustomers', () => {
     expect(m.query.mock.calls[0][1]).toEqual([3]);
   });
 
-  it('page 0 yields a negative OFFSET (current behaviour, no clamping)', async () => {
+  it('page 0 is clamped to 1 (OFFSET 0) and bad limits fall back / are capped', async () => {
     countThenRows('0');
     await SegmentEngine.getSegmentCustomers(3, { page: 0, limit: 10 });
-    expect(m.query.mock.calls[1][1]).toEqual([3, 10, -10]);
+    expect(m.query.mock.calls[1][1]).toEqual([3, 10, 0]);
+    m.query.mockClear();
+    countThenRows('0');
+    await SegmentEngine.getSegmentCustomers(3, { page: -2, limit: 0 });
+    expect(m.query.mock.calls[1][1]).toEqual([3, 25, 0]);
+    m.query.mockClear();
+    countThenRows('0');
+    await SegmentEngine.getSegmentCustomers(3, { page: 2, limit: 10000 });
+    expect(m.query.mock.calls[1][1]).toEqual([3, 500, 500]);
   });
 
   it('total 0 → totalPages 0', async () => {

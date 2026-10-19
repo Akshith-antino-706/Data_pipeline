@@ -52,8 +52,10 @@ describe('GTMService static snippets', () => {
     expect(s.body).toContain('ns.html?id=GTM-ABC');
     expect(GTMService.getContainerSnippet().head).toContain('GTM-RAYNA001');
   });
-  it('containerId is interpolated without escaping (current behaviour)', () => {
-    expect(GTMService.getContainerSnippet("x');alert(1)//").head).toContain("'x');alert(1)//'");
+  it('rejects containerIds that are not GTM-XXXX (no HTML/JS injection)', () => {
+    expect(() => GTMService.getContainerSnippet("x');alert(1)//")).toThrow(/Invalid GTM container ID/);
+    expect(() => GTMService.getContainerSnippet('GTM-AB"><script>')).toThrow();
+    expect(GTMService.getContainerSnippet('GTM-ABC123').head).toContain("'GTM-ABC123'");
   });
   it('identity + dataLayer scripts are non-empty', () => {
     expect(GTMService.getUserIdentityScript().length).toBeGreaterThan(0);

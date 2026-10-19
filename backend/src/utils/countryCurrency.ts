@@ -175,9 +175,9 @@ reg('TOP', 'tonga', 'to', 'ton');
 reg('VUV', 'vanuatu', 'vu', 'vut');
 reg('SBD', 'solomon islands', 'sb', 'slb');
 
-/** Normalize a country string for lookup: lowercase, trim, strip dots, collapse spaces. */
+/** Normalize a country string for lookup: lowercase, trim, strip dots/punctuation, hyphens → spaces, collapse spaces. */
 export function normalizeCountry(country: unknown): string {
-  return String(country || '').toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+  return String(country || '').toLowerCase().replace(/\./g, '').replace(/[-_]+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
 }
 
 /** ISO currency code for a country (name/code/variant), or null when unknown/blank. */

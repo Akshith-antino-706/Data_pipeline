@@ -16,6 +16,7 @@ import { isKeyBlocked } from '../config/blockedDestinations.js';
 import type { ClaudeCallArgs, ClaudeCallResult, ClaudeMessageResponse, ClaudeParsedJson, ClaudeRequestBody, RankOptions } from '../types/dayTemplates.js';
 import type { ProductCandidate } from '../types/dayTemplates.js';
 import type { Day6Ranking, DestinationSpotlight } from './Day6DestinationDataService.js';
+import { extractFirstJsonObject } from '../utils/extractJsonObject.js';
 
 interface Day6Candidates {
   holidayCandidates: ProductCandidate[];
@@ -198,6 +199,7 @@ function validateRanking(r: Day6Ranking, { dest, holidayCandidates, activityCand
     if (!allowEmpty && pool.size > 0 && arr.length === 0) {
       throw new Error(`${key} is empty but candidates exist`);
     }
+    if (arr.length > SLOT_COUNT) throw new Error(`${key} has ${arr.length} ids, max ${SLOT_COUNT}`);
     if (new Set(arr).size !== arr.length) throw new Error(`${key} has duplicate ids`);
     for (const id of arr) {
       if (!pool.has(Number(id))) throw new Error(`${key}: product_id ${id} not in candidates`);
@@ -253,12 +255,12 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
   if (!text) throw new Error('Claude returned no text content');
 
   const webSearchCalls = (data.content || []).filter(b => b.type === 'server_tool_use').length;
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
+  const json = extractFirstJsonObject(text);
+  if (json === null) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
 
   let parsed: ClaudeParsedJson;
-  try { parsed = JSON.parse(m[0]) as ClaudeParsedJson; }
-  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${m[0].slice(0, 200)}`); }
+  try { parsed = JSON.parse(json) as ClaudeParsedJson; }
+  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${json.slice(0, 200)}`); }
 
   return { parsed, usage: data.usage, model: data.model, webSearchCalls };
 }

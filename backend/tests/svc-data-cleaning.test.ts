@@ -68,7 +68,7 @@ describe('DataCleaningService.cleanPhone', () => {
 
   // Suspected bug: the international "00" dialling prefix is not stripped, so
   // 00971... gets no country and a bogus "+00971..." cleaned value.
-  it.fails('treats a 00 international prefix like +', () => {
+  it('treats a 00 international prefix like +', () => {
     expect(S.cleanPhone('00971501234567')?.countryCode).toBe('971');
   });
 });

@@ -139,7 +139,7 @@ describe('renderRecommendationEmail', () => {
   // BUG: values are passed as a *string* replacement to String.replace, so "$&", "$'" etc. are
   // interpreted as replacement patterns instead of literal text (RecommendationRenderer.ts:159,
   // same in _renderProductCard :140).
-  it.fails('inserts values containing "$&" literally', async () => {
+  it('inserts values containing "$&" literally', async () => {
     const r = await renderRecommendationEmail({ templateHtml: 'Code: {{coupon_code}}', vars: { coupon_code: 'A$&B' } });
     expect(r.html).toBe('Code: A$&B');
   });

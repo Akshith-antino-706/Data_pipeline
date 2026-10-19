@@ -36,7 +36,7 @@ describe('middleware: auth gate', () => {
     expect(isNext(await middleware(req('/dashboard', { 'rayna-auth': 'tampered' })))).toBe(true);
   });
 
-  it.fails('BUG middleware.ts:34-41 - signed-in user on "/" is never redirected to /dashboard (public-path early return wins)', async () => {
+  it('BUG middleware.ts:34-41 - signed-in user on "/" is never redirected to /dashboard (public-path early return wins)', async () => {
     const res = await middleware(req('/', { 'rayna-auth': '1' }));
     expect(location(res)).toBe(`${ORIGIN}/dashboard`);
   });

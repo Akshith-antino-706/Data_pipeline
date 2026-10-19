@@ -27,7 +27,7 @@ const SITE = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').repla
 // or unreachable. This default is only used when nothing better resolves.
 const WA_DEFAULT_IMG = process.env.WA_DEFAULT_IMG || `${SITE}/rayna-og.jpg`;
 
-const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch as '&' | '<' | '>' | '"']));
+const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch as '&' | '<' | '>' | '"' | "'"]));
 
 // Legacy / template-specific lowercase keys → canonical UPPER_SNAKE key.
 // (Plain lowercase keys that already match a canonical name — e.g. destination_city,
@@ -103,7 +103,8 @@ function buildValues(ctx: PlaceholderContext = {}): PlaceholderValues {
   const firstName = fullName.split(/\s+/)[0] || '';
   const pageUrl   = ev.page_url || p.pageUrl || '';
   const orderId   = p.transactionId || '';
-  const ts        = ev.created_at ? new Date(ev.created_at).toLocaleString() : (p.timestamp || '');
+  const evDate    = ev.created_at ? new Date(ev.created_at) : null;
+  const ts        = evDate ? (Number.isNaN(evDate.getTime()) ? '' : evDate.toLocaleString()) : (p.timestamp || '');
   const segs      = Array.isArray(c.segments) ? c.segments.join(', ') : (c.segments ?? '');
 
   return {

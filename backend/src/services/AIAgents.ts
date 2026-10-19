@@ -422,7 +422,11 @@ Channel performance: ${JSON.stringify(channelPerf)}`;
 
       // AVG() is NULL when a strategy has no measurable sends; `null < 70` is true in JS, so such
       // strategies used to get every "low rate" suggestion. Only judge rates that exist.
-      const rate = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+      const rate = (v: unknown): number | null => {
+        if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
       const delivery = rate(strategy.avg_delivery);
       const open = rate(strategy.avg_open);
       const click = rate(strategy.avg_click);

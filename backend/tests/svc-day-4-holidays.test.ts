@@ -76,7 +76,7 @@ describe('Day4 buildFallbackRanking + validateRanking', () => {
   });
   // BUG: catalog lookups use plain `catalog[key]`, so inherited names like "constructor" pass
   // the eid_special_key / hero_destination_key existence checks (Day4HolidaysRankingService.ts:149).
-  it.fails('rejects Object.prototype names as hero_destination_key', () => {
+  it('rejects Object.prototype names as hero_destination_key', () => {
     expect(() => rank.validateRanking({ ...good(), hero_destination_key: 'constructor' })).toThrow();
   });
 });
@@ -107,7 +107,7 @@ describe('renderDay4Holidays', () => {
     const tpl = '<i>{{#list xs}}{{title}}{{/list}}</i>';
     expect(renderDay4Holidays(tpl, d({ xs: [{}], title: 'T' }))).toBe('<i>T</i>');
   });
-  it('object values stringify as [object Object] (current behaviour)', () => {
-    expect(renderDay4Holidays('<p>{{b}}</p>', d({ b: { c: 1 } }))).toBe('<p>[object Object]</p>');
+  it('object values render as empty string', () => {
+    expect(renderDay4Holidays('<p>{{b}}</p>', d({ b: { c: 1 } }))).toBe('<p></p>');
   });
 });

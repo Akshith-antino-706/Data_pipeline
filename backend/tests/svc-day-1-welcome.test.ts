@@ -109,7 +109,7 @@ describe('Day1 validateRanking', () => {
   });
   // BUG: `map[k]` looks through the prototype chain, so inherited names like "toString" pass
   // validation as if they were catalog keys (Day1WelcomeRankingService.ts:159).
-  it.fails('rejects Object.prototype names as keys', () => {
+  it('rejects Object.prototype names as keys', () => {
     expect(() => rank.validateRanking({ ...good(), holiday_keys: ['toString', 'h2', 'h3', 'h4'] }, maps())).toThrow();
   });
 });

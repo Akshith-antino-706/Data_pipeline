@@ -29,6 +29,7 @@ function generateCityRows(cities: Day2CruiseData['departure_cities']) {
   let html = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse">`;
 
   let rowOpen = false;
+  let colInRow = 0;
   for (let i = 0; i < cities.length; i++) {
     const city = cities[i];
     const isFullWidth = !!city.is_full_width;
@@ -56,13 +57,10 @@ function generateCityRows(cities: Day2CruiseData['departure_cities']) {
     }
 
     // Regular 2-col card.
-    if (!rowOpen) { html += `<tr>`; rowOpen = true; }
+    if (!rowOpen) { html += `<tr>`; rowOpen = true; colInRow = 0; }
 
-    const isLeftCol = !rowOpen ? true : (i % 2 === 0); // safety guard
-    // Determine padding side based on whether this card sits in the left or right cell of a row
-    // Simpler: track a column index per row instead of relying on parity.
-    // Compute cellsInThisRow by counting non-full-width consecutive cards, but for simplicity
-    // we rely on the fact that we open <tr> for the first non-full card and close on the second.
+    // Column position within the current row (not the global index).
+    const isLeftCol = colInRow === 0;
     const padding = isLeftCol ? 'padding-right: 6px;' : 'padding-left: 6px;';
 
     html += `<td class="city-col" width="50%" valign="top" style="width: 50%; padding-top: 0; ${padding} padding-bottom: 0;">
@@ -86,11 +84,11 @@ function generateCityRows(cities: Day2CruiseData['departure_cities']) {
 
     // Close the row after the second card OR if this is the last item.
     const nextIsFullWidth = i + 1 < cities.length && cities[i + 1].is_full_width;
-    const closeRow = (i % 2 === 1) || (i === cities.length - 1) || nextIsFullWidth;
+    const closeRow = !isLeftCol || (i === cities.length - 1) || nextIsFullWidth;
     if (closeRow) {
       // If we only put a single card in this row (e.g., last item is right-padded),
       // pad with an empty cell so the row closes cleanly.
-      if (i % 2 === 0) html += `<td width="50%">&nbsp;</td>`;
+      if (isLeftCol) html += `<td width="50%">&nbsp;</td>`;
       html += `</tr>`;
       rowOpen = false;
 
@@ -100,6 +98,8 @@ function generateCityRows(cities: Day2CruiseData['departure_cities']) {
       if (!isLast && !nextIsFullWidth) {
         html += `<tr><td colspan="2" style="height: 12px; line-height: 12px; font-size: 12px;">&nbsp;</td></tr>`;
       }
+    } else {
+      colInRow++;
     }
   }
 

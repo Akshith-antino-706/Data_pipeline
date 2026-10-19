@@ -168,6 +168,8 @@ class SegmentEngine {
    * Get customers in a segment with pagination
    */
   static async getSegmentCustomers(segmentId: string | number, { page = 1, limit = 25, search, sortBy = 'assigned_at', sortDir = 'DESC' }: SegmentCustomersOpts = {}) {
+    page = Math.max(1, Math.floor(Number(page)) || 1);
+    limit = Math.min(500, Math.max(1, Math.floor(Number(limit)) || 25));
     const offset = (page - 1) * limit;
     const allowed = ['assigned_at', 'total_bookings', 'total_revenue', 'days_since_last_booking', 'first_name', 'email'];
     const orderCol = allowed.includes(sortBy) ? sortBy : 'assigned_at';

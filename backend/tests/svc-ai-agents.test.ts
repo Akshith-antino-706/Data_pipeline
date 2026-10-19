@@ -87,11 +87,10 @@ describe('AnalyticsInsights.autoOptimizeStrategies', () => {
     expect((await AnalyticsInsights.autoOptimizeStrategies()).optimized).toEqual([]);
   });
 
-  it('non-numeric rate strings become NaN and are never "low"', async () => {
+  it('empty / non-numeric rate strings are treated as missing (null), never "low"', async () => {
     withStrategies([strat({ avg_delivery: 'abc', avg_open: '', avg_click: 'NaN' })]);
     const r = await AnalyticsInsights.autoOptimizeStrategies();
-    // '' → Number('') === 0 → treated as low open rate (email channel).
-    expect(r.optimized[0].suggestions.map(s => s.type)).toEqual(['content_change']);
+    expect(r.optimized.flatMap(o => o.suggestions)).toEqual([]);
   });
 
   it('zero and negative rates count as low', async () => {

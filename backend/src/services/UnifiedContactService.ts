@@ -574,7 +574,8 @@ export default class UnifiedContactService {
 
     // Date filter for revenue queries (applied to bill_date)
     const dateClauses = [];
-    const isIsoDate = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const isIsoDate = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
+      && !isNaN(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
     if (dateFrom && !isIsoDate(dateFrom)) throw new Error('Invalid dateFrom (expected YYYY-MM-DD)');
     if (dateTo && !isIsoDate(dateTo)) throw new Error('Invalid dateTo (expected YYYY-MM-DD)');
     if (dateFrom) dateClauses.push(`bill_date >= '${dateFrom}'`);

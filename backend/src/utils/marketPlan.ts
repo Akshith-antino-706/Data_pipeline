@@ -36,7 +36,7 @@ export function resolveMarket(contact: MarketContact = {}): MarketResolution {
   // country field, so it wins when present; country is the fallback.
   const n = normalizeCountry(contact.mobile_country) || normalizeCountry(contact.country);
 
-  if (contact.is_indian === true || INDIA.has(n)) return { plan: 'IN', currency: 'INR' };
+  if (contact.is_indian === true || contact.is_indian === 'true' || INDIA.has(n)) return { plan: 'IN', currency: 'INR' };
   if (SAUDI.has(n))                               return { plan: 'SA', currency: 'SAR' };
   if (UAE.has(n))                                 return { plan: 'AE', currency: 'AED' };
 

@@ -103,7 +103,7 @@ describe('EmailRenderer.render', () => {
 
   // Suspected bug (EmailRenderer.ts:83/91): values are passed as String.replace replacement
   // strings, so "$&", "$'" etc. in a contact's name are expanded instead of inserted literally.
-  it.fails('inserts a name containing "$&" literally', async () => {
+  it('inserts a name containing "$&" literally', async () => {
     mq.mockResolvedValueOnce(res([tpl()])).mockResolvedValueOnce(res([{ name: 'Rich $& Co' }]));
     const out = await EmailRenderer.render(1, 9);
     expect(out.subject).toBe('Hi Rich $& Co');
@@ -145,7 +145,7 @@ describe('EmailRenderer.buildProductCard', () => {
     expect(EmailRenderer.buildProductCard({ price: 'AED 5' }, 'L', 'u')).toContain('AED 5');
   });
   // Suspected bug (EmailRenderer.ts:149-167): product fields are interpolated unescaped into HTML/attrs.
-  it.fails('escapes HTML in product names', () => {
+  it('escapes HTML in product names', () => {
     expect(EmailRenderer.buildProductCard({ name: '"><script>x</script>' }, 'L', 'u')).not.toContain('<script>');
   });
 });

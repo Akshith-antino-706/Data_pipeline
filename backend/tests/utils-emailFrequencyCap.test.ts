@@ -141,10 +141,11 @@ describe('email cap: enabled', () => {
     await m.releaseSend({ unifiedId: 2 });
   });
 
-  it('non-numeric cap env yields NaN and therefore never caps', async () => {
+  it('non-numeric cap env falls back to the default cap of 3', async () => {
     const m = await load({ EMAIL_CAP_ENABLED: 'true', EMAIL_CAP_PER_24H: 'abc' });
-    expect(m.capLimit()).toBeNaN();
-    for (let i = 0; i < 5; i++) expect((await m.reserveSend({ unifiedId: 1 })).allowed).toBe(true);
+    expect(m.capLimit()).toBe(3);
+    for (let i = 0; i < 3; i++) expect((await m.reserveSend({ unifiedId: 1 })).allowed).toBe(true);
+    expect((await m.reserveSend({ unifiedId: 1 })).allowed).toBe(false);
   });
 });
 

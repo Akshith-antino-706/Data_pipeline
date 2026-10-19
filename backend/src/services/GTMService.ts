@@ -12,6 +12,7 @@ class GTMService {
    * Generate GTM container snippet for embedding
    */
   static getContainerSnippet(containerId = 'GTM-RAYNA001') {
+    if (!/^GTM-[A-Z0-9]+$/.test(containerId)) throw new Error('Invalid GTM container ID (expected GTM-XXXX)');
     return {
       head: `<!-- Google Tag Manager -->
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':

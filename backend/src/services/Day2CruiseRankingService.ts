@@ -23,6 +23,7 @@ import { _internals as dataInternals } from './Day2CruiseDataService.js';
 import type { ClaudeCallArgs, ClaudeCallResult, ClaudeMessageResponse, ClaudeParsedJson, ClaudeRequestBody, RankOptions } from '../types/dayTemplates.js';
 import type { ProductRow } from '../types/dayTemplates.js';
 import type { Day2Ranking } from './Day2CruiseDataService.js';
+import { extractFirstJsonObject } from '../utils/extractJsonObject.js';
 
 interface Day2ValidationSets {
   productIds: Set<number>;
@@ -124,6 +125,8 @@ function validateRanking(ranking: Day2Ranking, { productIds, departureCityKeys, 
   for (const id of ranking.saver_product_ids) {
     if (!productIds.has(Number(id))) throw new Error(`saver_product_ids: unknown product ${id}`);
   }
+  if (new Set(ranking.saver_product_ids.map(Number)).size !== ranking.saver_product_ids.length)
+    throw new Error('saver_product_ids must not contain duplicates');
 
   // regional_product_ids
   if (!Array.isArray(ranking.regional_product_ids) || ranking.regional_product_ids.length !== 4)
@@ -146,11 +149,13 @@ function validateRanking(ranking: Day2Ranking, { productIds, departureCityKeys, 
   }
 
   // departure_city_keys
-  if (!Array.isArray(ranking.departure_city_keys) || ranking.departure_city_keys.length < 4)
+  if (!Array.isArray(ranking.departure_city_keys) || ranking.departure_city_keys.length < 4 || ranking.departure_city_keys.length > 5)
     throw new Error('departure_city_keys must be array of 4-5');
   for (const k of ranking.departure_city_keys) {
     if (!departureCityKeys.has(k)) throw new Error(`unknown departure_city_key: ${k}`);
   }
+  if (new Set(ranking.departure_city_keys).size !== ranking.departure_city_keys.length)
+    throw new Error('departure_city_keys must not contain duplicates');
 
   // variant keys
   if (ranking.hero_variant_key && !heroVariantKeys.has(ranking.hero_variant_key))
@@ -200,12 +205,12 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
 
   const webSearchCalls = (data.content || []).filter(b => b.type === 'server_tool_use').length;
 
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
+  const json = extractFirstJsonObject(text);
+  if (json === null) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
 
   let parsed: ClaudeParsedJson;
-  try { parsed = JSON.parse(m[0]) as ClaudeParsedJson; }
-  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${m[0].slice(0, 200)}`); }
+  try { parsed = JSON.parse(json) as ClaudeParsedJson; }
+  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${json.slice(0, 200)}`); }
 
   return { parsed, usage: data.usage, model: data.model, webSearchCalls };
 }

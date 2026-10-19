@@ -170,7 +170,7 @@ describe('_enrichEmails — Claude fixing', () => {
   it('handles empty content', async () => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
     anthropicCreate.mockResolvedValueOnce({ content: [] });
-    expect(await S._fixEmailsWithClaude(['x'])).toEqual(['']);
+    expect(await S._fixEmailsWithClaude(['x'])).toEqual([null]);
   });
 
   it('batches in groups of 50', async () => {
@@ -183,7 +183,7 @@ describe('_enrichEmails — Claude fixing', () => {
 
   // Suspected bug: Claude's reply is matched to inputs purely by line position. If the model drops
   // or merges a line, every later contact receives another contact's "fixed" email.
-  it.fails('does not assign one contact\'s fixed email to another when Claude drops a line', async () => {
+  it('does not assign one contact\'s fixed email to another when Claude drops a line', async () => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
     anthropicCreate.mockResolvedValueOnce({ content: [{ type: 'text', text: '2. bob@gmail.com' }] });
     const out = await S._enrichEmails([row({ email: 'alice@@gmail.com' }), row({ id: 2, email: 'bob@@gmail.com' })]);
@@ -229,7 +229,7 @@ describe('_enrichMobiles', () => {
   // Suspected bug (ContactEnrichmentService.ts:327-342): parsePhoneNumber('+9876543210') returns an
   // (invalid) object instead of throwing, so the `!parsed` country-hint and India fallbacks never
   // run and a valid Indian mobile is marked invalid.
-  it.fails('formats a bare 10-digit Indian mobile with country India', () => {
+  it('formats a bare 10-digit Indian mobile with country India', () => {
     const [r] = S._enrichMobiles([row({ mobile: '9876543210', country: 'India' })]);
     expect(r).toMatchObject({ enrichedMobile: '919876543210', mobileCountry: 'India', markInvalid: false });
   });

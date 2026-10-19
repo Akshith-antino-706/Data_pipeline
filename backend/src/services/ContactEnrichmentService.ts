@@ -280,17 +280,28 @@ export default class ContactEnrichmentService {
         max_tokens: 2000,
         messages: [{
           role: 'user',
-          content: `Fix these invalid email addresses. Common issues: typos in domain (gmial→gmail, yaho→yahoo, hotmal→hotmail, outloo→outlook), extra dots, missing dots, spaces. Return ONLY the fixed emails, one per line, same order. If unfixable, return the original as-is.\n\n${emailList}`
+          content: `Fix these invalid email addresses. Common issues: typos in domain (gmial→gmail, yaho→yahoo, hotmal→hotmail, outloo→outlook), extra dots, missing dots, spaces. Return ONLY the fixed emails, one per line, each prefixed with its input number exactly as given (e.g. "3. name@gmail.com"). If unfixable, return the original as-is.\n\n${emailList}`
         }]
       });
 
       const response = (msg.content[0] as { text?: string } | undefined)?.text || '';
-      const fixedLines = response.trim().split('\n').map(l => {
-        // Strip numbering like "1. " or "1) "
-        return l.replace(/^\d+[\.\)]\s*/, '').trim().toLowerCase();
-      });
+      const lines = response.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      const result: (string | null)[] = emails.map(() => null);
+      const numbered = lines.map(l => /^(\d+)[\.\):]\s*(.*)$/.exec(l));
 
-      return fixedLines;
+      if (numbered.every(m => m !== null)) {
+        // Match each fixed email to its input by the number Claude echoed back, never by line order.
+        for (const m of numbered) {
+          if (!m) continue;
+          const idx = parseInt(m[1], 10) - 1;
+          if (idx >= 0 && idx < emails.length && result[idx] === null) result[idx] = m[2].trim().toLowerCase();
+        }
+      } else if (numbered.every(m => m === null) && lines.length === emails.length) {
+        // Un-numbered reply: only trust line order when the counts match exactly.
+        lines.forEach((l, i) => { result[i] = l.toLowerCase(); });
+      }
+
+      return result;
     } catch (err) {
       console.error(`[Enrichment] Claude API error: ${(err as Error).message}`);
       return emails.map(() => null);
@@ -326,12 +337,15 @@ export default class ContactEnrichmentService {
         try {
           parsed = parsePhoneNumber(withPlus);
         } catch {}
+        // An invalid parse (e.g. '+9876543210') counts as a failed parse so the fallbacks run.
+        if (parsed && !parsed.isValid()) parsed = null;
 
         // Second try: with country code hint
         if (!parsed && isoCode) {
           try {
             parsed = parsePhoneNumber(original, isoCode);
           } catch {}
+          if (parsed && !parsed.isValid()) parsed = null;
         }
 
         // Third try: assume India if 10 digits

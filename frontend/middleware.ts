@@ -25,17 +25,17 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Authenticated users hitting landing page → redirect to dashboard
+  if (hasAuth && pathname === '/') {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
+  }
+
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     PUBLIC_PATHS.some((p) => pathname === p || (p !== '/' && pathname.startsWith(p + '/')))
   ) {
     return NextResponse.next();
-  }
-
-  // Authenticated users hitting landing page → redirect to dashboard
-  if (hasAuth && pathname === '/') {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
   if (!hasAuth) {

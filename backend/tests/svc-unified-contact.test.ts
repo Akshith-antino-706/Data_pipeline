@@ -56,9 +56,9 @@ describe('UnifiedContactService._computeSegmentationTree — date validation', (
     expect(m.query).not.toHaveBeenCalled();
   });
 
-  it('accepts shape-valid but impossible dates (only format is checked)', async () => {
-    await UnifiedContactService._computeSegmentationTree({ dateFrom: '2024-13-45' });
-    expect(allSql()).toContain("bill_date >= '2024-13-45'");
+  it('rejects shape-valid but impossible calendar dates', async () => {
+    await expect(UnifiedContactService._computeSegmentationTree({ dateFrom: '2024-13-45' })).rejects.toThrow(/Invalid dateFrom/);
+    await expect(UnifiedContactService._computeSegmentationTree({ dateTo: '2023-02-29' })).rejects.toThrow(/Invalid dateTo/);
   });
 
   it('valid dates are embedded in the revenue SQL', async () => {

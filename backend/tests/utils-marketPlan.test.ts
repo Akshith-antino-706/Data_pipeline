@@ -48,7 +48,7 @@ describe('resolveMarket', () => {
 
   // Suspected BUG (marketPlan.ts:39): only boolean true is honoured, but MarketContact.is_indian
   // allows strings and placeholderResolver treats 'true' as Indian — so 'true' is ignored here.
-  it.fails('BUG: is_indian "true" (string) should resolve to IN', () => {
+  it('BUG: is_indian "true" (string) should resolve to IN', () => {
     expect(resolveMarket({ is_indian: 'true' })).toEqual({ plan: 'IN', currency: 'INR' });
   });
 

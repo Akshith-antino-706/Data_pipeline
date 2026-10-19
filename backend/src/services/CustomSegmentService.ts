@@ -76,7 +76,7 @@ export default class CustomSegmentService {
           } else {
             params.push(parseInt(cv as string)); sub.push(`${countSql} >= $${idx++}`);
           }
-        } else if (cond.giveawayType || cond.giveawayName) {
+        } else if (cond.giveawayType || cond.giveawayName || gvDays > 0) {
           sub.push(`EXISTS (SELECT 1 FROM giveaway_events gv WHERE ${filters.join(' AND ')})`);
         }
       } else {
@@ -87,7 +87,8 @@ export default class CustomSegmentService {
             break;
           }
           case 'email': {
-            const emails = Array.isArray(cond.value) ? cond.value : [cond.value];
+            const emails = (Array.isArray(cond.value) ? cond.value : [cond.value]).filter(v => v != null && v !== '');
+            if (!emails.length) break;
             const placeholders = emails.map((v: SegmentScalar | undefined) => { params.push(String(v).toLowerCase()); return `$${idx++}`; });
             sub.push(`LOWER(uc.email) IN (${placeholders.join(',')})`);
             break;
@@ -201,7 +202,7 @@ export default class CustomSegmentService {
             break;
           }
           case 'booking_date_within': {
-            const x = parseInt(cond.value as string);
+            const x = Math.abs(parseInt(cond.value as string));
             if (!isNaN(x)) {
               const lo = cond.operator === 'after'  ? 'CURRENT_DATE' : `(CURRENT_DATE - ${x})`;
               const hi = cond.operator === 'before' ? 'CURRENT_DATE' : `(CURRENT_DATE + ${x})`;
@@ -236,11 +237,11 @@ export default class CustomSegmentService {
           case 'revenue': {
             if (cond.operator === 'between' && Array.isArray(cond.value)) {
               const [min, max] = cond.value;
-              if (min !== '' && min != null) { needsRevenueJoin = true; params.push(Number(min)); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`); }
-              if (max !== '' && max != null) { needsRevenueJoin = true; params.push(Number(max)); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`); }
-            } else if (cond.operator === 'gte' && cond.value !== '' && cond.value != null) {
+              if (min !== '' && min != null && Number.isFinite(Number(min))) { needsRevenueJoin = true; params.push(Number(min)); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`); }
+              if (max !== '' && max != null && Number.isFinite(Number(max))) { needsRevenueJoin = true; params.push(Number(max)); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`); }
+            } else if (cond.operator === 'gte' && cond.value !== '' && cond.value != null && Number.isFinite(Number(cond.value))) {
               needsRevenueJoin = true; params.push(Number(cond.value)); sub.push(`COALESCE(rev_agg.total_revenue, 0) >= $${idx++}`);
-            } else if (cond.operator === 'lte' && cond.value !== '' && cond.value != null) {
+            } else if (cond.operator === 'lte' && cond.value !== '' && cond.value != null && Number.isFinite(Number(cond.value))) {
               needsRevenueJoin = true; params.push(Number(cond.value)); sub.push(`COALESCE(rev_agg.total_revenue, 0) <= $${idx++}`);
             }
             break;

@@ -122,7 +122,7 @@ describe('Contact profile page', () => {
   // BUG app/(dashboard)/contacts/[id]/page.tsx:86 - formatAED does `(n || 0).toLocaleString(...)`;
   // when the API sends total_booking_revenue as a numeric string (PG NUMERIC), String#toLocaleString
   // ignores the options and prints the raw "12345.6" instead of "AED 12,346".
-  it.fails('profile formatAED formats string revenue', async () => {
+  it('profile formatAED formats string revenue', async () => {
     vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'ON_TRIP', total_booking_revenue: '12345.6' }));
     render(<ContactProfile />);
     await screen.findByText('Zed');
@@ -167,7 +167,7 @@ describe('Campaign (journey) detail page', () => {
 
   // BUG app/(dashboard)/campaigns/[id]/page.tsx:57 - fmt() is `Number(n || 0).toLocaleString()`,
   // so a non-numeric string total (e.g. totals.total_clicked: 'abc') renders "NaN" in the stat tile.
-  it.fails('header stat tiles do not show NaN for non-numeric totals', async () => {
+  it('header stat tiles do not show NaN for non-numeric totals', async () => {
     vi.mocked(api.getJourney).mockResolvedValue(journey);
     vi.mocked(api.getJourneyCampaignAnalytics).mockResolvedValue({ data: { target_count: '1', campaigns: [], totals: { total_clicked: 'abc' } } });
     render(<CampaignDetail />);

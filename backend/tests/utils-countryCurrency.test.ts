@@ -42,7 +42,7 @@ describe('currencyForCountry', () => {
 
   // Doc comment (countryCurrency.ts:3) promises "punctuation-insensitive" matching, but
   // normalizeCountry (countryCurrency.ts:179) only strips dots — hyphens/commas break the lookup.
-  it.fails('BUG: hyphenated name should match ("Saudi-Arabia")', () => {
+  it('BUG: hyphenated name should match ("Saudi-Arabia")', () => {
     expect(currencyForCountry('Saudi-Arabia')).toBe('SAR');
   });
 

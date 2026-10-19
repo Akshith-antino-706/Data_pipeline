@@ -21,7 +21,8 @@ import type { CapResult, CapTarget } from '../types/utilsEmail.js';
 
 const REDIS_URL  = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const ENABLED    = process.env.EMAIL_CAP_ENABLED === 'true';
-const CAP        = parseInt(process.env.EMAIL_CAP_PER_24H || '3', 10);
+const CAP_RAW    = parseInt(process.env.EMAIL_CAP_PER_24H || '3', 10);
+const CAP        = Number.isNaN(CAP_RAW) ? 3 : CAP_RAW;
 const WINDOW_SEC = parseInt(process.env.EMAIL_CAP_WINDOW_SEC || '86400', 10);
 
 // Test-inbox bypass. Any email in this comma-separated env var will always
@@ -100,7 +101,8 @@ export async function releaseSend(target?: CapTarget): Promise<void> {
 // Fail-OPEN like email: Redis down / disabled → sends allowed.
 // ═══════════════════════════════════════════════════════════════════════════
 const WA_ENABLED    = process.env.WHATSAPP_CAP_ENABLED === 'true';
-const WA_CAP        = parseInt(process.env.WHATSAPP_CAP_PER_24H || '3', 10);
+const WA_CAP_RAW    = parseInt(process.env.WHATSAPP_CAP_PER_24H || '3', 10);
+const WA_CAP        = Number.isNaN(WA_CAP_RAW) ? 3 : WA_CAP_RAW;
 const WA_WINDOW_SEC = parseInt(process.env.WHATSAPP_CAP_WINDOW_SEC || '86400', 10);
 const _WA_BYPASS = new Set(
   ((process.env.EMAIL_CAP_BYPASS_EMAILS || '') + ',' + (process.env.WHATSAPP_CAP_BYPASS_EMAILS || ''))

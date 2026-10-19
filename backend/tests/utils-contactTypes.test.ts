@@ -18,7 +18,7 @@ describe('contactTypes', () => {
 
   // BUG (contactTypes.ts:9): BY_LOWER is a plain object literal, so inherited keys like
   // 'constructor' / 'tostring' resolve to Object.prototype functions instead of null.
-  it.fails('BUG: does not match prototype keys', () => {
+  it('BUG: does not match prototype keys', () => {
     expect(normalizeContactType('constructor')).toBeNull();
     expect(normalizeContactType('__proto__')).toBeNull();
   });

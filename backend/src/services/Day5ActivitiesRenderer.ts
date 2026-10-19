@@ -39,7 +39,8 @@ function processLoops(template: string, data: unknown) {
     (_match: string, arrayPath: string, sizeStr: string, content: string) => {
       const arr = getValue(data, arrayPath);
       if (!Array.isArray(arr)) return '';
-      const size = parseInt(sizeStr, 10);
+      const parsedSize = parseInt(sizeStr, 10);
+      const size = Number.isFinite(parsedSize) && parsedSize > 0 ? parsedSize : 1;
 
       const chunks: unknown[][] = [];
       for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));

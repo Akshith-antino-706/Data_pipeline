@@ -96,6 +96,8 @@ export class DataCleaningService {
 
     // Strip everything except digits and leading +
     let digits = str.replace(/[^0-9]/g, '');
+    // A leading 00 is the international dialling prefix, same as +.
+    if (/^00/.test(str)) digits = digits.slice(2);
     if (digits.length < 7) return null;
 
     // Try to extract country code (longest match first)

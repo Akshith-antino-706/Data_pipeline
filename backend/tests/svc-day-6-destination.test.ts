@@ -91,7 +91,7 @@ describe('Day6 validateRanking', () => {
   });
   // BUG: there is no upper bound on the id arrays, though only SLOT_COUNT (4) are used — 5 holiday ids pass
   // (Day6DestinationRankingService.ts:196).
-  it.fails('rejects more than SLOT_COUNT holiday ids', () => {
+  it('rejects more than SLOT_COUNT holiday ids', () => {
     expect(() => rank.validateRanking({ ...good(), holiday_ids: [1, 2, 3, 4, 5] }, ctx())).toThrow();
   });
 });

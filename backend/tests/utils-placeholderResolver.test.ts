@@ -85,8 +85,8 @@ describe('renderTemplate', () => {
       .toBe(`${SITE}/my-bookings ${SITE}/checkout ${SITE}/checkout ${SITE}`);
   });
 
-  it('EVENT_TIMESTAMP: invalid created_at renders "Invalid Date"; payload timestamp fallback', () => {
-    expect(renderTemplate('{{EVENT_TIMESTAMP}}', { event: { created_at: 'not-a-date' } })).toBe('Invalid Date');
+  it('EVENT_TIMESTAMP: invalid created_at renders empty; payload timestamp fallback', () => {
+    expect(renderTemplate('{{EVENT_TIMESTAMP}}', { event: { created_at: 'not-a-date' } })).toBe('');
     expect(renderTemplate('{{EVENT_TIMESTAMP}}', { payload: { timestamp: 't0' } })).toBe('t0');
   });
 
@@ -97,7 +97,7 @@ describe('renderTemplate', () => {
 
   // Suspected BUG (placeholderResolver.ts:29): esc() does not escape single quotes, so a value
   // dropped into a single-quoted HTML attribute (href='{{ITEM_URL}}') can break out of it.
-  it.fails("BUG: single quotes should be escaped", () => {
+  it("BUG: single quotes should be escaped", () => {
     expect(renderTemplate('{{ITEM_NAME}}', { payload: { itemName: "O'Neil" } })).not.toContain("'");
   });
 });

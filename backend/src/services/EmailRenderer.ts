@@ -80,7 +80,7 @@ export default class EmailRenderer {
     // 4. Render subject line
     let subject = tpl.subject || '';
     for (const [key, val] of Object.entries(vars)) {
-      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val as string);
+      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), () => val as string);
     }
 
     // 5. Render HTML body
@@ -88,7 +88,7 @@ export default class EmailRenderer {
 
     // Simple variable replacement in HTML
     for (const [key, val] of Object.entries(vars)) {
-      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val as string);
+      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), () => val as string);
     }
 
     // 6. Inject product affinity cards ONLY for dynamic/cart-abandonment templates.
@@ -148,10 +148,15 @@ export default class EmailRenderer {
    */
   static buildProductCard(product: TemplateProductCard, label: string | undefined, utmLink: string): string {
     const price = product.price || '';
-    const image = product.image || 'https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/placeholder.jpg';
-    const url = product.url || utmLink;
-    const name = product.name || 'Experience';
-    const category = product.category || '';
+    const rawImage = product.image || 'https://d2cazmkfw8kdtj.cloudfront.net/Tour-Images/placeholder.jpg';
+    const rawUrl = product.url || utmLink;
+    const rawName = product.name || 'Experience';
+    const rawCategory = product.category || '';
+    const esc = (v: string): string => v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const image = esc(rawImage);
+    const url = esc(rawUrl);
+    const name = esc(rawName);
+    const category = esc(rawCategory);
 
     return `
       <div style="display:flex;gap:16px;padding:16px 24px;border-bottom:1px solid #F0EDE8;align-items:center;">
@@ -324,7 +329,7 @@ export default class EmailRenderer {
 
     // Subject: always regex (subjects don't carry Liquid control flow).
     for (const [k, v] of Object.entries(vars)) {
-      subject = subject.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v as string);
+      subject = subject.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), () => v as string);
     }
 
     // Body: Liquid for win-back (engine='liquid'), regex for Day 1-7 + legacy.
@@ -337,7 +342,7 @@ export default class EmailRenderer {
       }
     }
     for (const [k, v] of Object.entries(vars)) {
-      html = html.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v as string);
+      html = html.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), () => v as string);
     }
 
     let slotsFilled = 0;
@@ -619,7 +624,7 @@ export default class EmailRenderer {
     let html = tpl.html_body || tpl.body || '';
 
     for (const [key, val] of Object.entries(sampleVars)) {
-      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
+      subject = subject.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), () => String(val ?? ''));
     }
 
     if (tpl.html_engine === 'liquid') {
@@ -630,7 +635,7 @@ export default class EmailRenderer {
       }
     }
     for (const [key, val] of Object.entries(sampleVars)) {
-      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(val ?? ''));
+      html = html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), () => String(val ?? ''));
     }
 
     return {

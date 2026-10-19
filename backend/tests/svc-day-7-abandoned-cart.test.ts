@@ -87,14 +87,14 @@ describe('Day7 buildFallbackRanking', () => {
     expect(rank.FINAL_VARIANT_KEYS).toContain(fb.final_variant_key);
     expect(() => rank.validateRanking(fb, pools())).not.toThrow();
   });
-  it('empty pools drop nulls and visa -> null', () => {
+  it('empty pools keep null slots and visa -> null', () => {
     const fb = rank.buildFallbackRanking({ activities: [c(1)], holidays: [], cruises: [], visas: [] });
-    expect(fb.fallback_ids).toEqual([1]);
+    expect(fb.fallback_ids).toEqual([1, null, null]);
     expect(fb.fallback_visa_key).toBeNull();
   });
   // BUG: when a middle pool is empty, `.filter(Number.isFinite)` shifts later ids into the wrong
   // slot (cruise id lands in the holiday slot) (Day7AbandonedCartRankingService.ts:231-235).
-  it.fails('keeps slot positions when the holidays pool is empty', () => {
+  it('keeps slot positions when the holidays pool is empty', () => {
     const fb = rank.buildFallbackRanking({ activities: [c(1)], holidays: [], cruises: [c(20)], visas: [] });
     expect(fb.fallback_ids[1]).not.toBe(20);
   });

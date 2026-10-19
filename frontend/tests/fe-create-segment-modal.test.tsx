@@ -58,7 +58,7 @@ describe('CreateSegmentModal', () => {
 
   // BUG app/(dashboard)/segmentation/CreateSegmentModal.tsx:521 - the single-value Min (≥)/Max (≤)
   // input does `Number(e.target.value) || ''`, so typing 0 is turned into '' and the condition is invalid.
-  it.fails('revenue "Min (≥)": typing 0 keeps 0', () => {
+  it('revenue "Min (≥)": typing 0 keeps 0', () => {
     render(<CreateSegmentModal onClose={() => {}} />);
     pickContactField('revenue');
     fireEvent.change(screen.getByDisplayValue('Between'), { target: { value: 'gte' } });

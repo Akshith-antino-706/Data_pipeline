@@ -83,7 +83,7 @@ function parseDate(d: DateInput) {
 }
 function formatDate(d: DateInput) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function formatDateTime(d: DateInput) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
-function formatAED(n: number | null | undefined) { return `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+function formatAED(n: string | number | null | undefined) { return `AED ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 function formatCurrency(v: string | number | null | undefined) { if (v == null) return '—'; return `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
 
 const STATUS_COLOR: Record<string, string> = {

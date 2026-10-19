@@ -518,8 +518,8 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
             </>
           ) : (
             <input type="number" placeholder={opVal === 'gte' ? 'Min value' : 'Max value'}
-              value={typeof condition.value === 'object' ? '' : (condition.value as string | number || '')}
-              onChange={e => onChange({ ...condition, value: Number(e.target.value) || '' })}
+              value={typeof condition.value === 'object' ? '' : (condition.value as string | number ?? '')}
+              onChange={e => onChange({ ...condition, value: e.target.value === '' ? '' : Number(e.target.value) })}
               style={{ ...inputStyle, maxWidth: 140 }} />
           )}
         </div>

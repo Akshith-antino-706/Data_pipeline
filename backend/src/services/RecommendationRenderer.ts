@@ -134,7 +134,7 @@ function _renderProductCard(inner: string, product: HydratedProduct): string {
 
   // 2. Now do plain {{var}} substitutions with the product's values
   for (const [k, v] of Object.entries(product)) {
-    block = block.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), String(v ?? ''));
+    block = block.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), () => String(v ?? ''));
   }
   return block;
 }
@@ -156,7 +156,7 @@ function _expandIfBlocks(html: string, vars: RecoTemplateVars): string {
 function _substitute(html: string, vars: RecoTemplateVars): string {
   let out = html;
   for (const [k, v] of Object.entries(vars)) {
-    out = out.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), String(v ?? ''));
+    out = out.replace(new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, 'g'), () => String(v ?? ''));
   }
   // Strip any leftover single-variable placeholders so we never ship {{foo}} to a real inbox.
   out = out.replace(/\{\{\s*[a-z_]+\s*\}\}/gi, '');

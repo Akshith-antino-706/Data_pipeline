@@ -29,7 +29,7 @@ import type { ClickTrackingOptions } from '../types/utilsEmail.js';
 export function injectClickTracking(html: string, { logId, baseUrl, campaign, content, source = 'AI_marketer', medium = 'email', unifiedId, journeyId, nodeId }: ClickTrackingOptions): string {
   // Build utm_content with journey info if provided
   let utmContent = content;
-  if (journeyId) utmContent += `_j${journeyId}`;
+  if (journeyId !== null && journeyId !== undefined && journeyId !== '') utmContent += `_j${journeyId}`;
   if (nodeId) utmContent += `_${nodeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
   return html.replace(/href="(https?:\/\/[^"]+)"/g, (match: string, originalUrl: string) => {
@@ -46,8 +46,8 @@ export function injectClickTracking(html: string, { logId, baseUrl, campaign, co
       dest.searchParams.set('utm_medium', medium);
       dest.searchParams.set('utm_campaign', campaign);
       dest.searchParams.set('utm_content', utmContent);
-      if (unifiedId) dest.searchParams.set('rid', String(unifiedId));
-      if (journeyId) dest.searchParams.set('journeyId', String(journeyId));
+      if (unifiedId !== null && unifiedId !== undefined && unifiedId !== '') dest.searchParams.set('rid', String(unifiedId));
+      if (journeyId !== null && journeyId !== undefined && journeyId !== '') dest.searchParams.set('journeyId', String(journeyId));
       if (nodeId) dest.searchParams.set('nodeId', nodeId);
 
       const trackUrl = `${baseUrl}/api/track/email-send/click/${logId}?url=${encodeURIComponent(dest.toString())}`;
@@ -68,8 +68,8 @@ export function injectClickTracking(html: string, { logId, baseUrl, campaign, co
  */
 export function injectOpenPixel(html: string, logId: number | string, baseUrl: string): string {
   const pixel = `<img src="${baseUrl}/api/track/email-send/open/${logId}" width="1" height="1" style="display:none" alt="" />`;
-  if (html.includes('</body>')) {
-    return html.replace('</body>', `${pixel}</body>`);
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, m => `${pixel}${m}`);
   }
   return html + pixel;
 }

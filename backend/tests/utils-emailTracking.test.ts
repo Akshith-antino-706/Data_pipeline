@@ -34,12 +34,15 @@ describe('injectClickTracking', () => {
     expect(d.searchParams.get('utm_content')).toBe('welcome_j5_action_2__');
   });
 
-  it('omits falsy unifiedId / journeyId (including 0)', () => {
+  it('keeps id 0 for unifiedId / journeyId; omits undefined and empty nodeId', () => {
     const d = trackedDest(injectClickTracking('<a href="https://s.test/">x</a>', { ...opts, unifiedId: 0, journeyId: 0, nodeId: '' }));
-    expect(d.searchParams.has('rid')).toBe(false);
-    expect(d.searchParams.has('journeyId')).toBe(false);
+    expect(d.searchParams.get('rid')).toBe('0');
+    expect(d.searchParams.get('journeyId')).toBe('0');
     expect(d.searchParams.has('nodeId')).toBe(false);
-    expect(d.searchParams.get('utm_content')).toBe('welcome');
+    expect(d.searchParams.get('utm_content')).toBe('welcome_j0');
+    const e = trackedDest(injectClickTracking('<a href="https://s.test/">x</a>', { ...opts, unifiedId: undefined, journeyId: undefined }));
+    expect(e.searchParams.has('rid')).toBe(false);
+    expect(e.searchParams.has('journeyId')).toBe(false);
   });
 
   it('leaves own tracking, utm-redirect, mailto, tel, relative and single-quoted links alone', () => {
@@ -76,8 +79,8 @@ describe('injectOpenPixel', () => {
     expect(injectOpenPixel('hi', '7', BASE)).toBe(`hi${pixel}`);
     expect(injectOpenPixel('', 7, BASE)).toBe(pixel);
   });
-  it('only the first </body> is used; uppercase </BODY> is not matched', () => {
+  it('only the first </body> is used; uppercase </BODY> is matched too', () => {
     expect(injectOpenPixel('</body></body>', 7, BASE)).toBe(`${pixel}</body></body>`);
-    expect(injectOpenPixel('x</BODY>', 7, BASE)).toBe(`x</BODY>${pixel}`);
+    expect(injectOpenPixel('x</BODY>', 7, BASE)).toBe(`x${pixel}</BODY>`);
   });
 });

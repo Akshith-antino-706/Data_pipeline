@@ -18,6 +18,7 @@
 import { _internals as dataInternals } from './Day4HolidaysDataService.js';
 import type { ClaudeCallArgs, ClaudeCallResult, ClaudeMessageResponse, ClaudeParsedJson, ClaudeRequestBody, RankOptions } from '../types/dayTemplates.js';
 import type { Day4Ranking } from './Day4HolidaysDataService.js';
+import { extractFirstJsonObject } from '../utils/extractJsonObject.js';
 
 const DEFAULT_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -140,15 +141,15 @@ function validateRanking(ranking: Day4Ranking) {
     if (arr.length !== SLOT_COUNT) throw new Error(`${slot} has ${arr.length} keys, expected ${SLOT_COUNT}`);
     if (new Set(arr).size !== arr.length) throw new Error(`${slot} has duplicate keys`);
     for (const k of arr) {
-      if (!catalog[k]) throw new Error(`${slot}: unknown key "${k}"`);
+      if (!Object.hasOwn(catalog, k)) throw new Error(`${slot}: unknown key "${k}"`);
       if (!inTheme(k, theme)) throw new Error(`${slot}: "${k}" is not tagged with theme "${theme}"`);
     }
   }
 
-  if (!ranking.eid_special_key || !catalog[ranking.eid_special_key]) {
+  if (!ranking.eid_special_key || !Object.hasOwn(catalog, ranking.eid_special_key)) {
     throw new Error(`eid_special_key invalid: "${ranking.eid_special_key}"`);
   }
-  if (!ranking.hero_destination_key || !catalog[ranking.hero_destination_key]) {
+  if (!ranking.hero_destination_key || !Object.hasOwn(catalog, ranking.hero_destination_key)) {
     throw new Error(`hero_destination_key invalid: "${ranking.hero_destination_key}"`);
   }
   if (ranking.hero_variant_key && !VARIANT_OPTIONS.hero_variant_key.includes(ranking.hero_variant_key)) {
@@ -193,12 +194,12 @@ async function callClaude({ system, user, model = DEFAULT_MODEL, useWebSearch = 
   if (!text) throw new Error('Claude returned no text content');
 
   const webSearchCalls = (data.content || []).filter(b => b.type === 'server_tool_use').length;
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
+  const json = extractFirstJsonObject(text);
+  if (json === null) throw new Error(`No JSON object in response. Got: ${text.slice(0, 200)}`);
 
   let parsed: ClaudeParsedJson;
-  try { parsed = JSON.parse(m[0]) as ClaudeParsedJson; }
-  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${m[0].slice(0, 200)}`); }
+  try { parsed = JSON.parse(json) as ClaudeParsedJson; }
+  catch (e) { throw new Error(`JSON parse failed: ${(e as Error).message}. Got: ${json.slice(0, 200)}`); }
 
   return { parsed, usage: data.usage, model: data.model, webSearchCalls };
 }

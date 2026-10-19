@@ -54,7 +54,7 @@ const CHANNEL_ICON: Record<string, LucideIcon>   = { email: Mail, whatsapp: Mess
 const CHANNEL_COLOR: Record<string, string>  = { email: 'var(--red)', whatsapp: '#25d366', sms: 'var(--orange)', push: 'var(--purple)' };
 const STATUS_BADGE: Record<string, string>   = { active: 'badge-green', draft: 'badge-gray', paused: 'badge-orange', completed: 'badge-purple' };
 
-const fmt    = (n: NumLike) => Number(n || 0).toLocaleString();
+const fmt    = (n: NumLike) => { const v = Number(n); return (Number.isFinite(v) ? v : 0).toLocaleString(); };
 const fmtAed = (n: number) => n > 0 ? `AED ${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : null;
 
 const fadeInUp: Variants = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.3 } } };

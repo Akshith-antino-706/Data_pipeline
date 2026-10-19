@@ -31,4 +31,4 @@ export const CONTACT_TYPE_COLORS: Record<ContactType, BadgeColors> = {
 
 // Accepts any stored value; unknown types fall back to the B2C colours.
 export const contactTypeColor = (type: string | null | undefined): BadgeColors =>
-  (type && type in CONTACT_TYPE_COLORS ? CONTACT_TYPE_COLORS[type as ContactType] : undefined) || CONTACT_TYPE_COLORS.B2C;
+  (type && Object.hasOwn(CONTACT_TYPE_COLORS, type) ? CONTACT_TYPE_COLORS[type as ContactType] : undefined) || CONTACT_TYPE_COLORS.B2C;

@@ -93,11 +93,11 @@ describe('Day2 validateRanking', () => {
   });
   // BUG: no upper bound / dedupe on departure_city_keys ("array of 4-5" in the message),
   // so 6 keys or duplicate keys pass (Day2CruiseRankingService.ts:146).
-  it.fails('rejects more than 5 or duplicate departure cities', () => {
+  it('rejects more than 5 or duplicate departure cities', () => {
     expect(() => rank.validateRanking({ ...good(), departure_city_keys: ['dxb', 'dxb', 'dxb', 'dxb'] }, sets())).toThrow();
   });
   // BUG: duplicates inside saver_product_ids are not rejected (Day2CruiseRankingService.ts:122).
-  it.fails('rejects duplicate saver ids', () => {
+  it('rejects duplicate saver ids', () => {
     expect(() => rank.validateRanking({ ...good(), saver_product_ids: [1, 1, 1] }, sets())).toThrow();
   });
 });
@@ -156,7 +156,7 @@ describe('Day2 generateCityRows', () => {
   // BUG: left/right column and row closing use the global index parity (i % 2), not the
   // position within the current row. After a full-width card at index 0, cities 1 and 2 are
   // put into separate rows (Day2CruiseRenderer.ts:62 and :91).
-  it.fails('pairs the two cards that follow a leading full-width card into one row', () => {
+  it('pairs the two cards that follow a leading full-width card into one row', () => {
     const html = render.generateCityRows([city('w', true), city('a'), city('b')]);
     expect(html).not.toContain('<td width="50%">&nbsp;</td>');
   });

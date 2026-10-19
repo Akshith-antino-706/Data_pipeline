@@ -65,7 +65,7 @@ describe('Day5 buildFallbackRanking / validateRanking', () => {
   });
   // BUG: `cities[k]` follows the prototype chain, so "toString" counts as a known city
   // (Day5ActivitiesRankingService.ts:162).
-  it.fails('rejects Object.prototype names as city keys', () => {
+  it('rejects Object.prototype names as city keys', () => {
     const c = good().city_keys;
     expect(() => rank.validateRanking({ ...good(), city_keys: ['toString', c[1]!, c[2]!, c[3]!] })).toThrow();
   });
@@ -112,7 +112,8 @@ describe('Day5 renderer processLoops', () => {
   it('template without loops is returned unchanged', () => {
     expect(render.processLoops('{{item.x}} plain', {})).toBe('{{item.x}} plain');
   });
-  // BUG: a chunk size of 0 makes `i += size` never advance → infinite loop
-  // (Day5ActivitiesRenderer.ts:44). Not executed here because it would hang the runner.
-  it.todo('chunk-loop with size 0 should not hang');
+  it('chunk-loop with size 0 does not hang (treated as size 1)', () => {
+    const tpl = '<!-- @chunk-loop xs 0 --><tr><!-- @loop chunk --><td>{{item.n}}</td><!-- @endloop --></tr><!-- @endchunkloop -->';
+    expect(render.processLoops(tpl, { xs: [{ n: 1 }, { n: 2 }] })).toBe('<tr><td>1</td></tr><tr><td>2</td></tr>');
+  });
 });

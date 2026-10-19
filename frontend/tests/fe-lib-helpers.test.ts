@@ -27,7 +27,7 @@ describe('contactTypes', () => {
 // BUG lib/contactTypes.ts:34 - `type in CONTACT_TYPE_COLORS` walks the prototype chain, so
 // inherited keys like 'toString' / 'constructor' return a Function instead of the B2C fallback.
 describe('contactTypes prototype keys', () => {
-  it.fails('contactTypeColor("toString" | "constructor" | "__proto__") falls back to B2C', () => {
+  it('contactTypeColor("toString" | "constructor" | "__proto__") falls back to B2C', () => {
     for (const v of ['toString', 'constructor', '__proto__']) expect(contactTypeColor(v)).toEqual(CONTACT_TYPE_COLORS.B2C);
   });
 });
