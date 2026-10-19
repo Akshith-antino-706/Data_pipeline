@@ -111,9 +111,9 @@ describe('Journey Operations dashboard', () => {
   it('renders the header and skeletons while loading', () => {
     vi.mocked(api.getJourneyOpsDashboard).mockReturnValue(new Promise(() => {}));
     const { container } = render(<JourneyDashboardPage />);
-    expect(screen.getByText('Journey Operations')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Journey monitor' })).toBeTruthy();
     expect(bodyText()).toContain('· loading…');
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThanOrEqual(7);
+    expect(container.querySelectorAll('.ui-skel').length).toBeGreaterThanOrEqual(7);
   });
 
   it('status chips filter the journey list', async () => {

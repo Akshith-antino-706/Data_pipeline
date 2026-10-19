@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
+import { useId, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { PageHeader } from '@/components/ui';
+import s from './page.module.css';
 import {
   Database, ArrowRight, Users, GitBranch, Mail, MessageCircle, Globe, Target,
   Plane, Hotel, Ticket, RefreshCw, Clock, ChevronDown, ChevronUp, DollarSign,
@@ -11,32 +11,27 @@ import {
   CheckCircle, Info,
 } from 'lucide-react';
 
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.06 } } };
-
 interface SectionProps {
   title: string;
   icon: LucideIcon;
-  color: string;
   defaultOpen?: boolean;
   children?: React.ReactNode;
 }
 
-function Section({ title, icon: Icon, color, defaultOpen, children }: SectionProps) {
+function Section({ title, icon: Icon, defaultOpen, children }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen || false);
+  const bodyId = useId();
   return (
-    <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden', marginBottom: 16 }}>
-      <div onClick={() => setOpen(o => !o)} style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', userSelect: 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Icon size={16} style={{ color }} />
-          </div>
-          <span style={{ fontSize: 15, fontWeight: 600 }}>{title}</span>
-        </div>
-        {open ? <ChevronUp size={16} style={{ color: 'var(--muted-foreground)' }} /> : <ChevronDown size={16} style={{ color: 'var(--muted-foreground)' }} />}
-      </div>
-      {open && <div style={{ padding: '0 20px 20px', fontSize: 13, lineHeight: 1.8, color: 'var(--foreground)' }}>{children}</div>}
-    </motion.div>
+    <section className={s.section}>
+      <button type="button" className={s.toggle} aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen(o => !o)}>
+        <span className={s.toggleMain}>
+          <span className={s.iconTile} aria-hidden><Icon size={16} /></span>
+          <span className={s.title}>{title}</span>
+        </span>
+        {open ? <ChevronUp size={16} className={s.chev} aria-hidden /> : <ChevronDown size={16} className={s.chev} aria-hidden />}
+      </button>
+      {open && <div id={bodyId} className={s.body}>{children}</div>}
+    </section>
   );
 }
 
@@ -47,18 +42,14 @@ interface TblProps {
 
 function Tbl({ headers, rows }: TblProps) {
   return (
-    <div style={{ overflowX: 'auto', margin: '12px 0' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+    <div className={s.tbl}>
+      <table className="ui-table">
         <thead>
-          <tr style={{ background: 'var(--secondary)' }}>
-            {headers.map(h => <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted-foreground)', whiteSpace: 'nowrap' }}>{h}</th>)}
-          </tr>
+          <tr>{headers.map(h => <th key={h}>{h}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-              {row.map((cell, j) => <td key={j} style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>{cell}</td>)}
-            </tr>
+            <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>
           ))}
         </tbody>
       </table>
@@ -68,70 +59,47 @@ function Tbl({ headers, rows }: TblProps) {
 
 interface FlowStep {
   label: string;
-  color?: string;
-  textColor?: string;
 }
 
-interface FlowProps {
-  steps: FlowStep[];
-}
-
-function Flow({ steps }: FlowProps) {
+function Flow({ steps }: { steps: FlowStep[] }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '12px 0' }}>
+    <div className={s.flow}>
       {steps.map((step, i) => (
-        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ padding: '6px 12px', borderRadius: 6, background: step.color || 'var(--secondary)', color: step.textColor || 'var(--foreground)', fontSize: 12, fontWeight: 500, border: '1px solid var(--border)' }}>{step.label}</span>
-          {i < steps.length - 1 && <ArrowRight size={14} style={{ color: 'var(--muted-foreground)' }} />}
+        <span key={i} className={s.flowItem}>
+          <span className={s.step}>{step.label}</span>
+          {i < steps.length - 1 && <ArrowRight size={14} className={s.arrow} aria-hidden />}
         </span>
       ))}
     </div>
   );
 }
 
-interface MProps {
-  children?: React.ReactNode;
+function M({ children }: { children?: React.ReactNode }) {
+  return <code className={s.code}>{children}</code>;
 }
 
-function M({ children }: MProps) {
-  return <code style={{ padding: '2px 6px', borderRadius: 4, background: 'var(--secondary)', fontSize: 12, fontFamily: 'monospace' }}>{children}</code>;
-}
+type CalloutType = 'info' | 'warning' | 'success';
 
-interface CalloutProps {
-  type: string;
-  children?: React.ReactNode;
-}
-
-function Callout({ type, children }: CalloutProps) {
-  const configs = {
-    info: { bg: '#3b82f610', border: '#3b82f640', icon: Info, color: '#3b82f6' },
-    warning: { bg: '#f59e0b10', border: '#f59e0b40', icon: AlertTriangle, color: '#f59e0b' },
-    success: { bg: '#22c55e10', border: '#22c55e40', icon: CheckCircle, color: '#22c55e' },
-  };
-  const c = configs[type as keyof typeof configs] || configs.info;
+function Callout({ type, children }: { type: CalloutType; children?: React.ReactNode }) {
+  const Icon = type === 'warning' ? AlertTriangle : type === 'success' ? CheckCircle : Info;
   return (
-    <div style={{ display: 'flex', gap: 10, padding: '12px 16px', borderRadius: 8, background: c.bg, border: `1px solid ${c.border}`, margin: '12px 0', fontSize: 13 }}>
-      <c.icon size={16} style={{ color: c.color, flexShrink: 0, marginTop: 2 }} />
-      <div>{children}</div>
+    <div className={`${s.callout} ${s[type]}`}>
+      <Icon size={16} aria-hidden />
+      <div className={s.calloutText}>{children}</div>
     </div>
   );
 }
 
 export default function SystemArchitecture() {
   return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 1100 }}>
-
-      <motion.div variants={fadeInUp} style={{ marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>System Architecture & Documentation</h2>
-        <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--muted-foreground)', lineHeight: 1.6 }}>
-          Complete technical documentation for the Rayna Tours Omnichannel Marketing Platform.
-          This page covers every data flow, table relationship, business logic, and automation in the system.
-          If you are new to this project, read sections 1-7 in order.
-        </p>
-      </motion.div>
+    <div className={s.page}>
+      <PageHeader
+        title="System Architecture & Documentation"
+        description="Complete technical documentation for the Rayna Tours Omnichannel Marketing Platform. This page covers every data flow, table relationship, business logic, and automation in the system. If you are new to this project, read sections 1-7 in order."
+      />
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="1. System Overview — What This Platform Does" icon={Layers} color="#8b5cf6" defaultOpen={true}>
+      <Section title="1. System Overview — What This Platform Does" icon={Layers} defaultOpen={true}>
         <p>This is an <strong>omnichannel marketing automation platform</strong> for Rayna Tours, Dubai's largest tour operator. It does 5 things:</p>
 
         <ol style={{ paddingLeft: 20 }}>
@@ -144,13 +112,13 @@ export default function SystemArchitecture() {
 
         <p><strong>The daily loop:</strong></p>
         <Flow steps={[
-          { label: 'Data syncs in', color: '#3b82f620' },
-          { label: 'Contacts unified', color: '#22c55e20' },
-          { label: 'Segments computed', color: '#f59e0b20' },
-          { label: 'Journeys process', color: '#8b5cf620' },
-          { label: 'Messages sent', color: '#ef444420' },
-          { label: 'Conversions detected', color: '#22c55e20' },
-          { label: 'Customers move segments', color: '#f59e0b20' },
+          { label: 'Data syncs in' },
+          { label: 'Contacts unified' },
+          { label: 'Segments computed' },
+          { label: 'Journeys process' },
+          { label: 'Messages sent' },
+          { label: 'Conversions detected' },
+          { label: 'Customers move segments' },
         ]} />
 
         <Callout type="info">
@@ -161,7 +129,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="2. Data Sources — Where Data Comes From" icon={Database} color="#3b82f6">
+      <Section title="2. Data Sources — Where Data Comes From" icon={Database}>
         <p>The platform pulls data from <strong>6 external sources</strong>. Each has its own sync mechanism, schedule, and conflict resolution.</p>
 
         <h4 style={{ marginTop: 20 }}>2.1 Rayna Booking APIs (Tours, Hotels, Visas, Flights)</h4>
@@ -238,7 +206,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="3. Unified Contacts — The Single Source of Truth" icon={Users} color="#22c55e">
+      <Section title="3. Unified Contacts — The Single Source of Truth" icon={Users}>
         <p>The <M>unified_contacts</M> table is the <strong>central customer table</strong>. Every customer across all sources gets exactly one row here. This is how the system resolves "is this the same person?" across WhatsApp chats, booking records, website visits, and CRM data.</p>
 
         <h4 style={{ marginTop: 20 }}>3.1 How Identity Resolution Works</h4>
@@ -295,7 +263,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="4. Segmentation — 3-Step Decision Tree" icon={Target} color="#f59e0b">
+      <Section title="4. Segmentation — 3-Step Decision Tree" icon={Target}>
         <p>Every customer gets a <strong>segment label</strong> computed by <M>computeSegments()</M>. This runs as step 11 of the nightly sync. The logic is a priority-based waterfall — the first matching status wins.</p>
 
         <h4 style={{ marginTop: 20 }}>4.1 Step 1: Booking Status (6 states)</h4>
@@ -344,7 +312,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="5. Holiday Occasions — Automatic Festive Campaigns" icon={Globe} color="#8b5cf6">
+      <Section title="5. Holiday Occasions — Automatic Festive Campaigns" icon={Globe}>
         <p>The occasion system automatically assigns customers to festive campaigns based on their <strong>country/nationality</strong>. It runs as step 12 of the nightly sync.</p>
 
         <h4 style={{ marginTop: 20 }}>5.1 How It Works</h4>
@@ -374,7 +342,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="6. Journey Engine — How Messages Get Sent" icon={GitBranch} color="#10b981">
+      <Section title="6. Journey Engine — How Messages Get Sent" icon={GitBranch}>
         <p>Each segment has a <strong>visual journey flow</strong> — a directed graph of nodes and edges that defines what messages to send, when, and with what logic.</p>
 
         <h4 style={{ marginTop: 20 }}>6.1 Node Types</h4>
@@ -417,7 +385,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="7. Template Approval Pipeline (Gupshup) — WhatsApp + SMS" icon={Shield} color="#0ea5e9">
+      <Section title="7. Template Approval Pipeline (Gupshup) — WhatsApp + SMS" icon={Shield}>
         <p>Email goes out directly over SMTP, but WhatsApp and SMS both require <strong>external approval before any message can be sent</strong>. WhatsApp templates are reviewed by Meta via Gupshup's template API; Indian SMS templates must be DLT-registered under a Principal Entity ID with TRAI. The pipeline enforces both — no WA/SMS message ships until the template is <M>external_status = 'approved'</M>.</p>
 
         <h4 style={{ marginTop: 20 }}>7.1 Approval States</h4>
@@ -464,7 +432,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="8. Conversion Detection — How We Know It Worked" icon={Zap} color="#ef4444">
+      <Section title="8. Conversion Detection — How We Know It Worked" icon={Zap}>
         <p>The <strong>ConversionDetector</strong> answers the question: "did the journey messages actually lead to a booking?" It checks 3 signals, runs daily at 5 AM Dubai.</p>
 
         <h4 style={{ marginTop: 20 }}>7.1 The Three Signals</h4>
@@ -491,7 +459,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="9. Product Affinity — Personalized Recommendations" icon={DollarSign} color="#f59e0b">
+      <Section title="9. Product Affinity — Personalized Recommendations" icon={DollarSign}>
         <p>When a customer browses the Rayna Tours website, GTM tracks which products they view, add to cart, or purchase. The <strong>ProductAffinityService</strong> scores these interactions and recommends products in journey messages.</p>
 
         <h4 style={{ marginTop: 20 }}>8.1 Scoring Weights</h4>
@@ -522,7 +490,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="10. Campaign & UTM Tracking Chain" icon={Megaphone} color="#6366f1">
+      <Section title="10. Campaign & UTM Tracking Chain" icon={Megaphone}>
         <p>The full chain from customer segment to tracked click:</p>
 
         <Flow steps={[
@@ -561,7 +529,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="11. Cron Schedule — What Runs When" icon={Clock} color="#f97316">
+      <Section title="11. Cron Schedule — What Runs When" icon={Clock}>
         <p>All automated jobs with their exact timing (Dubai timezone = UTC+4):</p>
 
         <Tbl headers={['Dubai Time', 'UTC', 'Cron Expression', 'Job', 'Service', 'Duration']} rows={[
@@ -579,7 +547,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="12. Database Tables — Complete Reference" icon={Database} color="#06b6d4">
+      <Section title="12. Database Tables — Complete Reference" icon={Database}>
         <h4>Core Identity & Booking Tables</h4>
         <Tbl headers={['Table', 'Rows', 'Purpose', 'Key Columns']} rows={[
           ['unified_contacts', '~1.6M', 'Single source of truth for all customers', 'unified_id (PK), email_key, phone_key, booking_status, product_tier, geography, is_indian, current_occasion'],
@@ -633,7 +601,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="13. API Endpoints — Complete Reference" icon={Code} color="#94a3b8">
+      <Section title="13. API Endpoints — Complete Reference" icon={Code}>
         <h4>Unified Contacts & Segmentation</h4>
         <Tbl headers={['Method', 'Endpoint', 'Purpose', 'Key Params']} rows={[
           ['GET', '/api/v3/unified-contacts', 'Paginated contact list', 'page, limit, search, sortBy, contactType, bookingStatus, productTier, geography'],
@@ -691,7 +659,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="14. Frontend Pages & Navigation" icon={Activity} color="#e2b340">
+      <Section title="14. Frontend Pages & Navigation" icon={Activity}>
         <Tbl headers={['Page', 'Route', 'What It Shows', 'Key API Calls']} rows={[
           ['Dashboard', '/', 'KPIs, segment chart, revenue table, quick actions', 'getSegmentationTree, getSegmentActivity'],
           ['Segmentation', '/segmentation', '3-step decision tree: status cards → tier × geo → customer drill-down', 'getSegmentationTree, getSegmentCustomers'],
@@ -711,7 +679,7 @@ export default function SystemArchitecture() {
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="15. Environment & Deployment" icon={Shield} color="#64748b">
+      <Section title="15. Environment & Deployment" icon={Shield}>
         <h4>Environment Variables (.env file)</h4>
         <Tbl headers={['Variable', 'Purpose', 'Example Value']} rows={[
           ['DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS', 'PostgreSQL connection', 'localhost, 5432, rayna_data_pipe'],
@@ -757,7 +725,7 @@ export default function SystemArchitecture() {
         ]} />
 
         <h4 style={{ marginTop: 20 }}>Key File Structure</h4>
-        <pre style={{ background: 'var(--secondary)', padding: 16, borderRadius: 8, fontSize: 12, overflow: 'auto', lineHeight: 1.6 }}>{`backend/
+        <pre>{`backend/
   server.js                          # Express app + cron jobs + route registration
   src/
     config/database.js               # PostgreSQL pool connection
@@ -802,7 +770,7 @@ frontend/
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
-      <Section title="16. Troubleshooting & Common Issues" icon={AlertTriangle} color="#ef4444">
+      <Section title="16. Troubleshooting & Common Issues" icon={AlertTriangle}>
         <Tbl headers={['Problem', 'Likely Cause', 'How to Fix']} rows={[
           ['Segment counts show 0', 'computeSegments() hasn\'t run yet', 'Trigger sync: POST /api/v3/unified-contacts/sync'],
           ['New Rayna bookings not showing', 'Incremental sync hasn\'t run or API is down', 'Check: GET /api/v3/rayna-sync/status, then POST /api/v3/rayna-sync/trigger'],
@@ -822,6 +790,6 @@ frontend/
         ]} />
       </Section>
 
-    </motion.div>
+    </div>
   );
 }

@@ -19,12 +19,15 @@ import {
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
 import JourneyList, { useJourneyListState } from './JourneyList';
+import { JourneyDetailOverview, JourneyDetailSkeleton } from './JourneyDetail';
+import styles from './JourneyDetail.module.css';
+import { Button } from '@/components/ui';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
   ChevronRight, RefreshCw, AlertCircle, Plus, Search, BarChart3,
-  Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
+  Activity, Settings, Eye, Trash2, Edit3, CheckCircle2,
   Send, Mail, Smartphone, Bell, Globe, MessageCircle, Radio,
-  Pause, MoreVertical, Layers, ArrowRight,
+  Layers, ArrowRight,
   ChevronDown, ChevronUp, Sparkles
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -637,7 +640,6 @@ export default function Journeys() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedNode, setExpandedNode] = useState<string | null>(null);
   const [techExpanded, setTechExpanded] = useState<Record<string, boolean>>({});
-  const [showActions, setShowActions] = useState<boolean | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<{ name?: string; description?: string; status?: string }>({});
   const [flowEditMode, setFlowEditMode] = useState(false);
@@ -1419,6 +1421,49 @@ export default function Journeys() {
     saveNodeChanges(nodes);
   };
 
+  // Template preview for an action node — live dynamic render, falling back to the static preview.
+  const previewNode = async (node: JourneyNode, tpl: ContentTemplate) => {
+    setPreviewLoading(true);
+    // Open modal immediately in loading state
+    setPreviewTemplate({ ...tpl, body_html: null, _loading: true });
+    try {
+      // Live dynamic render (Claude ranking) — exact email that gets sent
+      const res = await previewJourneyNodeEmail(selected!, node.id) as ApiData<{ subject?: string; html?: string; rankingSource?: string }>;
+      setPreviewTemplate({
+        ...tpl,
+        subject: res.data?.subject || tpl.subject,
+        body_html: res.data?.html || null,
+        rankingSource: res.data?.rankingSource || null,
+      });
+    } catch (err) {
+      // Fallback to the fast static preview if dynamic render fails
+      try {
+        const res = await fetchTemplatePreview(tpl.id, node.data?.templateVariables || {}) as ApiData<{ html?: string }>;
+        setPreviewTemplate({ ...tpl, body_html: res.data?.html || null });
+      } catch {
+        setPreviewTemplate({ ...tpl, body_html: `<p style="padding:40px;text-align:center;color:#999">Preview failed: ${(err as Error).message}</p>` });
+      }
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  // Re-queue contacts that were skipped at a node because its template was missing.
+  const retryBlocked = async (nodeId: string) => {
+    try {
+      const r = await retryBlockedEntries(selected!, nodeId) as ApiData<{ retried?: number }>;
+      hotToast.success(`Retried ${r.data?.retried || 0} blocked entries — processing now…`);
+      await processJourney(selected!).catch(() => {});
+      const [d, cd] = await Promise.all([
+        getJourney(selected!) as Promise<ApiData<JourneyDetail>>,
+        getJourneyCampaignAnalytics(selected!).catch(() => ({ data: null })) as Promise<ApiData<CampaignData | null>>,
+      ]);
+      setDetail(d.data!);
+      setCampaignData(cd.data!);
+      await refreshQueueStats();
+    } catch (err) { hotToast.error((err as Error).message || 'Retry failed'); }
+  };
+
   const handleAISuggest = async () => {
     setSuggestLoading(true);
     try {
@@ -1454,57 +1499,9 @@ export default function Journeys() {
   // ══════════════════════════════════════════════════════════════
   if (selected) {
     if (detailLoading || !detail) return (
-      <div>
-        {/* Back + title skeleton */}
-        <div className="page-header" style={{ marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div className="skeleton" style={{ width: 32, height: 32, borderRadius: 8 }} />
-            <div>
-              <div className="skeleton" style={{ width: 220, height: 20, borderRadius: 6, marginBottom: 8 }} />
-              <div className="skeleton" style={{ width: 140, height: 12, borderRadius: 4 }} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <div className="skeleton" style={{ width: 80, height: 32, borderRadius: 8 }} />
-            <div className="skeleton" style={{ width: 64, height: 24, borderRadius: 20 }} />
-          </div>
-        </div>
-        {/* Stat tiles — labels visible */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
-          {['SNAPSHOTTED', 'ACTIVE', 'BOOKED (EXIT)', 'UNSUB (EXIT)', 'COMPLETED', 'FAILED'].map(label => (
-            <div key={label} style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '16px 10px', textAlign: 'center' }}>
-              <div className="skeleton" style={{ width: 60, height: 24, borderRadius: 6, margin: '0 auto 10px' }} />
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: 'var(--text-muted)' }}>{label}</div>
-            </div>
-          ))}
-        </div>
-        {/* Node list skeleton — section title visible */}
-        <div className="card">
-          <div className="card-header">
-            <h3>Journey Nodes</h3>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 0' }}>
-            {[...Array<undefined>(4)].map((_, i) => (
-              <div key={i} style={{ borderRadius: 10, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div className="skeleton" style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0 }} />
-                  <div className="skeleton" style={{ width: 16, height: 16, borderRadius: 4, flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <div className="skeleton" style={{ width: 140, height: 14, borderRadius: 4, marginBottom: 6 }} />
-                    <div className="skeleton" style={{ width: 80, height: 10, borderRadius: 4 }} />
-                  </div>
-                  <div className="skeleton" style={{ width: 60, height: 20, borderRadius: 20 }} />
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {[...Array<undefined>(3)].map((_, j) => (
-                      <div key={j} className="skeleton" style={{ width: 56, height: 20, borderRadius: 20 }} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <JourneyDetailSkeleton>
+        {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
+      </JourneyDetailSkeleton>
     );
 
     const nodes = detail.nodes || [];
@@ -1621,157 +1618,60 @@ export default function Journeys() {
             50%       { opacity: 0.3; }
           }
         `}</style>
-        {/* ── Back + Header ─────────────────────────────────────── */}
+        {/* ── Header, KPIs, steps, queue, contacts (JourneyDetail.tsx) ── */}
         <motion.div variants={fadeInUp}>
-        <button className="btn btn-ghost mb-4" onClick={() => { setSelected(null); setDetail(null); setEditMode(false); router.replace(pathname, { scroll: false }); }}>
-          <ArrowLeft size={14} /> All Journeys
-        </button>
-
-        <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {editMode ? (
-              <div className="flex gap-2 items-center mb-2">
+          <JourneyDetailOverview
+            journeyId={selected}
+            detail={detail}
+            channels={channels}
+            failedTotal={Number(campaignData?.totals?.total_failed) || 0}
+            sentByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.sent || 0]))}
+            queueStats={queueStats}
+            timeline={timeline}
+            entries={journeyEntries}
+            entriesTotal={entriesTotal}
+            entriesLoading={entriesLoading}
+            starting={starting}
+            suggestLoading={suggestLoading}
+            previewLoading={previewLoading}
+            getNodeTemplate={getNodeTemplate}
+            editSlot={editMode ? (
+              <div className={styles.editForm}>
                 <input
+                  aria-label="Journey name"
+                  className="ui-input"
                   value={editForm.name || ''}
                   onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
-                  style={{ fontSize: 22, fontWeight: 700, padding: '4px 12px', maxWidth: 400 }}
                 />
-                <button className="btn btn-sm btn-primary" onClick={handleUpdateJourney}>Save</button>
-                <button className="btn btn-sm btn-ghost" onClick={() => setEditMode(false)}>Cancel</button>
+                <textarea
+                  aria-label="Journey description"
+                  className="ui-input"
+                  value={editForm.description || ''}
+                  onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder="Journey description..."
+                />
+                <div className={styles.editActions}>
+                  <Button size="sm" variant="primary" onClick={handleUpdateJourney}>Save</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditMode(false)}>Cancel</Button>
+                </div>
               </div>
-            ) : (
-              <h2 className="flex items-center gap-2.5" style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>
-                {detail.name}
-                <button className="btn btn-ghost btn-sm" onClick={() => { setEditMode(true); setEditForm({ name: detail.name, description: detail.description, status: detail.status }); }}>
-                  <Edit3 size={14} />
-                </button>
-              </h2>
-            )}
-            <div className="flex gap-2 flex-wrap items-center">
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
-                background: statusConf.bg, color: statusConf.color
-              }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusConf.color }} />
-                {statusConf.label}
-              </span>
-              {detail.segment_name && <span className="badge badge-purple">{detail.segment_name}</span>}
-              {detail.stage_name && (
-                <span className="badge" style={{ background: (detail.stage_color || 'var(--red)') + '20', color: detail.stage_color || 'var(--red)' }}>
-                  {detail.stage_name}
-                </span>
-              )}
-              {channels.map(ch => {
-                const conf = CHANNEL_CONFIG[ch] || {};
-                const Icon = conf.icon || MessageSquare;
-                return (
-                  <span key={ch} style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    background: (conf.color || '#78716c') + '15', color: conf.color || '#78716c'
-                  }}>
-                    <Icon size={12} /> {conf.label || ch}
-                  </span>
-                );
-              })}
-            </div>
-            {detail.description && !editMode && (
-              <p className="text-secondary" style={{ fontSize: 13, marginTop: 10, lineHeight: 1.7, maxWidth: 600 }}>{detail.description}</p>
-            )}
-            {editMode && (
-              <textarea
-                value={editForm.description || ''}
-                onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-                placeholder="Journey description..."
-                style={{ marginTop: 8, maxWidth: 500, minHeight: 60 }}
-              />
-            )}
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <button className="btn btn-secondary" onClick={handleAISuggest} disabled={suggestLoading}>
-              <Sparkles size={14} /> {suggestLoading ? 'Analyzing...' : 'AI Optimize'}
-            </button>
-            {detail.status === 'draft' && (
-              <button className="btn btn-primary" onClick={() => setConfirmAction('start')} disabled={starting}>
-                <Play size={14} /> {starting ? 'Starting...' : 'Start Journey'}
-              </button>
-            )}
-            {detail.status === 'active' && (
-              <button className="btn btn-secondary" onClick={handlePause}>
-                <Pause size={14} /> Pause
-              </button>
-            )}
-            {detail.status === 'paused' && (
-              <button className="btn btn-primary" onClick={handlePause}>
-                <Play size={14} /> Resume
-              </button>
-            )}
-            <div style={{ position: 'relative' }}>
-              <button className="btn btn-ghost btn-icon" onClick={() => setShowActions(a => !a)}>
-                <MoreVertical size={16} />
-              </button>
-              {showActions && (
-                <>
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 50 }} onClick={() => setShowActions(false)} />
-                  <div style={{
-                    position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                    background: 'var(--bg-card)', border: '1px solid var(--border-color)',
-                    borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-lg)',
-                    minWidth: 180, zIndex: 51, overflow: 'hidden'
-                  }}>
-                    <button onClick={() => { setShowActions(false); navigator.clipboard?.writeText(String(selected)); showToast('Journey ID copied', 'info'); }}
-                      className="flex items-center gap-2" style={{ padding: '10px 14px', width: '100%', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
-                      <Copy size={14} /> Copy ID
-                    </button>
-                    <button onClick={() => { setShowActions(false); setConfirmAction('delete'); }}
-                      className="flex items-center gap-2" style={{ padding: '10px 14px', width: '100%', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--red)' }}>
-                      <Trash2 size={14} /> Delete Journey
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+            ) : undefined}
+            onBack={() => { setSelected(null); setDetail(null); setEditMode(false); router.replace(pathname, { scroll: false }); }}
+            onEdit={() => { setEditMode(true); setEditForm({ name: detail.name, description: detail.description, status: detail.status }); }}
+            onStart={() => setConfirmAction('start')}
+            onPauseResume={handlePause}
+            onAISuggest={() => { setActiveTab('flow'); void handleAISuggest(); }}
+            onCopyId={() => { navigator.clipboard?.writeText(String(selected)); showToast('Journey ID copied', 'info'); }}
+            onDelete={() => setConfirmAction('delete')}
+            onEditSteps={() => { setActiveTab('flow'); setFlowEditMode(true); }}
+            onOpenTab={tab => { setActiveTab(tab); if (tab === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, ''); if (tab === 'analytics') loadNodeAnalytics(selected); }}
+            onPreviewNode={node => { const tpl = getNodeTemplate(node); if (tpl) void previewNode(node, tpl); }}
+            onRetryBlocked={nodeId => { void retryBlocked(nodeId); }}
+            onLoadEntries={() => loadEntries(selected, 1, '')}
+          />
         </motion.div>
 
-        {/* ── KPIs ──────────────────────────────────────────────── */}
         <motion.div variants={fadeInUp}>
-        {(() => {
-          const ct = campaignData?.totals || {};
-          const kpis = [
-            // snapshot_count is -1 while the audience builds in the background, -2 if that build failed.
-            { label: 'Snapshotted',
-              value: Number(detail.snapshot_count) === -1 ? 'Building…'
-                   : Number(detail.snapshot_count) === -2 ? 'Build failed'
-                   : fmt(detail.snapshot_count || stats.total_entries),
-              color: 'kpi-blue', icon: Users },
-            { label: 'Active', value: fmt(stats.active), color: 'kpi-green', icon: Activity },
-            { label: 'Booked (Exit)', value: fmt(stats.exited_booked), color: 'kpi-purple', icon: Target },
-            { label: 'Unsub (Exit)', value: fmt(stats.unsubscribed_from_journey ?? stats.unsubscribed_during_journey ?? stats.exited_unsubscribed), color: 'kpi-red', icon: XCircle },
-            { label: 'Completed', value: fmt(stats.completed), color: 'kpi-blue', icon: CheckCircle2 },
-            { label: 'Failed', value: fmt(ct.total_failed || 0), color: 'kpi-red', icon: XCircle },
-          ];
-          return (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
-              {kpis.map((kpi, i) => (
-                <div key={i} className="card" style={{ padding: '16px 14px' }}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 600, marginBottom: 3 }}>{kpi.label}</div>
-                      <div className={`kpi-value ${kpi.color}`} style={{ fontSize: 22 }}>{kpi.value}</div>
-                    </div>
-                    <div className="flex items-center justify-center" style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--bg-secondary)' }}>
-                      <kpi.icon size={16} color="var(--text-secondary)" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          );
-        })()}
-
         {/* ── Scheduled Start Countdown ────────────────────────── */}
         {schedCountdown && detail?.scheduled_start_at && (
           <div style={{
@@ -2597,21 +2497,7 @@ export default function Journeys() {
                                           <div className="flex items-center justify-between gap-2 flex-wrap">
                                             <span>⚠ <strong>{fmt(blocked)}</strong> contacts skipped — template wasn't set when they ran</span>
                                             <button
-                                              onClick={async (e) => {
-                                                e.stopPropagation();
-                                                try {
-                                                  const r = await retryBlockedEntries(selected!, node.id) as ApiData<{ retried?: number }>;
-                                                  hotToast.success(`Retried ${r.data?.retried || 0} blocked entries — processing now…`);
-                                                  await processJourney(selected!).catch(() => {});
-                                                  const [d, cd] = await Promise.all([
-                                                    getJourney(selected!) as Promise<ApiData<JourneyDetail>>,
-                                                    getJourneyCampaignAnalytics(selected!).catch(() => ({ data: null })) as Promise<ApiData<CampaignData | null>>,
-                                                  ]);
-                                                  setDetail(d.data!);
-                                                  setCampaignData(cd.data!);
-                                                  await refreshQueueStats();
-                                                } catch (err) { hotToast.error((err as Error).message || 'Retry failed'); }
-                                              }}
+                                              onClick={(e) => { e.stopPropagation(); void retryBlocked(node.id); }}
                                               style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid #f97316', background: 'rgba(249,115,22,0.1)', color: '#f97316', whiteSpace: 'nowrap' }}>
                                               Retry
                                             </button>
@@ -2709,32 +2595,7 @@ export default function Journeys() {
                                             <button
                                               type="button"
                                               disabled={previewLoading}
-                                              onClick={async (e) => {
-                                                e.stopPropagation();
-                                                setPreviewLoading(true);
-                                                // Open modal immediately in loading state
-                                                setPreviewTemplate({ ...tpl, body_html: null, _loading: true });
-                                                try {
-                                                  // Live dynamic render (Claude ranking) — exact email that gets sent
-                                                  const res = await previewJourneyNodeEmail(selected!, node.id) as ApiData<{ subject?: string; html?: string; rankingSource?: string }>;
-                                                  setPreviewTemplate({
-                                                    ...tpl,
-                                                    subject: res.data?.subject || tpl.subject,
-                                                    body_html: res.data?.html || null,
-                                                    rankingSource: res.data?.rankingSource || null,
-                                                  });
-                                                } catch (err) {
-                                                  // Fallback to the fast static preview if dynamic render fails
-                                                  try {
-                                                    const res = await fetchTemplatePreview(tpl.id, node.data?.templateVariables || {}) as ApiData<{ html?: string }>;
-                                                    setPreviewTemplate({ ...tpl, body_html: res.data?.html || null });
-                                                  } catch {
-                                                    setPreviewTemplate({ ...tpl, body_html: `<p style="padding:40px;text-align:center;color:#999">Preview failed: ${(err as Error).message}</p>` });
-                                                  }
-                                                } finally {
-                                                  setPreviewLoading(false);
-                                                }
-                                              }}
+                                              onClick={(e) => { e.stopPropagation(); void previewNode(node, tpl); }}
                                               style={{
                                                 display: 'inline-flex', alignItems: 'center', gap: 6,
                                                 fontSize: 11, fontWeight: 600, padding: '6px 12px',

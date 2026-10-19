@@ -67,8 +67,8 @@ const jsonResponse = (status: number, body: unknown): Response =>
 describe('Login page', () => {
   it('renders the form with no NaN/undefined', () => {
     render(<LoginPage />);
-    expect(screen.getByLabelText('Email')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Sign In' })).toBeTruthy();
+    expect(screen.getByLabelText('Work email')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
@@ -81,7 +81,7 @@ describe('Login page', () => {
 
   it('validates empty fields without calling login', () => {
     render(<LoginPage />);
-    fireEvent.submit(screen.getByRole('button', { name: 'Sign In' }).closest('form') as HTMLFormElement);
+    fireEvent.submit(screen.getByRole('button', { name: 'Sign in' }).closest('form') as HTMLFormElement);
     expect(h.toastError).toHaveBeenCalledWith('Please enter both email and password');
     expect(h.login).not.toHaveBeenCalled();
   });
@@ -90,9 +90,9 @@ describe('Login page', () => {
     let resolve: () => void = () => {};
     h.login.mockImplementation(() => new Promise<void>(r => { resolve = r; }));
     render(<LoginPage />);
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.com' } });
+    fireEvent.change(screen.getByLabelText('Work email'), { target: { value: 'a@b.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await screen.findByText('Signing in...');
     expect(h.login).toHaveBeenCalledWith('a@b.com', 'secret');
     resolve();
@@ -103,19 +103,19 @@ describe('Login page', () => {
   it('shows error toast on login failure and re-enables the button', async () => {
     h.login.mockRejectedValue(new Error('Invalid credentials'));
     render(<LoginPage />);
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.com' } });
+    fireEvent.change(screen.getByLabelText('Work email'), { target: { value: 'a@b.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'bad' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith('Invalid credentials'));
-    expect(screen.getByRole('button', { name: 'Sign In' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
   });
 
   it('falls back to a generic message when the error has none', async () => {
     h.login.mockRejectedValue(new Error(''));
     render(<LoginPage />);
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.com' } });
+    fireEvent.change(screen.getByLabelText('Work email'), { target: { value: 'a@b.com' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'x' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith('Login failed. Please try again.'));
   });
 

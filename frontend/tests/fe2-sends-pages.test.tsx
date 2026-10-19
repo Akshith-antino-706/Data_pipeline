@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import TestSendsPage from '@/app/(dashboard)/test-sends/page';
@@ -58,6 +58,12 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const bodyText = (): string => document.body.textContent ?? '';
 const noJunk = (): void => { expect(bodyText()).not.toMatch(/NaN|undefined|Invalid Date/); };
+/** Sends now go through a ConfirmDialog (who / what / when); click its confirm button. */
+const confirmSend = async (label: RegExp = /^Confirm send$/): Promise<void> => {
+  const dialog = await screen.findByRole('alertdialog');
+  noJunk();
+  fireEvent.click(within(dialog).getByRole('button', { name: label }));
+};
 
 const CONTACTS = [
   { id: 1, email: 'a@x.com', name: 'Alice', country: 'UAE', contact_type: 'b2c', booking_status: 'CONFIRMED' },
@@ -140,6 +146,12 @@ describe('Test Sends page', () => {
     fireEvent.click(await screen.findByText('a@x.com'));
     expect(bodyText()).toContain('1 selected of 3 contacts');
     fireEvent.click(screen.getAllByRole('button', { name: /Send \(1\)/ })[0]);
+    // nothing is sent until the confirm dialog is accepted
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('a@x.com');
+    expect(dialog.textContent).toContain('Day 1 Welcome');
+    expect(calls(/test-sends\/day1$/)).toHaveLength(0);
+    await confirmSend();
     await screen.findByText(/Sent to 2 recipients/);
     expect(calls(/test-sends\/day1$/)[0].body).toEqual({ emails: ['a@x.com'] });
     expect(bodyText()).toContain('A · B · C');
@@ -155,6 +167,8 @@ describe('Test Sends page', () => {
     expect(screen.getByDisplayValue('Kuala Lumpur')).toBeTruthy();
     const btn = screen.getAllByRole('button', { name: /Send \(1\)/ })[5];
     fireEvent.click(btn);
+    expect((await screen.findByRole('alertdialog')).textContent).toContain('Kuala Lumpur');
+    await confirmSend();
     await waitFor(() => expect(calls(/test-sends\/day6$/)).toHaveLength(1));
     expect(calls(/test-sends\/day6$/)[0].body).toEqual({ emails: ['b@x.com'], destinationKey: 'kuala_lumpur' });
   });
@@ -165,6 +179,7 @@ describe('Test Sends page', () => {
     render(<TestSendsPage />);
     fireEvent.click(await screen.findByText('a@x.com'));
     fireEvent.click(screen.getAllByRole('button', { name: /Send \(1\)/ })[1]);
+    await confirmSend();
     await screen.findByText('SMTP down');
   });
 
@@ -176,8 +191,19 @@ describe('Test Sends page', () => {
     render(<TestSendsPage />);
     fireEvent.click(await screen.findByText('a@x.com'));
     fireEvent.click(screen.getAllByRole('button', { name: /Send \(1\)/ })[0]);
+    await confirmSend();
     await screen.findByText(/Sent to 1 recipients/);
     expect(bodyText()).not.toContain('undefined');
+  });
+
+  it('cancelling the confirm dialog sends nothing', async () => {
+    typical();
+    render(<TestSendsPage />);
+    fireEvent.click(await screen.findByText('a@x.com'));
+    fireEvent.click(screen.getAllByRole('button', { name: /Send \(1\)/ })[0]);
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(calls(/test-sends\/day1$/)).toHaveLength(0);
   });
 
   it('filters: changing a dropdown refetches with the filter; select-all dedupes; clear-all resets', async () => {
@@ -264,6 +290,9 @@ describe('Scheduler page', () => {
     render(<SchedulerPage />);
     fireEvent.click(await screen.findByText('Alice'));
     fireEvent.click(screen.getByRole('button', { name: /New Schedule/ }));
+    expect((await screen.findByRole('alertdialog')).textContent).toContain('a@x.com');
+    expect(calls(/schedule\/start/)).toHaveLength(0);
+    await confirmSend(/^Start schedule$/);
     await screen.findByText('Schedule #20');
     expect(calls(/schedule\/start/)[0].body).toEqual({ destinationKey: 'singapore', loop: false, emails: ['a@x.com'] });
   });
@@ -274,6 +303,7 @@ describe('Scheduler page', () => {
     render(<SchedulerPage />);
     fireEvent.click(await screen.findByText('Alice'));
     fireEvent.click(screen.getByRole('button', { name: /New Schedule/ }));
+    await confirmSend(/^Start schedule$/);
     await waitFor(() => expect(alertMock).toHaveBeenCalledWith('Start failed: too many'));
   });
 
@@ -285,9 +315,13 @@ describe('Scheduler page', () => {
     render(<SchedulerPage />);
     await screen.findByText('Schedule #11');
     fireEvent.click(screen.getByRole('button', { name: /Send Now/ }));
+    const tickDialog = await screen.findByRole('alertdialog');
+    expect(tickDialog.textContent).toContain('a@x.com, b@x.com');
+    expect(tickDialog.textContent).toContain('Day 3 email');
+    expect(calls(/schedule\/11\/tick/)).toHaveLength(0);
+    await confirmSend();
     await waitFor(() => expect(alertMock).toHaveBeenCalledWith('Day 3 (Visa Hub) sent to 2'));
-    const removeIcon = screen.getAllByText('b@x.com').map(e => e.querySelector('svg')).find(Boolean) as SVGElement;
-    fireEvent.click(removeIcon);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove b@x.com from this schedule' }));
     await waitFor(() => expect(calls(/remove-email/)[0]?.body).toEqual({ email: 'b@x.com' }));
     fireEvent.click(screen.getByRole('button', { name: /Stop/ }));
     await waitFor(() => expect(screen.getAllByText('STOPPED')).toHaveLength(2));
@@ -299,6 +333,7 @@ describe('Scheduler page', () => {
     render(<SchedulerPage />);
     await screen.findByText('Schedule #11');
     fireEvent.click(screen.getByRole('button', { name: /Send Now/ }));
+    await confirmSend();
     await waitFor(() => expect(alertMock).toHaveBeenCalledWith('Skipped: unknown'));
   });
 

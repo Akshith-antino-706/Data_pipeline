@@ -18,7 +18,7 @@ test.describe('API 500 handling', () => {
     // Backend recovers → Retry loads the dashboard.
     api.use({ method: 'GET', path: /^\/api\/v3\/journeys\/dashboard$/, body: { success: true, data: { kpis: { activeJourneys: 7, openRate7d: 10 } } } });
     await page.getByRole('button', { name: 'Retry' }).click();
-    await expect(page.getByText('Journey Operations')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Journey monitor' })).toBeVisible();
     await expect(page.getByText('Internal Server Error')).toHaveCount(0);
   });
 

@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
 import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getGTMEventDetail, getSpecialOccasions, getGTMExport, getEmailUtmLog, getEmailUtmSummary } from '@/lib/api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import type { QueryParams } from '@/types/api';
+import { Button, Card, Chip, EmptyState, Input, PageHeader, Select, Skeleton, Tabs } from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
+import s from './page.module.css';
 import { Code, Calendar, Download, Activity, Layers, Copy, Mail, MousePointer, Users, Target, ExternalLink, RefreshCw, Search } from 'lucide-react';
 
 interface GtmSnippet { head: string; body: string }
@@ -31,66 +32,38 @@ interface SpecialOccasion {
 }
 type Wrapped<T> = { data?: T } & T;
 
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
+type TabKey = 'overview' | 'emailtracking' | 'datalayer' | 'occasions' | 'snippet';
 
-/* ── Skeleton primitives ─────────────────────────────── */
-const shimmer: React.CSSProperties = {
-  background: 'linear-gradient(90deg, var(--bg-secondary) 25%, var(--border-color) 50%, var(--bg-secondary) 75%)',
-  backgroundSize: '200% 100%',
-  animation: 'shimmer 1.5s infinite',
-};
+const occasionTones: Record<string, ChipTone> = { festival: 'gold', holiday: 'bad', season: 'ok', event: 'info', custom: 'warn' };
 
-function SkeletonBox({ width, height = 20, borderRadius = 8, style = {} }: { width: number | string; height?: number | string; borderRadius?: number | string; style?: React.CSSProperties }) {
-  return <div style={{ width, height, borderRadius, ...shimmer, ...style }} />;
-}
+const urlPath = (u: string): string => { try { return new URL(u).pathname; } catch { return u; } };
 
-function SkeletonHeader() {
+function LoadingSkeleton() {
   return (
-    <div className="card-header" style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <div>
-        <SkeletonBox width={220} height={30} style={{ marginBottom: 8 }} />
-        <SkeletonBox width={380} height={13} />
+    <div className={s.page} aria-busy="true" aria-label="Loading GTM data">
+      <div className={s.stack}>
+        <Skeleton width={220} height={28} />
+        <Skeleton width={380} height={14} />
       </div>
-      <SkeletonBox width={170} height={38} borderRadius={10} />
-    </div>
-  );
-}
-
-function SkeletonTabs() {
-  return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-      {[110, 130, 140, 130, 120].map((w, i) => (
-        <SkeletonBox key={i} width={w} height={34} borderRadius={10} />
-      ))}
-    </div>
-  );
-}
-
-function SkeletonKPICards() {
-  return (
-    <div className="kpi-strip" style={{ marginBottom: 24, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
-      {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="card" style={{ padding: '16px 18px' }}>
-          <SkeletonBox width={90} height={11} style={{ marginBottom: 10 }} />
-          <SkeletonBox width={110} height={28} style={{ marginBottom: 8 }} />
-          <SkeletonBox width={80} height={11} style={{ marginBottom: 6 }} />
-          <SkeletonBox width={70} height={10} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SkeletonChartCard() {
-  return (
-    <div className="card" style={{ padding: 24 }}>
-      <SkeletonBox width={180} height={18} style={{ marginBottom: 20 }} />
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 260 }}>
-        {Array.from({ length: 20 }).map((_, i) => (
-          <div key={i} style={{ flex: 1, ...shimmer, borderRadius: '6px 6px 0 0', height: `${30 + (i * 37) % 65}%` }} />
+      <div className={s.skelRow}>
+        {[110, 130, 140, 130, 120].map((w, i) => <Skeleton key={i} width={w} height={32} />)}
+      </div>
+      <div className={s.kpis}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Card key={i}>
+            <Skeleton width={90} height={11} />
+            <div style={{ height: 10 }} />
+            <Skeleton width={110} height={26} />
+          </Card>
         ))}
       </div>
+      <Card>
+        <div className={s.skelBars}>
+          {Array.from({ length: 20 }).map((_, i) => (
+            <div key={i} className={s.skelBar} style={{ height: `${30 + (i * 37) % 65}%` }} />
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -101,7 +74,7 @@ export default function GTMIntegration() {
   const [scripts, setScripts] = useState<Record<string, string>>({});
   const [analytics, setAnalytics] = useState<GtmAnalytics>({ daily: [], top_events: [] });
   const [occasions, setOccasions] = useState<SpecialOccasion[]>([]);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedScript, setSelectedScript] = useState('page_view');
   const [copied, setCopied] = useState('');
 
@@ -181,7 +154,7 @@ export default function GTMIntegration() {
     } catch (err) { console.error(err); }
   }
 
-  const tabs = [
+  const tabs: { id: TabKey; label: string; icon: typeof Activity; badge?: number | null }[] = [
     { id: 'overview',      label: 'Event Analytics',   icon: Activity },
     { id: 'emailtracking', label: 'Email Tracking',     icon: Mail,        badge: utmTotal || null },
     { id: 'datalayer',     label: 'DataLayer Scripts',  icon: Code },
@@ -189,430 +162,363 @@ export default function GTMIntegration() {
     { id: 'snippet',       label: 'GTM Container',      icon: Layers },
   ];
 
-  const occasionColors: Record<string, string> = { festival: 'var(--yellow)', holiday: 'var(--red)', season: 'var(--green)', event: 'var(--red)', custom: 'var(--yellow)' };
+  if (loading) return <LoadingSkeleton />;
 
-  if (loading) {
-    return (
-      <div style={{ padding: 24 }}>
-        <SkeletonHeader />
-        <SkeletonTabs />
-        <SkeletonKPICards />
-        <SkeletonChartCard />
-      </div>
-    );
-  }
+  const tooltipStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--ink)', fontSize: 12 };
 
   return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
-      <motion.div variants={fadeInUp} className="card-header" style={{ marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>GTM & BigQuery</h1>
-          <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0' }}>Google Tag Manager integration, dataLayer events, and BigQuery export</p>
-        </div>
-        <button className="btn btn-primary" onClick={handleExport} style={{ gap: 8 }}>
-          <Download size={16} /> Export to BigQuery
-        </button>
-      </motion.div>
+    <div className={s.page}>
+      <PageHeader
+        title="GTM & BigQuery"
+        description="Google Tag Manager integration, dataLayer events, and BigQuery export"
+        actions={<Button variant="primary" onClick={handleExport}><Download size={16} aria-hidden /> Export to BigQuery</Button>}
+      />
 
-      {/* Tabs */}
-      <motion.div variants={fadeInUp} className="tabs" style={{ marginBottom: 24 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`tab ${activeTab === t.id ? 'active' : ''}`}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <t.icon size={14} /> {t.label}
-            {t.badge != null && (
-              <span style={{
-                fontSize: 10, padding: '1px 7px', borderRadius: 10, fontWeight: 700,
-                background: activeTab === t.id ? 'rgba(255,255,255,0.25)' : 'var(--bg-secondary)',
-                color: activeTab === t.id ? '#fff' : 'var(--text-secondary)',
-              }}>{t.badge}</span>
-            )}
-          </button>
-        ))}
-      </motion.div>
+      <Tabs
+        label="GTM sections"
+        value={activeTab}
+        onChange={setActiveTab}
+        items={tabs.map(t => ({
+          key: t.id,
+          label: (
+            <span className={s.tabLabel}>
+              <t.icon size={14} aria-hidden /> <span>{t.label}</span>
+              {t.badge != null && <span className={s.count}>{t.badge}</span>}
+            </span>
+          ),
+        }))}
+      />
 
       {/* ── Event Analytics ─────────────────────────────────────────────── */}
       {activeTab === 'overview' && (
-        <motion.div variants={fadeInUp}>
-          <div className="kpi-strip" style={{ marginBottom: 24 }}>
-            {analytics.top_events?.map(e => (
-              <div key={e.event_name} className="card" onClick={() => loadEventDetail(e.event_name)}
-                style={{ cursor: 'pointer', border: selectedEvent === e.event_name ? '2px solid var(--brand-primary)' : undefined, transition: 'border 0.2s' }}>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{e.event_name}</div>
-                <div style={{ fontSize: 28, fontWeight: 700 }}>{(parseInt(e.count) || 0).toLocaleString()}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{(parseInt(e.unique_users) || 0).toLocaleString()} unique users</div>
-                {parseFloat(e.total_value) > 0 && <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>AED {parseFloat(e.total_value).toFixed(0)}</div>}
-                <div style={{ fontSize: 10, color: 'var(--brand-primary)', marginTop: 4 }}>Click to view details →</div>
-              </div>
-            ))}
-          </div>
+        <div className={s.stack}>
+          {(analytics.top_events?.length ?? 0) > 0 && (
+            <div className={s.kpis}>
+              {analytics.top_events?.map(e => (
+                <button key={e.event_name} type="button" className={s.kpiBtn} aria-pressed={selectedEvent === e.event_name} onClick={() => loadEventDetail(e.event_name)}>
+                  <span className={s.kpiLabel}>{e.event_name}</span>
+                  <span className={s.kpiValue}>{(parseInt(e.count) || 0).toLocaleString()}</span>
+                  <span className={s.kpiSub}>{(parseInt(e.unique_users) || 0).toLocaleString()} unique users</span>
+                  {parseFloat(e.total_value) > 0 && <span className={s.kpiMoney}>AED {parseFloat(e.total_value).toFixed(0)}</span>}
+                  <span className={s.kpiHint}>Click to view details →</span>
+                </button>
+              ))}
+            </div>
+          )}
 
-          {/* Event Detail Table */}
           {selectedEvent && (
-            <div className="card" style={{ overflow: 'hidden', marginBottom: 24 }}>
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Activity size={16} color="var(--brand-primary)" />
+            <Card className={s.flush}>
+              <div className={s.flushHead}>
+                <h2 className={s.flushTitle}>
+                  <Activity size={16} aria-hidden />
                   {selectedEvent} — Activity Details
-                  <span className="badge badge-blue" style={{ fontSize: 10 }}>{eventDetails.length}</span>
-                </div>
-                <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedEvent(null); setEventDetails([]); }}>✕ Close</button>
+                  <Chip tone="info">{eventDetails.length}</Chip>
+                </h2>
+                <Button size="sm" onClick={() => { setSelectedEvent(null); setEventDetails([]); }}>✕ Close</Button>
               </div>
               {eventDetailLoading ? (
-                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)', fontSize: 13 }}>Loading...</div>
+                <div className={s.loading}>Loading...</div>
               ) : eventDetails.length > 0 ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <div className={s.tableScroll}>
+                  <table className="ui-table">
                     <thead>
-                      <tr style={{ background: 'var(--bg-secondary)' }}>
-                        {['Product / Label', 'Value (AED)', 'Category', 'Page', 'Device', 'Browser', 'Location', 'UTM Source', 'Campaign', 'Time'].map(h => (
-                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
-                        ))}
+                      <tr>
+                        {['Product / Label', 'Value (AED)', 'Category', 'Page', 'Device', 'Browser', 'Location', 'UTM Source', 'Campaign', 'Time'].map(h => <th key={h}>{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {eventDetails.map((e, i) => (
-                        <tr key={e.event_id || i} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                          <td style={{ padding: '10px 14px', fontWeight: 600, maxWidth: 200 }}>{e.event_label || '—'}</td>
-                          <td style={{ padding: '10px 14px', color: 'var(--green)', fontWeight: 700 }}>
-                            {e.event_value ? `AED ${parseFloat(e.event_value).toFixed(0)}` : '—'}
+                        <tr key={e.event_id || i}>
+                          <td className={s.strong}>{e.event_label || '—'}</td>
+                          <td className={s.money}>{e.event_value ? `AED ${parseFloat(e.event_value).toFixed(0)}` : '—'}</td>
+                          <td><Chip tone="mute">{e.event_category || '—'}</Chip></td>
+                          <td className={s.trunc}>
+                            {e.page_url ? <a href={e.page_url} target="_blank" rel="noreferrer" className={s.link}>{urlPath(e.page_url)}</a> : '—'}
                           </td>
-                          <td style={{ padding: '10px 14px' }}>
-                            <span className="badge badge-gray" style={{ fontSize: 10 }}>{e.event_category || '—'}</span>
-                          </td>
-                          <td style={{ padding: '10px 14px', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {e.page_url ? (
-                              <a href={e.page_url} target="_blank" rel="noreferrer" style={{ color: 'var(--brand-primary)', textDecoration: 'none', fontSize: 11 }}>
-                                {(() => { try { return new URL(e.page_url).pathname; } catch { return e.page_url; } })()}
-                              </a>
-                            ) : '—'}
-                          </td>
-                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
-                            <span className="badge badge-blue" style={{ fontSize: 10 }}>{e.device_type || '—'}</span>
-                          </td>
-                          <td style={{ padding: '10px 14px', fontSize: 11 }}>{e.browser || '—'}</td>
-                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', fontSize: 11 }}>
-                            {[e.city, e.country].filter(Boolean).join(', ') || '—'}
-                          </td>
-                          <td style={{ padding: '10px 14px', fontSize: 11 }}>{e.utm_source || '—'}</td>
-                          <td style={{ padding: '10px 14px', fontSize: 11 }}>{e.utm_campaign || '—'}</td>
-                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', color: 'var(--text-secondary)', fontSize: 11 }}>
-                            {new Date(e.created_at).toLocaleString()}
-                          </td>
+                          <td className={s.nowrap}><Chip tone="info">{e.device_type || '—'}</Chip></td>
+                          <td>{e.browser || '—'}</td>
+                          <td className={s.nowrap}>{[e.city, e.country].filter(Boolean).join(', ') || '—'}</td>
+                          <td>{e.utm_source || '—'}</td>
+                          <td>{e.utm_campaign || '—'}</td>
+                          <td className={`${s.nowrap} ${s.muted}`}>{new Date(e.created_at).toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>No detail rows found.</div>
+                <div className={s.loading}>No detail rows found.</div>
               )}
-            </div>
+            </Card>
           )}
 
-          <div className="card" style={{ padding: 24 }}>
-            <h3 style={{ margin: '0 0 16px' }}>Daily Event Volume</h3>
+          <Card title="Daily Event Volume">
             {analytics.daily?.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={analytics.daily.slice(0, 30)}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" tickFormatter={(d: string) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
-                  <YAxis />
-                  <Tooltip labelFormatter={(d: React.ReactNode) => new Date(d as string).toLocaleDateString()} contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }} />
-                  <Bar dataKey="event_count" fill="var(--red)" radius={[6, 6, 0, 0]} name="Events" />
-                  <Bar dataKey="unique_users" fill="var(--green)" radius={[6, 6, 0, 0]} name="Users" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                  <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--ink3)' }} tickFormatter={(d: string) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+                  <YAxis tick={{ fontSize: 11, fill: 'var(--ink3)' }} />
+                  <Tooltip labelFormatter={(d: React.ReactNode) => new Date(d as string).toLocaleDateString()} contentStyle={tooltipStyle} />
+                  <Bar dataKey="event_count" fill="var(--gold)" radius={[6, 6, 0, 0]} name="Events" />
+                  <Bar dataKey="unique_users" fill="var(--info)" radius={[6, 6, 0, 0]} name="Users" />
                 </BarChart>
               </ResponsiveContainer>
-            ) : <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', padding: 40 }}>GTM events will appear here as they are captured.</p>}
-          </div>
-        </motion.div>
+            ) : <EmptyState icon={<Activity size={20} />} title="No events yet" description="GTM events will appear here as they are captured." />}
+          </Card>
+        </div>
       )}
 
       {/* ── Email Tracking ──────────────────────────────────────────────── */}
       {activeTab === 'emailtracking' && (
-        <motion.div variants={fadeInUp} className="flex flex-col gap-16">
-
-          {/* KPI strip */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <div className={s.stack}>
+          <div className={s.statGrid}>
             {[
-              { label: 'Total Clicks',     value: utmTotal,                                    color: 'var(--brand-primary)', icon: MousePointer },
-              { label: 'Unique Contacts',  value: new Set(utmVisits.map(v => v.email)).size,   color: 'var(--purple)',        icon: Users },
-              { label: 'Campaigns',        value: utmSummary.byCampaign.length,                color: 'var(--green)',         icon: Target },
-              { label: 'Sources',          value: utmSummary.bySource.length,                  color: 'var(--orange)',        icon: Mail },
-            ].map(({ label, value, color, icon: Icon }) => (
-              <div key={label} className="card" style={{ padding: '16px 20px', borderTop: `3px solid ${color}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              { label: 'Total Clicks',     value: utmTotal,                                    icon: MousePointer },
+              { label: 'Unique Contacts',  value: new Set(utmVisits.map(v => v.email)).size,   icon: Users },
+              { label: 'Campaigns',        value: utmSummary.byCampaign.length,                icon: Target },
+              { label: 'Sources',          value: utmSummary.bySource.length,                  icon: Mail },
+            ].map(({ label, value, icon: Icon }) => (
+              <Card key={label}>
+                <div className={s.stat}>
                   <div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{label}</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color }}>{value}</div>
+                    <div className={s.kpiLabel}>{label}</div>
+                    <div className={s.kpiValue}>{value.toLocaleString()}</div>
                   </div>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: `color-mix(in srgb, ${color} 10%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon size={18} color={color} />
-                  </div>
+                  <span className={s.statIcon} aria-hidden><Icon size={18} /></span>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
 
-          {/* Campaign breakdown chart */}
           {utmSummary.byCampaign.length > 0 && (
-            <div className="card" style={{ padding: 20 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 16 }}>Clicks by Campaign</div>
+            <Card title="Clicks by Campaign">
               <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={utmSummary.byCampaign} layout="vertical" margin={{ left: 20, right: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} style={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="utm_campaign" width={180} style={{ fontSize: 11 }} />
+                <BarChart data={utmSummary.byCampaign} layout="vertical" margin={{ left: 8, right: 16 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--line)" />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--ink3)' }} />
+                  <YAxis type="category" dataKey="utm_campaign" width={140} tick={{ fontSize: 11, fill: 'var(--ink3)' }} />
                   <Tooltip
-                    contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12 }}
+                    contentStyle={tooltipStyle}
                     formatter={(v, n) => [v, n === 'total_clicks' ? 'Total Clicks' : 'Unique Visitors']}
                   />
-                  <Bar dataKey="total_clicks"    fill="var(--brand-primary)" radius={[0, 4, 4, 0]} name="total_clicks" />
-                  <Bar dataKey="unique_visitors" fill="var(--purple)"        radius={[0, 4, 4, 0]} name="unique_visitors" />
+                  <Bar dataKey="total_clicks"    fill="var(--gold)" radius={[0, 4, 4, 0]} name="total_clicks" />
+                  <Bar dataKey="unique_visitors" fill="var(--info)" radius={[0, 4, 4, 0]} name="unique_visitors" />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </Card>
           )}
 
-          {/* Campaign summary table */}
           {utmSummary.byCampaign.length > 0 && (
-            <div className="card" style={{ overflow: 'hidden' }}>
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: 13 }}>
-                Campaign Breakdown
-              </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead>
-                  <tr style={{ background: 'var(--bg-secondary)' }}>
-                    {['Campaign', 'Source', 'Medium', 'Total Clicks', 'Unique Visitors', 'Unique Emails'].map(h => (
-                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {utmSummary.byCampaign.map((r, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '10px 16px', fontWeight: 600 }}>
-                        <button onClick={() => { setUtmCampaignFilter(r.utm_campaign); loadUtmData(1, utmSearch, r.utm_campaign); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand-primary)', fontWeight: 600, fontSize: 12, padding: 0 }}>
-                          {r.utm_campaign}
-                        </button>
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span className="badge badge-blue" style={{ fontSize: 10 }}>{r.utm_source}</span>
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span className="badge badge-gray" style={{ fontSize: 10 }}>{r.utm_medium}</span>
-                      </td>
-                      <td style={{ padding: '10px 16px', fontWeight: 700, color: 'var(--green)' }}>{r.total_clicks}</td>
-                      <td style={{ padding: '10px 16px' }}>{r.unique_visitors}</td>
-                      <td style={{ padding: '10px 16px' }}>{r.unique_emails}</td>
+            <Card className={s.flush}>
+              <div className={s.flushHead}><h2 className={s.flushTitle}>Campaign Breakdown</h2></div>
+              <div className={s.tableScroll}>
+                <table className="ui-table">
+                  <thead>
+                    <tr>
+                      {['Campaign', 'Source', 'Medium', 'Total Clicks', 'Unique Visitors', 'Unique Emails'].map(h => <th key={h}>{h}</th>)}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {utmSummary.byCampaign.map((r, i) => (
+                      <tr key={i}>
+                        <td>
+                          <button type="button" className={s.linkBtn} onClick={() => { setUtmCampaignFilter(r.utm_campaign); loadUtmData(1, utmSearch, r.utm_campaign); }}>
+                            {r.utm_campaign}
+                          </button>
+                        </td>
+                        <td>{r.utm_source ? <Chip tone="info">{r.utm_source}</Chip> : '—'}</td>
+                        <td>{r.utm_medium ? <Chip tone="mute">{r.utm_medium}</Chip> : '—'}</td>
+                        <td className={s.money}>{r.total_clicks ?? '—'}</td>
+                        <td>{r.unique_visitors ?? '—'}</td>
+                        <td>{r.unique_emails ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
           )}
 
-          {/* Filters */}
-          <div className="card p-16" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 12, alignItems: 'end' }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Search by Email</div>
-              <div style={{ position: 'relative' }}>
-                <Search size={13} style={{ position: 'absolute', left: 9, top: 10, color: 'var(--text-tertiary)' }} />
-                <input value={utmSearch}
-                  onChange={e => setUtmSearch(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && loadUtmData(1, utmSearch, utmCampaignFilter)}
-                  placeholder="email@example.com"
-                  style={{ width: '100%', padding: '9px 12px 9px 28px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, background: 'var(--bg-secondary)' }} />
+          <Card>
+            <div className={s.filters}>
+              <div className="ui-field">
+                <label className="ui-label" htmlFor="utm-search">Search by Email</label>
+                <div className={s.searchWrap}>
+                  <Search size={14} className={s.searchIcon} aria-hidden />
+                  <Input id="utm-search" className={s.searchInput} value={utmSearch}
+                    onChange={e => setUtmSearch(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && loadUtmData(1, utmSearch, utmCampaignFilter)}
+                    placeholder="email@example.com" />
+                </div>
               </div>
+              <div className="ui-field">
+                <label className="ui-label" htmlFor="utm-campaign">Filter by Campaign</label>
+                <Select id="utm-campaign" value={utmCampaignFilter} onChange={e => setUtmCampaignFilter(e.target.value)}>
+                  <option value="">All Campaigns</option>
+                  {utmSummary.byCampaign.map(c => (
+                    <option key={c.utm_campaign} value={c.utm_campaign}>{c.utm_campaign}</option>
+                  ))}
+                </Select>
+              </div>
+              <Button variant="primary" onClick={() => loadUtmData(1, utmSearch, utmCampaignFilter)}>
+                <Search size={14} aria-hidden /> Search
+              </Button>
+              <Button onClick={() => { setUtmSearch(''); setUtmCampaignFilter(''); loadUtmData(1); }}>
+                <RefreshCw size={14} aria-hidden /> Reset
+              </Button>
             </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Filter by Campaign</div>
-              <select value={utmCampaignFilter} onChange={e => setUtmCampaignFilter(e.target.value)}
-                style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, background: 'var(--bg-secondary)' }}>
-                <option value="">All Campaigns</option>
-                {utmSummary.byCampaign.map(c => (
-                  <option key={c.utm_campaign} value={c.utm_campaign}>{c.utm_campaign}</option>
-                ))}
-              </select>
-            </div>
-            <button className="btn btn-primary flex items-center gap-4" onClick={() => loadUtmData(1, utmSearch, utmCampaignFilter)}>
-              <Search size={13} /> Search
-            </button>
-            <button className="btn btn-secondary flex items-center gap-4" onClick={() => { setUtmSearch(''); setUtmCampaignFilter(''); loadUtmData(1); }}>
-              <RefreshCw size={13} /> Reset
-            </button>
-          </div>
+          </Card>
 
-          {/* Visits table */}
-          <div className="card" style={{ overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid var(--border-color)' }}>
-              <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Mail size={15} color="var(--brand-primary)" />
+          <Card className={s.flush}>
+            <div className={s.flushHead}>
+              <h2 className={s.flushTitle}>
+                <Mail size={15} aria-hidden />
                 Email UTM Visits
-                <span className="badge badge-blue" style={{ fontSize: 10 }}>{utmTotal}</span>
-              </div>
-              <button className="btn btn-sm btn-secondary flex items-center gap-4" onClick={() => loadUtmData(utmPage, utmSearch, utmCampaignFilter)}>
-                <RefreshCw size={12} /> Refresh
-              </button>
+                <Chip tone="info">{utmTotal}</Chip>
+              </h2>
+              <Button size="sm" onClick={() => loadUtmData(utmPage, utmSearch, utmCampaignFilter)}>
+                <RefreshCw size={12} aria-hidden /> Refresh
+              </Button>
             </div>
 
             {utmLoading ? (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)', fontSize: 13 }}>Loading...</div>
+              <div className={s.loading}>Loading...</div>
             ) : utmVisits.length > 0 ? (
               <>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <div className={s.tableScroll}>
+                  <table className="ui-table">
                     <thead>
-                      <tr style={{ background: 'var(--bg-secondary)' }}>
-                        {['Contact', 'Email', 'Campaign', 'Source / Medium', 'Destination URL', 'Visited At'].map(h => (
-                          <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
-                        ))}
+                      <tr>
+                        {['Contact', 'Email', 'Campaign', 'Source / Medium', 'Destination URL', 'Visited At'].map(h => <th key={h}>{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {utmVisits.map(v => (
-                        <tr key={v.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                          <td style={{ padding: '10px 16px', fontWeight: 600, whiteSpace: 'nowrap' }}>{v.contact_name || '—'}</td>
-                          <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{v.email}</td>
-                          <td style={{ padding: '10px 16px' }}>
-                            <span className="badge badge-blue" style={{ fontSize: 10 }}>{v.utm_campaign || '—'}</span>
+                        <tr key={v.id}>
+                          <td className={`${s.strong} ${s.nowrap}`}>{v.contact_name || '—'}</td>
+                          <td className={`${s.muted} ${s.nowrap}`}>{v.email || '—'}</td>
+                          <td><Chip tone="info">{v.utm_campaign || '—'}</Chip></td>
+                          <td className={s.nowrap}>
+                            {v.utm_source || '—'}
+                            {v.utm_medium && <span className={s.muted}> / {v.utm_medium}</span>}
                           </td>
-                          <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>
-                            <span style={{ fontSize: 11 }}>{v.utm_source || '—'}</span>
-                            {v.utm_medium && <span style={{ color: 'var(--text-tertiary)', fontSize: 10 }}> / {v.utm_medium}</span>}
-                          </td>
-                          <td style={{ padding: '10px 16px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <td className={s.trunc}>
                             {v.destination_url ? (
-                              <a href={v.destination_url} target="_blank" rel="noreferrer"
-                                style={{ color: 'var(--brand-primary)', textDecoration: 'none', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <ExternalLink size={10} />
-                                {(() => { try { return new URL(v.destination_url).pathname; } catch { return v.destination_url; } })()}
+                              <a href={v.destination_url} target="_blank" rel="noreferrer" className={s.link}>
+                                <ExternalLink size={10} aria-hidden />
+                                {urlPath(v.destination_url)}
                               </a>
                             ) : '—'}
                           </td>
-                          <td style={{ padding: '10px 16px', whiteSpace: 'nowrap', color: 'var(--text-secondary)', fontSize: 11 }}>
-                            {new Date(v.created_at).toLocaleString()}
-                          </td>
+                          <td className={`${s.nowrap} ${s.muted}`}>{new Date(v.created_at).toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
 
-                {/* Pagination */}
                 {utmTotal > 50 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 18px', borderTop: '1px solid var(--border-color)' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <div className={s.pager}>
+                    <div className={s.pagerInfo}>
                       Showing {(utmPage - 1) * 50 + 1}–{Math.min(utmPage * 50, utmTotal)} of {utmTotal}
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn btn-sm btn-secondary" disabled={utmPage === 1}
-                        onClick={() => loadUtmData(utmPage - 1, utmSearch, utmCampaignFilter)}>← Prev</button>
-                      <button className="btn btn-sm btn-secondary" disabled={utmPage * 50 >= utmTotal}
-                        onClick={() => loadUtmData(utmPage + 1, utmSearch, utmCampaignFilter)}>Next →</button>
+                    <div className={s.pagerBtns}>
+                      <Button size="sm" disabled={utmPage === 1} onClick={() => loadUtmData(utmPage - 1, utmSearch, utmCampaignFilter)}>← Prev</Button>
+                      <Button size="sm" disabled={utmPage * 50 >= utmTotal} onClick={() => loadUtmData(utmPage + 1, utmSearch, utmCampaignFilter)}>Next →</Button>
                     </div>
                   </div>
                 )}
               </>
             ) : (
-              <div style={{ textAlign: 'center', padding: 48 }}>
-                <Mail size={40} color="var(--text-tertiary)" style={{ opacity: 0.3, marginBottom: 12 }} />
-                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 15 }}>No email visits yet</div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  Send a test email and click a link — the UTM data will appear here.
-                </div>
-              </div>
+              <EmptyState icon={<Mail size={20} />} title="No email visits yet" description="Send a test email and click a link — the UTM data will appear here." />
             )}
-          </div>
-        </motion.div>
+          </Card>
+        </div>
       )}
 
       {/* ── DataLayer Scripts ───────────────────────────────────────────── */}
       {activeTab === 'datalayer' && (
-        <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: 24 }}>
-          <div className="card" style={{ padding: 16 }}>
-            <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>Events ({Object.keys(scripts).length})</h4>
-            {Object.keys(scripts).map(key => (
-              <button key={key} onClick={() => setSelectedScript(key)}
-                className={`tab ${selectedScript === key ? 'active' : ''}`}
-                style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4 }}>
-                {key}
-              </button>
-            ))}
-          </div>
-          <div className="card" style={{ padding: 24 }}>
-            <div className="card-header" style={{ marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: 16 }}>{selectedScript}</h3>
-              <button onClick={() => copyToClipboard(scripts[selectedScript], selectedScript)}
-                className={`btn btn-sm ${copied === selectedScript ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ gap: 4 }}>
-                <Copy size={12} /> {copied === selectedScript ? 'Copied!' : 'Copy'}
-              </button>
+        <div className={s.split}>
+          <Card title={`Events (${Object.keys(scripts).length})`}>
+            <div className={s.eventList}>
+              {Object.keys(scripts).map(key => (
+                <button key={key} type="button" className={s.eventItem} aria-pressed={selectedScript === key} onClick={() => setSelectedScript(key)}>
+                  {key}
+                </button>
+              ))}
             </div>
-            <pre className="code-block">{scripts[selectedScript]}</pre>
-          </div>
-        </motion.div>
+          </Card>
+          <Card
+            title={selectedScript}
+            actions={
+              <Button size="sm" variant={copied === selectedScript ? 'primary' : 'secondary'} onClick={() => copyToClipboard(scripts[selectedScript], selectedScript)}>
+                <Copy size={12} aria-hidden /> {copied === selectedScript ? 'Copied!' : 'Copy'}
+              </Button>
+            }
+          >
+            <pre className={s.code}>{scripts[selectedScript]}</pre>
+          </Card>
+        </div>
       )}
 
       {/* ── Special Occasions ───────────────────────────────────────────── */}
       {activeTab === 'occasions' && (
-        <motion.div variants={fadeInUp} className="grid-auto">
-          {occasions.map(o => (
-            <div key={o.occasion_id} className="card" style={{ borderLeft: `4px solid ${occasionColors[o.occasion_type]}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{o.name}</div>
-                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: `color-mix(in srgb, ${occasionColors[o.occasion_type]} 10%, transparent)`, color: occasionColors[o.occasion_type], fontWeight: 600, textTransform: 'capitalize' }}>
-                    {o.occasion_type}
-                  </span>
-                </div>
-                {o.is_active && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'var(--green)', color: '#fff' }}>Active</span>}
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>{o.campaign_theme}</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
-                <div><span style={{ color: 'var(--text-tertiary)' }}>Start:</span> {new Date(o.start_date).toLocaleDateString()}</div>
-                <div><span style={{ color: 'var(--text-tertiary)' }}>End:</span> {new Date(o.end_date).toLocaleDateString()}</div>
-                <div><span style={{ color: 'var(--text-tertiary)' }}>Coupon:</span> <code style={{ background: 'var(--bg-secondary)', padding: '1px 4px', borderRadius: 3 }}>{o.discount_code}</code></div>
-                <div>{o.coupon_active && <span style={{ color: 'var(--green)', fontWeight: 600 }}>{o.discount_value}% off</span>}</div>
-                {o.target_markets && (
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <span style={{ color: 'var(--text-tertiary)' }}>Markets:</span>{' '}
-                    {(Array.isArray(o.target_markets) ? o.target_markets : typeof o.target_markets === 'string' ? o.target_markets.replace(/[{}]/g, '').split(',').filter(Boolean) : []).join(', ')}
+        occasions.length > 0 ? (
+          <div className={s.occGrid}>
+            {occasions.map(o => (
+              <Card key={o.occasion_id}>
+                <div className={s.occHead}>
+                  <div>
+                    <div className={s.occName}>{o.name}</div>
+                    <Chip tone={occasionTones[o.occasion_type] ?? 'mute'} className={s.cap}>{o.occasion_type}</Chip>
                   </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </motion.div>
+                  {o.is_active && <Chip tone="ok" dot>Active</Chip>}
+                </div>
+                {o.campaign_theme && <p className={s.occTheme}>{o.campaign_theme}</p>}
+                <div className={s.occMeta}>
+                  <div><span className={s.muted}>Start:</span> {new Date(o.start_date).toLocaleDateString()}</div>
+                  <div><span className={s.muted}>End:</span> {new Date(o.end_date).toLocaleDateString()}</div>
+                  <div><span className={s.muted}>Coupon:</span> {o.discount_code ? <code className={s.mono}>{o.discount_code}</code> : '—'}</div>
+                  <div>{o.coupon_active && <span className={s.money}>{o.discount_value}% off</span>}</div>
+                  {o.target_markets && (
+                    <div className={s.occWide}>
+                      <span className={s.muted}>Markets:</span>{' '}
+                      {(Array.isArray(o.target_markets) ? o.target_markets : typeof o.target_markets === 'string' ? o.target_markets.replace(/[{}]/g, '').split(',').filter(Boolean) : []).join(', ')}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        ) : <Card><EmptyState icon={<Calendar size={20} />} title="No special occasions" /></Card>
       )}
 
       {/* ── GTM Container Snippet ───────────────────────────────────────── */}
       {activeTab === 'snippet' && snippet && (
-        <motion.div variants={fadeInUp}>
-          <div className="card" style={{ padding: 24, marginBottom: 16 }}>
-            <div className="card-header" style={{ marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>Head Snippet (place in &lt;head&gt;)</h3>
-              <button onClick={() => copyToClipboard(snippet.head, 'head')}
-                className={`btn btn-sm ${copied === 'head' ? 'btn-primary' : 'btn-secondary'}`} style={{ gap: 4 }}>
-                <Copy size={12} /> {copied === 'head' ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-            <pre className="code-block">{snippet.head}</pre>
-          </div>
-          <div className="card" style={{ padding: 24 }}>
-            <div className="card-header" style={{ marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>Body Snippet (place after &lt;body&gt;)</h3>
-              <button onClick={() => copyToClipboard(snippet.body, 'body')}
-                className={`btn btn-sm ${copied === 'body' ? 'btn-primary' : 'btn-secondary'}`} style={{ gap: 4 }}>
-                <Copy size={12} /> {copied === 'body' ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
-            <pre className="code-block">{snippet.body}</pre>
-          </div>
-        </motion.div>
+        <div className={s.stack}>
+          <Card
+            title="Head Snippet (place in <head>)"
+            actions={
+              <Button size="sm" variant={copied === 'head' ? 'primary' : 'secondary'} onClick={() => copyToClipboard(snippet.head, 'head')}>
+                <Copy size={12} aria-hidden /> {copied === 'head' ? 'Copied!' : 'Copy'}
+              </Button>
+            }
+          >
+            <pre className={s.code}>{snippet.head}</pre>
+          </Card>
+          <Card
+            title="Body Snippet (place after <body>)"
+            actions={
+              <Button size="sm" variant={copied === 'body' ? 'primary' : 'secondary'} onClick={() => copyToClipboard(snippet.body, 'body')}>
+                <Copy size={12} aria-hidden /> {copied === 'body' ? 'Copied!' : 'Copy'}
+              </Button>
+            }
+          >
+            <pre className={s.code}>{snippet.body}</pre>
+          </Card>
+        </div>
       )}
-    </motion.div>
+    </div>
   );
 }

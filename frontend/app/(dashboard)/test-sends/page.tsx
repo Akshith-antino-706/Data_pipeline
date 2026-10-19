@@ -1,19 +1,16 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
 import {
-  Play, CheckCircle2, XCircle, Loader2, Mail, Users, Globe,
+  Play, CheckCircle2, XCircle, Loader2, Mail, Globe,
   Calendar, Search, X, ClipboardList,
-  MousePointer, Eye, ArrowRight, Link2, Filter, ChevronDown,
+  MousePointer, Eye, Link2, Filter,
 } from 'lucide-react';
 import Link from 'next/link';
 import { authFetch } from '@/lib/api';
 import { contactTypeColor } from '@/lib/contactTypes';
-
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.06 } } };
+import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Field } from '@/components/ui';
+import styles from './sends.module.css';
 
 const TEMPLATES = [
   { day: 1, key: 'day1', label: 'Welcome',               desc: '4 service categories — Holidays / Cruises / Visas / Activities',                            ranking: 'Anthropic web-search' },
@@ -203,6 +200,12 @@ export default function TestSends() {
   };
 
   const selectedEmails = selected.map(s => s.email);
+  const activeFilterCount = Object.values(filters).filter(v => v).length;
+  const runningSchedules = schedules.filter(s => s.is_running).length;
+
+  // ── send confirmation (who / what / when) ─────────────────────────────
+  const [confirmTpl, setConfirmTpl] = useState<TsTemplate | null>(null);
+  const cancelConfirm = useCallback(() => setConfirmTpl(null), []);
 
   // ── send handler ──────────────────────────────────────────────────────
   const handleSend = useCallback(async (tpl: TsTemplate) => {
@@ -221,478 +224,291 @@ export default function TestSends() {
     }
   }, [selectedEmails, day6Dest]);
 
+  const FILTER_SELECTS: { key: keyof typeof filters; label: string; options: { val: string; label: string }[]; onPick?: (v: string) => void }[] = filterOptions ? [
+    { key: 'booking_status', label: 'Booking Status', options: (filterOptions.booking_status || []).map(v => ({ val: v, label: v })) },
+    { key: 'contact_type', label: 'Contact Type', options: (filterOptions.contact_type || []).map(v => ({ val: v, label: v })) },
+    { key: 'country', label: 'Country', options: (filterOptions.countries || []).map(c => ({ val: c.val, label: `${c.val} (${c.cnt.toLocaleString()})` })) },
+    { key: 'geography', label: 'Geography', options: (filterOptions.geography || []).map(v => ({ val: v, label: v })) },
+    { key: 'is_indian', label: 'Indian / Rest', options: [{ val: 'true', label: 'Indian' }, { val: 'false', label: 'Rest of World' }] },
+    { key: 'product_tier', label: 'Product Tier', options: (filterOptions.product_tier || []).map(v => ({ val: v, label: v })) },
+    { key: 'segment_id', label: 'Segment', options: (filterOptions.segments || []).map(s => ({ val: String(s.id), label: s.name })),
+      onPick: v => { updateFilter('segment_id', v); updateFilter('custom_segment_id', ''); } },
+    { key: 'custom_segment_id', label: 'Custom Segment', options: (filterOptions.custom_segments || []).map(s => ({ val: String(s.id), label: s.name })),
+      onPick: v => { updateFilter('custom_segment_id', v); updateFilter('segment_id', ''); } },
+  ] : [];
+
+  const FLOW: { label: string; value: number; tone: 'info' | 'ok' | 'gold' | 'bad' | 'mute'; icon: typeof Mail; pct: boolean }[] = [
+    { label: 'Sent',         value: flowStats.sent,        tone: 'info', icon: Mail,         pct: false },
+    { label: 'Opened',       value: flowStats.opened,      tone: 'ok',   icon: Eye,          pct: true },
+    { label: 'Clicked',      value: flowStats.clicked,     tone: 'mute', icon: MousePointer, pct: true },
+    { label: 'UTM Captured', value: flowStats.utmCaptures, tone: 'gold', icon: Link2,        pct: true },
+    { label: 'Failed',       value: flowStats.failed,      tone: 'bad',  icon: XCircle,      pct: false },
+  ];
+
   return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-
-      {/* ── Page header ──────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Mail size={26} /> Test Sends
-          </h1>
-          <p style={{ color: 'var(--muted-foreground)', margin: 0, fontSize: 14 }}>
-            Select recipients, start schedules, and send any of the 7 day templates. Internal QA only.
-          </p>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <Link
-            href="/test-sends/scheduler"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 7,
-              background: 'var(--card)', color: 'var(--foreground)',
-              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-              padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-              textDecoration: 'none',
-            }}
-          >
-            <Calendar size={15} style={{ color: '#e2b340' }} />
-            Scheduler Mail
-            {schedules.filter(s => s.is_running).length > 0 && (
-              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700 }}>
-                {schedules.filter(s => s.is_running).length}
-              </span>
-            )}
-          </Link>
-          <Link
-            href="/test-sends/emaillog"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 7,
-              background: 'var(--card)', color: 'var(--foreground)',
-              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-              padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-              textDecoration: 'none',
-            }}
-          >
-            <ClipboardList size={15} style={{ color: '#e2b340' }} />
-            View Email Logs
-          </Link>
-        </div>
-      </div>
-
-      {/* ── Recipients panel ─────────────────────────────────────────── */}
-      <div style={{
-        background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)',
-        padding: '16px 18px', marginBottom: 24,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <Users size={16} style={{ color: '#e2b340' }} />
-          <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
-            Recipients
-          </span>
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-            &middot; {selected.length} selected of {contactsTotal.toLocaleString()} contacts
-          </span>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-            {selected.length > 0 && (
-              <button
-                onClick={() => setSelected([])}
-                style={{ fontSize: 11, color: 'var(--muted-foreground)', background: 'transparent', border: 'none', cursor: 'pointer' }}
-              >
-                Clear all
-              </button>
-            )}
-            <button
-              onClick={() => setShowFilters(f => !f)}
-              style={{
-                fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 'var(--radius-sm)',
-                border: `1px solid ${showFilters || Object.values(filters).some(v => v) ? '#e2b340' : 'var(--border)'}`,
-                background: showFilters ? 'rgba(226,179,64,0.12)' : 'transparent',
-                color: showFilters || Object.values(filters).some(v => v) ? '#e2b340' : 'var(--muted-foreground)',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-              }}
-            >
-              <Filter size={12} /> Filters
-              {Object.values(filters).filter(v => v).length > 0 && (
-                <span style={{ fontSize: 9, padding: '0 5px', borderRadius: 10, background: '#e2b340', color: '#1a1a1a', fontWeight: 700 }}>
-                  {Object.values(filters).filter(v => v).length}
-                </span>
+    <div className={styles.page}>
+      <PageHeader
+        title="Test Sends"
+        breadcrumbs={[{ label: 'Sends' }]}
+        description="Select recipients, start schedules, and send any of the 7 day templates. Internal QA only."
+        actions={
+          <div className={styles.headLinks}>
+            <Link href="/test-sends/scheduler" className={styles.linkBtn}>
+              <Calendar size={16} className={styles.goldIcon} aria-hidden="true" />
+              <span>Scheduler Mail</span>
+              {runningSchedules > 0 && (
+                <Chip tone="ok" aria-label={`${runningSchedules} running`}>{runningSchedules}</Chip>
               )}
-            </button>
+            </Link>
+            <Link href="/test-sends/emaillog" className={styles.linkBtn}>
+              <ClipboardList size={16} className={styles.goldIcon} aria-hidden="true" />
+              View Email Logs
+            </Link>
           </div>
-        </div>
+        }
+      />
 
-        {/* ── Filter dropdowns ──────────────────────────────────────── */}
+      {/* ── Recipients ───────────────────────────────────────────────── */}
+      <Card
+        title={
+          <span className={styles.cardTitle}>
+            Recipients
+            <span className={styles.muted}>&middot; {selected.length} selected of {contactsTotal.toLocaleString()} contacts</span>
+          </span>
+        }
+        actions={
+          <div className={styles.cardActions}>
+            {selected.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => setSelected([])}>Clear all</Button>
+            )}
+            <Button
+              size="sm"
+              aria-expanded={showFilters}
+              className={showFilters || activeFilterCount > 0 ? styles.filterOn : undefined}
+              onClick={() => setShowFilters(f => !f)}
+            >
+              <Filter size={14} aria-hidden="true" /> Filters
+              {activeFilterCount > 0 && <span className={styles.countBadge}>{activeFilterCount}</span>}
+            </Button>
+          </div>
+        }
+      >
         {showFilters && filterOptions && (
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12,
-            padding: '12px 14px', background: 'var(--background)', borderRadius: 'var(--radius)',
-            border: '1px solid var(--border)',
-          }}>
-            {/* Booking Status */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Booking Status</label>
-              <select value={filters.booking_status} onChange={e => updateFilter('booking_status', e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                {(filterOptions.booking_status || []).map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            {/* Contact Type */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Contact Type</label>
-              <select value={filters.contact_type} onChange={e => updateFilter('contact_type', e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                {(filterOptions.contact_type || []).map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            {/* Country */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Country</label>
-              <select value={filters.country} onChange={e => updateFilter('country', e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                {(filterOptions.countries || []).map(c => <option key={c.val} value={c.val}>{c.val} ({c.cnt.toLocaleString()})</option>)}
-              </select>
-            </div>
-            {/* Geography */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Geography</label>
-              <select value={filters.geography} onChange={e => updateFilter('geography', e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                {(filterOptions.geography || []).map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            {/* Indian / Rest */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Indian / Rest</label>
-              <select value={filters.is_indian} onChange={e => updateFilter('is_indian', e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                <option value="true">Indian</option>
-                <option value="false">Rest of World</option>
-              </select>
-            </div>
-            {/* Product Tier */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Product Tier</label>
-              <select value={filters.product_tier} onChange={e => updateFilter('product_tier', e.target.value)}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                {(filterOptions.product_tier || []).map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            {/* Segment */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Segment</label>
-              <select value={filters.segment_id} onChange={e => { updateFilter('segment_id', e.target.value); updateFilter('custom_segment_id', ''); }}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                <optgroup label="Standard Segments">
-                  {(filterOptions.segments || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </optgroup>
-              </select>
-            </div>
-            {/* Custom Segment */}
-            <div>
-              <label style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>Custom Segment</label>
-              <select value={filters.custom_segment_id} onChange={e => { updateFilter('custom_segment_id', e.target.value); updateFilter('segment_id', ''); }}
-                style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                <option value="">All</option>
-                {(filterOptions.custom_segments || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            {/* Clear + Select All row */}
-            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <button onClick={() => setFilters({ booking_status: '', contact_type: '', country: '', geography: '', product_tier: '', is_indian: '', segment_id: '', custom_segment_id: '' })}
-                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted-foreground)', cursor: 'pointer' }}>
+          <div className={styles.filterGrid}>
+            {FILTER_SELECTS.map(f => (
+              <Field key={f.key} label={f.label}>
+                {ctrl => (
+                  <Select {...ctrl} value={filters[f.key]} onChange={e => (f.onPick ? f.onPick(e.target.value) : updateFilter(f.key, e.target.value))}>
+                    <option value="">All</option>
+                    {f.options.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
+                  </Select>
+                )}
+              </Field>
+            ))}
+            <div className={styles.filterFooter}>
+              <Button size="sm" variant="ghost" onClick={() => setFilters({ booking_status: '', contact_type: '', country: '', geography: '', product_tier: '', is_indian: '', segment_id: '', custom_segment_id: '' })}>
                 Clear Filters
-              </button>
-              <button onClick={handleSelectAllFiltered} disabled={selectingAll || contactsTotal === 0}
-                style={{
-                  fontSize: 11, fontWeight: 600, padding: '5px 14px', borderRadius: 'var(--radius-sm)',
-                  border: 'none', background: '#e2b340', color: '#1a1a1a', cursor: selectingAll ? 'wait' : 'pointer',
-                  opacity: contactsTotal === 0 ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 5,
-                }}>
-                {selectingAll ? <><Loader2 size={12} className="spin" /> Selecting...</> : <>Select All {contactsTotal.toLocaleString()} Filtered</>}
-              </button>
-              {Object.values(filters).some(v => v) && (
-                <span style={{ fontSize: 11, color: '#e2b340', fontWeight: 600 }}>
-                  {contactsTotal.toLocaleString()} contacts match
-                </span>
+              </Button>
+              <Button size="sm" variant="primary" onClick={handleSelectAllFiltered} disabled={selectingAll || contactsTotal === 0}>
+                {selectingAll ? <><Loader2 size={14} className="spin" /> Selecting...</> : <>Select All {contactsTotal.toLocaleString()} Filtered</>}
+              </Button>
+              {activeFilterCount > 0 && (
+                <span className={styles.matchText}>{contactsTotal.toLocaleString()} contacts match</span>
               )}
             </div>
           </div>
         )}
 
-        {/* Search input */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
-          background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-          padding: '8px 12px',
-        }}>
+        <div className={styles.search}>
           {contactsLoading
-            ? <Loader2 size={15} className="spin" style={{ color: 'var(--muted-foreground)' }} />
-            : <Search size={15} style={{ color: 'var(--muted-foreground)' }} />}
+            ? <Loader2 size={16} className={`spin ${styles.goldIcon}`} aria-label="Loading contacts" />
+            : <Search size={16} className={styles.muted} aria-hidden="true" />}
           <input
             type="text"
+            className={styles.searchInput}
             value={contactQuery}
             onChange={e => setContactQuery(e.target.value)}
             placeholder="Filter by email or name..."
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: 13, color: 'var(--foreground)' }}
+            aria-label="Filter contacts by email or name"
           />
           {contactQuery && (
-            <X size={13} style={{ cursor: 'pointer', color: 'var(--muted-foreground)' }} onClick={() => setContactQuery('')} />
+            <button type="button" className={styles.iconBtn} aria-label="Clear search" onClick={() => setContactQuery('')}>
+              <X size={14} />
+            </button>
           )}
         </div>
 
-        {/* Contact list */}
-        <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+        <div className={styles.list}>
           {contacts.length === 0 && !contactsLoading ? (
-            <div style={{ padding: '20px 14px', textAlign: 'center', fontSize: 12, color: 'var(--muted-foreground)' }}>
-              No contacts found
-            </div>
+            <EmptyState title="No contacts found" description="Try a different search or clear the filters." />
           ) : (
             contacts.map(c => {
               const isSel = selected.some(s => s.email === c.email);
+              const tc = c.contact_type ? contactTypeColor(c.contact_type) : null;
               return (
-                <div
-                  key={c.id}
+                <button
+                  type="button"
+                  key={c.id ?? c.email}
+                  aria-pressed={isSel}
                   onClick={() => toggleContact(c)}
-                  style={{
-                    padding: '9px 14px', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    borderBottom: '1px solid color-mix(in srgb, var(--border) 60%, transparent)',
-                    background: isSel ? 'rgba(226,179,64,0.08)' : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgba(226,179,64,0.04)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = isSel ? 'rgba(226,179,64,0.08)' : 'transparent'; }}
+                  className={`${styles.row} ${isSel ? styles.rowOn : ''}`}
                 >
-                  <div style={{
-                    width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                    border: `2px solid ${isSel ? '#e2b340' : 'var(--border)'}`,
-                    background: isSel ? '#e2b340' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {isSel && <CheckCircle2 size={10} style={{ color: '#1a1a1a' }} />}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: isSel ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.email}
+                  <span className={`${styles.box} ${isSel ? styles.boxOn : ''}`} aria-hidden="true">
+                    {isSel && <CheckCircle2 size={10} />}
+                  </span>
+                  <span className={styles.rowBody}>
+                    <span className={styles.rowLine}>
+                      <span className={`${styles.email} ${isSel ? styles.emailOn : ''}`}>{c.email}</span>
+                      {c.contact_type && tc && (
+                        <span className={styles.typeTag} style={{ background: tc.bg, color: tc.fg }}>{c.contact_type}</span>
+                      )}
+                      {c.booking_status && <Chip tone="ok">{c.booking_status}</Chip>}
+                    </span>
+                    {(c.name || c.country) && (
+                      <span className={styles.rowMeta}>
+                        {c.name && <span>{c.name}</span>}
+                        {c.country && <span>{c.country}</span>}
                       </span>
-                      {c.contact_type && (
-                        <span style={{
-                          fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
-                          letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
-                          background: contactTypeColor(c.contact_type).bg,
-                          color:      contactTypeColor(c.contact_type).fg,
-                        }}>
-                          {c.contact_type}
-                        </span>
-                      )}
-                      {c.booking_status && (
-                        <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 600, letterSpacing: 0.3, flexShrink: 0, background: 'rgba(34,197,94,0.12)', color: '#22c55e' }}>
-                          {c.booking_status}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 1 }}>
-                      {c.name && (
-                        <span style={{ fontSize: 11, color: 'var(--muted-foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {c.name}
-                        </span>
-                      )}
-                      {c.country && (
-                        <span style={{ fontSize: 10, color: 'var(--muted-foreground)', flexShrink: 0 }}>
-                          {c.country}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                    )}
+                  </span>
+                </button>
               );
             })
           )}
           {contacts.length < contactsTotal && (
-            <div
-              onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}
-              style={{ padding: '10px 14px', textAlign: 'center', fontSize: 12, color: '#e2b340', cursor: 'pointer', borderTop: '1px solid var(--border)' }}
-            >
+            <button type="button" className={styles.loadMore} onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}>
               {contactsLoading
-                ? <Loader2 size={13} className="spin" style={{ display: 'inline' }} />
+                ? <Loader2 size={14} className="spin" aria-label="Loading" />
                 : `Load more (${(contactsTotal - contacts.length).toLocaleString()} remaining)`}
-            </div>
+            </button>
           )}
         </div>
 
-        {/* Selected tags */}
         {selected.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+          <div className={styles.tags}>
             {selected.map((s, i) => (
-              <span key={`${s.email}_${i}`} style={{
-                fontSize: 11, padding: '3px 8px 3px 10px', borderRadius: 'var(--radius-sm)',
-                background: 'rgba(226,179,64,0.12)', color: '#e2b340', fontWeight: 500,
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}>
+              <span key={`${s.email}_${i}`} className={styles.tag}>
                 {s.email}
-                <X size={11} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => toggleContact(s)} />
+                <button type="button" className={styles.tagX} aria-label={`Remove ${s.email}`} onClick={() => toggleContact(s)}>
+                  <X size={12} />
+                </button>
               </span>
             ))}
           </div>
         )}
-      </div>
-
+      </Card>
 
       {/* ── Email Flow Tracker ───────────────────────────────────────── */}
-      <div style={{
-        background: 'var(--card)', border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-xl)', padding: '16px 20px', marginBottom: 24,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-          <Mail size={15} style={{ color: '#e2b340' }} />
-          <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
-            Email Tracking Flow
-          </span>
-          <Link href="/test-sends/emaillog" style={{
-            marginLeft: 'auto', fontSize: 11, color: '#e2b340', background: 'transparent',
-            border: '1px solid rgba(226,179,64,0.3)', borderRadius: 'var(--radius-sm)',
-            padding: '3px 10px', cursor: 'pointer', fontWeight: 600, textDecoration: 'none',
-          }}>View Logs</Link>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 0, alignItems: 'center' }}>
-          {[
-            { label: 'Sent',         value: flowStats.sent,        color: '#3b82f6', icon: Mail },
-            { label: 'Opened',       value: flowStats.opened,      color: '#22c55e', icon: Eye },
-            { label: 'Clicked',      value: flowStats.clicked,     color: '#a855f7', icon: MousePointer },
-            { label: 'UTM Captured', value: flowStats.utmCaptures, color: '#e2b340', icon: Link2 },
-            { label: 'Failed',       value: flowStats.failed,      color: '#ef4444', icon: XCircle },
-          ].map(({ label, value, color, icon: Icon }, i, arr) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center' }}>
-              <div style={{
-                flex: 1, textAlign: 'center', padding: '10px 8px',
-                background: `color-mix(in srgb, ${color} 6%, transparent)`,
-                borderRadius: 10, border: `1px solid color-mix(in srgb, ${color} 20%, transparent)`,
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${color} 12%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon size={15} color={color} />
-                  </div>
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
-                <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 3 }}>{label}</div>
-                {i > 0 && i < 4 && flowStats.sent > 0 && (
-                  <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>
-                    {Math.round((value / flowStats.sent) * 100)}%
-                  </div>
-                )}
-              </div>
-              {i < arr.length - 1 && (
-                <ArrowRight size={14} style={{ color: 'var(--muted-foreground)', flexShrink: 0, margin: '0 4px' }} />
+      <Card
+        title="Email Tracking Flow"
+        actions={<Link href="/test-sends/emaillog" className={`${styles.linkBtn} ${styles.linkSm}`}>View Logs</Link>}
+      >
+        <div className={styles.flow}>
+          {FLOW.map(({ label, value, tone, icon: Icon, pct }) => (
+            <div key={label} className={styles.stat}>
+              <div className={`${styles.statIcon} ${styles[`t-${tone}`]}`}><Icon size={16} aria-hidden="true" /></div>
+              <div className={styles.statValue}>{value}</div>
+              <div className={styles.statLabel}>{label}</div>
+              {pct && flowStats.sent > 0 && (
+                <div className={`${styles.statPct} ${styles[`c-${tone}`]}`}>{Math.round((value / flowStats.sent) * 100)}%</div>
               )}
             </div>
           ))}
         </div>
-      </div>
+      </Card>
 
       {/* ── Template cards ────────────────────────────────────────────── */}
-      <motion.div variants={staggerContainer} initial="hidden" animate="visible"
-        style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
+      <div className={styles.templates}>
         {TEMPLATES.map(tpl => {
           const isRunning = !!running[tpl.key];
           const result    = results[tpl.key];
           const disabled  = isRunning || selected.length === 0;
           return (
-            <motion.div key={tpl.key} variants={fadeInUp} style={{
-              background: 'var(--card)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-xl)', padding: '18px 20px',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{
-                      fontSize: 10, padding: '2px 8px', borderRadius: 'var(--radius-sm)',
-                      background: 'rgba(226,179,64,0.15)', color: '#e2b340', fontWeight: 700,
-                      letterSpacing: 1, textTransform: 'uppercase',
-                    }}>
-                      Day {tpl.day}
-                    </span>
-                    <span style={{ fontSize: 16, fontWeight: 600 }}>{tpl.label}</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--muted-foreground)', lineHeight: 1.45, marginBottom: 8 }}>
-                    {tpl.desc}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Globe size={11} /> {tpl.ranking}
-                  </div>
-                </div>
+            <Card key={tpl.key} className={styles.tplCard}>
+              <div className={styles.tplHead}>
+                <Chip tone="gold">Day {tpl.day}</Chip>
+                <span className={styles.tplName}>{tpl.label}</span>
               </div>
+              <p className={styles.tplDesc}>{tpl.desc}</p>
+              <span className={styles.tplRank}><Globe size={12} aria-hidden="true" /> {tpl.ranking}</span>
 
               {tpl.needsDestination && (
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{ fontSize: 11, color: 'var(--muted-foreground)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Destination
-                  </label>
-                  <select value={day6Dest} onChange={e => setDay6Dest(e.target.value)}
-                    style={{
-                      width: '100%', padding: '8px 10px', fontSize: 13,
-                      background: 'var(--background)', color: 'var(--foreground)',
-                      border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-                    }}>
-                    {DAY6_DESTINATIONS.map(d => <option key={d} value={d}>{d.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
-                  </select>
-                </div>
+                <Field label="Destination">
+                  {ctrl => (
+                    <Select {...ctrl} value={day6Dest} onChange={e => setDay6Dest(e.target.value)}>
+                      {DAY6_DESTINATIONS.map(d => <option key={d} value={d}>{destLabel(d)}</option>)}
+                    </Select>
+                  )}
+                </Field>
               )}
 
-              <button
-                onClick={() => handleSend(tpl)}
-                disabled={disabled}
-                style={{
-                  width: '100%',
-                  background: isRunning ? 'rgba(226,179,64,0.15)' : '#e2b340',
-                  color: isRunning ? '#e2b340' : '#1a1a1a',
-                  border: 'none', borderRadius: 'var(--radius)', padding: '10px 14px',
-                  fontSize: 12, fontWeight: 700, cursor: disabled ? 'not-allowed' : 'pointer',
-                  opacity: disabled && !isRunning ? 0.5 : 1, letterSpacing: 0.5, textTransform: 'uppercase',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                }}>
+              <Button variant="primary" className={styles.full} onClick={() => setConfirmTpl(tpl)} disabled={disabled}>
                 {isRunning
                   ? <><Loader2 size={14} className="spin" /> Sending...</>
-                  : <><Play size={14} /> Send ({selected.length})</>
-                }
-              </button>
+                  : <><Play size={14} /> Send ({selected.length})</>}
+              </Button>
 
               {result && (
-                <div style={{
-                  marginTop: 12, padding: '10px 12px', borderRadius: 'var(--radius)',
-                  background: result.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                  border: `1px solid ${result.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-                  fontSize: 11.5,
-                }}>
-                  {result.ok ? (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#22c55e', fontWeight: 600, marginBottom: 6 }}>
-                        <CheckCircle2 size={13} />
-                        Sent to {result.results?.length || 0} recipients
-                        {result.ranking?.source && <span style={{ color: 'var(--muted-foreground)', fontWeight: 400 }}>&middot; {result.ranking.source}</span>}
-                      </div>
-                      {result.ranking?.themes && result.ranking.themes.length > 0 && (
-                        <div style={{ color: 'var(--muted-foreground)', fontSize: 11, marginBottom: 6 }}>
-                          <strong>Trending:</strong> {result.ranking.themes.slice(0, 3).join(' · ')}
-                        </div>
-                      )}
-                      <div style={{ display: 'grid', gap: 3, fontFamily: 'var(--font-mono, monospace)', fontSize: 10.5 }}>
-                        {(result.results || []).map((r, i) => (
-                          <div key={i} style={{ color: r.success ? 'var(--foreground)' : '#ef4444', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>{r.success ? '✓' : '✗'} {r.email}</span>
-                            <span style={{ color: 'var(--muted-foreground)' }}>{r.success ? `${r.ms ?? 0}ms` : (r.error || '').slice(0, 30)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ef4444' }}>
-                      <XCircle size={13} /> {result.error || 'Failed'}
+                result.ok ? (
+                  <div className={`${styles.result} ${styles.resultOk}`} role="status">
+                    <div className={styles.resultHead}>
+                      <CheckCircle2 size={14} aria-hidden="true" />
+                      Sent to {result.results?.length || 0} recipients
+                      {result.ranking?.source && <span className={styles.muted}>&middot; {result.ranking.source}</span>}
                     </div>
-                  )}
-                </div>
+                    {result.ranking?.themes && result.ranking.themes.length > 0 && (
+                      <div className={styles.muted}>
+                        <strong>Trending:</strong> {result.ranking.themes.slice(0, 3).join(' · ')}
+                      </div>
+                    )}
+                    <div className={`${styles.resultRows} ${styles.mono}`}>
+                      {(result.results || []).map((r, i) => (
+                        <div key={i} className={`${styles.resultRow} ${r.success ? '' : styles.resultRowBad}`}>
+                          <span>{r.success ? '✓' : '✗'} {r.email}</span>
+                          <span className={styles.muted}>{r.success ? `${r.ms ?? 0}ms` : (r.error || '').slice(0, 30)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`${styles.result} ${styles.resultBad}`} role="alert">
+                    <XCircle size={14} aria-hidden="true" /> <span>{result.error || 'Failed'}</span>
+                  </div>
+                )
               )}
-            </motion.div>
+            </Card>
           );
         })}
-      </motion.div>
+      </div>
 
-    </motion.div>
+      <ConfirmDialog
+        open={confirmTpl !== null}
+        title={confirmTpl ? `Send Day ${confirmTpl.day} · ${confirmTpl.label}?` : 'Send email?'}
+        description={confirmTpl ? (
+          <dl className={styles.confirmList}>
+            <dt>Who</dt>
+            <dd>
+              {selectedEmails.length} recipient{selectedEmails.length === 1 ? '' : 's'}: {selectedEmails.slice(0, 5).join(', ')}
+              {selectedEmails.length > 5 ? ` and ${selectedEmails.length - 5} more` : ''}
+            </dd>
+            <dt>What</dt>
+            <dd>Day {confirmTpl.day} {confirmTpl.label} template{confirmTpl.needsDestination ? ` for ${destLabel(day6Dest)}` : ''}</dd>
+            <dt>When</dt>
+            <dd>Immediately, as soon as you confirm. This sends real email.</dd>
+          </dl>
+        ) : undefined}
+        confirmLabel="Confirm send"
+        onCancel={cancelConfirm}
+        onConfirm={() => {
+          const tpl = confirmTpl;
+          setConfirmTpl(null);
+          if (tpl) handleSend(tpl);
+        }}
+      />
+    </div>
   );
+}
+
+function destLabel(d: string): string {
+  return d.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
 }

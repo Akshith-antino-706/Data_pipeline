@@ -1,41 +1,63 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import type { Variants } from 'framer-motion';
-import { getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport, authFetch } from '@/lib/api';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import type { ReactNode } from 'react';
+import {
+  getTemplates, getTemplate, previewTemplate, previewTemplateAI, renderPreviewHtml, createTemplate, updateTemplate, deleteTemplate,
+  approveTemplate, rejectTemplate, sendTestDay, sendTemplate, analyzeTestEmail, checkInboxPlacement, getStoredQaReport, authFetch,
+} from '@/lib/api';
 import WhatsAppTestSend from './WhatsAppTestSend';
 import CreateWhatsAppTemplate from './CreateWhatsAppTemplate';
 import SmsTestSend from './SmsTestSend';
 import RcsTestSend from './RcsTestSend';
-import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, FileText, Braces, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet, LayoutGrid, List } from 'lucide-react';
+import { Eye, X, Mail, MessageCircle, Smartphone, Bell, Plus, Upload, Edit2, Trash2, Sparkles, Send, Search, Info, RefreshCw, Monitor, Tablet, LayoutGrid, List, Check } from 'lucide-react';
 import hotToast from 'react-hot-toast';
+import { Button } from '@/components/ui/Button';
+import { Input, Select, Field } from '@/components/ui/Field';
+import { Card } from '@/components/ui/Card';
+import { Chip, StatusChip, type ChipTone } from '@/components/ui/Chip';
+import { Tabs } from '@/components/ui/Tabs';
+import { Table } from '@/components/ui/Table';
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { PageHeader } from '@/components/ui/PageHeader';
 import type { QueryParams } from '@/types/api';
 import type { ContentTemplate, TestSendRecipient, InboxPlacement, QaReportData, QaReportState, TemplatePreviewState, PreviewFit } from '@/types/f4Content';
+import styles from './content.module.css';
 
-interface ChannelOption { key: string; label: string; icon?: typeof Mail }
 interface DynVar { key: string; value: string }
 interface SendOptions { emails?: string[]; mode?: string }
-interface QaSectionProps { icon: string; title: string; items: string[]; okText: string; danger?: boolean }
+interface QaSectionProps { title: string; items: string[]; okText: string; danger?: boolean }
+type ChannelKey = 'all' | 'email' | 'whatsapp' | 'sms' | 'push';
+type ToolKey = 'email' | 'whatsapp' | 'sms' | 'rcs';
+type Device = 'desktop' | 'tablet' | 'mobile';
 
-const STATUS_BADGE: Record<string, string | undefined> = { draft: 'badge-gray', pending_approval: 'badge-orange', approved: 'badge-green', rejected: 'badge-red' };
-const CHANNEL_ICON: Record<string, typeof Mail | undefined> = { email: Mail, whatsapp: MessageCircle, sms: Smartphone, push: Bell };
+const STATUS_META: Record<string, { label: string; tone: ChipTone } | undefined> = {
+  draft: { label: 'Draft', tone: 'mute' },
+  pending_approval: { label: 'Waiting for approval', tone: 'gold' },
+  approved: { label: 'Approved', tone: 'ok' },
+  rejected: { label: 'Rejected', tone: 'bad' },
+};
+const statusMeta = (s: string | undefined) => STATUS_META[s || ''] || { label: s || 'Unknown', tone: 'mute' as ChipTone };
+
 const CHANNELS = [
   { key: 'email', label: 'Email', icon: Mail },
   { key: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
   { key: 'sms', label: 'SMS', icon: Smartphone },
   { key: 'push', label: 'Push', icon: Bell },
-];
+] as const;
+const CHANNEL_LABEL: Record<string, string | undefined> = { email: 'Email', whatsapp: 'WhatsApp', sms: 'SMS', push: 'Push' };
+const CHANNEL_ICON: Record<string, typeof Mail | undefined> = { email: Mail, whatsapp: MessageCircle, sms: Smartphone, push: Bell };
+const channelLabel = (c: string | undefined) => CHANNEL_LABEL[c || ''] || c || 'Unknown';
 
 const BLANK_FORM = { name: '', channel: 'email', subject: '', body: '', fileName: '' };
 
-// Fixed QA test inbox — the "Test Send to Rocky" button always targets this address
+// Fixed QA test inbox — the "Test Send" button always targets this address
 // (this is the IMAP inbox the real spam-placement check reads from).
 const ROCKY_EMAIL = 'rocky.86agency@gmail.com';
 
 const SYSTEM_VARS = new Set(['first_name', 'full_name', 'email', 'phone', 'country', 'city', 'company', 'segment', 'unsubscribe_link', 'utm_link',
   'product_affinity_1', 'product_affinity_2', 'product_affinity_3', 'service_affinity_1', 'service_affinity_2', 'service_affinity_3']);
-
 
 const PREVIEW_SAMPLE: Record<string, string> = {
   USER_NAME: 'Avinash Kumar', USER_FIRST_NAME: 'Avinash', USER_EMAIL: 'avinash@example.com',
@@ -82,39 +104,94 @@ const fillPreviewHtml = (html: string) => String(html || '').replace(/\{\{\s*([A
   return `<span style="background:#fde68a;color:#92400e;padding:0 3px;border-radius:3px;font-size:11px">{{${raw}}}</span>`;
 });
 
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
-
 const stripHtml = (html: string | null | undefined) => {
   if (!html) return '';
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 };
 
+function extractVars(html: string): DynVar[] {
+  const matches = [...html.matchAll(/\{\{(\w+)\}\}/g)];
+  const unique = [...new Set(matches.map(m => m[1]))];
+  return unique.map(key => ({ key, value: '' }));
+}
+
+// Inject a viewport meta so responsive emails reflow at the iframe width.
+function withViewport(raw: string): string {
+  const VP = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+  if (/name=["']viewport["']/i.test(raw)) return raw;
+  return /<head[^>]*>/i.test(raw) ? raw.replace(/<head[^>]*>/i, m => `${m}${VP}`) : `${VP}${raw}`;
+}
+
+const formatDate = (iso: string | undefined) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const toInt = (v: string | number | undefined): number => {
+  const n = typeof v === 'number' ? v : parseInt(v ?? '', 10);
+  return Number.isFinite(n) ? n : 0;
+};
+
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+
+const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const tsGet = (path: string) => authFetch(`${apiBase}${path}`, { credentials: 'include' })
+  .then(r => r.json() as Promise<{ data?: unknown }>)
+  .then(d => d.data || d); // unwrap { data: ... } envelope
+
+function QaSection({ title, items, okText, danger }: QaSectionProps) {
+  return (
+    <div className={styles.qaSection}>
+      <div className={styles.eyebrow} style={{ marginBottom: 8 }}>{title}</div>
+      {items.length === 0 ? (
+        <div className={styles.qaOk}>✓ {okText}</div>
+      ) : (
+        <ul>{items.map((it, i) => <li key={i} className={danger ? styles.qaBad : undefined}>{it}</li>)}</ul>
+      )}
+    </div>
+  );
+}
+
+function Modal({ label, onClose, className, children }: { label: string; onClose: () => void; className?: string; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className={styles.backdrop} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={[styles.dialog, className ?? ''].join(' ')} role="dialog" aria-modal="true" aria-label={label}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function Content() {
   const [templates, setTemplates] = useState<ContentTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [preview, setPreview] = useState<TemplatePreviewState | null>(null);
-  const [previewDevice, setPreviewDevice] = useState('desktop'); // desktop | tablet | mobile
+  const [previewDevice, setPreviewDevice] = useState<Device>('desktop');
   const previewIframeRef = useRef<HTMLIFrameElement>(null);
   const [previewFit, setPreviewFit] = useState<PreviewFit>({ scale: 1, height: null });
 
-  // Re-measure when the device toggle changes (iframe already loaded)
-  useEffect(() => { fitPreview(); }, [previewDevice]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Measure the email's rendered width and scale the iframe to fit the device frame
   // (Gmail-style "fit to width") so fixed-width emails don't horizontal-scroll on mobile.
-  function fitPreview() {
+  const fitPreview = useCallback(() => {
     const ifr = previewIframeRef.current;
     if (!ifr) return;
     if (previewDevice === 'desktop') { setPreviewFit({ scale: 1, height: null, contentW: null }); return; }
     const frameW = previewDevice === 'mobile' ? 390 : 768;
     try {
-      const doc = ifr.contentWindow!.document;
+      const doc = ifr.contentWindow?.document;
+      if (!doc) return;
       const contentW = Math.max(doc.body?.scrollWidth || 0, doc.documentElement?.scrollWidth || 0, frameW);
       const contentH = Math.max(doc.body?.scrollHeight || 0, doc.documentElement?.scrollHeight || 0);
       const scale = contentW > frameW ? frameW / contentW : 1;
@@ -124,8 +201,12 @@ export default function Content() {
         return { scale, contentW, contentH, height: contentH ? contentH * scale : null };
       });
     } catch { setPreviewFit({ scale: 1, height: null, contentW: null }); }
-  }
-  const [channelFilter, setChannelFilter] = useState('all');
+  }, [previewDevice]);
+
+  // Re-measure when the device toggle changes (iframe already loaded)
+  useEffect(() => { fitPreview(); }, [fitPreview]);
+
+  const [channelFilter, setChannelFilter] = useState<ChannelKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState(() => {
     if (typeof window === 'undefined') return 'card';
@@ -134,16 +215,22 @@ export default function Content() {
   useEffect(() => {
     if (typeof window !== 'undefined') window.localStorage.setItem('content.viewMode', viewMode);
   }, [viewMode]);
+  const [toolTab, setToolTab] = useState<ToolKey>('email');
 
-  // modal state: null = closed, 'create' = new, object = editing existing
+  // editor state: null = library, 'create' = new, object = editing existing
   const [modal, setModal] = useState<'create' | ContentTemplate | null>(null);
   const [form, setForm] = useState({ ...BLANK_FORM });
-  const [dynVars, setDynVars] = useState<DynVar[]>([]); // [{ key: 'first_name', value: '' }, ...]
+  const [dynVars, setDynVars] = useState<DynVar[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<ContentTemplate | null>(null); // template object to confirm
+  const [confirmDelete, setConfirmDelete] = useState<ContentTemplate | null>(null);
+  const [liveDevice, setLiveDevice] = useState<'desktop' | 'mobile'>('desktop');
 
-  // Edit-modal live preview — debounced server render so what you see in the
+  // Approval review side panel
+  const [review, setReview] = useState<{ template: ContentTemplate; html: string | null; loading: boolean } | null>(null);
+  const [reviewBusy, setReviewBusy] = useState<'approve' | 'reject' | null>(null);
+
+  // Editor live preview — debounced server render so what you see in the
   // preview pane matches what EmailRenderer will actually send. Falls back to
   // the raw HTML (with client-side fill) while the server is still rendering
   // or if the request fails.
@@ -166,34 +253,35 @@ export default function Content() {
   }, [form.body]);
 
   // ── Global recipients (shared by all card Test Send buttons) ──
-  const [recipients, setRecipients] = useState<TestSendRecipient[]>([]);        // searched/listed contacts
+  const [recipients, setRecipients] = useState<TestSendRecipient[]>([]);
   const [recipQuery, setRecipQuery] = useState('');
   const [recipTotal, setRecipTotal] = useState(0);
   const [recipLoading, setRecipLoading] = useState(false);
-  const [selectedEmails, setSelectedEmails] = useState<string[]>([]); // globally selected
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
   const [sendingDay, setSendingDay] = useState<number | null>(null);       // templateId currently sending
-  const [sendingMode, setSendingMode] = useState<string | null>(null);     // 'rocky' | 'selected' — which button is sending
+  const [sendingMode, setSendingMode] = useState<string | null>(null);     // 'rocky' | 'selected'
   const [flowStats, setFlowStats] = useState({ sent: 0, opened: 0, clicked: 0, utm: 0, failed: 0 });
 
   // ── Post-send QA report ──
-  const [qaReport, setQaReport] = useState<QaReportState | null>(null);   // { template } open + report
+  const [qaReport, setQaReport] = useState<QaReportState | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
-  const [placement, setPlacement] = useState<InboxPlacement | null>(null); // real inbox placement result
+  const [placement, setPlacement] = useState<InboxPlacement | null>(null);
   const [placementLoading, setPlacementLoading] = useState(false);
 
   async function checkPlacement() {
     const subject = qaReport?.report?.subject || '';
-    const tid = qaReport?.template?.id;
+    const tid = qaReport?.template.id;
+    if (tid === undefined) return;
     setPlacementLoading(true); setPlacement(null);
     try {
-      const res = await checkInboxPlacement(subject, tid!) as { data?: InboxPlacement } | null;
+      const res = await checkInboxPlacement(subject, tid) as { data?: InboxPlacement } | null;
       setPlacement(res?.data || { available: false, error: 'No response' });
     } catch (e) {
       setPlacement({ available: false, error: (e as Error).message });
     } finally { setPlacementLoading(false); }
   }
 
-  // View the STORED report for a template (the (i) button — no re-send)
+  // View the STORED report for a template (no re-send)
   async function viewStoredReport(tpl: ContentTemplate) {
     setQaReport({ template: tpl, report: null });
     setPlacement(null);
@@ -211,17 +299,12 @@ export default function Content() {
     } finally { setQaLoading(false); }
   }
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-  const tsGet = (path: string) => authFetch(`${apiBase}${path}`, { credentials: 'include' })
-    .then(r => r.json() as Promise<{ data?: unknown }>)
-    .then(d => d.data || d); // unwrap { data: ... } envelope
-
   // Load contacts (debounced on query)
   useEffect(() => {
     const t = setTimeout(async () => {
       setRecipLoading(true);
       try {
-        const qs = new URLSearchParams({ limit: 50, offset: 0 } as unknown as Record<string, string>);
+        const qs = new URLSearchParams({ limit: '50', offset: '0' });
         if (recipQuery.trim().length >= 2) qs.set('q', recipQuery.trim());
         const res = await tsGet(`/api/v3/test-sends/contacts?${qs}`) as { contacts?: TestSendRecipient[]; total?: number };
         setRecipients(res.contacts || []);
@@ -230,7 +313,7 @@ export default function Content() {
       setRecipLoading(false);
     }, 300);
     return () => clearTimeout(t);
-  }, [recipQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [recipQuery]);
 
   // Load tracking flow stats
   useEffect(() => {
@@ -241,13 +324,13 @@ export default function Content() {
           tsGet('/api/v3/test-sends/utm-log?limit=1'),
         ]) as [{ byStatus?: { status: string; count?: string }[] } | null, { total?: number } | null];
         const byStatus = summary?.byStatus || [];
-        const g = (s: string) => parseInt(byStatus.find(r => r.status === s)?.count || 0 as unknown as string);
+        const g = (s: string) => toInt(byStatus.find(r => r.status === s)?.count);
         setFlowStats({
           sent: g('sent') + g('opened') + g('clicked'),
           opened: g('opened') + g('clicked'),
           clicked: g('clicked'),
           failed: g('failed'),
-          utm: utmLog?.total || 0,
+          utm: toInt(utmLog?.total),
         });
       } catch { /* ignore */ }
     })();
@@ -257,115 +340,71 @@ export default function Content() {
     setSelectedEmails(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
   };
 
+  // Shared QA flow after a send: content report, then real IMAP inbox placement.
+  async function runQaAfterSend(tpl: ContentTemplate) {
+    setQaReport({ template: tpl, report: null });
+    setPlacement(null);
+    setQaLoading(true);
+    // 1. Content report (grammar / missing / urls / heuristic)
+    let report: QaReportData | null = null;
+    try {
+      const res = await analyzeTestEmail(tpl.id) as { data?: QaReportData } | null;
+      report = res?.data || null;
+    } catch (e) {
+      report = { error: (e as Error).message };
+    }
+    const subject = report?.subject || '';
+    // 2. Real spam placement via IMAP — retry while Gmail delivers (~15-40s)
+    let placementResult: InboxPlacement | null = null;
+    for (let attempt = 1; attempt <= 4 && !report?.error; attempt++) {
+      await new Promise(r => setTimeout(r, attempt === 1 ? 15000 : 12000));
+      try {
+        const res = await checkInboxPlacement(subject, tpl.id) as { data?: InboxPlacement } | null;
+        const p = res?.data;
+        if (p?.available && p.placement !== 'not_found') { placementResult = p; break; }
+        placementResult = p || { available: false, error: 'Not found after retries' };
+      } catch (e) {
+        placementResult = { available: false, error: (e as Error).message };
+      }
+    }
+    // 3. Reveal the complete report at once
+    setPlacement(placementResult);
+    setQaReport({ template: tpl, report });
+    setQaLoading(false);
+  }
+
+  // Day 1-7 email templates (id == day number) → AI test-day send.
   async function handleCardTestSend(tpl: ContentTemplate, { emails, mode }: SendOptions = {}) {
-    const recipients = emails && emails.length ? emails : selectedEmails;
-    if (recipients.length === 0) return;
-    const day = tpl.id; // template id 1-7 == day number
+    const to = emails && emails.length ? emails : selectedEmails;
+    if (to.length === 0) return;
     setSendingDay(tpl.id);
     setSendingMode(mode || 'selected');
     try {
-      const data = await sendTestDay(day, recipients) as { sent?: number } | null;
-      hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? recipients.length} recipient(s)`);
-
-      // Open modal in a single loading state — show the FULL report (content + real
-      // spam placement) all at once when everything is ready.
-      setQaReport({ template: tpl, report: null });
-      setPlacement(null);
-      setQaLoading(true);
-
-      // 1. Content report (grammar / missing / urls / heuristic) — fast
-      let report: QaReportData | null = null;
-      try {
-        const res = await analyzeTestEmail(tpl.id) as { data?: QaReportData } | null;
-        report = res?.data || null;
-      } catch (e) {
-        report = { error: (e as Error).message };
-      }
-      const subject = report?.subject || '';
-
-      // 2. Real spam placement via IMAP — retry while Gmail delivers (~15-40s)
-      let placementResult: InboxPlacement | null = null;
-      for (let attempt = 1; attempt <= 4 && !report?.error; attempt++) {
-        await new Promise(r => setTimeout(r, attempt === 1 ? 15000 : 12000));
-        try {
-          const res = await checkInboxPlacement(subject, tpl.id) as { data?: InboxPlacement } | null;
-          const p = res?.data;
-          if (p?.available && p.placement !== 'not_found') { placementResult = p; break; }
-          placementResult = p || { available: false, error: 'Not found after retries' };
-        } catch (e) {
-          placementResult = { available: false, error: (e as Error).message };
-        }
-      }
-
-      // 3. Reveal the complete report at once
-      setPlacement(placementResult);
-      setQaReport({ template: tpl, report });
-      setQaLoading(false);
+      const data = await sendTestDay(tpl.id, to) as { sent?: number } | null;
+      hotToast.success(`Sent ${tpl.name} to ${data?.sent ?? to.length} recipient(s)`);
+      await runQaAfterSend(tpl);
     } catch (err) {
       hotToast.error((err as Error).message || 'Send failed');
     } finally { setSendingDay(null); setSendingMode(null); }
   }
 
-  // Send for non-Day approved email templates (e.g. weekly broadcasts ids 83-89).
-  // No QA / IMAP placement flow — those are Day1-7 only. Just send + toast.
+  // Non-Day approved email templates (e.g. weekly broadcasts) → generic send-template.
   async function handleGenericSend(tpl: ContentTemplate, { emails, mode }: SendOptions = {}) {
-    const recipients = emails && emails.length ? emails : selectedEmails;
-    if (recipients.length === 0) return;
+    const to = emails && emails.length ? emails : selectedEmails;
+    if (to.length === 0) return;
     setSendingDay(tpl.id);
     setSendingMode(mode || 'selected');
     try {
-      const res = await sendTemplate(tpl.id, recipients) as { data?: { sent?: number } } | null;
-      const sent = res?.data?.sent ?? recipients.length;
-      hotToast.success(`Sent "${tpl.name}" to ${sent} recipient(s)`);
-
-      // QA scan (Claude) + inbox placement — same as Day 1-7 Test Send
-      setQaReport({ template: tpl, report: null });
-      setPlacement(null);
-      setQaLoading(true);
-
-      // 1. Content report (grammar / missing / urls / spam-risk) via Claude
-      let report: QaReportData | null = null;
-      try {
-        const r = await analyzeTestEmail(tpl.id) as { data?: QaReportData } | null;
-        report = r?.data || null;
-      } catch (e) {
-        report = { error: (e as Error).message };
-      }
-      const subject = report?.subject || '';
-
-      // 2. Real inbox placement via IMAP — retry while Gmail delivers (~15-40s)
-      let placementResult: InboxPlacement | null = null;
-      for (let attempt = 1; attempt <= 4 && !report?.error; attempt++) {
-        await new Promise(r => setTimeout(r, attempt === 1 ? 15000 : 12000));
-        try {
-          const r = await checkInboxPlacement(subject, tpl.id) as { data?: InboxPlacement } | null;
-          const p = r?.data;
-          if (p?.available && p.placement !== 'not_found') { placementResult = p; break; }
-          placementResult = p || { available: false, error: 'Not found after retries' };
-        } catch (e) {
-          placementResult = { available: false, error: (e as Error).message };
-        }
-      }
-
-      // 3. Reveal the complete report at once
-      setPlacement(placementResult);
-      setQaReport({ template: tpl, report });
-      setQaLoading(false);
+      const res = await sendTemplate(tpl.id, to) as { data?: { sent?: number } } | null;
+      hotToast.success(`Sent "${tpl.name}" to ${res?.data?.sent ?? to.length} recipient(s)`);
+      await runQaAfterSend(tpl);
     } catch (err) {
       hotToast.error((err as Error).message || 'Send failed');
       setQaLoading(false);
     } finally { setSendingDay(null); setSendingMode(null); }
   }
 
-  function extractVars(html: string) {
-    const matches = [...html.matchAll(/\{\{(\w+)\}\}/g)];
-    const unique = [...new Set(matches.map(m => m[1]))];
-    return unique.map(key => ({ key, value: '' }));
-  }
-
-  // Server-side pagination + channel + search filter. Backend supports
-  // page/limit/channel/search params and returns { data, total, page, limit }.
-  // Debounced 300 ms so typing in the search box doesn't hammer the API.
+  // Server-side pagination + channel + search filter, debounced 300 ms.
   useEffect(() => {
     const t = setTimeout(() => {
       setLoading(true);
@@ -375,14 +414,15 @@ export default function Content() {
       if (q) params.search = q;
       (getTemplates(params) as Promise<{ data?: ContentTemplate[]; total?: number }>)
         .then(res => {
-          setTemplates(res.data || []);
-          setTotal(res.total ?? (res.data?.length || 0));
-          setLoading(false);
+          setTemplates(res?.data || []);
+          setTotal(toInt(res?.total ?? (res?.data?.length || 0)));
+          setLoadError(null);
         })
-        .catch(() => setLoading(false));
+        .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : 'Request failed'))
+        .finally(() => { setLoading(false); setLoaded(true); });
     }, 300);
     return () => clearTimeout(t);
-  }, [page, pageSize, channelFilter, searchQuery]);
+  }, [page, pageSize, channelFilter, searchQuery, reloadKey]);
 
   // Reset to page 1 whenever the page-size, channel filter, or search changes.
   useEffect(() => { setPage(1); }, [pageSize, channelFilter, searchQuery]);
@@ -396,7 +436,7 @@ export default function Content() {
       const res = await previewTemplate(tpl.id) as { data?: { html?: string } } | null;
       setPreview({ template: tpl, html: res?.data?.html || '', loading: false });
     } catch (err) {
-      setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${(err as Error).message || 'Preview failed'}</pre>`, loading: false });
+      setPreview({ template: tpl, html: `<pre style="padding:20px;color:#b42318">${(err as Error).message || 'Preview failed'}</pre>`, loading: false });
     }
   }
 
@@ -408,19 +448,46 @@ export default function Content() {
       const res = await previewTemplateAI(tpl.id) as { data?: { html?: string } } | null;
       setPreview({ template: tpl, html: res?.data?.html || '', loading: false, ai: true });
     } catch (err) {
-      setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${(err as Error).message || 'AI preview failed'}</pre>`, loading: false, ai: true });
+      setPreview({ template: tpl, html: `<pre style="padding:20px;color:#b42318">${(err as Error).message || 'AI preview failed'}</pre>`, loading: false, ai: true });
     }
+  }
+
+  async function openReview(tpl: ContentTemplate) {
+    setReview({ template: tpl, html: null, loading: tpl.channel === 'email' });
+    if (tpl.channel !== 'email') return;
+    try {
+      const res = await previewTemplate(tpl.id) as { data?: { html?: string } } | null;
+      setReview(r => r && r.template.id === tpl.id ? { ...r, html: res?.data?.html || '', loading: false } : r);
+    } catch {
+      setReview(r => r && r.template.id === tpl.id ? { ...r, html: '', loading: false } : r);
+    }
+  }
+
+  async function decide(kind: 'approve' | 'reject') {
+    if (!review) return;
+    const tpl = review.template;
+    setReviewBusy(kind);
+    try {
+      const res = await (kind === 'approve' ? approveTemplate(tpl.id) : rejectTemplate(tpl.id)) as { data?: ContentTemplate } | null;
+      const status = kind === 'approve' ? 'approved' : 'rejected';
+      setTemplates(prev => prev.map(t => t.id === tpl.id ? { ...t, ...(res?.data || {}), status: res?.data?.status || status } : t));
+      hotToast.success(kind === 'approve' ? 'Template approved' : 'Template rejected');
+      setReview(null);
+    } catch (err) {
+      hotToast.error((err as Error).message || (kind === 'approve' ? 'Failed to approve' : 'Failed to reject'));
+    } finally { setReviewBusy(null); }
   }
 
   function openCreate() {
     setForm({ ...BLANK_FORM });
     setDynVars([]);
+    setLiveDevice('desktop');
     setModal('create');
   }
 
   async function openEdit(tpl: ContentTemplate) {
-    // Open immediately with whatever the list row has (may be empty body for
-    // templates linked via html_template_id) so the modal feels instant…
+    // Open immediately with whatever the list row has, then fetch the full record
+    // (source html_body with Liquid tags intact). Falls back to the server-rendered preview.
     setForm({
       name: tpl.name || '',
       channel: tpl.channel || 'email',
@@ -429,14 +496,11 @@ export default function Content() {
       fileName: tpl.body ? 'existing-template.html' : '',
     });
     setDynVars(extractVars(tpl.body || ''));
+    setLiveDevice('desktop');
     setModal(tpl);
 
-    // …then fetch the full record. getById now LEFT JOINs email_html_templates
-    // and returns the SOURCE html_body so the editor shows the actual template
-    // (with Liquid tags intact), not a rendered output. Falls back to the
-    // server-rendered preview if no source HTML exists.
     try {
-      const res = await getTemplate(tpl.id) as { data?: ContentTemplate } & ContentTemplate | null;
+      const res = await getTemplate(tpl.id) as ({ data?: ContentTemplate } & Partial<ContentTemplate>) | null;
       const full = res?.data || res;
       const sourceHtml = full?.body || full?.html_body || '';
       if (sourceHtml) {
@@ -463,7 +527,7 @@ export default function Content() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const html = ev.target!.result as string;
+      const html = String(ev.target?.result ?? '');
       setForm(f => ({ ...f, body: html, fileName: file.name }));
       setDynVars(extractVars(html));
     };
@@ -490,6 +554,7 @@ export default function Content() {
   async function handleSave() {
     if (!form.name.trim()) { hotToast.error('Template name is required'); return; }
     if (!form.body.trim()) { hotToast.error('Please upload an HTML file'); return; }
+    if (modal === null) return;
 
     setSaving(true);
     try {
@@ -508,8 +573,9 @@ export default function Content() {
         setTotal(t => t + 1);
         hotToast.success('Template created');
       } else {
-        const res = await updateTemplate(modal!.id, payload) as { data: ContentTemplate };
-        setTemplates(prev => prev.map(t => t.id === modal!.id ? res.data : t));
+        const id = modal.id;
+        const res = await updateTemplate(id, payload) as { data: ContentTemplate };
+        setTemplates(prev => prev.map(t => t.id === id ? res.data : t));
         hotToast.success('Template updated');
       }
       setModal(null);
@@ -520,945 +586,653 @@ export default function Content() {
     }
   }
 
-  // Only show the full-page spinner on the very first load. Once we've rendered
-  // once, keep the layout mounted so typing in the search box doesn't unmount
-  // the input on every debounced fetch.
-  const firstLoad = loading && templates.length === 0 && !searchQuery && channelFilter === 'all' && page === 1;
-  if (firstLoad) return <div className="spinner">Loading templates...</div>;
+  const closeQa = useCallback(() => setQaReport(null), []);
+  const closePreview = useCallback(() => setPreview(null), []);
+  const cancelDelete = useCallback(() => setConfirmDelete(null), []);
 
-  // Channel filter is now server-side, so the list we render is already filtered.
   const filtered = templates;
+  const pending = templates.filter(t => t.status === 'pending_approval');
+  const firstLoad = !loaded;
+  const hasFilter = !!searchQuery.trim() || channelFilter !== 'all';
+  const showingFrom = filtered.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingTo = (page - 1) * pageSize + filtered.length;
 
-  return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: 24 }}>
-      <motion.div variants={fadeInUp} style={{ marginBottom: 28 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Content Templates</h1>
-            <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              Showing {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
-              –{(page - 1) * pageSize + filtered.length} of {total} templates
-              {loading && (
-                <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-tertiary)' }} />
-              )}
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative', minWidth: 240 }}>
-              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
-              <input
-                className="form-input"
-                placeholder="Search name or subject…"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                style={{ paddingLeft: 32, paddingRight: searchQuery ? 28 : 10, height: 32, fontSize: 13, width: '100%' }}
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  aria-label="Clear search"
-                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', padding: 2 }}
-                >
-                  <X size={13} />
-                </button>
-              )}
+  // ── Shared modals (rendered in both library and editor) ──
+  const modals = (
+    <>
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        danger
+        title="Delete template"
+        description={confirmDelete ? <p>Delete <b>{confirmDelete.name}</b>? This can’t be undone.</p> : undefined}
+        confirmLabel="Delete"
+        onConfirm={confirmAndDelete}
+        onCancel={cancelDelete}
+      />
+
+      {qaReport && (
+        <Modal label="Email QA report" onClose={closeQa}>
+          <div className={styles.dialogHead}>
+            <div>
+              <h2>Email QA report</h2>
+              <div className={styles.help}>
+                {qaReport.template.name}
+                {qaReport.report?.generatedAt ? ` — stored ${new Date(qaReport.report.generatedAt).toLocaleString()}` : ' — analyzed'}
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {[
-                { key: 'all', label: 'All' } as ChannelOption,
-                ...CHANNELS,
-              ].map(ch => {
-                const Icon = ch.icon;
-                const active = channelFilter === ch.key;
-                return (
-                  <button
-                    key={ch.key}
-                    onClick={() => setChannelFilter(ch.key)}
-                    className={`btn btn-sm ${active ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                  >
-                    {Icon && <Icon size={13} />}
-                    {ch.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              <button
-                onClick={() => setViewMode('card')}
-                title="Card view"
-                aria-label="Card view"
-                aria-pressed={viewMode === 'card'}
-                style={{
-                  padding: '6px 10px', border: 'none', cursor: 'pointer',
-                  background: viewMode === 'card' ? 'var(--bg-secondary)' : 'transparent',
-                  color: viewMode === 'card' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                  display: 'inline-flex', alignItems: 'center',
-                }}
-              >
-                <LayoutGrid size={14} />
-              </button>
-              <button
-                onClick={() => setViewMode('table')}
-                title="Table view"
-                aria-label="Table view"
-                aria-pressed={viewMode === 'table'}
-                style={{
-                  padding: '6px 10px', border: 'none', borderLeft: '1px solid var(--border)', cursor: 'pointer',
-                  background: viewMode === 'table' ? 'var(--bg-secondary)' : 'transparent',
-                  color: viewMode === 'table' ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                  display: 'inline-flex', alignItems: 'center',
-                }}
-              >
-                <List size={14} />
-              </button>
-            </div>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={openCreate}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <Plus size={14} /> Add Template
-            </button>
+            <Button variant="ghost" size="sm" icon aria-label="Close QA report" onClick={closeQa}><X size={16} /></Button>
           </div>
-        </div>
-      </motion.div>
-
-      {/* ── Create WhatsApp Template (ChatHead → Meta review) ── */}
-      <motion.div variants={fadeInUp}><CreateWhatsAppTemplate /></motion.div>
-
-      {/* ── WhatsApp Test Send (ChatHead) ── */}
-      <motion.div variants={fadeInUp}><WhatsAppTestSend /></motion.div>
-      <motion.div variants={fadeInUp}><SmsTestSend /></motion.div>
-      <motion.div variants={fadeInUp}><RcsTestSend /></motion.div>
-
-      {/* ── Recipients (for Test Send) ── */}
-      <motion.div variants={fadeInUp} style={{ marginBottom: 16, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            <Send size={14} color="#16a34a" /> Recipients · {selectedEmails.length} selected of {recipTotal.toLocaleString()}
-          </div>
-          {selectedEmails.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedEmails([])} style={{ fontSize: 11 }}>Clear selection</button>
-          )}
-        </div>
-        <div style={{ position: 'relative', marginBottom: 10 }}>
-          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
-          <input className="form-input" placeholder="Filter by email or name… (min 2 chars)" value={recipQuery}
-            onChange={e => setRecipQuery(e.target.value)} style={{ paddingLeft: 36, width: '100%' }} />
-        </div>
-        <div
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            maxHeight: 260,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-          }}
-        >
-          {recipLoading && recipients.length === 0 && (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>Loading…</div>
-          )}
-          {!recipLoading && recipients.length === 0 && (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>No contacts</div>
-          )}
-          {recipients.map((c) => {
-            const email = c.email || c.actual_email!;
-            const checked = selectedEmails.includes(email);
-
-            return (
-              <label
-                key={c.id || email}
-                onClick={() => toggleRecipient(email)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '10px 12px',
-                  cursor: 'pointer',
-                  borderBottom: '1px solid var(--border)',
-                  background: checked
-                    ? 'rgba(34,197,94,0.06)'
-                    : 'transparent',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  readOnly
-                  style={{
-                    width: 16,
-                    height: 16,
-                    flexShrink: 0,
-                    cursor: 'pointer',
-                  }}
-                />
-
-                <div
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 13,
-                        color: 'var(--text-primary)',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {email}
-                    </span>
-
-                    {c.contact_type && (
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          padding: '2px 6px',
-                          borderRadius: 4,
-                          background: 'rgba(139,92,246,0.12)',
-                          color: '#8b5cf6',
-                        }}
-                      >
-                        {c.contact_type}
-                      </span>
+          <div className={styles.dialogBody}>
+            {qaLoading ? (
+              <div className={styles.loadingBlock} role="status">
+                <Sparkles size={24} aria-hidden="true" />
+                <div style={{ fontWeight: 600, marginTop: 8 }}>Generating report…</div>
+                <div className={styles.help}>Grammar · content · URLs · delivering & checking real inbox placement (~30-50s)</div>
+              </div>
+            ) : qaReport.report?.error ? (
+              <div className={styles.errorBox} role="alert">Analysis failed: {qaReport.report.error}</div>
+            ) : qaReport.report ? (() => {
+              const r = qaReport.report;
+              const sr: NonNullable<QaReportData['spamRisk']> = r.spamRisk || {};
+              const srTone: ChipTone = sr.level === 'High' ? 'bad' : sr.level === 'Medium' ? 'warn' : 'ok';
+              const known = placement?.available && placement.placement !== 'not_found';
+              const isInbox = placement?.placement === 'inbox';
+              return (
+                <div>
+                  <div className={[styles.qaBox, known ? (isInbox ? styles.qaBoxOk : styles.qaBoxBad) : ''].join(' ')}>
+                    <div className={styles.eyebrow} style={{ marginBottom: 6 }}>Spam check (real — QA inbox)</div>
+                    {placementLoading && !known ? (
+                      <div className={styles.row} role="status"><RefreshCw size={14} className={styles.spin} aria-hidden="true" /> Delivering & checking the QA Gmail… (~15-40s)</div>
+                    ) : known ? (
+                      <div>
+                        <div className={styles.qaVerdict} style={{ color: isInbox ? 'var(--ok)' : 'var(--bad)' }}>{isInbox ? 'Inbox — not spam' : 'Spam'}</div>
+                        <div className={styles.help}>Verified in {ROCKY_EMAIL} via IMAP{placement?.foundAt ? ` · ${new Date(placement.foundAt).toLocaleString()}` : ''}</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className={styles.note}>{placement?.error ? `⚠ ${placement.error}` : (placement?.note || 'Not found yet in the inbox.')}</div>
+                        <Button size="sm" onClick={checkPlacement} disabled={placementLoading} style={{ marginTop: 8 }}>
+                          <Search size={14} aria-hidden="true" /> {placementLoading ? 'Checking…' : 'Re-check now'}
+                        </Button>
+                      </div>
                     )}
-
-                    {c.booking_status && (
-                      <span
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          padding: '2px 6px',
-                          borderRadius: 4,
-                          background: 'rgba(34,197,94,0.12)',
-                          color: '#16a34a',
-                        }}
-                      >
-                        {c.booking_status}
-                      </span>
+                    {sr.level && (
+                      <div className={styles.qaHint}>
+                        Quick heuristic: <Chip tone={srTone}>{sr.level} risk</Chip>{sr.reasons?.length ? ` — ${sr.reasons.slice(0, 2).join('; ')}` : ''}
+                      </div>
                     )}
                   </div>
-
-                  {(c.name || c.country) && (
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: 11,
-                        color: 'var(--text-tertiary)',
-                      }}
-                    >
-                      {c.name}
-                      {c.country && ` • ${c.country}`}
-                    </div>
-                  )}
+                  <QaSection title="Grammar" items={r.grammar || []} okText="No grammar issues found" />
+                  <QaSection title="Missing content" items={r.missingContent || []} okText="No missing content" danger />
+                  <div className={styles.qaSection}>
+                    <div className={styles.eyebrow} style={{ marginBottom: 8 }}>URLs ({toInt(r.urls?.total)} found, {toInt(r.urls?.broken)} broken)</div>
+                    {(r.urls?.results || []).length === 0 ? (
+                      <div className={styles.note}>No links</div>
+                    ) : (
+                      <div className={styles.urlList}>
+                        {(r.urls?.results || []).map((u, i) => (
+                          <div key={i} className={styles.urlRow}>
+                            <Chip tone={u.ok ? 'ok' : 'bad'}>{u.ok ? '✓' : '✗'} {u.status ?? u.error ?? ''}</Chip>
+                            <span>{u.url}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <QaSection title="Other errors" items={r.errors || []} okText="No other issues" danger />
+                  {r.analysisSource && <div className={styles.help}>Content analysis: {r.analysisSource === 'claude' ? 'Claude AI' : r.analysisSource}</div>}
                 </div>
-              </label>
-            );
-          })}
-        </div>
-      </motion.div>
+              );
+            })() : null}
+          </div>
+        </Modal>
+      )}
 
-      {/* ── Email Tracking Flow ── */}
-      <motion.div variants={fadeInUp} style={{ marginBottom: 20, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>📧 Email Tracking Flow</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
-          {[
-            { label: 'Sent', value: flowStats.sent, color: '#3b82f6', bg: 'rgba(59,130,246,0.08)' },
-            { label: 'Opened', value: flowStats.opened, color: '#16a34a', bg: 'rgba(34,197,94,0.08)' },
-            { label: 'Clicked', value: flowStats.clicked, color: '#8b5cf6', bg: 'rgba(139,92,246,0.08)' },
-            { label: 'UTM Captured', value: flowStats.utm, color: '#f59e0b', bg: 'rgba(245,158,11,0.08)' },
-            { label: 'Failed', value: flowStats.failed, color: '#ef4444', bg: 'rgba(239,68,68,0.08)' },
-          ].map(s => (
-            <div key={s.label} style={{ background: s.bg, borderRadius: 10, padding: '14px 8px', textAlign: 'center' }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{s.label}</div>
+      {preview && (
+        <Modal label={`Preview of ${preview.template.name || 'template'}`} onClose={closePreview}
+          className={previewDevice === 'tablet' ? styles.dialogTablet : styles.dialogWide}>
+          <div className={styles.dialogHead}>
+            <div>
+              <h2>{preview.template.name}{preview.ai && <Chip tone="gold"><Sparkles size={12} aria-hidden="true" /> AI</Chip>}</h2>
+              <div className={styles.help}>
+                {channelLabel(preview.template.channel)} · {preview.template.segment_label || 'ALL'} · {statusMeta(preview.template.status).label}
+              </div>
+            </div>
+            <div className={styles.row}>
+              <div className={styles.seg} role="group" aria-label="Device">
+                {([
+                  { key: 'desktop', icon: Monitor, label: 'Desktop' },
+                  { key: 'tablet', icon: Tablet, label: 'Tablet' },
+                  { key: 'mobile', icon: Smartphone, label: 'Mobile' },
+                ] as const).map(d => {
+                  const DIcon = d.icon;
+                  return (
+                    <button key={d.key} type="button" className={styles.segBtn} aria-pressed={previewDevice === d.key}
+                      onClick={() => setPreviewDevice(d.key)} title={d.label} aria-label={d.label}>
+                      <DIcon size={15} aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+              <Button variant="ghost" size="sm" icon aria-label="Close preview" onClick={closePreview}><X size={16} /></Button>
+            </div>
+          </div>
+          <div className={[styles.previewBody, previewDevice === 'desktop' ? styles.previewBodyDesktop : ''].join(' ')}>
+            {preview.loading ? (
+              <div className={styles.previewMsg} role="status">
+                {preview.ai ? 'Generating AI preview with Claude… (~15-25s)' : 'Rendering preview…'}
+              </div>
+            ) : (() => {
+              const frameW = previewDevice === 'mobile' ? 390 : 768;
+              const html = withViewport(preview.html || '');
+              if (previewDevice === 'desktop') {
+                return (
+                  <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
+                    style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }}
+                    title={preview.template.name} />
+                );
+              }
+              // Render the iframe at the email's NATURAL content width, then scale it
+              // down to fit the device frame — Gmail-style "fit to width".
+              const contentW = previewFit.contentW || frameW;
+              const scale = contentW > frameW ? frameW / contentW : 1;
+              const innerH = previewFit.contentH || Math.round((window.innerHeight * 0.7) / scale);
+              return (
+                <div className={styles.deviceFrame} style={{ width: frameW, height: previewFit.height || '70vh' }}>
+                  <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
+                    style={{ width: contentW, height: innerH, border: 0, background: '#fff', transform: `scale(${scale})`, transformOrigin: 'top left' }}
+                    title={preview.template.name} />
+                </div>
+              );
+            })()}
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+
+  // ─────────────────────────── Editor view ───────────────────────────
+  if (modal !== null) {
+    const isCreate = modal === 'create';
+    const title = isCreate ? 'New template' : (form.name || modal.name || 'Template');
+    const st = isCreate ? null : statusMeta(modal.status);
+    const customVars = dynVars.filter(v => !SYSTEM_VARS.has(v.key));
+    const subjectLen = form.subject.length;
+    const leave = () => { if (!saving) setModal(null); };
+    return (
+      <div className={styles.page}>
+        <PageHeader
+          title={title}
+          breadcrumbs={[{ label: 'Messaging' }, { label: 'Templates', href: '/content' }, { label: isCreate ? 'Create' : 'Edit' }]}
+          meta={(
+            <div className={styles.row}>
+              <Chip>{channelLabel(form.channel)}</Chip>
+              {st && <StatusChip tone={st.tone}>{st.label}</StatusChip>}
+              <Chip>Liquid personalisation</Chip>
+              {!isCreate && modal.updated_at && <span className={styles.help}>Updated {formatDate(modal.updated_at)}</span>}
+            </div>
+          )}
+          actions={(
+            <>
+              <Button onClick={leave} disabled={saving}>Back to templates</Button>
+              {!isCreate && <Button onClick={() => openPreview(modal)}><Eye size={16} aria-hidden="true" /> Preview</Button>}
+              {!isCreate && modal.channel === 'email' && (
+                <Button onClick={() => viewStoredReport(modal)} title="View email QA report"><Info size={16} aria-hidden="true" /> QA report</Button>
+              )}
+              <Button variant="primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : isCreate ? 'Create Template' : 'Save Changes'}
+              </Button>
+            </>
+          )}
+        />
+        <div className={styles.editorGrid}>
+          <Card aria-label="Message settings" className={styles.panel}>
+            <Field label="Template name" required>
+              {p => <Input {...p} placeholder="e.g. Summer Sale Announcement" value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
+            </Field>
+            <div className="ui-field">
+              <span className="ui-label" id="tpl-channel-label">Channel</span>
+              <div className={styles.chanPick} role="group" aria-labelledby="tpl-channel-label">
+                {CHANNELS.map(ch => {
+                  const Icon = ch.icon;
+                  return (
+                    <button key={ch.key} type="button" className={styles.chanBtn} aria-pressed={form.channel === ch.key}
+                      onClick={() => setForm(f => ({ ...f, channel: ch.key }))}>
+                      <Icon size={13} aria-hidden="true" /> {ch.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {form.channel === 'email' && (
+              <Field label="Subject line" help={`${subjectLen} / 60 characters`}>
+                {p => <Input {...p} placeholder="e.g. Your Exclusive Offer Awaits" value={form.subject}
+                  onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} />}
+              </Field>
+            )}
+            <div className="ui-field">
+              <span className="ui-label">Personal fields</span>
+              {customVars.length > 0 ? (
+                <div className={styles.varList} aria-label="Custom variables">
+                  {customVars.map(v => <span key={v.key} className={[styles.mono, styles.varChip].join(' ')}>{`{{${v.key}}}`}</span>)}
+                </div>
+              ) : (
+                <span className={styles.help}>{dynVars.length > 0 ? 'Only standard contact fields are used.' : 'No {{FIELD}} placeholders detected yet.'}</span>
+              )}
+              {dynVars.length > 0 && <span className={styles.help}>{dynVars.length} placeholder{dynVars.length === 1 ? '' : 's'} detected in the HTML.</span>}
+            </div>
+          </Card>
+
+          <Card aria-label="Content editor" className={styles.panel}>
+            <div className={styles.panelHead}>
+              <span className={styles.label}>HTML template <span aria-hidden="true">*</span></span>
+              <label className={styles.upload}>
+                <Upload size={14} aria-hidden="true" /> Upload .html
+                <input type="file" accept=".html,.htm,text/html" onChange={handleFileChange} aria-label="Upload HTML file" />
+              </label>
+            </div>
+            <textarea
+              className={styles.code}
+              aria-label="HTML source"
+              value={form.body}
+              onChange={e => {
+                const html = e.target.value;
+                setForm(f => ({ ...f, body: html, fileName: html.trim() ? (f.fileName || 'inline-template.html') : '' }));
+                setDynVars(extractVars(html));
+              }}
+              spellCheck={false}
+              placeholder="<html>…</html> — edit directly. Use {{KEY}} placeholders (e.g. {{USER_NAME}}, {{ITEM_NAME}})."
+            />
+            <span className={styles.help}>
+              {form.fileName ? `Source: ${form.fileName}. ` : ''}Liquid tags like if / case are rendered by the server for the preview, exactly as they will be sent.
+            </span>
+          </Card>
+
+          <Card aria-label="Preview" className={styles.panel}>
+            <div className={styles.panelHead}>
+              <div className={styles.seg} role="group" aria-label="Preview device">
+                <button type="button" className={styles.segBtn} aria-pressed={liveDevice === 'desktop'} onClick={() => setLiveDevice('desktop')}>
+                  <Monitor size={14} aria-hidden="true" /> Desktop
+                </button>
+                <button type="button" className={styles.segBtn} aria-pressed={liveDevice === 'mobile'} onClick={() => setLiveDevice('mobile')}>
+                  <Smartphone size={14} aria-hidden="true" /> Mobile
+                </button>
+              </div>
+              <span className={styles.help}>Sample data</span>
+            </div>
+            <div className={styles.liveWrap}>
+              <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                title="template-preview"
+                className={[styles.liveIframe, liveDevice === 'mobile' ? styles.liveMobile : ''].join(' ')}
+                srcDoc={
+                  form.body
+                    ? (livePreviewHtml || fillPreviewHtml(form.body))
+                    : '<div style="font-family:sans-serif;color:#9ca3af;padding:16px;font-size:13px">Preview appears here as you type…</div>'
+                }
+              />
+            </div>
+            <div className={styles.row}>
+              {!form.body ? <Chip>Nothing to render yet</Chip>
+                : livePreviewLoading ? <Chip tone="info"><RefreshCw size={12} className={styles.spin} aria-hidden="true" /> Rendering…</Chip>
+                  : livePreviewHtml ? <Chip tone="ok">Rendered by the server</Chip>
+                    : <Chip tone="warn">Local sample fill</Chip>}
+            </div>
+          </Card>
+        </div>
+
+        {modals}
+      </div>
+    );
+  }
+
+  // ─────────────────────────── Library view ───────────────────────────
+  const renderSendButtons = (t: ContentTemplate) => {
+    const isDay = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+    const isGeneric = !isDay && t.channel === 'email' && t.status === 'approved';
+    if (!isDay && !isGeneric) return null;
+    const send = isDay ? handleCardTestSend : handleGenericSend;
+    const noRecipients = selectedEmails.length === 0;
+    const isSending = sendingDay === t.id;
+    const rockySending = isSending && sendingMode === 'rocky';
+    const selSending = isSending && sendingMode === 'selected';
+    return (
+      <div>
+        <Button size="sm" onClick={() => send(t, { emails: [ROCKY_EMAIL], mode: 'rocky' })} disabled={isSending}
+          title={`Send a QA test to ${ROCKY_EMAIL}`}>
+          <Send size={14} aria-hidden="true" /> {rockySending ? 'Sending…' : 'Test Send'}
+        </Button>
+        <Button size="sm" onClick={() => send(t, { emails: selectedEmails, mode: 'selected' })} disabled={noRecipients || isSending}
+          title={noRecipients ? 'Select recipients in Testing tools first' : `Send to ${selectedEmails.length} selected`}>
+          <Send size={14} aria-hidden="true" /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
+        </Button>
+      </div>
+    );
+  };
+
+  const channelTabs = [{ key: 'all' as ChannelKey, label: 'All' }, ...CHANNELS.map(c => ({ key: c.key as ChannelKey, label: c.label }))]
+    .map(c => ({ key: c.key, label: c.key === channelFilter && loaded && !loadError ? <>{c.label} <Chip className={styles.num}>{total}</Chip></> : c.label }));
+
+  const library = (() => {
+    if (firstLoad) {
+      return (
+        <div className={styles.grid} role="status" aria-label="Loading templates">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className={styles.skelCard}>
+              <Skeleton height={120} radius={0} />
+              <div className={styles.skelBody}><Skeleton width="80%" /><Skeleton width="50%" height={10} /></div>
             </div>
           ))}
         </div>
-      </motion.div>
-
-      {viewMode === 'card' && (
-      <motion.div variants={fadeInUp} className="grid-auto" style={{ gap: 16 }}>
+      );
+    }
+    if (loadError) {
+      return (
+        <ErrorState
+          title="Couldn't load templates"
+          description="The template service didn't respond. Nothing was changed."
+          details={loadError}
+          action={<Button variant="primary" size="sm" onClick={() => setReloadKey(k => k + 1)}>Try again</Button>}
+        />
+      );
+    }
+    if (filtered.length === 0 && viewMode === 'card') {
+      return hasFilter ? (
+        <EmptyState title="No templates found" description="Nothing matches this channel or search. Try a different filter." />
+      ) : (
+        <EmptyState title="No templates yet" description="Create a template or upload your own HTML. New templates start as drafts."
+          action={<Button variant="primary" onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create template</Button>} />
+      );
+    }
+    if (viewMode === 'table') {
+      return (
+        <Table label="Templates">
+          <thead>
+            <tr>
+              <th>Name</th><th>Channel</th><th>Status</th><th>Subject</th><th>Segment</th><th>Updated</th>
+              <th style={{ textAlign: 'right' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={7} className={styles.emptyLine}>No templates found</td></tr>
+            )}
+            {filtered.map(t => {
+              const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+              const st = statusMeta(t.status);
+              return (
+                <tr key={t.id}>
+                  <td className={styles.cellName}>{t.name}</td>
+                  <td><Chip>{channelLabel(t.channel)}</Chip></td>
+                  <td><StatusChip tone={st.tone}>{st.label}</StatusChip></td>
+                  <td className={styles.cellSub} title={t.subject || ''}>{t.subject || '—'}</td>
+                  <td>{t.segment_label ? <Chip>{t.segment_label}</Chip> : '—'}</td>
+                  <td className={styles.num} style={{ whiteSpace: 'nowrap' }}>{formatDate(t.updated_at)}</td>
+                  <td className={styles.cellActions}>
+                    <div>
+                      <Button size="sm" icon onClick={() => openPreview(t)} title="Preview" aria-label="Preview"><Eye size={14} /></Button>
+                      {hasAI && <Button size="sm" icon onClick={() => openPreviewAI(t)} title="Preview AI" aria-label="Preview AI"><Sparkles size={14} /></Button>}
+                      <Button size="sm" icon onClick={() => openEdit(t)} title="Edit" aria-label="Edit"><Edit2 size={14} /></Button>
+                      {t.channel === 'email' && <Button size="sm" icon onClick={() => viewStoredReport(t)} title="View email QA report" aria-label="View email QA report"><Info size={14} /></Button>}
+                      {t.status === 'pending_approval' && <Button size="sm" icon onClick={() => openReview(t)} title="Review for approval" aria-label="Review for approval"><Check size={14} /></Button>}
+                      <Button size="sm" icon onClick={() => setConfirmDelete(t)} disabled={deleting === t.id} title="Delete template" aria-label="Delete">
+                        <Trash2 size={14} className={styles.danger} />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      );
+    }
+    return (
+      <div className={styles.grid}>
         {filtered.map(t => {
+          const st = statusMeta(t.status);
           const Icon = CHANNEL_ICON[t.channel] || Mail;
+          const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
+          const plain = t.body_plain || stripHtml(t.body);
           return (
-            <div key={t.id} style={{
-              background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)',
-              padding: 20, display: 'flex', flexDirection: 'column', gap: 12,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className={`badge ${STATUS_BADGE[t.status] || 'badge-gray'}`}>{t.status}</span>
-                <span className="badge badge-gray" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <Icon size={12} /> {t.channel}
-                </span>
-                {t.segment_label && <span className="badge badge-gray">{t.segment_label}</span>}
-                {/* (i) View stored QA report — ALL email templates */}
-                {t.channel === 'email' && (
-                  <button onClick={() => viewStoredReport(t)} title="View email QA report"
-                    style={{ marginLeft: 'auto', width: 26, height: 26, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Info size={15} />
-                  </button>
-                )}
+            <article key={t.id} className={styles.tcard} aria-label={t.name}>
+              <div className={styles.thumb} aria-hidden="true">
+                {t.channel === 'email' ? (
+                  <div className={styles.thumbEmail}>
+                    <div className={styles.thumbBar} />
+                    <div className={styles.thumbHero} />
+                    <div className={styles.thumbLine} style={{ width: '90%' }} />
+                    <div className={styles.thumbLine} style={{ width: '70%' }} />
+                  </div>
+                ) : plain ? <div className={styles.bubble}>{plain}</div> : null}
               </div>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{t.name}</div>
-                {t.subject && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>Subject: {t.subject}</div>}
-              </div>
-              {(t.body_plain || t.body) && (
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {t.body_plain || stripHtml(t.body)}
+              <div className={styles.tbody}>
+                <h3 className={styles.tname}>{t.name}</h3>
+                <div className={styles.row}>
+                  <Chip><Icon size={12} aria-hidden="true" /> {channelLabel(t.channel)}</Chip>
+                  <StatusChip tone={st.tone}>{st.label}</StatusChip>
+                  {t.segment_label && <Chip tone="info">{t.segment_label}</Chip>}
                 </div>
-              )}
-              {t.cta_text && (
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CTA: {t.cta_text}</div>
-              )}
-              {(() => {
-                const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
-                const previewBtn = (
-                  <button className="btn btn-secondary btn-sm" onClick={() => openPreview(t)} style={{ gap: 6, flex: 1 }}>
-                    <Eye size={14} /> Preview
-                  </button>
-                );
-                const editBtn = (
-                  <button className="btn btn-secondary btn-sm" onClick={() => openEdit(t)} style={{ gap: 6, flex: 1 }}>
-                    <Edit2 size={14} /> Edit
-                  </button>
-                );
-                const deleteBtn = (
-                  <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(t)} disabled={deleting === t.id}
-                    style={{ gap: 6, flex: 1, color: 'var(--red, #ef4444)' }} title="Delete template">
-                    <Trash2 size={14} />{deleting === t.id ? '…' : 'Delete'}
-                  </button>
-                );
-                const aiBtn = (
-                  <button className="btn btn-sm" onClick={() => openPreviewAI(t)}
-                    style={{ gap: 6, flex: 1, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
-                    <Sparkles size={14} /> Preview AI Template
-                  </button>
-                );
-                const noRecipients = selectedEmails.length === 0;
-                const isSending = sendingDay === t.id;
-                const rockySending = isSending && sendingMode === 'rocky';
-                const selSending = isSending && sendingMode === 'selected';
-                // Button 1 — always enabled: sends the AI template to the fixed QA inbox (Rocky)
-                const rockyBtn = (
-                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t, { emails: [ROCKY_EMAIL], mode: 'rocky' })}
-                    disabled={isSending}
-                    title={`Send a QA test to ${ROCKY_EMAIL}`}
-                    style={{ gap: 6, flex: 1, background: 'rgba(59,130,246,0.1)', color: '#2563eb', border: '1px solid rgba(59,130,246,0.25)', cursor: isSending ? 'not-allowed' : 'pointer', opacity: isSending && !rockySending ? 0.5 : 1 }}>
-                    <Send size={14} /> {rockySending ? 'Sending…' : 'Test Send'}
-                  </button>
-                );
-                // Button 2 — disabled until ≥1 recipient selected: sends to selected users
-                const selectedBtn = (
-                  <button className="btn btn-sm" onClick={() => handleCardTestSend(t, { emails: selectedEmails, mode: 'selected' })}
-                    disabled={noRecipients || isSending}
-                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length} selected`}
-                    style={{ gap: 6, flex: 1, background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients || (isSending && !selSending) ? 0.5 : 1 }}>
-                    <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
-                  </button>
-                );
-                // Approved email templates outside the Day 1-7 sequence (e.g. weekly
-                // broadcasts ids 83-89) also get Test Send + Test Send to selected,
-                // routed through the generic /send-template endpoint.
-                const hasGenericSend = !hasAI && t.channel === 'email' && t.status === 'approved';
-                const genericRockyBtn = (
-                  <button className="btn btn-sm" onClick={() => handleGenericSend(t, { emails: [ROCKY_EMAIL], mode: 'rocky' })}
-                    disabled={isSending}
-                    title={`Send a QA test to ${ROCKY_EMAIL}`}
-                    style={{ gap: 6, flex: 1, background: 'rgba(59,130,246,0.1)', color: '#2563eb', border: '1px solid rgba(59,130,246,0.25)', cursor: isSending ? 'not-allowed' : 'pointer', opacity: isSending && !rockySending ? 0.5 : 1 }}>
-                    <Send size={14} /> {rockySending ? 'Sending…' : 'Test Send'}
-                  </button>
-                );
-                const genericSelectedBtn = (
-                  <button className="btn btn-sm" onClick={() => handleGenericSend(t, { emails: selectedEmails, mode: 'selected' })}
-                    disabled={noRecipients || isSending}
-                    title={noRecipients ? 'Select recipients above first' : `Send to ${selectedEmails.length} selected`}
-                    style={{ gap: 6, flex: 1, background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.25)', cursor: noRecipients || isSending ? 'not-allowed' : 'pointer', opacity: noRecipients || (isSending && !selSending) ? 0.5 : 1 }}>
-                    <Send size={14} /> {selSending ? 'Sending…' : noRecipients ? 'Test Send (select recipients)' : `Test Send to ${selectedEmails.length} selected`}
-                  </button>
-                );
-
-                // Email Day 1-7 (hasAI) → Preview/AI · Edit/Delete · two Test Send buttons
-                if (hasAI) return (
-                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{aiBtn}</div>
-                    <div style={{ display: 'flex', gap: 8 }}>{editBtn}{deleteBtn}</div>
-                    <div style={{ display: 'flex', gap: 8 }}>{rockyBtn}{selectedBtn}</div>
+                {t.subject && <div className={styles.tsub}>Subject: {t.subject}</div>}
+                {t.channel === 'email' && plain && <div className={styles.tplain}>{plain}</div>}
+                {t.cta_text && <div className={styles.help}>CTA: {t.cta_text}</div>}
+                {t.updated_at && <span className={styles.help}>Updated {formatDate(t.updated_at)}</span>}
+                <div className={styles.tactions}>
+                  <div>
+                    <Button size="sm" onClick={() => openEdit(t)}><Edit2 size={14} aria-hidden="true" /> Edit</Button>
+                    <Button size="sm" variant="ghost" onClick={() => openPreview(t)}><Eye size={14} aria-hidden="true" /> Preview</Button>
+                    {t.channel === 'email' && (
+                      <Button size="sm" variant="ghost" icon onClick={() => viewStoredReport(t)} title="View email QA report" aria-label="View email QA report"><Info size={14} /></Button>
+                    )}
+                    <Button size="sm" variant="ghost" icon onClick={() => setConfirmDelete(t)} disabled={deleting === t.id} title="Delete template" aria-label="Delete">
+                      {deleting === t.id ? <RefreshCw size={14} className={styles.spin} /> : <Trash2 size={14} className={styles.danger} />}
+                    </Button>
                   </div>
-                );
-                if (hasGenericSend) return (
-                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ display: 'flex', gap: 8 }}>{previewBtn}{editBtn}{deleteBtn}</div>
-                    <div style={{ display: 'flex', gap: 8 }}>{genericRockyBtn}{genericSelectedBtn}</div>
-                  </div>
-                );
-                return (
-                  <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
-                    {previewBtn}{editBtn}{deleteBtn}
-                  </div>
-                );
-              })()}
-            </div>
+                  {hasAI && (
+                    <div><Button size="sm" onClick={() => openPreviewAI(t)}><Sparkles size={14} aria-hidden="true" /> Preview AI Template</Button></div>
+                  )}
+                  {t.status === 'pending_approval' && (
+                    <div><Button size="sm" variant="primary" onClick={() => openReview(t)}><Check size={14} aria-hidden="true" /> Review</Button></div>
+                  )}
+                  {renderSendButtons(t)}
+                </div>
+              </div>
+            </article>
           );
         })}
-      </motion.div>
-      )}
+      </div>
+    );
+  })();
 
-      {viewMode === 'table' && (
-      <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', textAlign: 'left' }}>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Name</th>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Channel</th>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status</th>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Subject</th>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Segment</th>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Updated</th>
-                <th style={{ padding: '10px 14px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7} style={{ padding: '32px 14px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No templates found</td>
-                </tr>
+  return (
+    <div className={styles.page}>
+      <PageHeader
+        title="Templates"
+        breadcrumbs={[{ label: 'Messaging' }, { label: 'Templates' }]}
+        description="Every message you can send, for every channel. Only approved templates can be used in sends and journeys."
+        meta={loading && loaded ? <RefreshCw size={14} className={styles.spin} aria-label="Refreshing" /> : undefined}
+        actions={<Button variant="primary" onClick={openCreate}><Plus size={16} aria-hidden="true" /> Create template</Button>}
+      />
+
+      <div className={styles.layout}>
+        <div className={styles.main}>
+          {pending.length > 0 && (
+            <div className={styles.banner} role="status">
+              <span className={styles.bannerDot} aria-hidden="true" />
+              <div className={styles.bannerText}>
+                <b>{pending.length === 1 ? '1 template is' : `${pending.length} templates are`} waiting for approval on this page</b>
+                <div className={styles.note}>{pending.slice(0, 3).map(t => `“${t.name}” (${channelLabel(t.channel)})`).join(', ')}{pending.length > 3 ? ` and ${pending.length - 3} more` : ''}.</div>
+              </div>
+              <Button size="sm" variant="primary" onClick={() => openReview(pending[0])}>Review now</Button>
+            </div>
+          )}
+
+          <Tabs label="Channel" items={channelTabs} value={channelFilter} onChange={setChannelFilter} />
+
+          <div className={styles.toolbar}>
+            <div className={styles.search}>
+              <Search size={16} className={styles.searchIcon} aria-hidden="true" />
+              <Input aria-label="Search templates" placeholder="Search name or subject…" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+              {searchQuery && (
+                <button type="button" className={styles.searchClear} onClick={() => setSearchQuery('')} aria-label="Clear search"><X size={14} /></button>
               )}
-              {filtered.map(t => {
-                const Icon = CHANNEL_ICON[t.channel] || Mail;
-                const hasAI = t.id >= 1 && t.id <= 7 && t.channel === 'email';
-                const updated = t.updated_at ? new Date(t.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
-                return (
-                  <tr key={t.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-primary)', fontWeight: 600 }}>{t.name}</td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <span className="badge badge-gray" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <Icon size={12} /> {t.channel}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <span className={`badge ${STATUS_BADGE[t.status] || 'badge-gray'}`}>{t.status}</span>
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.subject || ''}>
-                      {t.subject || '—'}
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)' }}>
-                      {t.segment_label ? <span className="badge badge-gray">{t.segment_label}</span> : '—'}
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{updated}</td>
-                    <td style={{ padding: '12px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'inline-flex', gap: 6 }}>
-                        <button onClick={() => openPreview(t)} title="Preview" className="btn btn-secondary btn-sm" style={{ padding: '6px 8px' }}>
-                          <Eye size={14} />
-                        </button>
-                        {hasAI && (
-                          <button onClick={() => openPreviewAI(t)} title="Preview AI"
-                            className="btn btn-sm"
-                            style={{ padding: '6px 8px', background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
-                            <Sparkles size={14} />
-                          </button>
-                        )}
-                        <button onClick={() => openEdit(t)} title="Edit" className="btn btn-secondary btn-sm" style={{ padding: '6px 8px' }}>
-                          <Edit2 size={14} />
-                        </button>
-                        {t.channel === 'email' && (
-                          <button onClick={() => viewStoredReport(t)} title="View email QA report"
-                            style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: '#3b82f6', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Info size={14} />
-                          </button>
-                        )}
-                        <button onClick={() => setConfirmDelete(t)} title="Delete" disabled={deleting === t.id}
-                          className="btn btn-secondary btn-sm" style={{ padding: '6px 8px', color: '#ef4444' }}>
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </motion.div>
-      )}
-
-      {/* ── Pagination ── */}
-      {total > 0 && (
-        <motion.div
-          variants={fadeInUp}
-          style={{
-            marginTop: 20,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 12,
-            padding: '12px 16px',
-            background: 'var(--card)',
-            border: '1px solid var(--border)',
-            borderRadius: 12,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-secondary)' }}>
-            <span>Rows per page:</span>
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
-              className="form-input"
-              style={{ padding: '4px 8px', fontSize: 13, width: 'auto', minWidth: 64 }}
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <span style={{ marginLeft: 8 }}>
-              Page <strong style={{ color: 'var(--text-primary)' }}>{page}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong>
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => setPage(1)}
-              disabled={page === 1}
-              style={{ opacity: page === 1 ? 0.4 : 1, cursor: page === 1 ? 'not-allowed' : 'pointer' }}
-              title="First page"
-            >«</button>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-              style={{ opacity: page === 1 ? 0.4 : 1, cursor: page === 1 ? 'not-allowed' : 'pointer' }}
-            >Prev</button>
-
-            {/* Compact page numbers: show first, last, current ±1, with ellipses */}
-            {(() => {
-              const pages = new Set([1, totalPages, page, page - 1, page + 1]);
-              const visible = [...pages]
-                .filter((p) => p >= 1 && p <= totalPages)
-                .sort((a, b) => a - b);
-              const out: React.ReactElement[] = [];
-              visible.forEach((p, i) => {
-                if (i > 0 && p - visible[i - 1] > 1) {
-                  out.push(<span key={`gap-${p}`} style={{ padding: '0 4px', color: 'var(--text-tertiary)' }}>…</span>);
-                }
-                out.push(
-                  <button
-                    key={p}
-                    onClick={() => setPage(p)}
-                    className={`btn btn-sm ${p === page ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ minWidth: 32 }}
-                  >
-                    {p}
-                  </button>
-                );
-              });
-              return out;
-            })()}
-
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-              style={{ opacity: page >= totalPages ? 0.4 : 1, cursor: page >= totalPages ? 'not-allowed' : 'pointer' }}
-            >Next</button>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => setPage(totalPages)}
-              disabled={page >= totalPages}
-              style={{ opacity: page >= totalPages ? 0.4 : 1, cursor: page >= totalPages ? 'not-allowed' : 'pointer' }}
-              title="Last page"
-            >»</button>
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── Delete Confirm Modal ── */}
-      <AnimatePresence>
-        {confirmDelete && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-            onClick={() => setConfirmDelete(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.94, y: 12 }}
-              transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-              onClick={e => e.stopPropagation()}
-              style={{ background: 'var(--card)', borderRadius: 16, width: '100%', maxWidth: 420, boxShadow: '0 24px 80px rgba(0,0,0,0.3)', overflow: 'hidden' }}
-            >
-              <div style={{ padding: '28px 28px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(239,68,68,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Trash2 size={20} color="#ef4444" />
-                  </div>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>Delete Template</div>
-                </div>
-                <div style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, paddingLeft: 54 }}>
-                  Are you sure you want to delete <strong style={{ color: 'var(--text-primary)' }}>{confirmDelete.name}</strong>? This action cannot be undone.
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 28px', borderTop: '1px solid var(--border)' }}>
-                <button className="btn btn-ghost" onClick={() => setConfirmDelete(null)}>Cancel</button>
-                <button
-                  className="btn btn-sm"
-                  onClick={confirmAndDelete}
-                  style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 8, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                >
-                  <Trash2 size={14} /> Delete
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-
-      {/* ── Email QA Report Modal (after Test Send) ── */}
-      {qaReport && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-          onClick={() => setQaReport(null)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 14, maxWidth: 640, width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📋 Email QA Report</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                  {qaReport.template.name}
-                  {qaReport.report?.generatedAt ? ` — stored ${new Date(qaReport.report.generatedAt).toLocaleString()}` : ' — analyzed'}
-                </div>
-              </div>
-              <button onClick={() => setQaReport(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
             </div>
-            <div style={{ padding: '18px 22px', overflow: 'auto', flex: 1 }}>
-              {qaLoading ? (
-                <div style={{ textAlign: 'center', padding: 50, color: 'var(--text-secondary)' }}>
-                  <Sparkles size={28} style={{ color: '#8b5cf6', marginBottom: 12 }} />
-                  <div style={{ fontWeight: 600 }}>Generating report…</div>
-                  <div style={{ fontSize: 12, marginTop: 4 }}>Grammar · content · URLs · delivering & checking real inbox placement (~30-50s)</div>
-                </div>
-              ) : qaReport.report?.error ? (
-                <div style={{ padding: 16, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: 13 }}>Analysis failed: {qaReport.report.error}</div>
-              ) : qaReport.report ? (() => {
-                const r = qaReport.report;
-                const Section = ({ icon, title, items, okText, danger }: QaSectionProps) => (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 8 }}>{icon} {title}</div>
-                    {items.length === 0 ? (
-                      <div style={{ fontSize: 13, color: '#16a34a' }}>✓ {okText}</div>
-                    ) : (
-                      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        {items.map((it, i) => <li key={i} style={{ fontSize: 13, color: danger ? '#ef4444' : 'var(--text-primary)' }}>{it}</li>)}
-                      </ul>
-                    )}
-                  </div>
-                );
-                const sr: NonNullable<QaReportData['spamRisk']> = r.spamRisk || {};
-                const srColor = sr.level === 'High' ? '#ef4444' : sr.level === 'Medium' ? '#f59e0b' : '#16a34a';
-                return (
-                  <div>
-                    {/* SPAM CHECK = real IMAP placement in rocky's inbox (auto after send) */}
-                    {(() => {
-                      const known = placement?.available && placement.placement !== 'not_found';
-                      const isInbox = placement?.placement === 'inbox';
-                      const c = known ? (isInbox ? '#16a34a' : '#ef4444') : '#3b82f6';
-                      return (
-                        <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: c + '14', border: `1px solid ${c}40` }}>
-                          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>📬 Spam Check (real — rocky's inbox)</div>
-                          {placementLoading && !known ? (
-                            <div style={{ fontSize: 13, color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Delivering & checking rocky's Gmail… (~15-40s)
-                            </div>
-                          ) : known ? (
-                            <div>
-                              <div style={{ fontSize: 16, fontWeight: 800, color: c }}>{isInbox ? 'INBOX ✅ — not spam' : 'SPAM ❌'}</div>
-                              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>Verified in rocky.86agency@gmail.com via IMAP{placement.foundAt ? ` · ${new Date(placement.foundAt).toLocaleString()}` : ''}</div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>{placement?.error ? `⚠ ${placement.error}` : (placement?.note || 'Not found yet in the inbox.')}</div>
-                              <button className="btn btn-sm" onClick={checkPlacement} disabled={placementLoading}
-                                style={{ marginTop: 8, gap: 6, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.25)' }}>
-                                {placementLoading ? 'Checking…' : '🔍 Re-check now'}
-                              </button>
-                            </div>
-                          )}
-                          {/* heuristic as a small secondary hint */}
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
-                            Quick heuristic: <span style={{ color: srColor, fontWeight: 700 }}>{sr.level}</span> risk{sr.reasons?.length ? ` — ${sr.reasons.slice(0,2).join('; ')}` : ''}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    <Section icon="✍️" title="Grammar" items={r.grammar || []} okText="No grammar issues found" />
-                    <Section icon="📦" title="Missing Content" items={r.missingContent || []} okText="No missing content" danger />
-                    {/* URLs */}
-                    <div style={{ marginBottom: 16 }}>
-                      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 8 }}>🔗 URLs ({r.urls?.total || 0} found, {r.urls?.broken || 0} broken)</div>
-                      {(r.urls?.results || []).length === 0 ? (
-                        <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No links</div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflow: 'auto' }}>
-                          {r.urls!.results!.map((u, i) => (
-                            <div key={i} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ color: u.ok ? '#16a34a' : '#ef4444', fontWeight: 700, flexShrink: 0 }}>{u.ok ? '✓' : '✗'} {u.status || u.error}</span>
-                              <span style={{ color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.url}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <Section icon="⚠️" title="Other Errors" items={r.errors || []} okText="No other issues" danger />
-                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>Content analysis: {r.analysisSource === 'claude' ? 'Claude AI' : r.analysisSource}</div>
-                  </div>
-                );
-              })() : null}
+            <span className={[styles.note, styles.num].join(' ')}>Showing {showingFrom}–{showingTo} of {total} templates</span>
+            <span className={styles.spacer} />
+            <div className={styles.seg} role="group" aria-label="View">
+              <button type="button" className={styles.segBtn} aria-pressed={viewMode === 'card'} onClick={() => setViewMode('card')} aria-label="Card view" title="Card view">
+                <LayoutGrid size={14} aria-hidden="true" /> Grid
+              </button>
+              <button type="button" className={styles.segBtn} aria-pressed={viewMode === 'table'} onClick={() => setViewMode('table')} aria-label="Table view" title="Table view">
+                <List size={14} aria-hidden="true" /> List
+              </button>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* ── Preview Modal ── */}
-      {preview && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-          onClick={() => setPreview(null)}
-        >
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 'var(--radius-xl)', maxWidth: previewDevice === 'tablet' ? 840 : 720, width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {preview.template.name}
-                  {preview.ai && <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>✨ AI</span>}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                  {preview.template.channel} · {preview.template.segment_label || 'ALL'} · {preview.template.status}
-                </div>
+          {library}
+
+          {total > 0 && !loadError && (
+            <nav className={styles.pager} aria-label="Pagination">
+              <div className={styles.pagerLeft}>
+                <label htmlFor="tpl-page-size">Rows per page:</label>
+                <Select id="tpl-page-size" value={pageSize} onChange={e => setPageSize(parseInt(e.target.value, 10))}>
+                  {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                </Select>
+                <span className={styles.num}>Page <b>{page}</b> of <b>{totalPages}</b></span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {/* Device-view toggle */}
-                <div style={{ display: 'flex', gap: 2, background: 'var(--bg-secondary)', borderRadius: 8, padding: 2 }}>
-                  {[
-                    { key: 'desktop', icon: Monitor,    label: 'Desktop' },
-                    { key: 'tablet',  icon: Tablet,     label: 'Tablet'  },
-                    { key: 'mobile',  icon: Smartphone, label: 'Mobile'  },
-                  ].map(d => {
-                    const DIcon = d.icon;
-                    const active = previewDevice === d.key;
-                    return (
-                      <button key={d.key} onClick={() => setPreviewDevice(d.key)} title={d.label}
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 30, borderRadius: 6, border: 'none', cursor: 'pointer',
-                          background: active ? 'var(--card)' : 'transparent', color: active ? 'var(--brand-primary, #3b82f6)' : 'var(--text-tertiary)', boxShadow: active ? 'var(--shadow)' : 'none' }}>
-                        <DIcon size={15} />
-                      </button>
+              <div className={styles.pagerBtns}>
+                <Button size="sm" onClick={() => setPage(1)} disabled={page === 1} title="First page" aria-label="First page">«</Button>
+                <Button size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Prev</Button>
+                {(() => {
+                  const visible = [...new Set([1, totalPages, page, page - 1, page + 1])]
+                    .filter(p => p >= 1 && p <= totalPages)
+                    .sort((a, b) => a - b);
+                  const out: ReactNode[] = [];
+                  visible.forEach((p, i) => {
+                    if (i > 0 && p - visible[i - 1] > 1) out.push(<span key={`gap-${p}`} className={styles.gap}>…</span>);
+                    out.push(
+                      <Button key={p} size="sm" variant={p === page ? 'primary' : 'secondary'} onClick={() => setPage(p)}
+                        aria-current={p === page ? 'page' : undefined} style={{ minWidth: 32 }}>{p}</Button>,
                     );
-                  })}
-                </div>
-                <button onClick={() => setPreview(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
+                  });
+                  return out;
+                })()}
+                <Button size="sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</Button>
+                <Button size="sm" onClick={() => setPage(totalPages)} disabled={page >= totalPages} title="Last page" aria-label="Last page">»</Button>
               </div>
-            </div>
-            <div style={{ flex: 1, overflow: 'auto', background: previewDevice === 'desktop' ? '#fff' : 'var(--bg-secondary)', display: 'flex', justifyContent: 'center', padding: previewDevice === 'desktop' ? 0 : '16px 0' }}>
-              {preview.loading ? (
-                <div style={{ padding: 60, textAlign: 'center', color: '#888' }}>
-                  {preview.ai ? '✨ Generating AI preview with Claude… (~15-25s)' : 'Rendering preview…'}
-                </div>
-              ) : (() => {
-                const frameW = ({ desktop: null, tablet: 768, mobile: 390 } as Record<string, number | null>)[previewDevice];
-                // Inject a viewport meta so responsive emails reflow at the iframe width.
-                const VP = '<meta name="viewport" content="width=device-width, initial-scale=1">';
-                let html = preview.html || '';
-                if (!/name=["']viewport["']/i.test(html)) {
-                  html = /<head[^>]*>/i.test(html)
-                    ? html.replace(/<head[^>]*>/i, m => `${m}${VP}`)
-                    : `${VP}${html}`;
-                }
-                if (previewDevice === 'desktop') {
-                  return (
-                    <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
-                      style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }}
-                      title={preview.template.name} />
-                  );
-                }
-                // Device frame: render the iframe at the email's NATURAL content width
-                // (so it has no internal horizontal scrollbar), then scale that whole
-                // iframe down to fit the device frame — Gmail-style "fit to width".
-                const contentW = previewFit.contentW || frameW!;
-                const scale = contentW > frameW! ? frameW! / contentW : 1;
-                const innerH = previewFit.contentH || Math.round((window.innerHeight * 0.7) / scale);
-                return (
-                  <div style={{ width: frameW!, maxWidth: '100%', height: previewFit.height || '70vh', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
-                    <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" ref={previewIframeRef} srcDoc={html} onLoad={fitPreview}
-                      style={{ width: contentW, height: innerH, border: 0, background: '#fff',
-                        transform: `scale(${scale})`, transformOrigin: 'top left' }}
-                      title={preview.template.name} />
+            </nav>
+          )}
+
+          <Card title="Testing tools" className={styles.tools}>
+            <Tabs label="Testing tools" value={toolTab} onChange={setToolTab} items={[
+              { key: 'email', label: 'Email' },
+              { key: 'whatsapp', label: 'WhatsApp' },
+              { key: 'sms', label: 'SMS' },
+              { key: 'rcs', label: 'RCS' },
+            ]} />
+            {toolTab === 'email' && (
+              <>
+                <div>
+                  <div className={styles.eyebrow} style={{ marginBottom: 8 }}>Email tracking flow</div>
+                  <div className={styles.flow}>
+                    {[
+                      { label: 'Sent', value: flowStats.sent },
+                      { label: 'Opened', value: flowStats.opened },
+                      { label: 'Clicked', value: flowStats.clicked },
+                      { label: 'UTM Captured', value: flowStats.utm },
+                      { label: 'Failed', value: flowStats.failed },
+                    ].map(s => (
+                      <div key={s.label} className={styles.flowStat}>
+                        <div className={styles.flowVal}>{s.value.toLocaleString()}</div>
+                        <div className={styles.flowLabel}>{s.label}</div>
+                      </div>
+                    ))}
                   </div>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Create / Edit Modal ── */}
-      <AnimatePresence>
-        {modal !== null && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-            onClick={() => !saving && setModal(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 16 }}
-              transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-              onClick={e => e.stopPropagation()}
-              style={{ background: 'var(--bg-card)', borderRadius: 16, width: '100%', maxWidth: 1040, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}
-            >
-              {/* Header */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid var(--border-color)' }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>
-                  {modal === 'create' ? 'Add Template' : 'Edit Template'}
                 </div>
-                <button onClick={() => !saving && setModal(null)} className="btn btn-ghost btn-sm"><X size={18} /></button>
-              </div>
-
-              {/* Body */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-                {/* Name */}
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Template Name *</label>
-                  <input
-                    className="form-input"
-                    placeholder="e.g. Summer Sale Announcement"
-                    value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  />
-                </div>
-
-                {/* Channel */}
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Channel</label>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {CHANNELS.map(ch => {
-                      const Icon = ch.icon;
-                      const active = form.channel === ch.key;
+                <div className={styles.panel}>
+                  <div className={styles.panelHead}>
+                    <span className={styles.label}>Test recipients · <span className={styles.num}>{selectedEmails.length} selected of {recipTotal.toLocaleString()}</span></span>
+                    {selectedEmails.length > 0 && <Button size="sm" variant="ghost" onClick={() => setSelectedEmails([])}>Clear selection</Button>}
+                  </div>
+                  <div className={styles.search} style={{ maxWidth: 'none' }}>
+                    <Search size={16} className={styles.searchIcon} aria-hidden="true" />
+                    <Input aria-label="Filter test recipients" placeholder="Filter by email or name… (min 2 chars)" value={recipQuery}
+                      onChange={e => setRecipQuery(e.target.value)} />
+                  </div>
+                  <div className={styles.recipList}>
+                    {recipLoading && recipients.length === 0 && <div className={styles.emptyLine}>Loading…</div>}
+                    {!recipLoading && recipients.length === 0 && <div className={styles.emptyLine}>No contacts</div>}
+                    {recipients.map(c => {
+                      const email = c.email || c.actual_email || '';
+                      const checked = selectedEmails.includes(email);
                       return (
-                        <button
-                          key={ch.key}
-                          onClick={() => setForm(f => ({ ...f, channel: ch.key }))}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: active ? '1.5px solid var(--brand-primary)' : '1.5px solid var(--border-color)', background: active ? 'color-mix(in srgb, var(--brand-primary) 12%, transparent)' : 'transparent', color: active ? 'var(--brand-primary)' : 'var(--text-secondary)' }}
-                        >
-                          <Icon size={13} /> {ch.label}
-                        </button>
+                        <label key={c.id ?? email} className={[styles.recip, checked ? styles.recipOn : ''].join(' ')}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleRecipient(email)} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className={styles.row} style={{ gap: 6 }}>
+                              <span className={styles.recipEmail}>{email}</span>
+                              {c.contact_type && <Chip tone="info">{c.contact_type}</Chip>}
+                              {c.booking_status && <Chip tone="ok">{c.booking_status}</Chip>}
+                            </div>
+                            {(c.name || c.country) && (
+                              <div className={styles.recipMeta}>{c.name}{c.country && ` • ${c.country}`}</div>
+                            )}
+                          </div>
+                        </label>
                       );
                     })}
                   </div>
+                  <span className={styles.help}>Pick recipients here, then use “Test Send to … selected” on an email template.</span>
                 </div>
+              </>
+            )}
+            {toolTab === 'whatsapp' && (<><CreateWhatsAppTemplate /><WhatsAppTestSend /></>)}
+            {toolTab === 'sms' && <SmsTestSend />}
+            {toolTab === 'rcs' && <RcsTestSend />}
+          </Card>
+        </div>
 
-                {/* Subject — email only */}
-                {form.channel === 'email' && (
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Subject Line</label>
-                    <input
-                      className="form-input"
-                      placeholder="e.g. Your Exclusive Offer Awaits 🎉"
-                      value={form.subject}
-                      onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}
-                    />
-                  </div>
-                )}
-
-                {/* HTML body — edit directly with live preview, or upload a file */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>HTML Template *</label>
-                    <label style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: 'var(--brand-primary)', cursor: 'pointer', padding: '4px 10px', border: '1px solid var(--border-color)', borderRadius: 6 }}>
-                      <Upload size={12} /> Upload .html
-                      <input type="file" accept=".html,.htm,text/html" onChange={handleFileChange} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
-                    </label>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, height: 380 }}>
-                    {/* Editor */}
-                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>HTML</div>
-                      <textarea
-                        value={form.body}
-                        onChange={e => {
-                          const html = e.target.value;
-                          setForm(f => ({ ...f, body: html, fileName: html.trim() ? (f.fileName || 'inline-template.html') : '' }));
-                          setDynVars(extractVars(html));
-                        }}
-                        spellCheck={false}
-                        placeholder="<html>…</html> — edit directly. Use {{KEY}} placeholders (e.g. {{USER_NAME}}, {{ITEM_NAME}})."
-                        style={{ flex: 1, width: '100%', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: 1.5, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', whiteSpace: 'pre', overflow: 'auto' }}
-                      />
-                    </div>
-                    {/* Live preview (sample data) — server-rendered via Liquid
-                        so {% case %} / {% if %} blocks expand correctly. */}
-                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          Live Preview · sample data
-                        </div>
-                        {livePreviewLoading && (
-                          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> rendering…
-                          </div>
-                        )}
-                      </div>
-                      <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                        title="template-preview"
-                        srcDoc={
-                          form.body
-                            ? (livePreviewHtml || fillPreviewHtml(form.body))
-                            : '<div style="font-family:sans-serif;color:#9ca3af;padding:16px;font-size:13px">Preview appears here as you type…</div>'
-                        }
-                        style={{ flex: 1, width: '100%', borderRadius: 8, border: '1px solid var(--border-color)', background: '#fff' }}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Show detected custom variables as read-only chips (system vars excluded) */}
-                {form.body && dynVars.filter(v => !SYSTEM_VARS.has(v.key)).length > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
-                    <Braces size={13} color="var(--brand-primary)" style={{ flexShrink: 0 }} />
-                    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Variables:</span>
-                    {dynVars.filter(v => !SYSTEM_VARS.has(v.key)).map(v => (
-                      <span key={v.key} style={{ fontSize: 11, fontFamily: 'monospace', background: 'color-mix(in srgb, var(--brand-primary) 10%, transparent)', color: 'var(--brand-primary)', padding: '2px 7px', borderRadius: 5, fontWeight: 700 }}>
-                        {`{{${v.key}}}`}
-                      </span>
-                    ))}
-                  </div>
-                )}
+        {review && (
+          <aside className={styles.review} aria-labelledby="tpl-review-title">
+            <div className={styles.reviewHead}>
+              <div>
+                <span className={styles.eyebrow}>
+                  Approval review{pending.length > 0 && pending.some(p => p.id === review.template.id)
+                    ? ` · ${pending.findIndex(p => p.id === review.template.id) + 1} of ${pending.length}` : ''}
+                </span>
+                <h2 id="tpl-review-title">{review.template.name}</h2>
               </div>
-
-              {/* Footer */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid var(--border-color)' }}>
-                <button className="btn btn-ghost" onClick={() => !saving && setModal(null)} disabled={saving}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ minWidth: 100 }}>
-                  {saving ? 'Saving…' : modal === 'create' ? 'Create Template' : 'Save Changes'}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
+              <Button variant="ghost" size="sm" icon aria-label="Close review" onClick={() => setReview(null)}><X size={16} /></Button>
+            </div>
+            <div className={styles.row}>
+              <Chip>{channelLabel(review.template.channel)}</Chip>
+              <StatusChip tone={statusMeta(review.template.status).tone}>{statusMeta(review.template.status).label}</StatusChip>
+              {review.template.updated_at && <span className={styles.help}>Updated {formatDate(review.template.updated_at)}</span>}
+            </div>
+            <div className={styles.reviewFrame}>
+              {review.template.subject && <div className={styles.reviewSubject}><b>Subject:</b> {review.template.subject}</div>}
+              {review.template.channel === 'email' ? (
+                review.loading ? <div className={styles.previewMsg} role="status">Rendering preview…</div> : (
+                  <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" className={styles.reviewIframe}
+                    srcDoc={withViewport(review.html || '')} title={`Review of ${review.template.name || 'template'}`} />
+                )
+              ) : (
+                <div className={styles.reviewText}>{review.template.body_plain || stripHtml(review.template.body) || 'No message text.'}</div>
+              )}
+            </div>
+            {review.template.channel === 'email' && (
+              <Button size="sm" onClick={() => viewStoredReport(review.template)} title="View email QA report"><Info size={14} aria-hidden="true" /> Automatic checks (QA report)</Button>
+            )}
+            <div className={styles.row} style={{ marginTop: 'auto' }}>
+              <Button onClick={() => decide('reject')} disabled={reviewBusy !== null}>{reviewBusy === 'reject' ? 'Rejecting…' : 'Reject'}</Button>
+              <Button variant="primary" onClick={() => decide('approve')} disabled={reviewBusy !== null}>{reviewBusy === 'approve' ? 'Approving…' : 'Approve template'}</Button>
+            </div>
+            <span className={styles.help}>Only approved templates can be used in sends and journeys.</span>
+          </aside>
         )}
-      </AnimatePresence>
-    </motion.div>
+      </div>
+
+      {modals}
+    </div>
   );
 }

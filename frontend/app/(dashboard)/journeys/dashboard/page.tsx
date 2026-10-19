@@ -2,23 +2,27 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
 import {
-  GitBranch, Users, Send, Clock, Mail, Eye, TrendingUp, MousePointerClick,
-  AlertTriangle, RefreshCw, Sparkles, XCircle, Activity, Calendar,
-  ChevronRight, ChevronDown, Layers, X, Loader2, GitFork, Flag, Zap,
+  GitBranch, Users, Send, Clock, Mail, Eye, TrendingUp, Target,
+  AlertTriangle, RefreshCw, Sparkles, Calendar,
+  ChevronRight, ChevronDown, Layers, X, Loader2,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   LineChart, Line, Legend,
 } from 'recharts';
 import type { LucideIcon } from 'lucide-react';
-import type { Variants } from 'framer-motion';
+import type { ReactNode } from 'react';
+import { Button, Card, ErrorState, Input, PageHeader, Skeleton, StatusChip } from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
+import styles from './monitor.module.css';
 import { getJourneyOpsDashboard, getJourneyNodeBreakdown, getJourneysActiveOnDate, previewJourneyNodeEmail } from '@/lib/api';
 
 const dubaiToday = () => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
 
-const PALETTE = ['#8b5cf6', '#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#ef4444', '#6366f1', '#a855f7', '#0ea5e9'];
+const PALETTE = ['var(--chart-1)', 'var(--chart-3)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-5)', '#2E8C8C', '#B5617E', '#5A6F9C', '#8C7A3E', '#4F7D4F'];
+const n0 = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const fmtN = (v: unknown) => n0(v).toLocaleString();
 
 type JourneyStatus = 'active' | 'paused' | 'completed' | 'draft';
 type NodeType = 'action' | 'wait' | 'condition' | 'goal' | 'trigger';
@@ -50,7 +54,6 @@ interface ByDateState { loading: boolean; journeys: OpsJourney[]; error: string 
 interface ByDateRes { data?: { journeys?: OpsJourney[]; isToday?: boolean } }
 interface TemplateModalState { journeyName: string; label: string; loading: boolean; html?: string; subject?: string; error?: string }
 
-const fadeIn: Variants = { hidden: { opacity: 0, y: 14 }, visible: { opacity: 1, y: 0, transition: { duration: 0.3 } } };
 
 function dayLabel(dateStr: string) {
   const today = new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
@@ -147,11 +150,13 @@ export default function JourneyDashboardPage() {
   // of the user staring at a blank page until every query finishes.
   if (error && !data) {
     return (
-      <div style={{ padding: 28 }}>
-        <div className="card" style={{ padding: 28, textAlign: 'center', color: '#ef4444' }}>
-          <AlertTriangle size={28} style={{ marginBottom: 8 }} /><div>{error}</div>
-          <button className="btn btn-sm" onClick={() => load()} style={{ marginTop: 14 }}><RefreshCw size={14} /> Retry</button>
-        </div>
+      <div className={styles.page}>
+        <PageHeader title="Journey monitor" breadcrumbs={[{ label: 'Journeys', href: '/journeys' }, { label: 'Journey monitor' }]} />
+        <ErrorState
+          title="Couldn't load the journey monitor"
+          description={error}
+          action={<Button size="sm" onClick={() => load()}><RefreshCw size={14} aria-hidden="true" /> Retry</Button>}
+        />
       </div>
     );
   }
@@ -161,21 +166,21 @@ export default function JourneyDashboardPage() {
     kpis = {}, forecast = [], forecastChart = [], forecastJourneyNames = [],
     runningNow = [], engagement = [], journeys = [], health = {},
   } = data || {} as OpsDashboard;
-  const colorFor = (name: string) => PALETTE[forecastJourneyNames.indexOf(name) % PALETTE.length] || '#8b5cf6';
-  const SectionSkeleton = ({ h = 240 }: { h?: number }) => <div className="skeleton" style={{ width: '100%', height: h, borderRadius: 10 }} />;
+  const colorFor = (name: string) => PALETTE[Math.max(0, forecastJourneyNames.indexOf(name)) % PALETTE.length];
+  const SectionSkeleton = ({ h = 240 }: { h?: number }) => <Skeleton height={h} radius={10} />;
 
-  const KPIS = [
-    { label: 'Active Journeys', value: kpis.activeJourneys, icon: GitBranch, color: '#8b5cf6' },
-    { label: 'Active Enrollments', value: kpis.activeEntries?.toLocaleString(), icon: Users, color: '#3b82f6' },
-    { label: 'Sends Today', value: kpis.sendsToday?.toLocaleString(), icon: Send, color: '#22c55e' },
-    { label: 'Sends Tomorrow', value: kpis.sendsTomorrow?.toLocaleString(), icon: Calendar, color: '#14b8a6' },
-    { label: 'Queued Now', value: kpis.queuedNow?.toLocaleString(), icon: Clock, color: '#f59e0b' },
-    { label: 'Open Rate (7d)', value: `${kpis.openRate7d ?? 0}%`, icon: Eye, color: '#ec4899' },
-    { label: 'Conversions (7d)', value: kpis.conversions7d?.toLocaleString(), icon: TrendingUp, color: '#6366f1' },
+  const KPIS: { label: string; value: string; icon: LucideIcon }[] = [
+    { label: 'Active Journeys', value: fmtN(kpis.activeJourneys), icon: GitBranch },
+    { label: 'Active Enrollments', value: fmtN(kpis.activeEntries), icon: Users },
+    { label: 'Sends Today', value: fmtN(kpis.sendsToday), icon: Send },
+    { label: 'Sends Tomorrow', value: fmtN(kpis.sendsTomorrow), icon: Calendar },
+    { label: 'Queued Now', value: fmtN(kpis.queuedNow), icon: Clock },
+    { label: 'Open Rate (7d)', value: `${n0(kpis.openRate7d)}%`, icon: Eye },
+    { label: 'Conversions (7d)', value: fmtN(kpis.conversions7d), icon: TrendingUp },
   ];
 
-  const hasFallback = health.aiFallback?.length as number > 0;
-  const hasStuck = health.stuckEntries?.length as number > 0;
+  const hasFallback = (health.aiFallback?.length ?? 0) > 0;
+  const hasStuck = (health.stuckEntries?.length ?? 0) > 0;
 
   // Journey status filter — chips are built from whatever statuses are actually present
   // in the current list (all-time = ops-dashboard journeys; date mode = byDate journeys).
@@ -184,64 +189,83 @@ export default function JourneyDashboardPage() {
   const statusChips = ['all', ...Object.keys(statusCounts).sort()];
   const statusMatch = (j: OpsJourney) => statusFilter === 'all' || j.status === statusFilter;
   const visibleJourneys = journeyList.filter(statusMatch);
+  const openJourney = (id: JourneyId) => router.push(`/journeys?id=${id}`);
+  const tickStyle = { fontSize: 11, fill: 'var(--ink3)' };
+  const tooltipStyle = { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--ink)' };
+
+  const journeyHead = (j: OpsJourney, isOpen: boolean, sub: ReactNode, extra?: ReactNode) => (
+    <div
+      className={styles.jhead}
+      role="button"
+      tabIndex={0}
+      aria-expanded={isOpen}
+      onClick={() => toggleJourney(j.journeyId)}
+      onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleJourney(j.journeyId); } }}
+    >
+      <ChevronDown size={16} className={[styles.caret, isOpen ? '' : styles.caretClosed].filter(Boolean).join(' ')} aria-hidden="true" />
+      <div className={styles.jmain}>
+        <div className={styles.jname}>{j.name}</div>
+        <div className={styles.jsub}>{sub}</div>
+      </div>
+      <StatusPill status={j.status} />
+      {extra}
+      <Button size="sm" icon title="Open journey" aria-label={`Open journey ${j.name}`}
+        onClick={e => { e.stopPropagation(); openJourney(j.journeyId); }}>
+        <ChevronRight size={14} aria-hidden="true" />
+      </Button>
+    </div>
+  );
 
   return (
-    <motion.div initial="hidden" animate="visible" variants={{ visible: { transition: { staggerChildren: 0.05 } } }} style={{ padding: 28, maxWidth: 1400, margin: '0 auto' }}>
-      {/* Header */}
-      <motion.div variants={fadeIn} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Activity size={24} color="#8b5cf6" /> Journey Operations
-          </h1>
-          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 }}>
-            What's running, what's sending today &amp; tomorrow, and journey health {loaded ? `· updated ${fmtDateTime(data!.generatedAt)}` : '· loading…'}
-          </div>
-        </div>
-        <button className="btn btn-sm" onClick={() => load(true)} disabled={refreshing}
-          style={{ marginLeft: 'auto', gap: 6 }}>
-          <RefreshCw size={14} style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined} /> Refresh
-        </button>
-      </motion.div>
+    <div className={styles.page}>
+      <PageHeader
+        title="Journey monitor"
+        breadcrumbs={[{ label: 'Journeys', href: '/journeys' }, { label: 'Journey monitor' }]}
+        description={<>What&apos;s running, what&apos;s sending today &amp; tomorrow, and journey health <span className={styles.updated}>{loaded ? `· updated ${fmtDateTime(data?.generatedAt)}` : '· loading…'}</span></>}
+        actions={
+          <Button size="sm" onClick={() => load(true)} disabled={refreshing}>
+            <RefreshCw size={14} className={refreshing ? styles.spin : undefined} aria-hidden="true" /> Refresh
+          </Button>
+        }
+      />
 
       {/* Health alerts (top, only if present) */}
       {(hasFallback || hasStuck) && (
-        <motion.div variants={fadeIn} style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-          {hasStuck && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontSize: 13 }}>
-              <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+        <div className={styles.alerts}>
+          {hasStuck && health.stuckEntries && (
+            <div className={`${styles.alert} ${styles.alertBad}`} role="alert">
+              <AlertTriangle size={18} aria-hidden="true" />
               <div>
-                <strong>{health.stuckEntries!.reduce((s, x) => s + x.count, 0)} entries are overdue</strong> (next_fire_at &gt; 1h in the past) across {health.stuckEntries!.length} journey(s) — the worker may not be processing. {health.stuckEntries!.slice(0, 3).map(s => `${s.name} (${s.count})`).join(', ')}
+                <strong>{fmtN(health.stuckEntries.reduce((s, x) => s + n0(x.count), 0))} entries are overdue</strong> (next_fire_at &gt; 1h in the past) across {health.stuckEntries.length} journey(s) — the worker may not be processing. {health.stuckEntries.slice(0, 3).map(s => `${s.name} (${n0(s.count)})`).join(', ')}
               </div>
             </div>
           )}
-          {hasFallback && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b', fontSize: 13 }}>
-              <Sparkles size={18} style={{ flexShrink: 0 }} />
+          {hasFallback && health.aiFallback && (
+            <div className={`${styles.alert} ${styles.alertWarn}`} role="status">
+              <Sparkles size={18} aria-hidden="true" />
               <div>
-                <strong>{health.aiFallback!.length} of today's daily templates used fallback (non-AI) content</strong> — Claude rendering failed for Day {health.aiFallback!.map(f => f.dayNumber || f.templateId).join(', ')}. Recipients today get degraded content.
+                <strong>{health.aiFallback.length} of today&apos;s daily templates used fallback (non-AI) content</strong> — Claude rendering failed for Day {health.aiFallback.map(f => f.dayNumber || f.templateId).join(', ')}. Recipients today get degraded content.
               </div>
             </div>
           )}
-        </motion.div>
+        </div>
       )}
 
       {/* KPI strip */}
-      <motion.div variants={fadeIn} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', gap: 12, marginBottom: 24 }}>
+      <div className={styles.kpiGrid}>
         {!loaded
-          ? [...Array<undefined>(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: 86, borderRadius: 12 }} />)
+          ? [...Array<undefined>(7)].map((_, i) => <Skeleton key={i} height={86} radius={12} />)
           : KPIS.map(k => (
-          <div key={k.label} className="card" style={{ padding: '16px 18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              <k.icon size={14} color={k.color} /> {k.label}
+            <div key={k.label} className={styles.kpi}>
+              <span className={styles.eyebrow}><k.icon size={14} aria-hidden="true" /> {k.label}</span>
+              <span className={styles.kpiValue}>{k.value}</span>
             </div>
-            <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-primary)', marginTop: 8 }}>{k.value ?? 0}</div>
-          </div>
-        ))}
-      </motion.div>
+          ))}
+      </div>
 
       {/* ── Send Forecast ── */}
-      <motion.div variants={fadeIn} className="card" style={{ padding: 22, marginBottom: 20 }}>
-        <SectionTitle icon={Calendar} color="#22c55e" title="Send Forecast — next 7 days"
+      <Card>
+        <SectionTitle icon={Calendar} title="Send Forecast — next 7 days"
           subtitle="Scheduled emails per day, resolved to the exact journey · node · template that will fire" />
         {!loaded ? (
           <SectionSkeleton h={240} />
@@ -251,10 +275,10 @@ export default function JourneyDashboardPage() {
           <>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={forecastChart} barCategoryGap="22%">
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="date" tickFormatter={dayLabel} tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} labelFormatter={dayLabel as (label: React.ReactNode) => string} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="date" tickFormatter={dayLabel} tick={tickStyle} axisLine={false} tickLine={false} />
+                <YAxis tick={tickStyle} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={tooltipStyle} labelFormatter={dayLabel as (label: ReactNode) => string} />
                 {forecastJourneyNames.map(name => (
                   <Bar key={name} dataKey={name} stackId="a" fill={colorFor(name)} radius={[3, 3, 0, 0]} maxBarSize={48} />
                 ))}
@@ -262,33 +286,31 @@ export default function JourneyDashboardPage() {
             </ResponsiveContainer>
 
             {/* Day-by-day breakdown */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 18 }}>
+            <div className={styles.days}>
               {forecast.map(day => (
                 <div key={day.date}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{dayLabel(day.date)}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{day.date} · {day.total.toLocaleString()} sends</span>
+                  <div className={styles.dayHead}>
+                    <span className={styles.dayName}>{dayLabel(day.date)}</span>
+                    <span className={styles.dayMeta}>{day.date} · {fmtN(day.total)} sends</span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div className={styles.items}>
                     {day.items.map(it => (
-                      <div key={`${it.journeyId}-${it.nodeId}`}
-                        onClick={() => router.push(`/journeys?id=${it.journeyId}`)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer' }}>
-                        <span style={{ width: 9, height: 9, borderRadius: '50%', background: colorFor(it.journeyName), flexShrink: 0 }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {it.journeyName}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                            {it.dayNumber && <span style={{ fontWeight: 700, padding: '1px 6px', borderRadius: 5, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>DAY {it.dayNumber}</span>}
+                      <div key={`${it.journeyId}-${it.nodeId}`} className={styles.item} role="link" tabIndex={0}
+                        onClick={() => openJourney(it.journeyId)}
+                        onKeyDown={e => { if (e.key === 'Enter') openJourney(it.journeyId); }}>
+                        <span className={styles.dot} style={{ background: colorFor(it.journeyName) }} aria-hidden="true" />
+                        <div className={styles.itemMain}>
+                          <div className={styles.itemName}>{it.journeyName}</div>
+                          <div className={styles.itemSub}>
+                            {it.dayNumber ? <span className={styles.dayTag}>DAY {it.dayNumber}</span> : null}
                             <span>{it.label}</span>
                             <span>· {it.nodeId}</span>
                             {fmtHour(it.sendHour) && <span>· {fmtHour(it.sendHour)} GST</span>}
-                            {it.approximate && <span style={{ color: '#f59e0b' }} title="Path passes a condition node — exact email depends on the branch">· branch est.</span>}
+                            {it.approximate && <span className={styles.estimate} title="Path passes a condition node — exact email depends on the branch">· branch est.</span>}
                           </div>
                         </div>
-                        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)', flexShrink: 0 }}>{it.count.toLocaleString()}</span>
-                        <ChevronRight size={15} color="var(--text-tertiary)" style={{ flexShrink: 0 }} />
+                        <span className={styles.itemCount}>{fmtN(it.count)}</span>
+                        <ChevronRight size={15} className={styles.chev} aria-hidden="true" />
                       </div>
                     ))}
                   </div>
@@ -297,35 +319,35 @@ export default function JourneyDashboardPage() {
             </div>
           </>
         )}
-      </motion.div>
+      </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 20, marginBottom: 20 }}>
+      <div className={styles.twoCol}>
         {/* ── Running now ── */}
-        <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
-          <SectionTitle icon={Layers} color="#3b82f6" title="Running now" subtitle="Where every active enrollment currently sits" />
+        <Card>
+          <SectionTitle icon={Layers} title="Running now" subtitle="Where every active enrollment currently sits" />
           {!loaded ? <SectionSkeleton h={180} /> : runningNow.length === 0 ? <Empty text="No active enrollments" /> : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className={styles.running}>
               {runningNow.map(j => {
-                const total = j.nodes.reduce((s, n) => s + n.count, 0);
+                const total = j.nodes.reduce((s, n) => s + n0(n.count), 0);
                 return (
                   <div key={j.journeyId}>
-                    <div onClick={() => router.push(`/journeys?id=${j.journeyId}`)} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.journeyName}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{total.toLocaleString()} active</span>
-                    </div>
-                    {/* proportion bar */}
-                    <div style={{ display: 'flex', height: 8, borderRadius: 5, overflow: 'hidden', background: 'var(--bg-secondary)' }}>
+                    <button type="button" className={styles.runHead} onClick={() => openJourney(j.journeyId)}>
+                      <span className={styles.runName}>{j.journeyName}</span>
+                      <span className={styles.runCount}>{fmtN(total)} active</span>
+                    </button>
+                    <div className={styles.stack}>
                       {j.nodes.map((n, i) => (
-                        <div key={n.nodeId} title={`${n.label}: ${n.count}`} style={{ width: `${(n.count / total) * 100}%`, background: PALETTE[i % PALETTE.length] }} />
+                        <div key={n.nodeId} title={`${n.label}: ${n0(n.count)}`}
+                          style={{ width: `${total > 0 ? (n0(n.count) / total) * 100 : 0}%`, background: PALETTE[i % PALETTE.length] }} />
                       ))}
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    <div className={styles.legend}>
                       {j.nodes.map((n, i) => (
-                        <span key={n.nodeId} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: 'var(--text-secondary)' }}>
-                          <span style={{ width: 7, height: 7, borderRadius: 2, background: PALETTE[i % PALETTE.length] }} />
-                          {n.label} <strong style={{ color: 'var(--text-primary)' }}>{n.count}</strong>
-                          {n.type === 'wait' && <Clock size={9} />}
-                          {n.type === 'action' && <Mail size={9} />}
+                        <span key={n.nodeId} className={styles.legendItem}>
+                          <span className={styles.swatch} style={{ background: PALETTE[i % PALETTE.length] }} aria-hidden="true" />
+                          {n.label} <strong>{n0(n.count)}</strong>
+                          {n.type === 'wait' && <Clock size={10} aria-label="wait" />}
+                          {n.type === 'action' && <Mail size={10} aria-label="email" />}
                         </span>
                       ))}
                     </div>
@@ -334,62 +356,55 @@ export default function JourneyDashboardPage() {
               })}
             </div>
           )}
-        </motion.div>
+        </Card>
 
         {/* ── Engagement timeseries ── */}
-        <motion.div variants={fadeIn} className="card" style={{ padding: 22 }}>
-          <SectionTitle icon={TrendingUp} color="#ec4899" title="Engagement (30 days)" subtitle="Delivered · Opened · Clicked across all journey sends" />
+        <Card>
+          <SectionTitle icon={TrendingUp} title="Engagement (30 days)" subtitle="Delivered · Opened · Clicked across all journey sends" />
           {!loaded ? <SectionSkeleton h={240} /> : engagement.length === 0 ? <Empty text="No journey sends in the last 30 days" /> : (
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={engagement} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="date" tickFormatter={(d: string) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} minTickGap={24} />
-                <YAxis tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="delivered" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="opened" stroke="#8b5cf6" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="clicked" stroke="#22c55e" strokeWidth={2} dot={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="date" tickFormatter={(d: string) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} tick={tickStyle} axisLine={false} tickLine={false} minTickGap={24} />
+                <YAxis tick={tickStyle} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={tooltipStyle} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Line type="monotone" dataKey="delivered" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="opened" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="clicked" stroke="var(--chart-2)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
-        </motion.div>
+        </Card>
       </div>
 
       {/* ── Per-journey accordion ── */}
-      <motion.div variants={fadeIn} className="card" style={{ padding: 22, marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <SectionTitle icon={GitBranch} color="#8b5cf6" title="Journeys"
+      <Card>
+        <div className={styles.accHead}>
+          <div className={styles.accTitle}>
+            <SectionTitle icon={GitBranch} title="Journeys"
               subtitle={journeyDate
                 ? `Only journeys with a node fired, running or scheduled on ${dayLabel(journeyDate)}`
                 : 'Expand a journey to see per-node delivery, opens, clicks & templates'} />
           </div>
-          {/* Date filter — defaults to today; scopes the whole list to that day */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Calendar size={15} color="var(--text-tertiary)" />
-            <input type="date" value={journeyDate} onChange={e => setJourneyDate(e.target.value)}
-              style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12.5 }} />
-            <button className="btn btn-sm btn-secondary" onClick={() => setJourneyDate(dubaiToday())} style={{ gap: 5 }} title="Scope to today">Today</button>
-            <button className="btn btn-sm btn-secondary" onClick={() => setJourneyDate('')} disabled={!journeyDate}
-              style={{ gap: 5, opacity: journeyDate ? 1 : 0.5 }} title="Show all journeys, all nodes (no date scope)">
-              <X size={13} /> All time
-            </button>
+          <div className={styles.dateCtl}>
+            <Calendar size={15} aria-hidden="true" />
+            <Input type="date" aria-label="Scope to date" value={journeyDate} onChange={e => setJourneyDate(e.target.value)} />
+            <Button size="sm" onClick={() => setJourneyDate(dubaiToday())} title="Scope to today">Today</Button>
+            <Button size="sm" onClick={() => setJourneyDate('')} disabled={!journeyDate} title="Show all journeys, all nodes (no date scope)">
+              <X size={13} aria-hidden="true" /> All time
+            </Button>
           </div>
         </div>
 
         {/* Status filter chips — built from whatever statuses are present */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div className={styles.filters} role="group" aria-label="Filter by status">
           {statusChips.map(s => {
             const on = statusFilter === s;
             const count = s === 'all' ? journeyList.length : statusCounts[s];
             return (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 20, cursor: 'pointer',
-                  border: `1px solid ${on ? '#8b5cf6' : 'var(--border)'}`,
-                  background: on ? 'rgba(139,92,246,0.12)' : 'var(--bg-secondary)',
-                  color: on ? '#8b5cf6' : 'var(--text-secondary)', textTransform: 'capitalize' }}>
-                {s === 'all' ? 'All' : s} <span style={{ opacity: 0.65, marginLeft: 2 }}>{count ?? 0}</span>
+              <button key={s} type="button" aria-pressed={on} className={on ? styles.filterOn : styles.filter} onClick={() => setStatusFilter(s)}>
+                {s === 'all' ? 'All' : s} <span className={styles.filterCount}>{count ?? 0}</span>
               </button>
             );
           })}
@@ -398,37 +413,22 @@ export default function JourneyDashboardPage() {
         {journeyDate ? (
           // ── Date mode: filtered journeys with relevant nodes inline ──
           byDate.loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: 12, padding: '16px 0' }}>
-              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Loading journeys for {dayLabel(journeyDate)}…
-            </div>
+            <div className={styles.inlineMsg}><Loader2 size={14} className={styles.spin} aria-hidden="true" /> Loading journeys for {dayLabel(journeyDate)}…</div>
           ) : byDate.error ? (
-            <div style={{ color: '#ef4444', fontSize: 12, padding: '8px 0' }}>{byDate.error}</div>
+            <div className={styles.inlineErr} role="alert">{byDate.error}</div>
           ) : visibleJourneys.length === 0 ? (
             <Empty text={`No ${statusFilter === 'all' ? '' : statusFilter + ' '}journey has a node fired, running or scheduled on ${dayLabel(journeyDate)}`} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className={styles.list}>
               {visibleJourneys.map(j => {
                 const isOpen = expanded.has(j.journeyId);
+                const nodes = j.nodes || [];
                 return (
-                  <div key={j.journeyId} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-secondary)' }}>
-                    <div onClick={() => toggleJourney(j.journeyId)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', cursor: 'pointer' }}>
-                      <ChevronDown size={16} color="var(--text-tertiary)" style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .18s', flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                          {j.nodes.length} node{j.nodes.length > 1 ? 's' : ''} on {dayLabel(journeyDate)} · {j.sentOnDate.toLocaleString()} sent · {j.scheduledOnDate.toLocaleString()} scheduled
-                        </div>
-                      </div>
-                      <StatusPill status={j.status} />
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/journeys?id=${j.journeyId}`); }}
-                        title="Open journey" className="btn btn-sm btn-secondary" style={{ padding: '5px 8px', flexShrink: 0 }}>
-                        <ChevronRight size={13} />
-                      </button>
-                    </div>
+                  <div key={j.journeyId} className={styles.jrow}>
+                    {journeyHead(j, isOpen, <>{nodes.length} node{nodes.length > 1 ? 's' : ''} on {dayLabel(journeyDate)} · {fmtN(j.sentOnDate)} sent · {fmtN(j.scheduledOnDate)} scheduled</>)}
                     {isOpen && (
-                      <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px', background: 'var(--card)' }}>
-                        <NodeTable nodes={j.nodes} dateActive onViewTemplate={(n) => openTemplate(j.journeyId, n, j.name)} />
+                      <div className={styles.jbody}>
+                        <NodeTable nodes={nodes} dateActive onViewTemplate={(n) => openTemplate(j.journeyId, n, j.name)} />
                       </div>
                     )}
                   </div>
@@ -442,44 +442,31 @@ export default function JourneyDashboardPage() {
           <Empty text={`No ${statusFilter === 'all' ? '' : statusFilter + ' '}journeys`} />
         ) : (
           // ── All-time mode: full journey list; per-node breakdown is fetched LAZILY on expand ──
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className={styles.list}>
             {visibleJourneys.map(j => {
               const isOpen = expanded.has(j.journeyId);
               const det = nodeDetails[j.journeyId];
               return (
-                <div key={j.journeyId} style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg-secondary)' }}>
-                  <div onClick={() => toggleJourney(j.journeyId)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', cursor: 'pointer' }}>
-                    <ChevronDown size={16} color="var(--text-tertiary)" style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .18s', flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                        {j.activeEntries.toLocaleString()} active · next fire {j.nextFire ? fmtDateTime(j.nextFire) : '—'}
-                      </div>
-                    </div>
-                    <StatusPill status={j.status} />
-                    <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--text-tertiary)', flexShrink: 0 }}>
-                      <span title="Sends today">📨 {j.sendsToday.toLocaleString()}</span>
-                      <span title="Open rate (7d)">👁 {j.openRate}%</span>
-                      <span title="Conversions">🎯 {j.conversions.toLocaleString()}</span>
-                    </div>
-                    <button onClick={(e) => { e.stopPropagation(); router.push(`/journeys?id=${j.journeyId}`); }}
-                      title="Open journey" className="btn btn-sm btn-secondary" style={{ padding: '5px 8px', flexShrink: 0 }}>
-                      <ChevronRight size={13} />
-                    </button>
-                  </div>
+                <div key={j.journeyId} className={styles.jrow}>
+                  {journeyHead(
+                    j, isOpen,
+                    <>{fmtN(j.activeEntries)} active · next fire {j.nextFire ? fmtDateTime(j.nextFire) : '—'}</>,
+                    <div className={styles.jstats}>
+                      <span className={styles.jstat} title="Sends today"><Send size={12} aria-label="Sends today" /> {fmtN(j.sendsToday)}</span>
+                      <span className={styles.jstat} title="Open rate (7d)"><Eye size={12} aria-label="Open rate" /> {n0(j.openRate)}%</span>
+                      <span className={styles.jstat} title="Conversions"><Target size={12} aria-label="Conversions" /> {fmtN(j.conversions)}</span>
+                    </div>,
+                  )}
                   {isOpen && (
-                    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px', background: 'var(--card)' }}>
+                    <div className={styles.jbody}>
                       {!det || det.loading ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: 12, padding: '12px 0' }}>
-                          <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Loading nodes…
-                        </div>
+                        <div className={styles.inlineMsg}><Loader2 size={14} className={styles.spin} aria-hidden="true" /> Loading nodes…</div>
                       ) : det.error ? (
-                        <div style={{ color: '#ef4444', fontSize: 12, padding: '8px 0' }}>{det.error}</div>
-                      ) : det.nodes!.length === 0 ? (
+                        <div className={styles.inlineErr} role="alert">{det.error}</div>
+                      ) : !det.nodes || det.nodes.length === 0 ? (
                         <Empty text="This journey has no nodes" />
                       ) : (
-                        <NodeTable nodes={det.nodes!} dateActive={false} onViewTemplate={(n) => openTemplate(j.journeyId, n, j.name)} />
+                        <NodeTable nodes={det.nodes} dateActive={false} onViewTemplate={(n) => openTemplate(j.journeyId, n, j.name)} />
                       )}
                     </div>
                   )}
@@ -488,98 +475,86 @@ export default function JourneyDashboardPage() {
             })}
           </div>
         )}
-      </motion.div>
+      </Card>
 
       {/* ── Template preview modal (action nodes) ── */}
       {templateModal && (
-        <div onClick={() => setTemplateModal(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{ background: 'var(--card)', borderRadius: 16, width: '100%', maxWidth: 760, maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,0.4)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-              <Mail size={17} color="#8b5cf6" />
+        <div className={styles.overlay} onClick={() => setTemplateModal(null)}>
+          <div className={styles.modal} role="dialog" aria-modal="true" aria-label={templateModal.label} onClick={e => e.stopPropagation()}>
+            <div className={styles.modalHead}>
+              <Mail size={17} aria-hidden="true" />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{templateModal.label}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div className={styles.modalTitle}>{templateModal.label}</div>
+                <div className={styles.modalSub}>
                   {templateModal.journeyName}{templateModal.subject ? ` · ${templateModal.subject}` : ''}
                 </div>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setTemplateModal(null)}><X size={18} /></button>
+              <Button variant="ghost" size="sm" icon aria-label="Close" onClick={() => setTemplateModal(null)}><X size={18} /></Button>
             </div>
-            <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+            <div className={styles.modalBody}>
               {templateModal.loading ? (
-                <div style={{ padding: 60, textAlign: 'center', color: '#888', fontSize: 13 }}>
-                  <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} /><div style={{ marginTop: 8 }}>Rendering the exact email that gets sent… (may take ~15-25s on a cache miss)</div>
+                <div className={styles.modalMsg}>
+                  <Loader2 size={20} className={styles.spin} aria-hidden="true" />
+                  <div>Rendering the exact email that gets sent… (may take ~15-25s on a cache miss)</div>
                 </div>
               ) : templateModal.error ? (
-                <div style={{ padding: 40, textAlign: 'center', color: '#ef4444', fontSize: 13 }}>{templateModal.error}</div>
+                <div className={styles.modalErr}>{templateModal.error}</div>
               ) : (
-                <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={templateModal.html || ''} title={templateModal.label}
-                  style={{ width: '100%', height: '70vh', border: 0, background: '#fff' }} />
+                <iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={templateModal.html || ''} title={templateModal.label} className={styles.frame} />
               )}
             </div>
           </div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }
-
-const NODE_ICON: Record<NodeType, LucideIcon> = { action: Mail, wait: Clock, condition: GitFork, goal: Flag, trigger: Zap };
 
 // Tabular per-node breakdown shown when a journey is expanded (both date + all-time modes).
 interface NodeTableProps { nodes: JNode[]; dateActive?: boolean; onViewTemplate: (n: JNode) => void }
 function NodeTable({ nodes, onViewTemplate }: NodeTableProps) {
-  const num = (v: number | undefined) => (v || 0).toLocaleString();
-  const th: React.CSSProperties = { padding: '7px 10px', fontSize: 10.5, fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap', textAlign: 'left' };
-  const thR: React.CSSProperties = { ...th, textAlign: 'right' };
-  const td: React.CSSProperties = { padding: '8px 10px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border)' };
-  const tdR: React.CSSProperties = { ...td, textAlign: 'right' };
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div className={styles.tableWrap}>
+      <table className={styles.ntable}>
         <thead>
           <tr>
-            <th style={th}>Node</th>
-            <th style={th}>Type</th>
-            <th style={thR}>Delivered</th>
-            <th style={thR}>Opened</th>
-            <th style={thR}>Clicked</th>
-            <th style={thR}>Failed</th>
-            <th style={th}>State</th>
-            <th style={th} />
+            <th>Node</th>
+            <th>Type</th>
+            <th className={styles.r}>Delivered</th>
+            <th className={styles.r}>Opened</th>
+            <th className={styles.r}>Clicked</th>
+            <th className={styles.r}>Failed</th>
+            <th>State</th>
+            <th aria-label="Template preview" />
           </tr>
         </thead>
         <tbody>
           {nodes.map(n => {
             const isAction = n.type === 'action';
-            const running = n.running ?? n.active ?? 0;
-            const scheduled = n.scheduled ?? n.scheduledOnDate ?? 0;
-            const fired = n.fired ?? ((n.total || 0) > 0);
+            const running = n0(n.running ?? n.active);
+            const scheduled = n0(n.scheduled ?? n.scheduledOnDate);
+            const fired = n.fired ?? (n0(n.total) > 0);
             const stateBits: string[] = [];
             if (fired) stateBits.push('Fired');
-            if (running > 0) stateBits.push(`▶ ${num(running)}`);
-            if (scheduled > 0) stateBits.push(`⏱ ${num(scheduled)}`);
+            if (running > 0) stateBits.push(`▶ ${fmtN(running)}`);
+            if (scheduled > 0) stateBits.push(`⏱ ${fmtN(scheduled)}`);
             if (n.type === 'wait') stateBits.push(`waits ${n.waitDays ?? 1}d`);
             return (
               <tr key={n.nodeId}>
-                <td style={{ ...td, maxWidth: 320 }}>
-                  {n.dayNumber && <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6', marginRight: 6 }}>DAY {n.dayNumber}</span>}
-                  <span style={{ fontWeight: 600 }}>{n.label}</span>
-                  <span style={{ color: 'var(--text-tertiary)', fontSize: 10.5 }}> · {n.nodeId}</span>
+                <td style={{ maxWidth: 320 }}>
+                  {n.dayNumber ? <span className={styles.dayTag}>DAY {n.dayNumber}</span> : null}
+                  <span className={styles.nodeName}>{n.label}</span>
+                  <span className={styles.nodeId}> · {n.nodeId}</span>
                 </td>
-                <td style={{ ...td, color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{n.type}</td>
-                <td style={tdR}>{isAction ? num(n.delivered) : '—'}</td>
-                <td style={tdR}>{isAction ? <>{num(n.opened)}{n.openRate != null && <span style={{ color: '#8b5cf6', marginLeft: 4 }}>{n.openRate}%</span>}</> : '—'}</td>
-                <td style={tdR}>{isAction ? <>{num(n.clicked)}{n.clickRate != null && <span style={{ color: '#22c55e', marginLeft: 4 }}>{n.clickRate}%</span>}</> : '—'}</td>
-                <td style={tdR}>{isAction && n.failed > 0 ? <span style={{ color: '#ef4444' }}>{num(n.failed)}</span> : '—'}</td>
-                <td style={{ ...td, color: 'var(--text-secondary)', fontSize: 11, whiteSpace: 'nowrap' }}>{stateBits.join(' · ') || '—'}</td>
-                <td style={tdR}>
+                <td className={styles.ntype}>{n.type}</td>
+                <td className={styles.r}>{isAction ? fmtN(n.delivered) : '—'}</td>
+                <td className={styles.r}>{isAction ? <>{fmtN(n.opened)}{n.openRate != null && <span className={styles.rate}>{n0(n.openRate)}%</span>}</> : '—'}</td>
+                <td className={styles.r}>{isAction ? <>{fmtN(n.clicked)}{n.clickRate != null && <span className={styles.rate}>{n0(n.clickRate)}%</span>}</> : '—'}</td>
+                <td className={styles.r}>{isAction && n0(n.failed) > 0 ? <span className={styles.failed}>{fmtN(n.failed)}</span> : '—'}</td>
+                <td className={styles.state}>{stateBits.join(' · ') || '—'}</td>
+                <td className={styles.r}>
                   {isAction && n.hasTemplate && (
-                    <button onClick={() => onViewTemplate(n)} className="btn btn-sm"
-                      style={{ gap: 4, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)', padding: '4px 8px', whiteSpace: 'nowrap' }}>
-                      <Eye size={12} /> Template
-                    </button>
+                    <Button size="sm" onClick={() => onViewTemplate(n)}><Eye size={12} aria-hidden="true" /> Template</Button>
                   )}
                 </td>
               </tr>
@@ -591,93 +566,21 @@ function NodeTable({ nodes, onViewTemplate }: NodeTableProps) {
   );
 }
 
-interface NodeRowProps { node: JNode; dateActive?: boolean; onViewTemplate: () => void }
-function NodeRow({ node, dateActive, onViewTemplate }: NodeRowProps) {
-  const Icon = NODE_ICON[node.type] || Layers;
-  const color = { action: '#3b82f6', wait: '#f59e0b', condition: '#a855f7', goal: '#22c55e', trigger: '#8b5cf6' }[node.type] || '#9ca3af';
-  const isAction = node.type === 'action';
-  // Normalize across the two payload shapes (date mode vs all-time breakdown)
-  const running = node.running ?? node.active ?? 0;
-  const scheduled = node.scheduled ?? node.scheduledOnDate ?? 0;
-  const fired = node.fired ?? (node.total || 0) > 0;
-  const badges = dateActive ? [
-    fired && { label: 'Fired', color: '#3b82f6' },
-    running > 0 && { label: `Running ${running.toLocaleString()}`, color: '#22c55e' },
-    scheduled > 0 && { label: `Scheduled ${scheduled.toLocaleString()}`, color: '#f59e0b' },
-  ].filter(Boolean) as { label: string; color: string }[] : [];
+interface SectionTitleProps { icon: LucideIcon; title: string; subtitle?: string }
+function SectionTitle({ icon: Icon, title, subtitle }: SectionTitleProps) {
   return (
-    <div style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: `${color}1f`, color, flexShrink: 0 }}>
-          <Icon size={14} />
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            {node.dayNumber && <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 5, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>DAY {node.dayNumber}</span>}
-            {node.label}
-            <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 400 }}>· {node.nodeId} · {node.type}</span>
-            {badges.map(b => (
-              <span key={b.label} style={{ fontSize: 9, fontWeight: 800, padding: '2px 7px', borderRadius: 20, background: `${b.color}1f`, color: b.color, letterSpacing: 0.3 }}>{b.label}</span>
-            ))}
-          </div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)', marginTop: 1 }}>
-            {!dateActive && running > 0 && <span style={{ color: '#22c55e' }}>● {running.toLocaleString()} here now</span>}
-            {node.type === 'wait' && <span>{!dateActive && running > 0 ? ' · ' : ''}waits {node.waitDays}d</span>}
-          </div>
-        </div>
-        {isAction && node.hasTemplate && (
-          <button onClick={onViewTemplate} className="btn btn-sm" style={{ gap: 5, flexShrink: 0, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.25)' }}>
-            <Eye size={13} /> View template
-          </button>
-        )}
-      </div>
-      {/* Engagement metrics — only meaningful for action (email) nodes */}
-      {isAction && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-          <Metric icon={Send} label="Delivered" value={node.delivered} color="#3b82f6" />
-          <Metric icon={Eye} label="Opened" value={node.opened} sub={node.openRate != null ? `${node.openRate}%` : null} color="#8b5cf6" />
-          <Metric icon={MousePointerClick} label="Clicked" value={node.clicked} sub={node.clickRate != null ? `${node.clickRate}%` : null} color="#22c55e" />
-          {node.failed > 0 && <Metric icon={XCircle} label="Failed" value={node.failed} color="#ef4444" />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface MetricProps { icon: LucideIcon; label: string; value?: number; sub?: string | null; color: string }
-function Metric({ icon: Icon, label, value, sub, color }: MetricProps) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '5px 10px', borderRadius: 8, background: 'var(--card)', border: '1px solid var(--border)' }}>
-      <Icon size={12} color={color} />
-      <span style={{ color: 'var(--text-tertiary)' }}>{label}</span>
-      <strong style={{ color: 'var(--text-primary)' }}>{(value || 0).toLocaleString()}</strong>
-      {sub && <span style={{ color, fontWeight: 700 }}>{sub}</span>}
-    </span>
-  );
-}
-
-interface SectionTitleProps { icon: LucideIcon; color: string; title: string; subtitle?: string }
-function SectionTitle({ icon: Icon, color, title, subtitle }: SectionTitleProps) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon size={17} color={color} /> {title}
-      </div>
-      {subtitle && <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 3 }}>{subtitle}</div>}
+    <div className={styles.sectionHead}>
+      <h2 className={styles.sectionTitle}><Icon size={17} aria-hidden="true" /> {title}</h2>
+      {subtitle && <p className={styles.sectionSub}>{subtitle}</p>}
     </div>
   );
 }
 
 function Empty({ text }: { text: string }) {
-  return <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>{text}</div>;
+  return <div className={styles.empty}>{text}</div>;
 }
 
+const STATUS_TONE: Record<JourneyStatus, ChipTone> = { active: 'ok', paused: 'warn', completed: 'info', draft: 'mute' };
 function StatusPill({ status }: { status: JourneyStatus }) {
-  const map = {
-    active: { bg: 'rgba(34,197,94,0.12)', color: '#22c55e' },
-    paused: { bg: 'rgba(251,146,60,0.15)', color: '#fb923c' },
-    completed: { bg: 'rgba(59,130,246,0.12)', color: '#3b82f6' },
-    draft: { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af' },
-  }[status] || { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af' };
-  return <span style={{ fontSize: 9.5, fontWeight: 800, padding: '3px 9px', borderRadius: 20, background: map.bg, color: map.color, letterSpacing: 0.5, textTransform: 'uppercase' }}>{status}</span>;
+  return <StatusChip tone={STATUS_TONE[status] ?? 'mute'}>{status}</StatusChip>;
 }

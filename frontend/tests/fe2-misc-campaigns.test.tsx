@@ -40,7 +40,7 @@ describe('Campaigns list page', () => {
     asMock('getJourneys').mockReturnValue(new Promise(() => {}));
     const { container } = render(<Campaigns />);
     expect(screen.getByText('Campaigns')).toBeTruthy();
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.ui-skel').length).toBeGreaterThan(0);
     expect(screen.queryByText(/All Campaigns/)).toBeNull();
   });
 
@@ -57,8 +57,8 @@ describe('Campaigns list page', () => {
     expect(screen.getByText('email')).toBeTruthy();
     expect(screen.getByText('New users')).toBeTruthy();
     expect(screen.getByText('carrier-pigeon')).toBeTruthy();
-    expect(screen.getByText('weird').className).toContain('badge-gray');
-    expect(screen.getByText('active').className).toContain('badge-green');
+    expect(screen.getByText('weird').className).toContain('ui-chip--mute');
+    expect(screen.getByText('active').className).toContain('ui-chip--ok');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 

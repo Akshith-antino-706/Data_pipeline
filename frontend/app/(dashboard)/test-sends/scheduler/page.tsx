@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { motion } from 'framer-motion';
 import {
-  Play, CheckCircle2, XCircle, Loader2, Users, Calendar, Zap,
-  Search, X, ClipboardList, Square, Cpu, Plus, ArrowLeft, Filter, CheckSquare,
+  CheckCircle2, XCircle, Loader2, Zap,
+  Search, X, ClipboardList, Square, Cpu, Plus, Filter, CheckSquare, RefreshCw,
 } from 'lucide-react';
-import Link from 'next/link';
 import { authFetch } from '@/lib/api';
 import { contactTypeColor } from '@/lib/contactTypes';
-import type { CSSProperties } from 'react';
+import {
+  Button, Card, Chip, ConfirmDialog, EmptyState, Field, PageHeader, Select, StatusChip, Table,
+} from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
+import styles from '../sends.module.css';
 import type { Id, SendLogRow } from '@/types/api';
 import type {
   FilterOptionObj, MailSchedule, ScheduleLogModal, ScheduleTickResult, TestSendContact,
@@ -41,11 +43,14 @@ async function apiGet(path: string): Promise<unknown> {
   return data.data || data;
 }
 
-const statusColor = (st: string) =>
-  st === 'sent' || st === 'opened' || st === 'clicked' ? '#22c55e'
-  : st === 'failed' ? '#ef4444'
-  : st === 'queued' ? '#e2b340'
-  : 'var(--muted-foreground)';
+const statusTone = (st: string): ChipTone =>
+  st === 'sent' || st === 'opened' || st === 'clicked' ? 'ok'
+  : st === 'failed' ? 'bad'
+  : st === 'queued' ? 'gold'
+  : 'mute';
+
+const fmtList = (emails: string[]): string =>
+  `${emails.slice(0, 5).join(', ')}${emails.length > 5 ? ` and ${emails.length - 5} more` : ''}`;
 
 export default function SchedulerPage() {
   // ── contact list state ────────────────────────────────────────────────
@@ -73,6 +78,12 @@ export default function SchedulerPage() {
   const [day6Dest, setDay6Dest]             = useState('singapore');
   const anyRunningRef = useRef(false);
   const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── send confirmations (who / what / when) ──────────────────────────
+  const [confirmStart, setConfirmStart] = useState(false);
+  const [confirmTick, setConfirmTick]   = useState<MailSchedule | null>(null);
+  const cancelStart = useCallback(() => setConfirmStart(false), []);
+  const cancelTick  = useCallback(() => setConfirmTick(null), []);
 
   // ── schedule list ─────────────────────────────────────────────────────
   const loadSchedules = useCallback(async () => {
@@ -222,573 +233,394 @@ export default function SchedulerPage() {
     }
   }, [logModal?.id]);
 
+  const runningCount = schedules.filter(s => s.is_running).length;
+  const filterFields: FilterField[] = filterOptions ? [
+    { key: 'booking_status', label: 'Booking Status', opts: filterOptions.booking_status },
+    { key: 'contact_type', label: 'Contact Type', opts: filterOptions.contact_type },
+    { key: 'country', label: 'Country', opts: (filterOptions.countries || []).map(c => c.val) },
+    { key: 'geography', label: 'Geography', opts: filterOptions.geography },
+    { key: 'is_indian', label: 'Indian / Rest', opts: [{ val: 'true', label: 'Indian' }, { val: 'false', label: 'Rest of World' }], isObj: true },
+    { key: 'product_tier', label: 'Product Tier', opts: filterOptions.product_tier },
+    { key: 'segment_id', label: 'Segment', opts: (filterOptions.segments || []).map(s => ({ val: String(s.id), label: s.name })), isObj: true },
+    { key: 'custom_segment_id', label: 'Custom Segment', opts: (filterOptions.custom_segments || []).map(s => ({ val: String(s.id), label: s.name })), isObj: true },
+  ] : [];
+  const tickEmails = Array.isArray(confirmTick?.emails) ? confirmTick.emails : [];
+
   return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+    <div className={styles.page}>
+      <PageHeader
+        title="Mail Scheduler"
+        breadcrumbs={[{ label: 'Sends' }, { label: 'Test Sends', href: '/test-sends' }, { label: 'Scheduler' }]}
+        description="Select recipients, create schedules, and manage Day 1→7 auto-sends."
+      />
 
-      {/* ── Page header ──────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-        <div>
-          <Link href="/test-sends" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12,
-            color: 'var(--muted-foreground)', textDecoration: 'none', marginBottom: 10,
-          }}>
-            <ArrowLeft size={14} /> Back to Test Sends
-          </Link>
-          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Calendar size={26} style={{ color: '#e2b340' }} /> Mail Scheduler
-          </h1>
-          <p style={{ color: 'var(--muted-foreground)', margin: 0, fontSize: 14 }}>
-            Select recipients, create schedules, and manage Day 1→7 auto-sends.
-          </p>
-        </div>
-      </div>
-
-      {/* ── Recipients panel ─────────────────────────────────────────── */}
-      <div style={{
-        background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)',
-        padding: '16px 18px', marginBottom: 24,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <Users size={16} style={{ color: '#e2b340' }} />
-          <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
+      {/* ── Recipients ───────────────────────────────────────────────── */}
+      <Card
+        title={
+          <span className={styles.cardTitle}>
             Recipients
+            <span className={styles.muted}>&middot; {selected.length} selected of {contactsTotal} contacts</span>
           </span>
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-            &middot; {selected.length} selected of {contactsTotal} contacts
-          </span>
-          {selected.length > 0 && (
-            <button
-              onClick={() => setSelected([])}
-              style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted-foreground)', background: 'transparent', border: 'none', cursor: 'pointer' }}
-            >
-              Clear all
-            </button>
-          )}
-        </div>
-
-        {/* Filter input */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
-          background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-          padding: '8px 12px',
-        }}>
+        }
+        actions={selected.length > 0 ? (
+          <div className={styles.cardActions}>
+            <Button variant="ghost" size="sm" onClick={() => setSelected([])}>Clear all</Button>
+          </div>
+        ) : undefined}
+      >
+        <div className={styles.search}>
           {contactsLoading
-            ? <Loader2 size={15} className="spin" style={{ color: 'var(--muted-foreground)' }} />
-            : <Search size={15} style={{ color: 'var(--muted-foreground)' }} />}
+            ? <Loader2 size={16} className={`spin ${styles.goldIcon}`} aria-label="Loading contacts" />
+            : <Search size={16} className={styles.muted} aria-hidden="true" />}
           <input
             type="text"
+            className={styles.searchInput}
             value={contactQuery}
             onChange={e => setContactQuery(e.target.value)}
             placeholder="Filter by email or name..."
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: 13, color: 'var(--foreground)' }}
+            aria-label="Filter contacts by email or name"
           />
           {contactQuery && (
-            <X size={13} style={{ cursor: 'pointer', color: 'var(--muted-foreground)' }} onClick={() => setContactQuery('')} />
-          )}
-        </div>
-
-        {/* Filter bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-          <button
-            onClick={() => setShowFilters(f => !f)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
-              padding: '5px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-              background: showFilters ? 'rgba(226,179,64,0.12)' : 'transparent',
-              border: `1px solid ${showFilters ? '#e2b340' : 'var(--border)'}`,
-              color: showFilters ? '#e2b340' : 'var(--muted-foreground)',
-            }}>
-            <Filter size={12} /> Filters {hasActiveFilters && `(${Object.values(filters).filter(v => v !== '').length})`}
-          </button>
-          {hasActiveFilters && (
-            <button onClick={clearFilters} style={{ fontSize: 11, color: 'var(--muted-foreground)', background: 'transparent', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-              Clear Filters
+            <button type="button" className={styles.iconBtn} aria-label="Clear search" onClick={() => setContactQuery('')}>
+              <X size={14} />
             </button>
           )}
-          <button
-            onClick={handleSelectAllFiltered}
-            disabled={selectingAll || contactsTotal === 0}
-            style={{
-              marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5,
-              fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 'var(--radius-sm)',
-              background: 'rgba(34,197,94,0.12)', color: '#22c55e', cursor: 'pointer',
-              border: '1px solid rgba(34,197,94,0.3)',
-              opacity: selectingAll || contactsTotal === 0 ? 0.5 : 1,
-            }}>
-            {selectingAll ? <Loader2 size={12} className="spin" /> : <CheckSquare size={12} />}
-            Select All {contactsTotal.toLocaleString()} Filtered
-          </button>
         </div>
 
-        {/* Filter dropdowns */}
+        <div className={styles.toolbar}>
+          <Button
+            size="sm"
+            aria-expanded={showFilters}
+            className={showFilters || hasActiveFilters ? styles.filterOn : undefined}
+            onClick={() => setShowFilters(f => !f)}
+          >
+            <Filter size={14} aria-hidden="true" />Filters {hasActiveFilters && `(${Object.values(filters).filter(v => v !== '').length})`}
+          </Button>
+          {hasActiveFilters && (
+            <Button size="sm" variant="ghost" onClick={clearFilters}>Clear Filters</Button>
+          )}
+          <div className={styles.cardActions}>
+            <Button size="sm" onClick={handleSelectAllFiltered} disabled={selectingAll || contactsTotal === 0}>
+              {selectingAll ? <Loader2 size={14} className="spin" /> : <CheckSquare size={14} aria-hidden="true" />}
+              Select All {contactsTotal.toLocaleString()} Filtered
+            </Button>
+          </div>
+        </div>
+
         {showFilters && filterOptions && (
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8,
-            marginBottom: 10, padding: '10px 12px',
-            background: 'var(--background)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-          }}>
-            {([
-              { key: 'booking_status', label: 'Booking Status', opts: filterOptions.booking_status },
-              { key: 'contact_type', label: 'Contact Type', opts: filterOptions.contact_type },
-              { key: 'country', label: 'Country', opts: (filterOptions.countries || []).map(c => c.val) },
-              { key: 'geography', label: 'Geography', opts: filterOptions.geography },
-              { key: 'is_indian', label: 'Indian / Rest', opts: [{ val: 'true', label: 'Indian' }, { val: 'false', label: 'Rest of World' }], isObj: true },
-              { key: 'product_tier', label: 'Product Tier', opts: filterOptions.product_tier },
-              { key: 'segment_id', label: 'Segment', opts: (filterOptions.segments || []).map(s => ({ val: String(s.id), label: s.name })), isObj: true },
-              { key: 'custom_segment_id', label: 'Custom Segment', opts: (filterOptions.custom_segments || []).map(s => ({ val: String(s.id), label: s.name })), isObj: true },
-            ] as FilterField[]).map(({ key, label, opts, isObj }) => (
-              <div key={key}>
-                <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, display: 'block' }}>
-                  {label}
-                </label>
-                <select
-                  value={filters[key]}
-                  onChange={e => handleFilterChange(key, e.target.value)}
-                  style={{
-                    width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 'var(--radius-sm)',
-                    background: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)',
-                  }}>
-                  <option value="">All</option>
-                  {(opts || []).map(o => isObj
-                    ? <option key={(o as FilterOptionObj).val} value={(o as FilterOptionObj).val}>{(o as FilterOptionObj).label}</option>
-                    : <option key={o as string} value={o as string}>{o as string}</option>
-                  )}
-                </select>
-              </div>
+          <div className={styles.filterGrid}>
+            {filterFields.map(({ key, label, opts, isObj }) => (
+              <Field key={key} label={label}>
+                {ctrl => (
+                  <Select {...ctrl} value={filters[key]} onChange={e => handleFilterChange(key, e.target.value)}>
+                    <option value="">All</option>
+                    {(opts || []).map(o => isObj
+                      ? <option key={(o as FilterOptionObj).val} value={(o as FilterOptionObj).val}>{(o as FilterOptionObj).label}</option>
+                      : <option key={o as string} value={o as string}>{o as string}</option>
+                    )}
+                  </Select>
+                )}
+              </Field>
             ))}
           </div>
         )}
 
-        {/* Contact list */}
-        <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+        <div className={styles.list}>
           {contacts.length === 0 && !contactsLoading ? (
-            <div style={{ padding: '20px 14px', textAlign: 'center', fontSize: 12, color: 'var(--muted-foreground)' }}>
-              No contacts found
-            </div>
+            <EmptyState title="No contacts found" description="Try a different search or clear the filters." />
           ) : (
             contacts.map(c => {
               const isSel = selected.some(s => s.email === c.email);
+              const tc = c.contact_type ? contactTypeColor(c.contact_type) : null;
               return (
-                <div
-                  key={c.id}
+                <button
+                  type="button"
+                  key={c.id ?? c.email}
+                  aria-pressed={isSel}
                   onClick={() => toggleContact(c)}
-                  style={{
-                    padding: '9px 14px', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    borderBottom: '1px solid color-mix(in srgb, var(--border) 60%, transparent)',
-                    background: isSel ? 'rgba(226,179,64,0.08)' : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'rgba(226,179,64,0.04)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = isSel ? 'rgba(226,179,64,0.08)' : 'transparent'; }}
+                  className={`${styles.row} ${isSel ? styles.rowOn : ''}`}
                 >
-                  <div style={{
-                    width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                    border: `2px solid ${isSel ? '#e2b340' : 'var(--border)'}`,
-                    background: isSel ? '#e2b340' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {isSel && <CheckCircle2 size={10} style={{ color: '#1a1a1a' }} />}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: isSel ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.email}
-                      </span>
-                      {c.contact_type && (
-                        <span style={{
-                          fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
-                          letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
-                          background: contactTypeColor(c.contact_type).bg,
-                          color:      contactTypeColor(c.contact_type).fg,
-                        }}>
-                          {c.contact_type}
-                        </span>
+                  <span className={`${styles.box} ${isSel ? styles.boxOn : ''}`} aria-hidden="true">
+                    {isSel && <CheckCircle2 size={10} />}
+                  </span>
+                  <span className={styles.rowBody}>
+                    <span className={styles.rowLine}>
+                      <span className={`${styles.email} ${isSel ? styles.emailOn : ''}`}>{c.email}</span>
+                      {c.contact_type && tc && (
+                        <span className={styles.typeTag} style={{ background: tc.bg, color: tc.fg }}>{c.contact_type}</span>
                       )}
                       {c.booking_status && (
-                        <span style={{
-                          fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
-                          letterSpacing: 0.5, textTransform: 'uppercase', flexShrink: 0,
-                          background: c.booking_status === 'CANCELLED' ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
-                          color: c.booking_status === 'CANCELLED' ? '#ef4444' : '#22c55e',
-                        }}>
-                          {c.booking_status}
-                        </span>
+                        <Chip tone={c.booking_status === 'CANCELLED' ? 'bad' : 'ok'}>{c.booking_status}</Chip>
                       )}
-                      {c.country && (
-                        <span style={{ fontSize: 9, color: 'var(--muted-foreground)', flexShrink: 0 }}>{c.country}</span>
-                      )}
-                    </div>
-                    {c.name && (
-                      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.name}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                      {c.country && <span className={styles.muted}>{c.country}</span>}
+                    </span>
+                    {c.name && <span className={styles.rowMeta}><span>{c.name}</span></span>}
+                  </span>
+                </button>
               );
             })
           )}
           {contacts.length < contactsTotal && (
-            <div
-              onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}
-              style={{ padding: '10px 14px', textAlign: 'center', fontSize: 12, color: '#e2b340', cursor: 'pointer', borderTop: '1px solid var(--border)' }}
-            >
+            <button type="button" className={styles.loadMore} onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}>
               Load more ({contactsTotal - contacts.length} remaining)
-            </div>
+            </button>
           )}
         </div>
 
-        {/* Selected tags */}
         {selected.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+          <div className={styles.tags}>
             {selected.map((s, i) => (
-              <span key={`${s.email}_${i}`} style={{
-                fontSize: 11, padding: '3px 8px 3px 10px', borderRadius: 'var(--radius-sm)',
-                background: 'rgba(226,179,64,0.12)', color: '#e2b340', fontWeight: 500,
-                display: 'flex', alignItems: 'center', gap: 5,
-              }}>
+              <span key={`${s.email}_${i}`} className={styles.tag}>
                 {s.email}
-                <X size={11} style={{ cursor: 'pointer', opacity: 0.7 }} onClick={() => toggleContact(s)} />
+                <button type="button" className={styles.tagX} aria-label={`Remove ${s.email}`} onClick={() => toggleContact(s)}>
+                  <X size={12} />
+                </button>
               </span>
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* ── Daily Auto-Send Schedules ─────────────────────────────────── */}
-      <div style={{ marginBottom: 24 }}>
-
-        {/* Header + create row */}
-        <div style={{
-          background: 'var(--card)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-xl)', padding: '14px 18px', marginBottom: 12,
-          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-        }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-              <Calendar size={15} style={{ color: '#e2b340' }} />
-              <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted-foreground)' }}>
-                Daily Auto-Send Schedules
-              </span>
-              {schedules.filter(s => s.is_running).length > 0 && (
-                <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 'var(--radius-sm)', background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700 }}>
-                  {schedules.filter(s => s.is_running).length} RUNNING
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-              Each schedule sends Day 1→7 at 24 h intervals to its own recipient list. Multiple schedules can run in parallel.
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-            <button
-              onClick={handleScheduleStart}
+      <Card
+        title={
+          <span className={styles.cardTitle}>
+            Daily Auto-Send Schedules
+            {runningCount > 0 && <StatusChip tone="ok">{runningCount} RUNNING</StatusChip>}
+          </span>
+        }
+        actions={
+          <div className={styles.cardActions}>
+            <Button
+              variant="primary"
+              onClick={() => { if (selected.length === 0) { alert('Select at least one recipient first'); return; } setConfirmStart(true); }}
               disabled={scheduleLoading || selected.length === 0}
               title={selected.length === 0 ? 'Select recipients above first' : `Start Day 1→7 for ${selected.length} recipient(s)`}
-              style={{
-                background: selected.length === 0 ? 'var(--muted-foreground)' : '#22c55e',
-                color: '#0a0a0a', border: 'none', borderRadius: 'var(--radius)',
-                padding: '8px 16px', fontSize: 12, fontWeight: 700,
-                cursor: scheduleLoading || selected.length === 0 ? 'not-allowed' : 'pointer',
-                opacity: selected.length === 0 ? 0.4 : 1,
-                display: 'flex', alignItems: 'center', gap: 6,
-                letterSpacing: 0.4, textTransform: 'uppercase',
-              }}>
-              {scheduleLoading ? <Loader2 size={13} className="spin" /> : <Plus size={13} />}
+            >
+              {scheduleLoading ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
               New Schedule
-            </button>
+            </Button>
           </div>
-        </div>
+        }
+      >
+        <p className={styles.sub}>
+          Each schedule sends Day 1→7 at 24 h intervals to its own recipient list. Multiple schedules can run in parallel.
+        </p>
 
-        {/* Schedule cards */}
         {schedules.length === 0 ? (
-          <div style={{
-            background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)',
-            padding: '28px 20px', textAlign: 'center', fontSize: 13, color: 'var(--muted-foreground)',
-          }}>
-            No schedules yet. Select recipients above and click &ldquo;New Schedule&rdquo;.
-          </div>
+          <EmptyState
+            icon={<ClipboardList size={20} />}
+            title="No schedules yet"
+            description={<>Select recipients above and click &ldquo;New Schedule&rdquo;.</>}
+          />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className={styles.schedList}>
             {schedules.map(sched => {
               const isRunning = !!sched.is_running;
               const prewarm   = sched.prewarm || {};
               const emails    = Array.isArray(sched.emails) ? sched.emails : [];
+              const pwTone: ChipTone = prewarm.status === 'prewarming' ? 'gold' : prewarm.status === 'ready' ? 'ok' : 'bad';
               return (
-                <div key={sched.id} style={{
-                  background: 'var(--card)',
-                  border: `1px solid ${isRunning ? 'rgba(34,197,94,0.35)' : 'var(--border)'}`,
-                  borderRadius: 'var(--radius-xl)', padding: '14px 18px',
-                  boxShadow: isRunning ? '0 0 0 1px rgba(34,197,94,0.15)' : 'none',
-                }}>
-                  {/* Card header row */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>Schedule #{sched.id}</span>
-                    {isRunning ? (
-                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontWeight: 700, letterSpacing: 0.5 }}>RUNNING</span>
-                    ) : (
-                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'rgba(148,163,184,0.12)', color: 'var(--muted-foreground)', fontWeight: 700, letterSpacing: 0.5 }}>STOPPED</span>
-                    )}
+                <Card key={sched.id} className={isRunning ? styles.schedRunning : undefined}>
+                  <div className={styles.toolbar}>
+                    <span className={styles.tplName}>Schedule #{sched.id}</span>
+                    {isRunning
+                      ? <StatusChip tone="ok">RUNNING</StatusChip>
+                      : <StatusChip tone="mute">STOPPED</StatusChip>}
                     {sched.started_at && (
-                      <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-                        Started {new Date(sched.started_at).toLocaleString()}
-                      </span>
+                      <span className={styles.muted}>Started {new Date(sched.started_at).toLocaleString()}</span>
                     )}
-                    {/* Action buttons pushed to the right */}
-                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        onClick={() => openLogModal(sched.id)}
-                        style={{
-                          background: 'transparent', color: '#e2b340',
-                          border: '1px solid rgba(226,179,64,0.4)', borderRadius: 'var(--radius)',
-                          padding: '6px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                          display: 'flex', alignItems: 'center', gap: 5,
-                        }}>
-                        <ClipboardList size={12} /> View Logs
-                      </button>
+                    <div className={styles.cardActions}>
+                      <Button size="sm" variant="ghost" onClick={() => openLogModal(sched.id)}>
+                        <ClipboardList size={14} aria-hidden="true" /> View Logs
+                      </Button>
                       {isRunning && (
                         <>
-                          <button
-                            onClick={() => handleScheduleTick(sched.id)}
-                            title="Send today's email now without waiting"
-                            style={{
-                              background: 'transparent', color: '#e2b340',
-                              border: '1px solid #e2b340', borderRadius: 'var(--radius)',
-                              padding: '6px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                              display: 'flex', alignItems: 'center', gap: 5,
-                            }}>
-                            <Zap size={12} /> Send Now
-                          </button>
-                          <button
-                            onClick={() => handleScheduleStop(sched.id)}
-                            style={{
-                              background: '#ef4444', color: '#fff', border: 'none',
-                              borderRadius: 'var(--radius)', padding: '6px 12px', fontSize: 11,
-                              fontWeight: 700, cursor: 'pointer', letterSpacing: 0.4, textTransform: 'uppercase',
-                              display: 'flex', alignItems: 'center', gap: 5,
-                            }}>
-                            <Square size={11} fill="currentColor" /> Stop
-                          </button>
+                          <Button size="sm" onClick={() => setConfirmTick(sched)} title="Send today's email now without waiting">
+                            <Zap size={14} aria-hidden="true" /> Send Now
+                          </Button>
+                          <Button size="sm" variant="danger" onClick={() => handleScheduleStop(sched.id)}>
+                            <Square size={12} fill="currentColor" aria-hidden="true" /> Stop
+                          </Button>
                         </>
                       )}
                     </div>
                   </div>
 
-                  {/* Day progress row */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
+                  <div className={styles.days}>
                     {[1, 2, 3, 4, 5, 6, 7].map(d => {
-                      const sent = sched.last_sent_day! >= d;
+                      const sent = (sched.last_sent_day ?? 0) >= d;
                       const next = isRunning && sched.next_day_to_send === d;
                       return (
-                        <span key={d} style={{
-                          fontSize: 10, padding: '2px 7px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
-                          background: sent ? 'rgba(34,197,94,0.15)' : next ? 'rgba(226,179,64,0.15)' : 'rgba(148,163,184,0.08)',
-                          color:      sent ? '#22c55e'              : next ? '#e2b340'              : 'var(--muted-foreground)',
-                          border:     next ? '1px solid rgba(226,179,64,0.4)' : '1px solid transparent',
-                        }}>
-                          {sent ? '\u2713' : next ? '\u2192' : ''} Day {d}
-                        </span>
+                        <Chip key={d} tone={sent ? 'ok' : next ? 'gold' : 'mute'}>
+                          {sent ? '✓' : next ? '→' : ''} Day {d}
+                        </Chip>
                       );
                     })}
                     {sched.last_sent_day != null && sched.last_sent_day !== 0 && (
-                      <span style={{ fontSize: 11, color: 'var(--muted-foreground)', marginLeft: 6 }}>
+                      <span className={styles.muted}>
                         Last: Day {sched.last_sent_day} &middot; {sched.last_sent_at ? new Date(sched.last_sent_at).toLocaleTimeString() : ''}
                       </span>
                     )}
                   </div>
 
-                  {/* Prewarm status (only when not idle) */}
                   {prewarm.status && prewarm.status !== 'idle' && (
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
-                      padding: '8px 12px', borderRadius: 'var(--radius)',
-                      background: prewarm.status === 'prewarming' ? 'rgba(226,179,64,0.08)'
-                               : prewarm.status === 'ready'       ? 'rgba(34,197,94,0.08)'
-                               :                                    'rgba(239,68,68,0.08)',
-                      border: `1px solid ${prewarm.status === 'prewarming' ? 'rgba(226,179,64,0.3)'
-                             : prewarm.status === 'ready'       ? 'rgba(34,197,94,0.3)'
-                             :                                    'rgba(239,68,68,0.3)'}`,
-                    }}>
+                    <div className={`${styles.prewarm} ${styles[`t-${pwTone}`]}`}>
                       {prewarm.status === 'prewarming'
-                        ? <Loader2 size={13} className="spin" style={{ color: '#e2b340' }} />
+                        ? <Loader2 size={14} className="spin" aria-hidden="true" />
                         : prewarm.status === 'ready'
-                          ? <Cpu size={13} style={{ color: '#22c55e' }} />
-                          : <XCircle size={13} style={{ color: '#ef4444' }} />}
-                      <span style={{ fontSize: 12 }}>
-                        {prewarm.status === 'prewarming' && 'Pre-generating AI rankings for all 7 days\u2026'}
-                        {prewarm.status === 'ready' && `AI content ready \u2014 ${prewarm.readyCount ?? 0}/7 days cached`}
-                        {prewarm.status === 'failed' && `Pre-warm failed: ${prewarm.error}`}
+                          ? <Cpu size={14} aria-hidden="true" />
+                          : <XCircle size={14} aria-hidden="true" />}
+                      <span>
+                        {prewarm.status === 'prewarming' && 'Pre-generating AI rankings for all 7 days…'}
+                        {prewarm.status === 'ready' && `AI content ready — ${prewarm.readyCount ?? 0}/7 days cached`}
+                        {prewarm.status === 'failed' && `Pre-warm failed: ${prewarm.error ?? 'unknown error'}`}
                       </span>
-                      {prewarm.status === 'ready' && prewarm.summary?.length as number > 0 && (
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginLeft: 8 }}>
-                          {prewarm.summary!.map(s => (
-                            <span key={s.day} style={{
-                              fontSize: 9, padding: '1px 5px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
-                              background: s.status === 'ready' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-                              color: s.status === 'ready' ? '#22c55e' : '#ef4444',
-                            }}>
-                              D{s.day}{s.status === 'ready' ? '\u2713' : '\u2717'}
-                            </span>
+                      {prewarm.status === 'ready' && (prewarm.summary?.length ?? 0) > 0 && (
+                        <span className={styles.miniTags}>
+                          {(prewarm.summary ?? []).map(s => (
+                            <Chip key={s.day} tone={s.status === 'ready' ? 'ok' : 'bad'}>
+                              D{s.day}{s.status === 'ready' ? '✓' : '✗'}
+                            </Chip>
                           ))}
-                        </div>
+                        </span>
                       )}
                     </div>
                   )}
 
-                  {/* Recipient email tags */}
                   {emails.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    <div className={styles.tags}>
                       {emails.map(email => (
-                        <span key={email} style={{
-                          fontSize: 11, padding: '2px 8px 2px 10px', borderRadius: 'var(--radius-sm)',
-                          background: 'rgba(226,179,64,0.08)', color: '#e2b340', fontWeight: 500,
-                          display: 'inline-flex', alignItems: 'center', gap: 5,
-                        }}>
+                        <span key={email} className={`${styles.tag} ${isRunning ? '' : styles.tagStatic}`}>
                           {email}
                           {isRunning && (
-                            <X
-                              size={10}
-                              style={{ cursor: 'pointer', opacity: 0.6, flexShrink: 0 }}
+                            <button
+                              type="button"
+                              className={styles.tagX}
+                              aria-label={`Remove ${email} from this schedule`}
                               title={`Remove ${email} from this schedule`}
                               onClick={() => handleRemoveEmailFromSchedule(sched.id, email)}
-                            />
+                            >
+                              <X size={12} />
+                            </button>
                           )}
                         </span>
                       ))}
                     </div>
                   )}
-                </div>
+                </Card>
               );
             })}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* ── Log Modal ─────────────────────────────────────────────────── */}
       {logModal && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 100,
-            background: 'rgba(0,0,0,0.65)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 24,
-          }}
-          onClick={() => setLogModal(null)}
-        >
+        <div className={styles.overlay} onClick={() => setLogModal(null)}>
           <div
-            style={{
-              background: 'var(--card)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-xl)', width: '100%', maxWidth: 780,
-              maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-              boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
-            }}
+            className={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Schedule #${logModal.id} email send logs`}
             onClick={e => e.stopPropagation()}
           >
-            {/* Modal header */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px',
-              borderBottom: '1px solid var(--border)', flexShrink: 0,
-            }}>
-              <ClipboardList size={15} style={{ color: '#e2b340' }} />
-              <span style={{ fontSize: 14, fontWeight: 700 }}>Schedule #{logModal.id} — Email Send Logs</span>
-              <span style={{ fontSize: 11, color: 'var(--muted-foreground)', marginLeft: 4 }}>
-                {logModal.rows.length} entries
-              </span>
-              <button
-                onClick={refreshLogModal}
-                disabled={logModal.loading}
-                style={{
-                  marginLeft: 'auto', fontSize: 11, color: '#e2b340',
-                  background: 'transparent', border: '1px solid rgba(226,179,64,0.35)',
-                  borderRadius: 'var(--radius-sm)', padding: '4px 10px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 5,
-                }}>
-                {logModal.loading ? <Loader2 size={11} className="spin" /> : '\u21bb'} Refresh
-              </button>
-              <button
-                onClick={() => setLogModal(null)}
-                style={{
-                  background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: 'var(--muted-foreground)', padding: 4, marginLeft: 4,
-                }}>
-                <X size={16} />
-              </button>
+            <div className={styles.modalHead}>
+              <ClipboardList size={16} className={styles.goldIcon} aria-hidden="true" />
+              <h2>Schedule #{logModal.id} — Email Send Logs</h2>
+              <span className={styles.muted}>{logModal.rows.length} entries</span>
+              <div className={styles.cardActions}>
+                <Button size="sm" onClick={refreshLogModal} disabled={logModal.loading}>
+                  {logModal.loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} aria-hidden="true" />} Refresh
+                </Button>
+                <Button size="sm" variant="ghost" icon aria-label="Close" onClick={() => setLogModal(null)}>
+                  <X size={16} />
+                </Button>
+              </div>
             </div>
 
-            {/* Modal body */}
-            <div style={{ overflowY: 'auto', flex: 1 }}>
+            <div className={styles.modalBody}>
               {logModal.loading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, gap: 10, color: 'var(--muted-foreground)' }}>
+                <div className={styles.loadingRow}>
                   <Loader2 size={18} className="spin" /> Loading logs…
                 </div>
               ) : logModal.rows.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '36px 20px', fontSize: 13, color: 'var(--muted-foreground)' }}>
-                  No send log entries found for this schedule yet.
-                </div>
+                <EmptyState title="No send log entries found for this schedule yet." />
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, tableLayout: 'fixed' }}>
-                  <colgroup>
-                    <col style={{ width: 72 }} />
-                    <col />
-                    <col style={{ width: 90 }} />
-                    <col style={{ width: 170 }} />
-                    <col style={{ width: 90 }} />
-                    <col style={{ width: 72 }} />
-                  </colgroup>
-                  <thead style={{ position: 'sticky', top: 0, background: 'var(--card)', zIndex: 1 }}>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      {[
-                        { label: 'Day',     align: 'left'  },
-                        { label: 'Email',   align: 'left'  },
-                        { label: 'Status',  align: 'left'  },
-                        { label: 'Sent At', align: 'left'  },
-                        { label: 'Opened',  align: 'left'  },
-                        { label: 'ms',      align: 'right' },
-                      ].map(({ label, align }) => (
-                        <th key={label} style={{ padding: '8px 10px', textAlign: align as CSSProperties['textAlign'], fontWeight: 600, color: 'var(--muted-foreground)', whiteSpace: 'nowrap', fontSize: 11 }}>{label}</th>
-                      ))}
+                <Table label="Schedule send logs">
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th>Email</th>
+                      <th>Status</th>
+                      <th>Sent At</th>
+                      <th>Opened</th>
+                      <th className={styles.right}>ms</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {logModal.rows.map(row => {
-                      const sc = statusColor(row.status);
-                      return (
-                        <tr key={row.id} style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 50%, transparent)' }}>
-                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-sm)', background: 'rgba(226,179,64,0.12)', color: '#e2b340', fontWeight: 700 }}>
-                              Day {row.day_number}
-                            </span>
-                          </td>
-                          <td style={{ padding: '6px 10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.email}</td>
-                          <td style={{ padding: '6px 10px' }}>
-                            <span style={{
-                              fontSize: 10, padding: '1px 7px', borderRadius: 'var(--radius-sm)', fontWeight: 700,
-                              letterSpacing: 0.3, textTransform: 'uppercase',
-                              background: `color-mix(in srgb, ${sc} 12%, transparent)`, color: sc,
-                            }}>
-                              {row.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '6px 10px', color: 'var(--muted-foreground)', whiteSpace: 'nowrap' }}>
-                            {row.sent_at ? new Date(row.sent_at).toLocaleString() : '\u2014'}
-                          </td>
-                          <td style={{ padding: '6px 10px', color: 'var(--muted-foreground)', whiteSpace: 'nowrap' }}>
-                            {row.opened_at ? new Date(row.opened_at).toLocaleTimeString() : '\u2014'}
-                          </td>
-                          <td style={{ padding: '6px 10px', color: 'var(--muted-foreground)', textAlign: 'right' }}>
-                            {row.duration_ms ? `${row.duration_ms}ms` : '\u2014'}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {logModal.rows.map(row => (
+                      <tr key={row.id}>
+                        <td className={styles.nowrap}><Chip tone="gold">Day {row.day_number}</Chip></td>
+                        <td><div className={styles.ellipsis}>{row.email}</div></td>
+                        <td><Chip tone={statusTone(row.status)}>{row.status}</Chip></td>
+                        <td className={styles.nowrap}>{row.sent_at ? new Date(row.sent_at).toLocaleString() : '—'}</td>
+                        <td className={styles.nowrap}>{row.opened_at ? new Date(row.opened_at).toLocaleTimeString() : '—'}</td>
+                        <td className={`${styles.nowrap} ${styles.right}`}>{row.duration_ms ? `${row.duration_ms}ms` : '—'}</td>
+                      </tr>
+                    ))}
                   </tbody>
-                </table>
+                </Table>
               )}
             </div>
           </div>
         </div>
       )}
 
-    </motion.div>
+      <ConfirmDialog
+        open={confirmStart}
+        title="Start a new Day 1→7 schedule?"
+        description={
+          <dl className={styles.confirmList}>
+            <dt>Who</dt>
+            <dd>{selected.length} recipient{selected.length === 1 ? '' : 's'}: {fmtList(selected.map(s => s.email))}</dd>
+            <dt>What</dt>
+            <dd>The Day 1 to Day 7 template sequence (Day 6 destination: {day6Dest.replace('_', ' ')}).</dd>
+            <dt>When</dt>
+            <dd>Day 1 goes out right after you confirm, then one email every 24 hours until Day 7 or until stopped.</dd>
+          </dl>
+        }
+        confirmLabel="Start schedule"
+        busy={scheduleLoading}
+        onCancel={cancelStart}
+        onConfirm={() => { setConfirmStart(false); handleScheduleStart(); }}
+      />
+
+      <ConfirmDialog
+        open={confirmTick !== null}
+        title={confirmTick ? `Send the next email for Schedule #${confirmTick.id} now?` : 'Send now?'}
+        description={confirmTick ? (
+          <dl className={styles.confirmList}>
+            <dt>Who</dt>
+            <dd>
+              {tickEmails.length > 0
+                ? `${tickEmails.length} recipient${tickEmails.length === 1 ? '' : 's'}: ${fmtList(tickEmails)}`
+                : 'Every recipient on this schedule'}
+            </dd>
+            <dt>What</dt>
+            <dd>{confirmTick.next_day_to_send ? `Day ${confirmTick.next_day_to_send} email` : "This schedule's next day email"}</dd>
+            <dt>When</dt>
+            <dd>Immediately, without waiting for the 24 hour timer.</dd>
+          </dl>
+        ) : undefined}
+        confirmLabel="Confirm send"
+        onCancel={cancelTick}
+        onConfirm={() => {
+          const s = confirmTick;
+          setConfirmTick(null);
+          if (s) handleScheduleTick(s.id);
+        }}
+      />
+    </div>
   );
 }

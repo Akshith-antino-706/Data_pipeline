@@ -65,6 +65,8 @@ describe('Daily report page', () => {
     expect(screen.getByText('2026-10-01  to  2026-10-02', { normalizer: s => s })).toBeTruthy();
     expect(screen.getByText('1,000 rows')).toBeTruthy();
     expect(bodyText()).toContain('Synced:');
+    expect(screen.getByText('Synced')).toBeTruthy();
+    expect(screen.getAllByText('No sync info').length).toBeGreaterThan(0);
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
@@ -163,14 +165,14 @@ describe('Daily report page', () => {
     render(<DailyReport />);
     loadSummary();
     await screen.findByText('Rayna API Bookings');
-    fireEvent.click(screen.getAllByRole('button', { name: 'CSV' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download CSV' })[0]);
     await screen.findByText('Rayna Tours CSV downloaded');
     expect(api.downloadReportCSV).toHaveBeenCalledWith('rayna_tours', today(), today());
     fireEvent.click(screen.getByRole('button', { name: /Download All as ZIP/ }));
     await screen.findByText('ZIP downloaded with all data files');
     expect(api.downloadReportAll).toHaveBeenCalledWith(today(), today());
     vi.mocked(api.downloadReportCSV).mockRejectedValue(new Error('disk full'));
-    fireEvent.click(screen.getAllByRole('button', { name: 'CSV' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Download CSV' })[0]);
     await screen.findByText('Download failed: disk full');
   });
 });

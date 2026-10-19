@@ -1,0 +1,35 @@
+.page{min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:var(--bg);color:var(--ink);font-family:var(--font-sans)}
+.brand{background:#141A21;color:#E9EDF2;padding:56px;display:flex;flex-direction:column;justify-content:space-between;gap:32px}
+.logoWrap{display:inline-flex;align-self:flex-start;background:#fff;border-radius:10px;padding:8px 14px}
+.logo{height:40px;width:auto;display:block;object-fit:contain}
+.pitch{display:flex;flex-direction:column;gap:14px;max-width:460px}
+.pitch h2{margin:0;font-size:34px;line-height:42px;font-weight:700;text-wrap:balance}
+.pitch p{margin:0;color:#A9B4C0;font-size:15px}
+.foot{color:#8B96A3;font-size:12px}
+.main{display:flex;align-items:center;justify-content:center;padding:40px}
+.panel{width:400px;max-width:100%;display:flex;flex-direction:column;gap:18px}
+.panel h1{margin:0;font-size:26px;font-weight:700}
+.note{margin:0;font-size:14px;color:var(--ink2)}
+.form{display:flex;flex-direction:column;gap:18px}
+.field{display:flex;flex-direction:column;gap:6px}
+.label{font-size:13px;font-weight:600;color:var(--ink)}
+.pwWrap{position:relative}
+.input{font:inherit;font-size:14px;height:44px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);box-sizing:border-box;width:100%}
+.input:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.input[aria-invalid="true"]{border-color:var(--bad)}
+.pwInput{padding-right:76px}
+.reveal{position:absolute;right:4px;top:4px;height:36px;padding:0 10px;display:inline-flex;align-items:center;gap:6px;border:0;border-radius:6px;background:transparent;color:var(--ink2);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.reveal:hover{background:var(--sunken)}
+.submit{width:100%;height:44px;font-size:15px}
+.alert{background:var(--bad-soft);color:var(--bad);border-radius:8px;padding:10px 12px;font-size:13px;font-weight:500}
+.back{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink3);text-decoration:none;align-self:flex-start}
+.back:hover{color:var(--gold-ink)}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (max-width:860px){
+  .page{grid-template-columns:1fr}
+  .brand{padding:24px 16px;gap:16px}
+  .pitch h2{font-size:24px;line-height:30px}
+  .foot{display:none}
+  .main{padding:32px 16px;align-items:flex-start}
+}
