@@ -515,7 +515,8 @@ const MSG_STATUSES = ['queued', 'sent', 'delivered', 'read', 'opened', 'clicked'
 
 // Per-channel column mapping, copied from SendTrackService.getSendLog/getWhatsAppLog.
 const MSG_SRC: Record<MsgChannel, { table: string; ts: string; recipient: string; name: string; label: string; error: string; extraSearch: string }> = {
-  email:    { table: 'email_send_log',    ts: 'sent_at',    recipient: 'email', name: 'contact_name', label: 'COALESCE(subject, template_label)', error: 'error_message', extraSearch: 'subject' },
+  // created_at, not sent_at: failed/queued emails never get a sent_at, so filtering on it hid them.
+  email:    { table: 'email_send_log',    ts: 'created_at',    recipient: 'email', name: 'contact_name', label: 'COALESCE(subject, template_label)', error: 'error_message', extraSearch: 'subject' },
   whatsapp: { table: 'whatsapp_send_log', ts: 'created_at', recipient: 'phone', name: 'contact_name', label: 'template_name',                     error: 'error',         extraSearch: 'template_name' },
   sms:      { table: 'sms_send_log',      ts: 'sent_at',    recipient: 'phone', name: 'contact_name', label: 'message_body',                      error: 'error',         extraSearch: 'message_body' },
 };

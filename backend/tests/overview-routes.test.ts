@@ -434,3 +434,17 @@ describe('series14d per-day computation', () => {
     }
   });
 });
+
+describe('GET /messages failed filter', () => {
+  it('filters email by created_at so failed emails (no sent_at) are included', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { status } = await get('/messages?channel=email&status=failed');
+    expect(status).toBe(200);
+    const emailSql = sqlCalls().filter(s => s.includes('email_send_log'));
+    expect(emailSql.length).toBeGreaterThan(0);
+    for (const s of emailSql) {
+      expect(s).toMatch(/created_at >= NOW\(\)/);
+      expect(s).not.toMatch(/sent_at >= NOW\(\)/);
+    }
+  });
+});
