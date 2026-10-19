@@ -41,6 +41,7 @@ const EXPECTED: Record<string, { expr: string; fn: string }> = {
   dailyRecommendationCompute: { expr: '35 3 * * *', fn: 'runDailyRecommendationCompute' },
   weeklyProductUrlHealthCheck:{ expr: '0 6 * * 1',  fn: 'runWeeklyProductUrlHealthCheck' },
   dailyContinuousReEnroll:    { expr: '0 4 * * *',  fn: 'runDailyContinuousReEnroll' },
+  dailySendCounts:            { expr: '45 0 * * *', fn: 'runDailySendCounts' },
 };
 
 describe('server.ts cron registrations for src/crons/*', () => {

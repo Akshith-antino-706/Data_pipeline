@@ -150,7 +150,7 @@ describe('GET /home/:section', () => {
     mockQuery.mockResolvedValue({ rows: [] });
     await get('/home/series14d');
     await get('/home/sentToday');
-    for (const sql of sqlCalls()) {
+    for (const sql of sqlCalls().filter(q => !q.includes('daily_send_counts'))) {
       const where = sql.slice(sql.indexOf('WHERE'));
       expect(where).toMatch(/\b(sent_at|created_at) >= /);
       expect(where).toMatch(/\b(sent_at|created_at) < /);
@@ -460,5 +460,33 @@ describe('GET /messages capped count', () => {
     expect(body).toMatchObject({ total: 10000, capped: true });
     const countSql = sqlCalls().find(s => s.includes('AS total')) ?? '';
     expect(countSql).toMatch(/LIMIT 10001/);
+  });
+});
+
+describe('series14d with daily_send_counts', () => {
+  it('uses stored finished days and only counts the logs live for today', async () => {
+    const dubai = new Date(Date.now() + 4 * 3600 * 1000);
+    const iso = (k: number) => new Date(dubai.getTime() - k * 86400000).toISOString().slice(0, 10);
+    const stored: { d: string; channel: string; sent: string }[] = [];
+    for (let k = 1; k <= 13; k++) for (const channel of ['email', 'whatsapp', 'sms']) stored.push({ d: iso(k), channel, sent: '10' });
+    mockQuery.mockImplementation((sql: string) => Promise.resolve({
+      rows: String(sql).includes('daily_send_counts') ? stored : String(sql).includes('GROUP BY') ? [] : [{ n: '1' }],
+    }));
+    const r = await getHomeSection('series14d');
+    expect(r.available).toBe(true);
+    if (r.available) {
+      expect(r.days[0]).toMatchObject({ email: 10, whatsapp: 10, sms: 10, total: 30 });
+      expect(r.days[13]).toMatchObject({ email: 1 });
+    }
+    expect(sqlCalls().filter(q => q.includes('email_send_log'))).toHaveLength(1); // today only
+  });
+
+  it('falls back to live counts when the table does not exist', async () => {
+    mockQuery.mockImplementation((sql: string) => String(sql).includes('daily_send_counts')
+      ? Promise.reject(Object.assign(new Error('relation does not exist'), { code: '42P01' }))
+      : Promise.resolve({ rows: String(sql).includes('GROUP BY') ? [] : [{ n: '2' }] }));
+    const r = await getHomeSection('series14d');
+    expect(r.available).toBe(true);
+    expect(sqlCalls().filter(q => q.includes('email_send_log'))).toHaveLength(14);
   });
 });

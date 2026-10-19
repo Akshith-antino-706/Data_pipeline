@@ -725,6 +725,26 @@ cron.schedule('30 0 * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Registration data sync (affiliate/guestuser/agent) scheduled at 12:30 AM Dubai time');
+// ── Daily send counts (feeds the Home 14-day chart) ──
+// Reads the send logs and writes ONLY to daily_send_counts (migration 118).
+// Off unless DAILY_SEND_COUNTS_ENABLED=true, so nothing is written until it is switched on.
+if (process.env.DAILY_SEND_COUNTS_ENABLED === 'true') {
+  cron.schedule('45 0 * * *', async () => {
+    try {
+      const { runDailySendCounts } = await import('./src/crons/dailySendCounts.js');
+      await runDailySendCounts();
+    } catch (err) {
+      console.error('[Cron:DailySendCounts] Error:', (err as Error).message);
+    }
+  }, { timezone: 'Asia/Dubai', noOverlap: true });
+  // Backfill missing finished days shortly after start (only fills gaps; yesterday refreshed).
+  setTimeout(() => {
+    import('./src/crons/dailySendCounts.js')
+      .then(({ runDailySendCounts }) => runDailySendCounts())
+      .catch(err => console.error('[DailySendCounts] Startup backfill failed:', (err as Error).message));
+  }, 90_000).unref();
+  console.log('[Cron] Daily send counts scheduled at 12:45 AM Dubai time');
+}
 
 // ── Daily Billing Sync — 1 AM Dubai time (UTC+4) ────────────
 // Retries up to 3 times with 10-minute gaps if any step fails.

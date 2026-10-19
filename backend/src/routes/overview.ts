@@ -174,6 +174,29 @@ async function waSmsSeries(): Promise<{ wa: Map<string, number>; sms: Map<string
   return waSmsSeriesCache;
 }
 
+/**
+ * Finished-day totals from daily_send_counts (migration 118), keyed by YYYY-MM-DD. Only days
+ * with all three channels are used. Missing table / any error → empty map (live counting).
+ */
+async function storedDailyCounts(): Promise<Map<string, { email: number; whatsapp: number; sms: number }>> {
+  const out = new Map<string, { email: number; whatsapp: number; sms: number }>();
+  try {
+    const { rows } = await hq(`SELECT to_char(day, 'YYYY-MM-DD') AS d, channel, sent FROM daily_send_counts
+      WHERE day >= (NOW() AT TIME ZONE 'Asia/Dubai')::date - 13 AND day < (NOW() AT TIME ZONE 'Asia/Dubai')::date`);
+    const acc = new Map<string, { email?: number; whatsapp?: number; sms?: number }>();
+    for (const r of rows) {
+      const d = String(r.d), ch = String(r.channel);
+      const e = acc.get(d) ?? {};
+      if (ch === 'email' || ch === 'whatsapp' || ch === 'sms') e[ch] = num(r.sent);
+      acc.set(d, e);
+    }
+    for (const [d, e] of acc) {
+      if (e.email !== undefined && e.whatsapp !== undefined && e.sms !== undefined) out.set(d, { email: e.email, whatsapp: e.whatsapp, sms: e.sms });
+    }
+  } catch { /* table not created yet — fall back to live counts */ }
+  return out;
+}
+
 /** Cap for the per-journey "joined" counts on Home (keeps each count bounded). */
 const JOINED_COUNT_CAP = 100_000;
 
@@ -251,19 +274,27 @@ const HOME_SECTION_FNS = {
   },
 
   series14d: async () => {
-    // Email: one cheap indexed count per Dubai day (past days cached 6h, today 2 min).
-    // WhatsApp/SMS: one grouped read for the whole window (their time columns are unindexed).
+    // Finished days come from daily_send_counts (14 tiny rows, filled nightly) when present.
+    // Any day not in that table — and today, which is still changing — is counted live:
+    // email per day on idx_esl_sent_at, WhatsApp/SMS via one grouped read.
     const today = dubaiTodayIso();
     const offsets = Array.from({ length: 14 }, (_, i) => 13 - i); // 13 … 0 days ago
-    const waSmsP = waSmsSeries();
-    const emails: number[] = [];
-    for (let i = 0; i < offsets.length; i += 4) {
-      emails.push(...await Promise.all(offsets.slice(i, i + 4).map(k => seriesEmailDay(addDays(today, -k), k))));
+    const stored = await storedDailyCounts();
+    const needLive = offsets.filter(k => k === 0 || !stored.has(addDays(today, -k)));
+    const waSmsP = needLive.length ? waSmsSeries() : Promise.resolve({ wa: new Map<string, number>(), sms: new Map<string, number>() });
+    const liveEmail = new Map<number, number>();
+    for (let i = 0; i < needLive.length; i += 4) {
+      const batch = needLive.slice(i, i + 4);
+      const vals = await Promise.all(batch.map(k => seriesEmailDay(addDays(today, -k), k)));
+      batch.forEach((k, j) => liveEmail.set(k, vals[j]));
     }
     const { wa, sms } = await waSmsP;
-    const days = offsets.map((k, i) => {
+    const days = offsets.map(k => {
       const date = addDays(today, -k);
-      const email = emails[i] ?? 0, whatsapp = wa.get(date) ?? 0, smsN = sms.get(date) ?? 0;
+      const st = k === 0 ? undefined : stored.get(date);
+      const email = st ? st.email : liveEmail.get(k) ?? 0;
+      const whatsapp = st ? st.whatsapp : wa.get(date) ?? 0;
+      const smsN = st ? st.sms : sms.get(date) ?? 0;
       return { date, email, whatsapp, sms: smsN, total: email + whatsapp + smsN };
     });
     return { days };

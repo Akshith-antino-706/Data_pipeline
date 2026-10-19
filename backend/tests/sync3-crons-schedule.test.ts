@@ -38,6 +38,7 @@ const EXPECTED: [string, string][] = [
   ['contactMarketRefresh', '45 5 * * *'],
   ['weeklyProductUrlHealthCheck', '0 6 * * 1'],
   ['dailyContinuousReEnroll', '0 4 * * *'],
+  ['dailySendCounts', '45 0 * * *'],
 ];
 
 describe('cron schedules registered in server.ts', () => {
