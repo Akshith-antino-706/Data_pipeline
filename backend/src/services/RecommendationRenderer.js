@@ -30,12 +30,16 @@ import { getRates } from '../utils/currency.js';
 /**
  * Load full product rows for ordered product_ids, in input order (missing ids dropped).
  *
- * `market` = { plan, currency } from utils/marketPlan.resolveMarket(contact):
- *   - LEGACY fields (product_price / product_strike_price) stay in DEFAULT-plan AED, so
- *     templates still saying "AED {{product_price}}" render exactly as before.
- *   - NEW fields (product_currency / product_price_local / product_strike_price_local) use the
- *     recipient's rate plan (feed market_prices) converted to their currency — templates opt in
- *     with "{{product_currency}} {{product_price_local}}".
+ * `market` = { plan, currency } from utils/marketPlan.resolveMarket(contact).
+ * EVERY price field is market-aware: product_price / product_strike_price carry the
+ * recipient's plan price converted to product_currency, and *_local are aliases of the
+ * same values. There is no AED-only price key — so a template cannot render the wrong
+ * figure by choosing the wrong key.
+ *
+ * Templates MUST write "{{product_currency}} {{product_price}}" and never hardcode a
+ * currency label: a literal "AED" beside a converted figure mislabels the amount.
+ * Callers needing AED (gtm/giveaway-triggered journeys) pass market={plan:'default',
+ * currency:'AED'}, which makes every field resolve to AED and the label render "AED".
  */
 export async function hydrateProducts(productIds, market = { plan: 'default', currency: 'AED' }) {
   if (!Array.isArray(productIds) || productIds.length === 0) return [];
@@ -64,15 +68,24 @@ export async function hydrateProducts(productIds, market = { plan: 'default', cu
     .filter(Boolean)
     .map(r => {
       const mp = r.market_prices || {};
-      // Default-plan AED (legacy, unchanged): feed default → flat sale_price fallback.
+      // Fallback chain when a plan has no entry: feed default → flat sale_price column.
       const defSale   = num(mp.default?.sale_price) ?? num(r.sale_price);
       const defStrike = num(mp.default?.price)      ?? num(r.normal_price);
-      const legacyHasStrike = defSale != null && defStrike != null && defStrike > defSale;
-      // Recipient's plan AED → convert to their currency (new fields).
+      // Recipient's plan (AED in the feed) → converted to their display currency.
       const planP     = mp[plan] || mp.default || null;
       const planSale  = num(planP?.sale_price) ?? defSale;
       const planStrike= num(planP?.price)      ?? defStrike;
       const planHasStrike = planSale != null && planStrike != null && planStrike > planSale;
+
+      // ONE canonical price, market-aware. `product_price` now carries the recipient's
+      // plan price in their currency, so a template can never render the wrong figure by
+      // picking the "wrong" key — correctness lives here, not in 17 hand-edited templates.
+      // Callers that must stay in AED (gtm/giveaway-triggered journeys) pin the market to
+      // {plan:'default', currency:'AED'} upstream, which makes these resolve to AED anyway.
+      // `*_local` stays as an ALIAS of the same values so templates already using it are
+      // unaffected. ALWAYS pair a price with {{product_currency}} — never a hardcoded label.
+      const price       = planSale   != null ? money(planSale   * rate) : '';
+      const strikePrice = planHasStrike      ? money(planStrike * rate) : '';
 
       return {
         product_id:           r.product_id,
@@ -81,14 +94,14 @@ export async function hydrateProducts(productIds, market = { plan: 'default', cu
         product_image:        r.image_url || '',
         product_category:     r.category || 'Activity',
         product_city:         r.city || '',
-        // LEGACY — default-plan AED (unchanged behaviour)
-        product_price:        defSale != null ? Math.round(defSale) : '',
-        product_strike_price: legacyHasStrike ? Math.round(defStrike) : '',
-        product_discount_percent: legacyHasStrike ? Math.round(((defStrike - defSale) / defStrike) * 100) : '',
-        // NEW — recipient's market plan, converted to their currency
-        product_currency:            currency,
-        product_price_local:         planSale   != null ? money(planSale   * rate) : '',
-        product_strike_price_local:  planHasStrike ? money(planStrike * rate) : '',
+        product_currency:     currency,
+        product_price:        price,
+        product_strike_price: strikePrice,
+        // Percentage is currency-independent — compute from the plan's own AED figures.
+        product_discount_percent: planHasStrike ? Math.round(((planStrike - planSale) / planStrike) * 100) : '',
+        // Aliases — identical values, kept so existing templates need no change.
+        product_price_local:         price,
+        product_strike_price_local:  strikePrice,
         product_rating:       '4.7',   // No ratings column yet in `products` — placeholder
         product_reviews:      '',
       };

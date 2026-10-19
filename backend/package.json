@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "giveaway:consumer": "node src/giveaway-consumer.js"
+    "giveaway:consumer": "node src/giveaway-consumer.js",
+    "watch:giveaway": "node scripts/watch-giveaway.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",

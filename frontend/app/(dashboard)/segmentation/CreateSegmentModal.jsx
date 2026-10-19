@@ -523,7 +523,7 @@ function isConditionValid(cond) {
     const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
     return !!cond.gtmEvent || hasCount;   // valid with a specific event OR a count (any event)
   }
-  if (cond.type === 'giveaway') {
+  if (cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') {
     const cv = cond.countValue;
     const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
     return !!cond.giveawayType || !!cond.giveawayName || hasCount;  // valid with a type/name OR a count
@@ -532,8 +532,11 @@ function isConditionValid(cond) {
   return false;
 }
 
-// Giveaway event types (from the RabbitMQ giveaway feed).
-const GIVEAWAY_TYPES = ['participation', 'eligible', 'winner', 'loser'];
+// Event types from the RabbitMQ feeds. Both land in giveaway_affiliate_events, told apart
+// by `source`; a blank/any source counts BOTH feeds.
+const GIVEAWAY_TYPES  = ['participation', 'eligible', 'winner', 'loser'];
+const AFFILIATE_TYPES = ['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated'];
+const TYPES_BY_SOURCE = { any: [...GIVEAWAY_TYPES, ...AFFILIATE_TYPES], GIVEAWAY: GIVEAWAY_TYPES, AFFILIATE: AFFILIATE_TYPES };
 
 const emptyCondition = () => ({
   type: '',
@@ -543,6 +546,7 @@ const emptyCondition = () => ({
   gtmEvent: '',
   giveawayType: '',
   giveawayName: '',
+  giveawaySource: 'any',   // 'any' | 'GIVEAWAY' | 'AFFILIATE'
   exclude: false,
   joinOp: 'AND',
 });
@@ -554,13 +558,16 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   const [conditions, setConditions] = useState(() => {
     if (segment?.conditions?.length > 0) {
       return segment.conditions.map(c => ({
-        type: c.type || (c.giveawayType || c.giveawayName ? 'giveaway' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
+        // Legacy segments stored type:'giveaway'; show them in the merged editor.
+        type: (c.type === 'giveaway' ? 'giveaway_affiliate' : c.type)
+              || (c.giveawayType || c.giveawayName ? 'giveaway_affiliate' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
         field: c.field || '',
         operator: c.operator || '',
         value: c.value ?? null,
         gtmEvent: c.gtmEvent || '',
         giveawayType: c.giveawayType || '',
         giveawayName: c.giveawayName || '',
+        giveawaySource: c.giveawaySource || 'any',
         countOp: c.countOp || 'gte',
         countValue: c.countValue ?? '',
         windowDays: c.windowDays ?? '',
@@ -795,15 +802,15 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                             <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>GTM / Analytics Event</div>
                             <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by tracked events</div>
                           </button>
-                          <button type="button" onClick={() => changeType(idx, 'giveaway')}
+                          <button type="button" onClick={() => changeType(idx, 'giveaway_affiliate')}
                             style={{
                               flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
                               border: '1px solid var(--border)', borderRadius: 'var(--radius)',
                               cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
                               transition: 'all 0.15s', textAlign: 'left',
                             }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Giveaway</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by giveaway activity</div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Giveaway / Affiliate</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by giveaway or affiliate activity</div>
                           </button>
                         </div>
                       </div>
@@ -943,10 +950,10 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                     )}
 
                     {/* ── Giveaway ── */}
-                    {cond.type === 'giveaway' && (
+                    {(cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') && (
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Giveaway</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Giveaway / Affiliate</span>
                           <button type="button" onClick={() => changeType(idx, '')}
                             title="Change type"
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
@@ -958,13 +965,32 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                           const countOp = cond.countOp || 'gte';
                           return (
                             <>
-                              {/* Event type */}
+                              {/* Feed: both land in one table, told apart by `source`.
+                                  'any' counts BOTH — which is exactly what legacy segments did. */}
+                              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                {[{ k: 'any', l: 'Any' }, { k: 'GIVEAWAY', l: 'Giveaway' }, { k: 'AFFILIATE', l: 'Affiliate' }].map(o => {
+                                  const on = (cond.giveawaySource || 'any') === o.k;
+                                  const c = o.k === 'AFFILIATE' ? '#a855f7' : o.k === 'GIVEAWAY' ? '#f59e0b' : 'var(--muted-foreground)';
+                                  return (
+                                    <button key={o.k} type="button"
+                                      onClick={() => setCond({ giveawaySource: o.k, giveawayType: '' })}
+                                      style={{ flex: 1, padding: '6px 10px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                                        borderRadius: 6, border: `1px solid ${on ? c : 'var(--border)'}`,
+                                        background: on ? 'color-mix(in srgb, ' + c + ' 12%, transparent)' : 'var(--card)',
+                                        color: on ? c : 'var(--text-secondary)' }}>
+                                      {o.l}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Event type — the list follows the selected feed */}
                               <select value={cond.giveawayType || ''}
                                 onChange={e => setCond({ giveawayType: e.target.value })}
                                 style={selectStyle}>
-                                <option value="">— Any type (all giveaway activity) —</option>
-                                {GIVEAWAY_TYPES.map(t => (
-                                  <option key={t} value={t}>{t}</option>
+                                <option value="">— Any type (all {(cond.giveawaySource || 'any') === 'any' ? '' : (cond.giveawaySource || '').toLowerCase() + ' '}activity) —</option>
+                                {(TYPES_BY_SOURCE[cond.giveawaySource || 'any'] || TYPES_BY_SOURCE.any).map(t => (
+                                  <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
                                 ))}
                               </select>
 

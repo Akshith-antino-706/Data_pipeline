@@ -50,11 +50,19 @@ export default class CustomSegmentService {
           params.push(cond.gtmEvent);
           sub.push(`EXISTS (SELECT 1 FROM gtm_events ge WHERE ge.unified_id = uc.id AND ge.event_name = $${idx++})`);
         }
-      } else if (cond.type === 'giveaway') {
-        // Count-based: COUNT of giveaway_events (optionally a specific type e.g. 'winner',
-        // optionally a specific giveaway name, optionally within the last N days) compared
-        // with ≥ / ≤ / between. Falls back to EXISTS ("has any giveaway event") when no count.
+      } else if (cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') {
+        // Count-based: COUNT of giveaway_affiliate_events (optionally a specific type e.g.
+        // 'winner' or 'coupon_assigned', optionally a specific giveaway name, optionally a
+        // specific source, optionally within the last N days) compared with ≥ / ≤ / between.
+        // Falls back to EXISTS ("has any matching event") when no count is given.
+        //
+        // 'giveaway' is the LEGACY condition key — segments saved before the affiliate merge
+        // still carry it, so both are accepted and behave identically (no source filter =
+        // both feeds counted). No data migration needed for existing segments.
         const filters = ['gv.unified_id = uc.id'];
+        if (cond.giveawaySource && cond.giveawaySource !== 'any') {
+          params.push(String(cond.giveawaySource).toUpperCase()); filters.push(`gv.source = $${idx++}`);
+        }
         if (cond.giveawayType) { params.push(cond.giveawayType); filters.push(`gv.type = $${idx++}`); }
         if (cond.giveawayName) { params.push(cond.giveawayName); filters.push(`gv.giveaway = $${idx++}`); }
         const gvDays = parseInt(cond.windowDays);
@@ -65,7 +73,7 @@ export default class CustomSegmentService {
           ? cv.some(v => v !== '' && v != null)
           : (cv !== '' && cv != null);
         if (hasCount) {
-          const countSql = `(SELECT COUNT(*) FROM giveaway_events gv WHERE ${filters.join(' AND ')})`;
+          const countSql = `(SELECT COUNT(*) FROM giveaway_affiliate_events gv WHERE ${filters.join(' AND ')})`;
           const op = cond.countOp || 'gte';
           if (op === 'between' && Array.isArray(cv)) {
             if (cv[0] !== '' && cv[0] != null) { params.push(parseInt(cv[0])); sub.push(`${countSql} >= $${idx++}`); }
@@ -76,7 +84,7 @@ export default class CustomSegmentService {
             params.push(parseInt(cv)); sub.push(`${countSql} >= $${idx++}`);
           }
         } else if (cond.giveawayType || cond.giveawayName) {
-          sub.push(`EXISTS (SELECT 1 FROM giveaway_events gv WHERE ${filters.join(' AND ')})`);
+          sub.push(`EXISTS (SELECT 1 FROM giveaway_affiliate_events gv WHERE ${filters.join(' AND ')})`);
         }
       } else {
         switch (cond.field) {

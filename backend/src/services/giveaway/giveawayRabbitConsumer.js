@@ -37,8 +37,39 @@ const MAX_RETRIES  = parseInt(process.env.GIVEAWAY_MAX_SEND_RETRIES || '3', 10);
 const SEND_ENABLED = process.env.GIVEAWAY_SEND_ENABLED === 'true';
 const CONN_NAME    = process.env.GIVEAWAY_CONNECTION_NAME || 'rayna-giveaway-consumer';
 
-const VALID_TYPES = new Set(['participation', 'eligible', 'winner', 'loser']);
 const EMAIL_RE    = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// ── AFFILIATE feed ─────────────────────────────────────────────────────────
+// The affiliate app publishes to the SAME exchange on the SAME vhost, differing only by
+// routing key: `affiliate.email.<env>.<type>`. It gets its OWN queue so a problem in one
+// feed can never stall the other.
+//
+// ⚠️ ALL FOUR ENVIRONMENTS (dev/test/pre-prod/prod) SHARE THIS ONE VHOST. Bind only our
+// env's key — `affiliate.email.#` would pull dev/test events into prod and email real
+// people from test data.
+const AFF_QUEUE   = process.env.AFFILIATE_QUEUE || 'affiliate-emails-prod';
+const AFF_BINDING = process.env.AFFILIATE_BINDING || 'affiliate.email.prod.*';
+
+// Event types per source. A type outside its source's set is poison (ack + drop, never requeued).
+const TYPES_BY_SOURCE = {
+  GIVEAWAY:  new Set(['participation', 'eligible', 'winner', 'loser']),
+  AFFILIATE: new Set(['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated']),
+};
+// The affiliate block that must accompany each type (it carries the event's actual data).
+const AFF_BLOCK_FOR_TYPE = {
+  joined:                'coupon',
+  coupon_assigned:       'coupon',
+  commission_assigned:   'commission',
+  link_generated:        'link',
+  card_offer_generated:  'cardOffer',
+};
+
+/** Source from the routing key's first segment — `giveaway.*` → GIVEAWAY, `affiliate.*` → AFFILIATE. */
+function sourceFromRoutingKey(rk) {
+  const first = String(rk || '').split('.')[0].toLowerCase();
+  return first === 'affiliate' ? 'AFFILIATE' : 'GIVEAWAY';
+}
+
 
 let _conn = null, _ch = null, _transporter = null, _stopped = false, _reconnectMs = 1000;
 
@@ -55,12 +86,26 @@ function smtp() {
 }
 
 // ── §3 contract validation ──
-function validate(p) {
+function validate(p, source = 'GIVEAWAY') {
   if (!p || typeof p !== 'object')                return { ok: false, reason: 'not_an_object' };
   if (p.version !== 1)                             return { ok: false, reason: `unknown_version:${p.version}` };
   if (!p.id)                                       return { ok: false, reason: 'missing_id' };
-  if (!VALID_TYPES.has(p.type))                    return { ok: false, reason: `bad_type:${p.type}` };
+  const types = TYPES_BY_SOURCE[source] || TYPES_BY_SOURCE.GIVEAWAY;
+  if (!types.has(p.type))                          return { ok: false, reason: `bad_type:${p.type}` };
   if (!p.to?.email || !EMAIL_RE.test(p.to.email))  return { ok: false, reason: 'invalid_email' };
+
+  if (source === 'AFFILIATE') {
+    // Affiliate messages carry DATA, not a rendered email — there is no subject/body to
+    // require. Instead the type-specific block must be present; the journey template turns
+    // it into the actual email.
+    const block = AFF_BLOCK_FOR_TYPE[p.type];
+    if (block && (p[block] == null || typeof p[block] !== 'object')) {
+      return { ok: false, reason: `missing_block:${block}` };
+    }
+    return { ok: true };
+  }
+
+  // GIVEAWAY messages ARE a pre-rendered email — subject + body are mandatory.
   if (!p.subject)                                  return { ok: false, reason: 'missing_subject' };
   if (typeof p.body !== 'string')                  return { ok: false, reason: 'missing_body' };
   return { ok: true };
@@ -90,6 +135,9 @@ async function record(evt) {
 // ── message handler ──
 async function handle(msg) {
   const raw = msg.content.toString();
+  // Which feed this came from — decides the valid types, the validation rules and whether
+  // the producer supplied an email body at all.
+  const source = sourceFromRoutingKey(msg.fields?.routingKey);
   let p;
   try { p = JSON.parse(raw); }
   catch {
@@ -98,12 +146,12 @@ async function handle(msg) {
     return _ch.ack(msg);
   }
 
-  const tag = `[GiveawayMQ] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
+  const tag = `[${source === 'AFFILIATE' ? 'AffiliateMQ' : 'GiveawayMQ'}] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
   // meta = light fields the toast uses; payload = parsed §3 message; raw = exact wire string.
-  const meta = { id: p?.id ?? null, type: p?.type ?? null, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
+  const meta = { id: p?.id ?? null, type: p?.type ?? null, source, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
 
   // 1. contract validation → poison acked + logged, NEVER requeued
-  const v = validate(p);
+  const v = validate(p, source);
   if (!v.ok) {
     console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`);
     await record({ ...meta, outcome: 'poison', reason: v.reason });
@@ -117,13 +165,22 @@ async function handle(msg) {
   let journeyHandled = 0;
   let unifiedId = null;
   try {
-    ({ unifiedId } = await ingestGiveawayEvent(p));
+    ({ unifiedId } = await ingestGiveawayEvent(p, source));
     if (unifiedId) {
       const { default: GiveawayJourneyService } = await import('../GiveawayJourneyService.js');
-      journeyHandled = (await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id })) || 0;
+      journeyHandled = (await GiveawayJourneyService.onEvent({ giveawayType: p.type, unifiedId, eventId: p.id, source })) || 0;
     }
   } catch (e) {
     console.error(`${tag} ⚠️ ingest/journey failed (continuing): ${e.message}`);
+  }
+
+  // AFFILIATE messages carry no email body, so there is nothing to "send directly" — the
+  // journey template is the only possible email. Stop here either way: enrolled or not, a
+  // direct send is impossible. (This also keeps store-only types like link_generated silent.)
+  if (source === 'AFFILIATE') {
+    console.log(`${tag} ✅ stored${journeyHandled ? ` — enrolled in ${journeyHandled} journey(s)` : ' — no matching journey (store-only)'}`);
+    await record({ ...meta, outcome: 'stored', journeys: journeyHandled });
+    return _ch.ack(msg);
   }
 
   // 1c. DEDUP THE EMAIL: when a giveaway JOURNEY handles this contact (active journey for this
@@ -200,6 +257,10 @@ async function assertTopology(ch) {
   await ch.bindQueue(DLQ, DLX, '');
   await ch.assertQueue(QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX } });
   await ch.bindQueue(QUEUE, EXCHANGE, BINDING);
+  // Affiliate feed — its own queue on the same exchange, sharing the giveaway DLQ.
+  // Bound to THIS env's key only (all envs share the vhost — see AFF_BINDING).
+  await ch.assertQueue(AFF_QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX } });
+  await ch.bindQueue(AFF_QUEUE, EXCHANGE, AFF_BINDING);
 }
 
 async function connect() {
@@ -215,10 +276,18 @@ async function connect() {
     _ch = await _conn.createChannel();
     await assertTopology(_ch);            // re-assert on every (re)connect — idempotent
     await _ch.prefetch(PREFETCH);
-    await _ch.consume(QUEUE, (msg) => { if (msg) handle(msg).catch(e => { console.error('[GiveawayMQ] handler crash:', e.message); try { _ch.nack(msg, false, false); } catch {} }); }, { noAck: false });
+    const onMessage = (label) => (msg) => {
+      if (!msg) return;
+      handle(msg).catch(e => { console.error(`[${label}] handler crash:`, e.message); try { _ch.nack(msg, false, false); } catch {} });
+    };
+    // Two queues, ONE process/connection — CloudAMQP caps connections and a second replica
+    // would split each queue. `handle` branches on the routing key, so both feeds share all
+    // the idempotency, retry and DLQ behaviour.
+    await _ch.consume(QUEUE,     onMessage('GiveawayMQ'),  { noAck: false });
+    await _ch.consume(AFF_QUEUE, onMessage('AffiliateMQ'), { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     scheduleReconnect(`connect failed: ${err.message}`);
   }
