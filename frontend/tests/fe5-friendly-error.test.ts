@@ -10,6 +10,13 @@ describe('friendlyError', () => {
     ['connect ETIMEDOUT 1.2.3.4:587', 'Could not reach the sending service'],
     ['Invalid number', 'Phone number is not valid'],
     ['Template not approved', 'Message template is not approved'],
+    ['HTTP 200', 'Email service did not confirm the send'],
+    ['HTTP 401', 'Sending service refused our login'],
+    ['HTTP 404', 'Sending service address is wrong'],
+    ['HTTP 429', 'Sending was temporarily limited'],
+    ['HTTP 400', 'Sending service rejected the request'],
+    ['HTTP 503', 'Sending service had a problem'],
+    ['Day-3 send failed: HTTP 502 ', 'Sending service had a problem'],
     ['something completely new', 'Sending failed'],
   ])('%s → %s', (raw, reason) => {
     expect(friendlyError(raw)?.reason).toBe(reason);

@@ -3,6 +3,25 @@
 export interface FriendlyError { reason: string; action: string }
 
 const RULES: { test: RegExp; reason: string; action: string }[] = [
+  // Bare "HTTP <code>" errors come from a provider/relay reply with no readable reason.
+  { test: /^\s*HTTP 2\d\d\s*$/i,
+    reason: 'Email service did not confirm the send',
+    action: 'The service received the request but did not say it was sent (no reason given). It may not have been delivered — check with your admin if this repeats.' },
+  { test: /\bHTTP 40[13]\b/i,
+    reason: 'Sending service refused our login',
+    action: 'The API key or account permissions are wrong. Ask your admin to check the provider settings.' },
+  { test: /\bHTTP 404\b/i,
+    reason: 'Sending service address is wrong',
+    action: 'The service URL in the settings is incorrect. Ask your admin to check it.' },
+  { test: /\bHTTP 429\b/i,
+    reason: 'Sending was temporarily limited',
+    action: 'Too many messages at once. It usually works on the next attempt.' },
+  { test: /\bHTTP 4\d\d\b/i,
+    reason: 'Sending service rejected the request',
+    action: 'The message details were not accepted. See the technical details, or ask your admin.' },
+  { test: /\bHTTP 5\d\d\b/i,
+    reason: 'Sending service had a problem',
+    action: 'The provider was down or had an error. It usually works on the next attempt.' },
   { test: /\b535\b|authentication (data|failed|unsuccessful)|invalid login|username and password not accepted|auth(entication)? error/i,
     reason: 'Email server login failed',
     action: 'The sending email account\'s username or password is wrong. Ask your admin to check the email (SMTP) settings — no emails from this sender are going out.' },
