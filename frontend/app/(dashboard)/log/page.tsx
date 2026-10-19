@@ -184,6 +184,20 @@ export default function LogPage() {
     if (st && STATUS_FILTERS.some(f => f.key === st)) setStatusFilter(st);
   }, []);
 
+  // Keep the URL in step with the chosen tab and status, so the address bar is accurate and
+  // the view can be shared or bookmarked. replaceState avoids adding history entries.
+  const [urlReady, setUrlReady] = useState(false);
+  useEffect(() => { setUrlReady(true); }, []);
+  useEffect(() => {
+    if (!urlReady) return;
+    const q = new URLSearchParams(window.location.search);
+    if (channel === 'email') q.delete('channel'); else q.set('channel', channel);
+    if (statusFilter) q.set('status', statusFilter); else q.delete('status');
+    const qs = q.toString();
+    const next = `${window.location.pathname}${qs ? `?${qs}` : ''}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, '', next);
+  }, [channel, statusFilter, urlReady]);
+
   const [journeys, setJourneys] = useState<LogJourney[]>([]);
   const [journeyNodes, setJourneyNodes] = useState<LogNode[]>([]);
 

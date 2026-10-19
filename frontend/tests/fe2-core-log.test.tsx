@@ -19,7 +19,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network disabled in tests'))));
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); window.history.replaceState(null, '', '/'); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const bodyText = (): string => document.body.textContent ?? '';
 type SendLog = Awaited<ReturnType<typeof api.getSendLog>>;
@@ -41,6 +41,21 @@ const ROWS = [
 ];
 
 describe('Send Log page', () => {
+  it('updates the URL when the tab or status changes', async () => {
+    unified(MSGS, 2);
+    sendLog(ROWS, 2);
+    window.history.replaceState(null, '', '/log?channel=all&status=failed');
+    try {
+      render(<LogPage />);
+      await screen.findByText('Phone number is not valid');
+      fireEvent.click(screen.getByRole('tab', { name: /Email/ }));
+      fireEvent.click(screen.getByRole('button', { name: 'Sent' }));
+      await waitFor(() => expect(window.location.search).toBe('?status=sent'));
+      fireEvent.click(screen.getByRole('button', { name: 'All Status' }));
+      await waitFor(() => expect(window.location.search).toBe(''));
+    } finally { window.history.replaceState(null, '', '/'); }
+  });
+
   it('opens pre-filtered from a deep link (?channel=all&status=failed)', async () => {
     unified(MSGS, 2);
     window.history.replaceState(null, '', '/log?channel=all&status=failed');
