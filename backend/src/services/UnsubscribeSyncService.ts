@@ -2,6 +2,9 @@ import { mysqlQuery } from '../config/mysql.js';
 import db from '../config/database.js';
 
 const BATCH_SIZE = 5000;
+// Opt-outs recorded on our side that a MySQL unsubscribe = 0 row may not undo.
+const PROTECTED_OPT_OUTS = ['unsubscribe_page', 'email_link', 'complaint', 'bounce', 'registration_optout']
+  .map(c => `'${c}'`).join(', ');
 
 /**
  * UnsubscribeSyncService
@@ -9,9 +12,13 @@ const BATCH_SIZE = 5000;
  * Syncs unsubscribe status from MySQL (phpMyAdmin) `unsubscribed` table
  * into RDS `unified_contacts.email_unsubscribe`.
  *
- * MySQL is the source of truth:
+ * MySQL rules:
  *   unsubscribe = 1  →  email_unsubscribe = 'Yes'
- *   unsubscribe = 0  →  email_unsubscribe = 'No'
+ *   unsubscribe = 0  →  email_unsubscribe = 'No', EXCEPT for contacts who opted out on our
+ *                       side — an unsubscribe click, spam complaint, hard bounce or
+ *                       registration opt-out (unsubscribe_log), or a restriction
+ *                       (unsubscribe_reason). Those always stay 'Yes': a 0 row in MySQL
+ *                       must never re-subscribe someone who asked not to be emailed.
  *
  * Runs daily at 2 AM Dubai via cron in server.js.
  */
@@ -64,13 +71,19 @@ export default class UnsubscribeSyncService {
           }
         }
 
-        // Bulk update: unsubscribe = 0 → 'No'
+        // Bulk update: unsubscribe = 0 → 'No' (never for contacts who opted out with us)
         if (resub.length > 0) {
           const { rowCount } = await db.query(`
-            UPDATE unified_contacts
+            UPDATE unified_contacts uc
             SET email_unsubscribe = 'No', updated_at = NOW()
-            WHERE LOWER(TRIM(email)) = ANY($1::text[])
-              AND email_unsubscribe <> 'No'
+            WHERE LOWER(TRIM(uc.email)) = ANY($1::text[])
+              AND uc.email_unsubscribe IS DISTINCT FROM 'No'
+              AND NOT EXISTS (
+                SELECT 1 FROM unsubscribe_log l
+                WHERE l.unified_id = uc.id
+                  AND l.campaign IN (${PROTECTED_OPT_OUTS})
+              )
+              AND NOT EXISTS (SELECT 1 FROM unsubscribe_reason r WHERE r.unified_id = uc.id)
           `, [resub]);
           setNo += rowCount!;
         }
