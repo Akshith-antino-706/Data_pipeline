@@ -580,3 +580,78 @@ export async function downloadReportAll(from: string, to: string): Promise<void>
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   saveBlob(await res.blob(), `rayna_daily_report_${from}_to_${to}.zip`);
 }
+
+// ── Overview (redesign, read-only) ───────────────────────────────────────────
+export type OverviewUnavailable = { available: false; reason: 'unavailable' };
+export type OverviewSection<T> = ({ available: true } & T) | OverviewUnavailable;
+export interface OverviewRange { from: string; to: string; days: number }
+export interface OverviewChannelCounts { email: number; whatsapp: number; sms: number; total: number }
+export interface OverviewTotals { sent: number; delivered: number; opened: number; clicked: number; unsubscribed: number }
+
+export interface OverviewHome {
+  sentToday: OverviewSection<OverviewChannelCounts>;
+  delivery7d: OverviewSection<{ sent: number; delivered: number; deliveredPct: number }>;
+  conversions30d: OverviewSection<{ count: number }>;
+  runningJourneys: OverviewSection<{ journeys: { id: number; name: string; status: string; joined: number }[] }>;
+  sendingToday: OverviewSection<{ journeys: { id: number; name: string; due: number }[]; total: number }>;
+  series14d: OverviewSection<{ days: ({ date: string } & OverviewChannelCounts)[] }>;
+}
+
+export interface OverviewInsights {
+  range: OverviewRange;
+  totals: OverviewSection<OverviewTotals>;
+  previous: OverviewSection<{ from: string; to: string } & OverviewTotals>;
+  weeklyTrend: OverviewSection<{ weeks: { week: string; sent: number; opened: number; clicked: number; openRate: number; clickRate: number }[] }>;
+  funnel: OverviewSection<{ channel: 'email'; sent: number; opened: number; clicked: number; converted: number }>;
+  journeys: OverviewSection<{ rows: { id: number; name: string; status: string | null; sent: number; opened: number; clicked: number; unsubscribed: number; openRate: number; clickRate: number }[] }>;
+}
+
+export type OverviewQueueChannel = 'email' | 'whatsapp' | 'sms' | 'rcs' | 'welcome' | 'gtmJourney';
+export type OverviewQueue =
+  | { channel: OverviewQueueChannel; available: true; waiting: number; active: number; delayed: number; completed: number; failed: number; paused: number }
+  | { channel: OverviewQueueChannel; available: false };
+
+export interface OverviewStatus {
+  dataSources: OverviewSection<{ sources: { name: string; status: string | null; lastSyncedAt: string | null; lastRunAt: string | null; rows: number; durationMs: number; error: string | null }[] }>;
+  queues: OverviewSection<{ queues: OverviewQueue[] }>;
+  failedSends: OverviewSection<{ rows: { channel: string; id: number; recipient: string | null; reason: string | null; time: string | null; journeyId: number | null }[] }>;
+}
+
+export interface OverviewMessage {
+  channel: string; id: number; recipient: string | null; contactName: string | null; label: string | null;
+  status: string | null; error: string | null; journeyId: number | null; nodeId: string | null;
+  time: string | null; openedAt: string | null; clickedAt: string | null;
+}
+export interface OverviewMessages {
+  page: number; limit: number; days: number; channel: 'all' | 'email' | 'whatsapp' | 'sms';
+  messages: OverviewSection<{ rows: OverviewMessage[] }>;
+  total: number | null;
+}
+export interface OverviewMessagesParams {
+  channel?: 'email' | 'whatsapp' | 'sms'; status?: string; journeyId?: number; q?: string; page?: number; limit?: number; days?: number;
+}
+
+export interface OverviewWebsite {
+  range: OverviewRange;
+  eventsPerDay: OverviewSection<{ days: { date: string; events: number }[] }>;
+  topEvents: OverviewSection<{ events: { name: string; count: number; uniqueUsers: number }[] }>;
+  topPages: OverviewSection<{ pages: { url: string; count: number }[] }>;
+  lastHour: OverviewSection<{ count: number }>;
+  utmLinks: OverviewSection<{
+    totals: { links: number; clickedLinks: number; clicks: number; campaigns: number; uniqueUsers: number };
+    campaigns: { campaignId: number; name: string | null; segment: string | null; channel: string | null; links: number; clickedLinks: number; clicks: number; lastClick: string | null }[];
+  }>;
+}
+
+function overviewQs(params: Record<string, string | number | undefined>): string {
+  const qs = toQuery(Object.entries(params).filter(([, v]) => v != null && v !== ''));
+  return qs ? `?${qs}` : '';
+}
+export const getOverviewHome = () => request<OverviewHome>('/api/v3/overview/home');
+export const getOverviewInsights = (from?: string, to?: string) =>
+  request<OverviewInsights>(`/api/v3/overview/insights${overviewQs({ from, to })}`);
+export const getOverviewStatus = () => request<OverviewStatus>('/api/v3/overview/status');
+export const getOverviewMessages = (params: OverviewMessagesParams = {}) =>
+  request<OverviewMessages>(`/api/v3/overview/messages${overviewQs({ ...params })}`);
+export const getOverviewWebsite = (from?: string, to?: string) =>
+  request<OverviewWebsite>(`/api/v3/overview/website${overviewQs({ from, to })}`);

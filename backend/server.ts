@@ -54,6 +54,7 @@ import { startGiveawayWorker } from './src/services/giveaway/giveawayWorker.js';
 import authRouter from './src/routes/auth.js';
 import { apiAuthGate, requireRole } from './src/middleware/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
+import overviewRouter from './src/routes/overview.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
 
@@ -163,6 +164,7 @@ app.use('/api/v3/chathead', chatheadV1Router);
 app.use('/api/v3/giveaways', giveawaysRouter);
 app.use('/api/v3/chat-leads', chatLeadsRouter);
 app.use('/api/v3/custom-segments', customSegmentsRouter);
+app.use('/api/v3/overview', overviewRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
