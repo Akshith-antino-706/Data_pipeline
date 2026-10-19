@@ -1151,7 +1151,9 @@ class JourneyService {
     // Email-only sender selection ('default' AWS API | 'giveaway' SMTP). Does not affect wa/sms/rcs.
     const emailCred = emailCredential === 'giveaway' ? 'giveaway' : 'default';
     // Continuous-journey trigger source ('gtm' GTM events | 'giveaway' giveaway events).
-    const trigSource = triggerSource === 'giveaway' ? 'giveaway' : 'gtm';
+    // Continuous-journey trigger feed: 'gtm' (GTM events) | 'giveaway' | 'affiliate'
+    // (both RabbitMQ feeds). Anything unrecognised falls back to 'gtm'.
+    const trigSource = ['gtm', 'giveaway', 'affiliate'].includes(triggerSource) ? triggerSource : 'gtm';
 
     const { rows: [journey] } = await db.query(`
       INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source)

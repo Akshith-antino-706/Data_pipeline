@@ -3843,7 +3843,7 @@ export default function Journeys() {
                       {/* Trigger source: GTM analytics events OR giveaway events (email-website feed) */}
                       <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Trigger Source</label>
                       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                        {[{ k: 'gtm', label: 'GTM Event', c: '#3b82f6' }, { k: 'giveaway', label: 'Giveaway', c: '#f59e0b' }].map(o => {
+                        {[{ k: 'gtm', label: 'GTM Event', c: '#3b82f6' }, { k: 'giveaway', label: 'Giveaway', c: '#f59e0b' }, { k: 'affiliate', label: 'Affiliate', c: '#a855f7' }].map(o => {
                           const active = (createForm.triggerSource || 'gtm') === o.k;
                           return (
                             <button key={o.k} type="button"
@@ -3858,13 +3858,22 @@ export default function Journeys() {
                         })}
                       </div>
 
-                      {createForm.triggerSource === 'giveaway' ? (
+                      {/* Giveaway and Affiliate both arrive on the SAME RabbitMQ exchange and
+                          differ only by event type, so they share this chip picker. */}
+                      {(createForm.triggerSource === 'giveaway' || createForm.triggerSource === 'affiliate') ? (() => {
+                        const isAff = createForm.triggerSource === 'affiliate';
+                        const feed  = isAff
+                          ? { label: 'Affiliate', color: '#a855f7', tint: 'rgba(168,85,247,0.12)', where: 'the affiliate portal',
+                              types: ['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated'] }
+                          : { label: 'Giveaway', color: '#f59e0b', tint: 'rgba(245,158,11,0.12)', where: 'the giveaway site',
+                              types: ['participation', 'eligible', 'winner', 'loser'] };
+                        return (
                         <>
                           <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
-                            Giveaway Type(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(select one or more)</span>
+                            {feed.label} Type(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(select one or more)</span>
                           </label>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            {['participation', 'eligible', 'winner', 'loser'].map(t => {
+                            {feed.types.map(t => {
                               const list = (createForm.triggerEvent || '').split(',').map(s => s.trim()).filter(Boolean);
                               const on = list.includes(t);
                               return (
@@ -3873,21 +3882,22 @@ export default function Journeys() {
                                     const next = on ? list.filter(x => x !== t) : [...list, t];
                                     setCreateForm(f => ({ ...f, triggerEvent: next.join(',') }));
                                   }}
-                                  style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', borderRadius: 20, textTransform: 'capitalize',
-                                    border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
-                                    background: on ? 'rgba(245,158,11,0.12)' : 'var(--card)', color: on ? '#f59e0b' : 'var(--text-secondary)' }}>
-                                  {on ? '✓ ' : ''}{t}
+                                  style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', borderRadius: 20,
+                                    border: `1px solid ${on ? feed.color : 'var(--border)'}`,
+                                    background: on ? feed.tint : 'var(--card)', color: on ? feed.color : 'var(--text-secondary)' }}>
+                                  {on ? '✓ ' : ''}{t.replace(/_/g, ' ')}
                                 </button>
                               );
                             })}
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
                             {createForm.triggerEvent
-                              ? <>A <strong>segment</strong> user who fires <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on the giveaway site enters — one entry per event (fires N times → N sends).</>
-                              : <>Pick one or more giveaway types. Only <strong>segment members</strong> who fire the selected type enter the journey.</>}
+                              ? <>A <strong>segment</strong> user who fires <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on {feed.where} enters — one entry per event (fires N times → N sends).</>
+                              : <>Pick one or more {feed.label.toLowerCase()} types. Only <strong>segment members</strong> who fire the selected type enter the journey.</>}
                           </div>
                         </>
-                      ) : (
+                        );
+                      })() : (
                         <>
                           <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
                             Trigger GTM Event(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional · select one or more)</span>

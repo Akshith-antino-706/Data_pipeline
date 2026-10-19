@@ -1,11 +1,14 @@
 /**
- * GiveawayJourneyService — real-time entry into continuous "giveaway" journeys.
+ * GiveawayJourneyService — real-time entry into continuous "giveaway" / "affiliate" journeys.
  *
- * Mirror of GtmJourneyService.onEvent, but the trigger is a giveaway event TYPE
- * (participation | eligible | winner | loser) instead of a GTM event name.
+ * Mirror of GtmJourneyService.onEvent, but the trigger is an event TYPE from the RabbitMQ
+ * feed instead of a GTM event name:
+ *   giveaway  → participation | eligible | winner | loser
+ *   affiliate → joined | coupon_assigned | commission_assigned | link_generated | card_offer_generated
  *
- * A giveaway journey = journey_type='gtm', trigger_source='giveaway',
+ * A journey here = journey_type='gtm', trigger_source='giveaway' OR 'affiliate',
  *   trigger_event='winner' (or a comma list like 'winner,loser').
+ * The source is matched too, so the two feeds can safely share event-type names.
  *
  * Segment-gated (same as GTM): a user enters ONLY if they belong to the journey's
  * selected segment AND fired the giveaway type. Fan-out key = the giveaway eventId
@@ -27,17 +30,20 @@ class GiveawayJourneyService {
    * send is skipped (no duplicate). Eligibility is used (not "newly-created entry") so the count
    * is stable across RabbitMQ redeliveries.
    */
-  static async onEvent({ giveawayType, unifiedId, eventId }) {
+  static async onEvent({ giveawayType, unifiedId, eventId, source = 'GIVEAWAY' }) {
     if (!giveawayType || !unifiedId) return 0;
 
+    // One code path, two feeds: a journey subscribes to its own source only, so an
+    // affiliate 'joined' can never enrol someone into a giveaway journey or vice versa.
+    const triggerSource = source === 'AFFILIATE' ? 'affiliate' : 'giveaway';
     const { rows: journeys } = await db.query(
       `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
          FROM journey_flows
-        WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = 'giveaway'
+        WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = $2
           AND trigger_event IS NOT NULL
           AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))
           AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
-      [giveawayType]
+      [giveawayType, triggerSource]
     );
     if (!journeys.length) return 0;
 

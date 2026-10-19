@@ -201,15 +201,21 @@ class GtmJourneyService {
       if (bought) { await _exit('purchased'); return; }
     }
 
-    // Giveaway journeys: the trigger is a giveaway_events row (PK = a UUID), not a GTM event.
-    // Load it so its data can fill the email ({{ giveaway }}, {{ prize }}, {{ rank }}, {{ code }}, …).
+    // Giveaway AND affiliate journeys: the trigger is a giveaway_affiliate_events row
+    // (PK = the producer's message id), not a GTM event. Load it so its data can fill the
+    // email — giveaway: {{ giveaway }}, {{ prize }}, {{ rank }}, {{ code }}; affiliate:
+    // {{ coupon_code }}, {{ commission_rate }}, {{ tracking_url }}, {{ bank_name }}, …
     let gvRow = null;
     const gvId = String(itemId || eventId || '');
     if (gvId) {
       const { rows: [gv] } = await db.query(
-        `SELECT name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
-                rank, code, offer, offer_code, expiry, position, points
-           FROM giveaway_events WHERE id = $1`, [gvId]
+        `SELECT source, name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
+                rank, code, offer, offer_code, expiry, position, points,
+                coupon_id, valid_from, max_per_user, discount_type, max_discount_value, currency,
+                commission_rate, commission_prev_rate, effective_from,
+                link_slug, tracking_url, destination_url, campaign_source, campaign_medium, campaign_name,
+                offer_subtitle, bank_name, min_order_value, max_discount_cap
+           FROM giveaway_affiliate_events WHERE id = $1`, [gvId]
       ).catch(() => ({ rows: [] }));
       if (gv) gvRow = gv;
     }
@@ -445,7 +451,7 @@ class GtmJourneyService {
       }
     }
 
-    // Giveaway journeys: expose the giveaway_events row as lowercase template vars so
+    // Giveaway/affiliate journeys: expose the giveaway_affiliate_events row as lowercase vars so
     // {{ giveaway }}, {{ prize }}, {{ rank }}, {{ mechanic }}, {{ code }}, {{ value }}, etc. resolve.
     const gvVars = gvRow ? {
       name: gvRow.name || c.name || '', giveaway: gvRow.giveaway || '', giveaway_image: gvRow.giveaway_image || '',
@@ -453,6 +459,20 @@ class GtmJourneyService {
       prize_type: gvRow.prize_type || '', value: gvRow.value || '', rank: gvRow.rank ?? '',
       code: gvRow.code || '', offer: gvRow.offer || '', offer_code: gvRow.offer_code || '', expiry: gvRow.expiry || '',
       position: gvRow.position ?? '', points: gvRow.points ?? '',
+      // AFFILIATE vars — blank for giveaway rows, so one template set serves both feeds.
+      // `code`/`expiry`/`value` above are already shared (coupon code, validUntil, discount).
+      coupon_code: gvRow.code || '', coupon_id: gvRow.coupon_id || '',
+      valid_from: gvRow.valid_from || '', valid_until: gvRow.expiry || '',
+      max_per_user: gvRow.max_per_user ?? '', discount_type: gvRow.discount_type || '',
+      discount_value: gvRow.value || '', max_discount_value: gvRow.max_discount_value ?? '',
+      currency: gvRow.currency || '',
+      commission_rate: gvRow.commission_rate ?? '', commission_prev_rate: gvRow.commission_prev_rate ?? '',
+      effective_from: gvRow.effective_from || '',
+      tracking_url: gvRow.tracking_url || '', destination_url: gvRow.destination_url || '',
+      link_slug: gvRow.link_slug || '', campaign_source: gvRow.campaign_source || '',
+      campaign_medium: gvRow.campaign_medium || '', campaign_name: gvRow.campaign_name || '',
+      offer_subtitle: gvRow.offer_subtitle || '', bank_name: gvRow.bank_name || '',
+      min_order_value: gvRow.min_order_value ?? '', max_discount_cap: gvRow.max_discount_cap ?? '',
     } : null;
     // Fill {{ key }} from gvVars for the regex/subject paths (Liquid gets them via the vars object).
     const fillGv = (s) => gvVars ? String(s).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => (k in gvVars) ? String(gvVars[k] ?? '') : m) : s;
@@ -491,7 +511,8 @@ class GtmJourneyService {
         // journeys (no gtm/giveaway trigger event selected). When a trigger event IS selected
         // (gtm or giveaway), product-card prices stay default-plan AED — consistent with the
         // event values placeholderResolver renders — so the email never mixes currencies.
-        const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim()) || jf.trigger_source === 'giveaway';
+        const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim())
+                            || jf.trigger_source === 'giveaway' || jf.trigger_source === 'affiliate';
         const marketOverride = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
         if (!isRecipientAllowedForRec(c.email)) {
           console.log(`[GtmJourney ${journeyId}] REC ALLOWLIST BLOCKED — ${c.email} not in REC_JOURNEY_ALLOWLIST (type=${jf.recommendation_type}). Skipping send + advancing.`);
