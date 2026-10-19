@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { GitBranch, Send } from 'lucide-react';
+import { GitBranch } from 'lucide-react';
 import { getOverviewHomeSection, getOverviewStatus } from '@/lib/api';
 import type { OverviewHomeSectionName, OverviewSection } from '@/lib/api';
 import { Card, Skeleton, buttonClass } from '@/components/ui';
@@ -154,7 +154,6 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
         <div className={`${s.actions} page-actions`}>
           {extraActions}
           <Link href="/journeys" className={buttonClass('secondary')}><GitBranch size={16} aria-hidden="true" />Create journey</Link>
-          <Link href="/sends/new" className={buttonClass('primary')}><Send size={16} aria-hidden="true" />Send a message</Link>
         </div>
       </div>
 
