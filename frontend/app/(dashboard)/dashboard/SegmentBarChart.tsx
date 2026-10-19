@@ -1,26 +1,48 @@
 'use client';
 
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import Link from 'next/link';
+import styles from './SegmentBarChart.module.css';
 
-// Segment Distribution bar chart. Kept in its own file so the dashboard can load
-// Recharts lazily (next/dynamic) instead of shipping it in the initial bundle.
+// Segment Distribution as a ranked horizontal bar list. Counts differ by orders of magnitude
+// (e.g. Prospect ≈ 1M vs On Trip ≈ a few hundred), so every bar gets a minimum visible width
+// and each row shows the exact count and its share of the total.
 interface SegmentBarDatum { name: string; customers: number; color: string }
 interface SegmentBarChartProps { data: SegmentBarDatum[]; fmt: (v: number) => string }
 
+const MIN_PCT = 1.5;
+
 export default function SegmentBarChart({ data, fmt }: SegmentBarChartProps) {
+  const rows = data
+    .map(d => ({ ...d, customers: Number.isFinite(d.customers) ? d.customers : 0 }))
+    .sort((a, b) => b.customers - a.customers);
+  const total = rows.reduce((s, d) => s + d.customers, 0);
+  const max = rows.length ? rows[0].customers : 0;
+
   return (
-    <ResponsiveContainer width="100%" height={250}>
-      <BarChart data={data}>
-        <XAxis dataKey="name" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={60} />
-        <YAxis tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }} />
-        <Tooltip
-          formatter={(v) => fmt(v as number)}
-          contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, fontSize: 12, boxShadow: 'var(--shadow-md)', color: 'var(--text-primary)' }}
-        />
-        <Bar dataKey="customers" name="Customers" radius={[6, 6, 0, 0]}>
-          {data.map((d, i) => <Cell key={i} fill={d.color} />)}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <ul className={styles.list} aria-label="Contacts by booking status">
+      {rows.map(d => {
+        const width = max > 0 ? Math.max(MIN_PCT, (d.customers / max) * 100) : 0;
+        const share = total > 0 ? (d.customers / total) * 100 : 0;
+        return (
+          <li key={d.name}>
+            <Link href="/segmentation" className={styles.row}>
+              <span className={styles.label}>
+                <span className={styles.dot} style={{ background: d.color }} aria-hidden="true" />
+                {d.name}
+              </span>
+              <span className={styles.track} aria-hidden="true">
+                <span className={styles.bar} style={{ width: `${width}%`, background: d.color }} />
+              </span>
+              <span className={styles.count}>{fmt(d.customers)}</span>
+              <span className={styles.share}>{share < 0.1 && d.customers > 0 ? '<0.1%' : `${share.toFixed(1)}%`}</span>
+            </Link>
+          </li>
+        );
+      })}
+      <li className={styles.total}>
+        <span>Total</span>
+        <span className={styles.count}>{fmt(total)}</span>
+      </li>
+    </ul>
   );
 }

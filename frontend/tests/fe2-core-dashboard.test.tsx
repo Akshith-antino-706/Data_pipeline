@@ -67,7 +67,7 @@ describe('Dashboard page', () => {
     expect(screen.getByText('AED 2.50M')).toBeTruthy();
     expect(screen.getByText('AED 5,000')).toBeTruthy();
     expect(screen.getByText('AED 0')).toBeTruthy(); // missing revenue -> 0
-    expect(screen.getByTestId('chart').textContent).toBe('On Trip,CUSTOM_X');
+    expect(screen.getByTestId('chart').textContent).toBe('On Trip,Custom X');
     expect(screen.getByText('9,999')).toBeTruthy();
     expect(screen.getByText('77')).toBeTruthy();
     expect(screen.getByText('website')).toBeTruthy();

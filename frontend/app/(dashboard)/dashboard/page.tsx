@@ -45,18 +45,21 @@ const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 
 const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 const STATUS_COLORS = {
-  ON_TRIP: '#22c55e', FUTURE_TRAVEL: '#3b82f6', ACTIVE_ENQUIRY: '#f59e0b',
-  PAST_BOOKING: '#8b5cf6', PAST_ENQUIRY: '#f97316', PROSPECT: '#64748b',
-  B2B_ACTIVE_PARTNER: '#22c55e', B2B_DORMANT_PARTNER: '#f97316',
-  B2B_NEW_LEAD: '#3b82f6', B2B_PROSPECT: '#64748b',
+  ON_TRIP: 'var(--ok)', FUTURE_TRAVEL: 'var(--info)', ACTIVE_ENQUIRY: 'var(--warn)',
+  PAST_BOOKING: 'var(--gold)', PAST_ENQUIRY: 'var(--gold-ink)', PROSPECT: 'var(--ink3)', CANCELLED: 'var(--bad)',
+  B2B_ACTIVE_PARTNER: 'var(--ok)', B2B_DORMANT_PARTNER: 'var(--warn)',
+  B2B_NEW_LEAD: 'var(--info)', B2B_PROSPECT: 'var(--ink3)',
 };
 
 const STATUS_LABELS = {
   ON_TRIP: 'On Trip', FUTURE_TRAVEL: 'Future Travel', ACTIVE_ENQUIRY: 'Active Enquiry',
-  PAST_BOOKING: 'Past Booking', PAST_ENQUIRY: 'Past Enquiry', PROSPECT: 'Prospect',
+  PAST_BOOKING: 'Past Booking', PAST_ENQUIRY: 'Past Enquiry', PROSPECT: 'Prospect', CANCELLED: 'Cancelled',
   B2B_ACTIVE_PARTNER: 'Active Partner', B2B_DORMANT_PARTNER: 'Dormant Partner',
   B2B_NEW_LEAD: 'New Lead', B2B_PROSPECT: 'B2B Prospect',
 };
+
+// Unknown status codes (e.g. NEW_STATUS) → "New Status" instead of raw caps.
+const titleCase = (v: string) => String(v || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // Month-year options (e.g. "Jan 2026") from 1 year ahead down to 2 years back.
@@ -208,9 +211,9 @@ export default function Dashboard() {
   const totalReached = logs.reduce((s, r) => s + (r.total_reached || 0), 0);
 
   const barData = statusCounts.map(s => ({
-    name: STATUS_LABELS[s.booking_status as keyof typeof STATUS_LABELS] || s.booking_status,
+    name: STATUS_LABELS[s.booking_status as keyof typeof STATUS_LABELS] || titleCase(s.booking_status),
     customers: s.count,
-    color: STATUS_COLORS[s.booking_status as keyof typeof STATUS_COLORS] || '#64748b',
+    color: STATUS_COLORS[s.booking_status as keyof typeof STATUS_COLORS] || 'var(--ink3)',
   }));
 
   return (
@@ -540,7 +543,7 @@ export default function Dashboard() {
                       <tr key={s.booking_status}>
                         <td>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: 2, background: STATUS_COLORS[s.booking_status as keyof typeof STATUS_COLORS] || '#64748b' }} />
+                            <span style={{ width: 8, height: 8, borderRadius: 2, background: STATUS_COLORS[s.booking_status as keyof typeof STATUS_COLORS] || 'var(--ink3)' }} />
                             {STATUS_LABELS[s.booking_status as keyof typeof STATUS_LABELS] || s.booking_status}
                           </span>
                         </td>
