@@ -92,12 +92,12 @@ describe('Segmentation overview page', () => {
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
-  it('loading state shows skeletons and disables Refresh', () => {
+  it('loading state shows skeletons and disables Update counts now', () => {
     vi.mocked(api.getSegmentationTree).mockReturnValue(new Promise(() => {}));
     vi.mocked(api.getGeneralSegment).mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(screen.queryByText('Total Customers')).toBeNull();
-    expect((screen.getByText('Refresh').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText('Update counts now').closest('button') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('empty data renders zeroes without NaN/undefined', async () => {
@@ -106,18 +106,23 @@ describe('Segmentation overview page', () => {
     expect(screen.getByText('0 (0%)')).toBeTruthy();
     expect(screen.getByText('AED 0.00M')).toBeTruthy();
     expect(screen.queryByText('General')).toBeNull();
-    expect(screen.queryByText('Custom Segments')).toBeNull();
+    await screen.findByText('No custom segments yet');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
-  it('API errors do not crash', async () => {
+  it('API errors show error states with retry instead of fake zeroes', async () => {
     vi.mocked(api.getSegmentationTree).mockRejectedValue(new Error('HTTP 500'));
     vi.mocked(api.getGeneralSegment).mockRejectedValue(new Error('HTTP 500'));
     vi.mocked(api.getCustomSegments).mockRejectedValue(new Error('HTTP 500'));
     renderPage();
-    await screen.findByText('Total Customers');
-    expect(screen.getByText('Status Distribution')).toBeTruthy();
+    await screen.findByText("Couldn't load segment counts");
+    expect(screen.queryByText('Total Customers')).toBeNull();
+    await screen.findByText("Couldn't load custom segments");
     expect(bodyText()).not.toMatch(/NaN|undefined/);
+    vi.mocked(api.getSegmentationTree).mockResolvedValue(tree as unknown as TreeRes);
+    fireEvent.click(screen.getAllByText('Try again')[0]);
+    await screen.findByText('Total Customers');
+    expect(screen.getByText('Contacts by booking status')).toBeTruthy();
   });
 
   it('expanding a status card shows its breakdown and navigates to the combo slug', async () => {
@@ -125,8 +130,7 @@ describe('Segmentation overview page', () => {
     renderPage();
     await screen.findByText('Total Customers');
     fireEvent.click(screen.getAllByText('On Trip')[0]);
-    await screen.findByText(/On Trip Breakdown/);
-    expect(screen.queryByText('Status Distribution')).toBeNull();
+    await screen.findByText('On Trip breakdown');
     expect(screen.getByText('4 Indian')).toBeTruthy();
     fireEvent.click(screen.getByText('On Trip — Luxury — Local'));
     expect(nav.push).toHaveBeenCalledWith('/segmentation/on-trip-luxury-local');
@@ -136,7 +140,7 @@ describe('Segmentation overview page', () => {
     withData();
     renderPage();
     fireEvent.click(await screen.findByText('General'));
-    await screen.findByText(/General Breakdown/);
+    await screen.findByText('General breakdown');
     // ON_TRIP 100 + PROSPECT '50' => 150 for LUXURY|LOCAL
     expect(screen.getByText('150')).toBeTruthy();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
@@ -160,7 +164,7 @@ describe('Segmentation overview page', () => {
     withData();
     renderPage();
     await screen.findByText('Total Customers');
-    fireEvent.click(screen.getByText('Refresh'));
+    fireEvent.click(screen.getByText('Update counts now'));
     await waitFor(() => expect(api.refreshSegmentationSnapshot).toHaveBeenCalled());
     expect(api.recomputeSegmentation).toHaveBeenCalled();
     await waitFor(() => expect(api.getSegmentationTree).toHaveBeenCalledTimes(2));
@@ -172,8 +176,9 @@ describe('Segmentation overview page', () => {
     vi.mocked(api.recomputeSegmentation).mockRejectedValue(new Error('timeout'));
     renderPage();
     await screen.findByText('Total Customers');
-    fireEvent.click(screen.getByText('Refresh'));
-    await waitFor(() => expect((screen.getByText('Refresh').closest('button') as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByText('Update counts now'));
+    await waitFor(() => expect((screen.getByText('Update counts now').closest('button') as HTMLButtonElement).disabled).toBe(false));
+    expect(toastMock.error).toHaveBeenCalledWith('Couldn’t update counts');
     expect(api.refreshSegmentationSnapshot).not.toHaveBeenCalled();
     expect(api.getSegmentationTree).toHaveBeenCalledTimes(1);
   });
@@ -181,10 +186,12 @@ describe('Segmentation overview page', () => {
   it('header buttons navigate / open create modal', async () => {
     renderPage();
     await screen.findByText('Total Customers');
-    fireEvent.click(screen.getByText('All Segments'));
+    fireEvent.click(screen.getByText('All segments'));
     expect(nav.push).toHaveBeenCalledWith('/segmentation/all-segments');
-    fireEvent.click(screen.getByText('Create Segment'));
-    await screen.findByText('Create Custom Segment');
+    fireEvent.click(screen.getByText('Changes over time'));
+    expect(nav.push).toHaveBeenCalledWith('/segment-activity');
+    fireEvent.click(screen.getAllByText('Create segment')[0]);
+    await screen.findByText('New segment');
   });
 
   it('custom segment click navigates; delete confirms then calls api', async () => {
@@ -193,7 +200,7 @@ describe('Segmentation overview page', () => {
     fireEvent.click(await screen.findByText('My Custom'));
     expect(nav.push).toHaveBeenCalledWith('/segmentation/custom/5');
     fireEvent.click(screen.getAllByTitle('Delete segment')[1]);
-    await screen.findByText('Delete Segment');
+    await screen.findByText('Delete segment?');
     fireEvent.click(screen.getByText('Cancel'));
     expect(api.deleteCustomSegment).not.toHaveBeenCalled();
     fireEvent.click(screen.getAllByTitle('Delete segment')[1]);

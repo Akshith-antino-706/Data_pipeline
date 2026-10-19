@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
-import { X, Plus, Trash2, Filter, Loader2, Users, Search } from 'lucide-react';
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { X, Plus, Trash2, Loader2, Search } from 'lucide-react';
+import { Button, Skeleton } from '@/components/ui';
+import b from './builder.module.css';
 import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics, searchContactsByEmail, searchAffinityProducts } from '@/lib/api';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
 import type { JsonBody } from '@/types/api';
@@ -152,9 +153,8 @@ const FIELD_CONFIG: Record<string, FieldConfig> = {
 const FIELD_KEYS = Object.keys(FIELD_CONFIG);
 
 const inputStyle: React.CSSProperties = {
-  padding: '7px 10px', fontSize: 13, border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)', background: 'var(--background)', color: 'var(--foreground)',
-  outline: 'none', width: '100%',
+  font: 'inherit', height: 36, padding: '0 10px', fontSize: 13, border: '1px solid var(--line)',
+  borderRadius: 8, backgroundColor: 'var(--surface)', color: 'var(--ink)', width: '100%', minWidth: 0,
 };
 
 const selectStyle: React.CSSProperties = {
@@ -213,10 +213,10 @@ function EmailSearchInput({ condition, onChange }: ConditionInputProps) {
       {selected.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
           {selected.map(email => (
-            <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 20, fontSize: 12, fontWeight: 500, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.3)' }}>
+            <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 20, fontSize: 12, fontWeight: 500, background: 'var(--info-soft)', color: 'var(--info)', border: '1px solid transparent' }}>
               {email}
               <button type="button" onClick={() => removeEmail(email)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3b82f6', padding: 0, lineHeight: 1, fontSize: 14, display: 'flex', alignItems: 'center' }}>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--info)', padding: 0, lineHeight: 1, fontSize: 14, display: 'flex', alignItems: 'center' }}>
                 <X size={11} />
               </button>
             </span>
@@ -226,7 +226,7 @@ function EmailSearchInput({ condition, onChange }: ConditionInputProps) {
 
       {/* Search input */}
       <div style={{ position: 'relative' }}>
-        <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)', pointerEvents: 'none' }} />
+        <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink3)', pointerEvents: 'none' }} />
         <input
           type="text"
           value={query}
@@ -235,34 +235,34 @@ function EmailSearchInput({ condition, onChange }: ConditionInputProps) {
           placeholder="Type email or name to search…"
           style={{ ...inputStyle, paddingLeft: 28, maxWidth: 320 }}
         />
-        {searching && <Loader2 size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite', color: 'var(--muted-foreground)' }} />}
+        {searching && <Loader2 size={13} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite', color: 'var(--ink3)' }} />}
       </div>
 
       {/* Dropdown */}
       {open && results.length > 0 && (
-        <div style={{ position: 'absolute', zIndex: 50, marginTop: 4, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 220, overflowY: 'auto', minWidth: 320 }}>
+        <div style={{ position: 'absolute', zIndex: 50, marginTop: 4, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', maxHeight: 220, overflowY: 'auto', minWidth: 320 }}>
           {results.map(r => {
             const alreadyAdded = selected.includes(r.email);
             return (
               <button key={r.id} type="button" onClick={() => !alreadyAdded && addEmail(r.email)} disabled={alreadyAdded}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: alreadyAdded ? 'default' : 'pointer', textAlign: 'left', borderBottom: '1px solid var(--border)', opacity: alreadyAdded ? 0.5 : 1, transition: 'background 0.1s' }}
-                onMouseEnter={e => { if (!alreadyAdded) e.currentTarget.style.background = 'var(--background)'; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: alreadyAdded ? 'default' : 'pointer', textAlign: 'left', borderBottom: '1px solid var(--line)', opacity: alreadyAdded ? 0.5 : 1, transition: 'background 0.1s' }}
+                onMouseEnter={e => { if (!alreadyAdded) e.currentTarget.style.background = 'var(--sunken)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}>
-                <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: '#3b82f6' }}>
+                <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--info-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: 'var(--info)' }}>
                   {(r.name || r.email || '?')[0].toUpperCase()}
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)' }}>{r.name || '—'}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{r.email}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{r.name || '—'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink3)' }}>{r.email}</div>
                 </div>
-                {alreadyAdded && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#22c55e', fontWeight: 600 }}>Added</span>}
+                {alreadyAdded && <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--ok)', fontWeight: 600 }}>Added</span>}
               </button>
             );
           })}
         </div>
       )}
       {selected.length > 0 && (
-        <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink3)', marginTop: 6 }}>
           {selected.length} email{selected.length > 1 ? 's' : ''} selected
         </div>
       )}
@@ -321,16 +321,16 @@ function AffinityProductInput({ condition, onChange }: ConditionInputProps) {
   return (
     <div ref={containerRef}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>Contact&apos;s top product</span>
+        <span style={{ fontSize: 12, color: 'var(--ink3)' }}>Contact&apos;s top product</span>
         <AffinityRankSelect condition={condition} onChange={onChange} />
       </div>
       {selected.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
           {selected.map(key => (
-            <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 20, fontSize: 12, fontWeight: 500, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', border: '1px solid rgba(139,92,246,0.3)' }}>
+            <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 20, fontSize: 12, fontWeight: 500, background: 'var(--gold-soft)', color: 'var(--gold-ink)', border: '1px solid transparent' }}>
               {productKeyLabel(key)}
               <button type="button" onClick={() => toggle(key)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8b5cf6', padding: 0, lineHeight: 1, display: 'flex', alignItems: 'center' }}>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold-ink)', padding: 0, lineHeight: 1, display: 'flex', alignItems: 'center' }}>
                 <X size={11} />
               </button>
             </span>
@@ -338,31 +338,31 @@ function AffinityProductInput({ condition, onChange }: ConditionInputProps) {
         </div>
       )}
       <div style={{ position: 'relative' }}>
-        <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)', pointerEvents: 'none' }} />
+        <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink3)', pointerEvents: 'none' }} />
         <input type="text" value={query} onChange={e => { setQuery(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
           placeholder="Search products, e.g. Desert Safari…" style={{ ...inputStyle, paddingLeft: 28, maxWidth: 320 }} />
-        {searching && <Loader2 size={13} style={{ position: 'absolute', left: 296, top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite', color: 'var(--muted-foreground)' }} />}
+        {searching && <Loader2 size={13} style={{ position: 'absolute', left: 296, top: '50%', transform: 'translateY(-50%)', animation: 'spin 1s linear infinite', color: 'var(--ink3)' }} />}
       </div>
       {open && results.length > 0 && (
-        <div style={{ position: 'absolute', zIndex: 50, marginTop: 4, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', maxHeight: 240, overflowY: 'auto', minWidth: 340 }}>
+        <div style={{ position: 'absolute', zIndex: 50, marginTop: 4, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', maxHeight: 240, overflowY: 'auto', minWidth: 340 }}>
           {results.map(r => {
             const added = selected.includes(r.product_key);
             return (
               <button key={r.product_key} type="button" onClick={() => pick(r.product_key)}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid var(--border)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--background)'; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', borderBottom: '1px solid var(--line)' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--sunken)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)' }}>{r.product_name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>#1 for {Number(r.customers_rank1).toLocaleString()} · top 3 for {Number(r.customers_top3).toLocaleString()} contacts</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{r.product_name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink3)' }}>#1 for {Number(r.customers_rank1).toLocaleString()} · top 3 for {Number(r.customers_top3).toLocaleString()} contacts</div>
                 </div>
-                {added && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 600 }}>Added</span>}
+                {added && <span style={{ fontSize: 10, color: 'var(--ok)', fontWeight: 600 }}>Added</span>}
               </button>
             );
           })}
         </div>
       )}
-      <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>{AFFINITY_HINT}</div>
+      <div style={{ fontSize: 11, color: 'var(--ink3)', marginTop: 6 }}>{AFFINITY_HINT}</div>
     </div>
   );
 }
@@ -383,11 +383,11 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
       return (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>Contact&apos;s top service</span>
+            <span style={{ fontSize: 12, color: 'var(--ink3)' }}>Contact&apos;s top service</span>
             <AffinityRankSelect condition={condition} onChange={onChange} />
           </div>
           <ConditionValueInput fieldKey={fieldKey} condition={condition} onChange={onChange} cfgOverride={cfg} />
-          <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 6 }}>{AFFINITY_HINT}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink3)', marginTop: 6 }}>{AFFINITY_HINT}</div>
         </div>
       );
 
@@ -404,10 +404,10 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
                   onChange({ ...condition, value: next.length ? next : [] });
                 }}
                 style={{
-                  padding: '4px 10px', fontSize: 12, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                  border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
-                  background: selected ? 'var(--primary)' : 'var(--background)',
-                  color: selected ? 'var(--primary-foreground)' : 'var(--foreground)',
+                  font: 'inherit', height: 30, padding: '0 12px', fontSize: 12, borderRadius: 999, cursor: 'pointer',
+                  border: `1px solid ${selected ? 'var(--gold)' : 'var(--line)'}`,
+                  background: selected ? 'var(--gold-soft)' : 'var(--surface)',
+                  color: selected ? 'var(--gold-ink)' : 'var(--ink)',
                   fontWeight: selected ? 600 : 400, transition: 'all 0.15s',
                 }}>
                 {cfg.labels?.[opt] || opt}
@@ -437,10 +437,10 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
               <button key={String(opt.value)} type="button"
                 onClick={() => onChange({ ...condition, value: opt.value })}
                 style={{
-                  padding: '4px 14px', fontSize: 12, borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                  border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
-                  background: selected ? 'var(--primary)' : 'var(--background)',
-                  color: selected ? 'var(--primary-foreground)' : 'var(--foreground)',
+                  font: 'inherit', height: 30, padding: '0 14px', fontSize: 12, borderRadius: 999, cursor: 'pointer',
+                  border: `1px solid ${selected ? 'var(--gold)' : 'var(--line)'}`,
+                  background: selected ? 'var(--gold-soft)' : 'var(--surface)',
+                  color: selected ? 'var(--gold-ink)' : 'var(--ink)',
                   fontWeight: selected ? 600 : 400, transition: 'all 0.15s',
                 }}>
                 {opt.label}
@@ -463,7 +463,7 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
           <input type="date" value={(condition.value as string[] | null)?.[0] || ''}
             onChange={e => onChange({ ...condition, value: [e.target.value, (condition.value as string[] | null)?.[1] || ''] })}
             style={{ ...inputStyle, maxWidth: 160 }} />
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>to</span>
+          <span style={{ fontSize: 12, color: 'var(--ink3)' }}>to</span>
           <input type="date" value={(condition.value as string[] | null)?.[1] || ''}
             onChange={e => onChange({ ...condition, value: [(condition.value as string[] | null)?.[0] || '', e.target.value] })}
             style={{ ...inputStyle, maxWidth: 160 }} />
@@ -483,12 +483,12 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
             <option value="after">+ after today (upcoming)</option>
             <option value="before">− before today (past)</option>
           </select>
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>today {sign}</span>
+          <span style={{ fontSize: 12, color: 'var(--ink3)' }}>today {sign}</span>
           <input type="number" min="0" placeholder="X"
             value={(condition.value ?? '') === '' ? '' : condition.value as string | number}
             onChange={e => onChange({ ...condition, value: e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0) })}
             style={{ ...inputStyle, maxWidth: 80 }} />
-          <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>days = date</span>
+          <span style={{ fontSize: 12, color: 'var(--ink3)' }}>days = date</span>
         </div>
       );
     }
@@ -511,7 +511,7 @@ function ConditionValueInput({ fieldKey, condition, onChange, cfgOverride }: Con
               <input type="number" placeholder="Min" value={(condition.value as string[] | null)?.[0] ?? ''}
                 onChange={e => onChange({ ...condition, value: [e.target.value, (condition.value as string[] | null)?.[1] ?? ''] })}
                 style={{ ...inputStyle, maxWidth: 110 }} />
-              <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>–</span>
+              <span style={{ fontSize: 12, color: 'var(--ink3)' }}>–</span>
               <input type="number" placeholder="Max" value={(condition.value as string[] | null)?.[1] ?? ''}
                 onChange={e => onChange({ ...condition, value: [(condition.value as string[] | null)?.[0] ?? '', e.target.value] })}
                 style={{ ...inputStyle, maxWidth: 110 }} />
@@ -581,6 +581,96 @@ const emptyCondition = (): SegmentCondition => ({
   joinOp: 'AND',
 });
 
+// ── Plain-words summary ───────────────────────────────────────────────
+const shortLabel = (key: string) => (FIELD_CONFIG[key]?.label || key).replace(/ within ± days \(today\)$/, '').replace(/ \(booking affinity\)$/, '');
+const optLabel = (key: string, v: string) => FIELD_CONFIG[key]?.labels?.[v] || v;
+const listWords = (items: string[], max = 3) => (items.length > max ? `${items.slice(0, max).join(', ')} +${items.length - max} more` : items.join(', '));
+
+function countWords(cond: SegmentCondition): string {
+  const cv = cond.countValue;
+  if (Array.isArray(cv)) {
+    if (!cv.some(v => v !== '' && v != null)) return '';
+    return `between ${cv[0] || '0'} and ${cv[1] || 'any number of'} times`;
+  }
+  if (cv === '' || cv == null) return '';
+  return `${(cond.countOp || 'gte') === 'lte' ? 'at most' : 'at least'} ${cv} times`;
+}
+
+/** One condition in plain words; mirrors exactly what is sent to the API. */
+function describeCondition(cond: SegmentCondition): string {
+  const win = cond.windowDays ? ` in the last ${cond.windowDays} days` : '';
+  if (cond.type === 'gtm') {
+    const evt = cond.gtmEvent ? `the website event "${cond.gtmEvent}"` : 'any website event';
+    const cnt = countWords(cond);
+    return `triggered ${evt}${cnt ? ` ${cnt}` : ''}${win}`;
+  }
+  if (cond.type === 'giveaway') {
+    const kind = cond.giveawayType ? `a giveaway "${cond.giveawayType}" event` : 'any giveaway activity';
+    const nm = cond.giveawayName ? ` for "${cond.giveawayName}"` : '';
+    const cnt = countWords(cond);
+    return `had ${kind}${nm}${cnt ? ` ${cnt}` : ''}${win}`;
+  }
+  const key = cond.field;
+  const cfg = FIELD_CONFIG[key];
+  if (!cfg) return '';
+  const label = shortLabel(key).toLowerCase();
+  const v = cond.value;
+  switch (cfg.type) {
+    case 'email-search': return `have the email ${listWords(Array.isArray(v) ? v : [])}`;
+    case 'multi-select': return `have ${label} ${listWords((Array.isArray(v) ? v : []).map(x => optLabel(key, x)))}`;
+    case 'affinity-service':
+    case 'affinity-product': {
+      const items = (Array.isArray(v) ? v : []).map(x => (cfg.type === 'affinity-product' ? productKeyLabel(x) : optLabel(key, x)));
+      return `have ${listWords(items)} as their ${cond.operator === 'top3' ? 'top-3' : 'number 1'} ${cfg.type === 'affinity-product' ? 'product' : 'service'}`;
+    }
+    case 'single-select': return `have ${label} ${optLabel(key, String(v))}`;
+    case 'boolean': return `${v === true ? 'are' : 'are not'} ${label.replace(/^is /, '')}`;
+    case 'text': return `have ${label} "${String(v).trim()}"`;
+    case 'date-range': {
+      const [a, z] = Array.isArray(v) ? v : ['', ''];
+      return `have ${label} ${a && z ? `from ${a} to ${z}` : a ? `on or after ${a}` : `on or before ${z}`}`;
+    }
+    case 'days-window': {
+      const dir = cond.operator || 'within';
+      const span = dir === 'after' ? `in the next ${v} days` : dir === 'before' ? `in the last ${v} days` : `within ${v} days of today`;
+      return `have ${label} ${span}`;
+    }
+    case 'number-range': {
+      if (cond.operator === 'between') {
+        const [a, z] = Array.isArray(v) ? v : ['', ''];
+        return `have ${label} ${a !== '' && z !== '' ? `between ${a} and ${z}` : a !== '' ? `of at least ${a}` : `of at most ${z}`}`;
+      }
+      return `have ${label} of ${cond.operator === 'lte' ? 'at most' : 'at least'} ${String(v)}`;
+    }
+    default: return '';
+  }
+}
+
+function negate(d: string): string {
+  const swaps: [RegExp, string][] = [[/^had /, 'did not have '], [/^triggered /, 'did not trigger '], [/^have /, 'do not have '], [/^are not /, 'are '], [/^are /, 'are not ']];
+  const hit = swaps.find(([re]) => re.test(d));
+  return hit ? d.replace(hit[0], hit[1]) : `not: ${d}`;
+}
+
+function PlainWords({ conditions }: { conditions: SegmentCondition[] }) {
+  if (conditions.length === 0) return <span className={b.note}>Add a rule to describe who belongs in this segment.</span>;
+  const parts: ReactNode[] = [];
+  conditions.forEach((c, i) => {
+    if (i > 0) parts.push(<span key={`j${i}`}> {conditions[i - 1].joinOp === 'OR' ? 'or' : 'and'} </span>);
+    parts.push(c.exclude
+      ? <b key={i}>{negate(describeCondition(c))}</b>
+      : <b key={i}>{describeCondition(c)}</b>);
+  });
+  return <span>Contacts who {parts}.</span>;
+}
+
+const RULE_KINDS = [
+  { type: 'contact', name: 'Contact property', desc: 'Booking status, product, location, revenue, dates…' },
+  { type: 'gtm', name: 'Website event (GTM)', desc: 'Events tracked on the website' },
+  { type: 'giveaway', name: 'Giveaway', desc: 'Giveaway entries and results' },
+];
+const kindName = (type: string) => RULE_KINDS.find(k => k.type === type)?.name || type;
+
 export default function CreateSegmentModal({ onClose, onCreated, segment = null, onUpdated }: CreateSegmentModalProps) {
   const isEditMode = !!segment;
   const [name, setName] = useState(segment?.name || '');
@@ -606,7 +696,9 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   });
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const [gtmEventNames, setGtmEventNames] = useState<string[]>([]);
 
   useEffect(() => {
@@ -615,6 +707,12 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
       setGtmEventNames(names);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const updateCondition = (idx: number, updated: SegmentCondition) => {
     const next = [...conditions];
@@ -644,25 +742,23 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     });
   };
 
-  const removeCondition = (idx: number) => {
-    setConditions(conditions.filter((_, i) => i !== idx));
-  };
+  const removeCondition = (idx: number) => setConditions(conditions.filter((_, i) => i !== idx));
+  const addCondition = () => setConditions([...conditions, emptyCondition()]);
 
-  const addCondition = () => {
-    setConditions([...conditions, emptyCondition()]);
-  };
-
-  const validConditions = conditions.filter(isConditionValid);
+  const validConditions = useMemo(() => conditions.filter(isConditionValid), [conditions]);
+  const incompleteCount = conditions.filter(c => c.type && !isConditionValid(c)).length;
 
   const refreshPreview = useCallback(async (conds: SegmentCondition[]) => {
     if (!conds.length) { setPreviewCount(null); return; }
     setPreviewLoading(true);
+    setPreviewError(false);
     try {
       const res = await previewSegmentCount(conds, 'AND') as { count: number };
       setPreviewCount(res.count);
     } catch (err) {
       console.error('Preview count failed:', err);
       setPreviewCount(null);
+      setPreviewError(true);
     }
     setPreviewLoading(false);
   }, []);
@@ -670,33 +766,30 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   useEffect(() => {
     const timer = setTimeout(() => {
       if (validConditions.length > 0) refreshPreview(validConditions);
-      else setPreviewCount(null);
+      else { setPreviewCount(null); setPreviewError(false); }
     }, 600);
     return () => clearTimeout(timer);
-  }, [conditions, refreshPreview]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [validConditions, refreshPreview]);
 
-  const handleSave = async () => {
+  const canSave = !saving && !!name.trim() && validConditions.length > 0;
+
+  const handleSave = async (status?: 'draft') => {
     if (!name.trim() || validConditions.length === 0) return;
     setSaving(true);
+    setSaveError(false);
     try {
+      const body = { name: name.trim(), description: description.trim() || null, conditions: validConditions };
       if (isEditMode) {
-        await updateCustomSegment(segment!.id, {
-          name: name.trim(),
-          description: description.trim() || null,
-          conditions: validConditions,
-        });
+        await updateCustomSegment(segment!.id, body);
         onUpdated?.();
       } else {
-        await createCustomSegment({
-          name: name.trim(),
-          description: description.trim() || null,
-          conditions: validConditions,
-        });
+        await createCustomSegment(status ? { ...body, status } : body);
         onCreated?.();
       }
       onClose();
     } catch (err) {
       console.error(`Failed to ${isEditMode ? 'update' : 'create'} segment:`, err);
+      setSaveError(true);
     }
     setSaving(false);
   };
@@ -704,491 +797,219 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   // Fields already chosen in other rows (for disabling duplicates)
   const usedFields = new Set(conditions.map(c => c.type === 'contact' ? c.field : '').filter(Boolean));
 
+  const countControls = (cond: SegmentCondition, setCond: (patch: Partial<SegmentCondition>) => void, example: string) => {
+    const countOp = cond.countOp || 'gte';
+    return (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span className={b.help} style={{ minWidth: 48 }}>Count</span>
+          <select aria-label="Count condition" value={countOp}
+            onChange={e => { const op = e.target.value; setCond({ countOp: op, countValue: op === 'between' ? ['', ''] : '' }); }}
+            style={{ ...selectStyle, maxWidth: 140 }}>
+            <option value="gte">at least (≥)</option>
+            <option value="lte">at most (≤)</option>
+            <option value="between">between</option>
+          </select>
+          {countOp === 'between' ? (
+            <>
+              <input type="number" min="0" placeholder="min" aria-label="Minimum count" value={cond.countValue?.[0] ?? ''}
+                onChange={e => setCond({ countValue: [e.target.value, cond.countValue?.[1] ?? ''] })}
+                style={{ ...inputStyle, maxWidth: 84 }} />
+              <span className={b.help}>–</span>
+              <input type="number" min="0" placeholder="max" aria-label="Maximum count" value={cond.countValue?.[1] ?? ''}
+                onChange={e => setCond({ countValue: [cond.countValue?.[0] ?? '', e.target.value] })}
+                style={{ ...inputStyle, maxWidth: 84 }} />
+            </>
+          ) : (
+            <input type="number" min="0" placeholder={example} aria-label="Count"
+              value={typeof cond.countValue === 'object' ? '' : (cond.countValue ?? '')}
+              onChange={e => setCond({ countValue: e.target.value })}
+              style={{ ...inputStyle, maxWidth: 100 }} />
+          )}
+          <span className={b.help}>events</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span className={b.help} style={{ minWidth: 48 }}>Within</span>
+          <select aria-label="Time window" value={cond.windowDays ?? ''} onChange={e => setCond({ windowDays: e.target.value })} style={{ ...selectStyle, maxWidth: 160 }}>
+            <option value="">All time</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="180">Last 180 days</option>
+          </select>
+        </div>
+      </>
+    );
+  };
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--card)', borderRadius: 'var(--radius-xl)', padding: '24px 28px',
-          width: 620, maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto',
-          border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-        }}>
-
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 'var(--radius)', background: 'rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Filter size={18} style={{ color: '#3b82f6' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>{isEditMode ? 'Edit Segment' : 'Create Custom Segment'}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>{isEditMode ? 'Modify conditions and details' : 'Define conditions to group contacts'}</div>
-            </div>
+    <div className={b.backdrop} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={b.panel} role="dialog" aria-modal="true" aria-labelledby="segment-builder-title">
+        <div className={b.top}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span className={b.crumbs}>Segments / {isEditMode ? 'Edit' : 'New'}</span>
+            <h2 id="segment-builder-title" className={b.title}>{isEditMode ? 'Edit segment' : 'New segment'}</h2>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 4 }}>
-            <X size={18} />
-          </button>
+          <Button variant="ghost" size="sm" icon aria-label="Close" onClick={onClose}><X size={18} /></Button>
         </div>
 
-        {/* Name & Description */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--muted-foreground)', marginBottom: 4, display: 'block' }}>Segment Name *</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)}
-              placeholder="e.g. High-Value Local Travelers"
-              style={inputStyle} />
+        <div className={b.top}>
+          <div className={b.fields}>
+            <div className={b.field} style={{ flexGrow: 2 }}>
+              <label className={b.label} htmlFor="sb-name">Segment name <span className={b.req}>*</span></label>
+              <input id="sb-name" className={b.nameInput} type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. High-Value Local Travelers" />
+            </div>
+            <div className={b.field}>
+              <label className={b.label} htmlFor="sb-desc">Description</label>
+              <input id="sb-desc" className={b.descInput} type="text" value={description} onChange={e => setDescription(e.target.value)} placeholder="Optional description" />
+            </div>
           </div>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--muted-foreground)', marginBottom: 4, display: 'block' }}>Description</label>
-            <input type="text" value={description} onChange={e => setDescription(e.target.value)}
-              placeholder="Optional description"
-              style={inputStyle} />
+          <div className={b.actions}>
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            {!isEditMode && <Button onClick={() => handleSave('draft')} disabled={!canSave}>Save as draft</Button>}
+            <Button variant="primary" onClick={() => handleSave()} disabled={!canSave}>
+              {saving && <Loader2 size={14} className="spin" />}
+              {saving ? 'Saving…' : (isEditMode ? 'Save changes' : 'Save segment')}
+            </Button>
           </div>
         </div>
+        {saveError && <span className={b.err} role="alert">Couldn&apos;t save the segment. Your rules are still here — try again.</span>}
 
-        {/* Conditions */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-            Conditions
-          </div>
+        <div className={b.cols}>
+          <section className={b.rules} aria-label="Rules">
+            <div className={b.plain}>
+              <span className={b.eyebrow}>In plain words</span>
+              <PlainWords conditions={validConditions} />
+            </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {conditions.map((cond, idx) => (
-              <div key={idx}>
-                {/* Per-pair AND / OR segmented toggle */}
-                {idx > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0' }}>
-                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                    <div style={{
-                      display: 'flex', borderRadius: 20, overflow: 'hidden',
-                      border: '1px solid var(--border)',
-                      background: 'var(--background)',
-                    }}>
-                      {['AND', 'OR'].map(op => {
-                        const active = conditions[idx - 1].joinOp === op;
-                        const color = op === 'OR' ? '#3b82f6' : '#8b5cf6';
-                        return (
-                          <button
-                            key={op}
-                            type="button"
-                            onClick={() => updateCondition(idx - 1, { ...conditions[idx - 1], joinOp: op })}
-                            style={{
-                              padding: '4px 14px', fontSize: 10, fontWeight: 700,
-                              letterSpacing: '0.5px', cursor: 'pointer', border: 'none',
-                              background: active ? color : 'transparent',
-                              color: active ? '#fff' : 'var(--muted-foreground)',
-                              transition: 'all 0.15s',
-                            }}>
-                            {op}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-                  </div>
-                )}
+            <span className={b.help}>Rules are checked in order. Each rule joins the one before it with AND or OR.</span>
 
-                {/* Condition card */}
-                <div style={{
-                  background: 'var(--background)', borderRadius: 'var(--radius)',
-                  border: '1px solid var(--border)', overflow: 'hidden',
-                }}>
-                  <div style={{ padding: '12px 14px' }}>
-
-                    {/* ── No type selected yet — show type picker ── */}
-                    {!cond.type && (
-                      <div>
-                        <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginBottom: 8 }}>
-                          Select condition type:
-                        </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button type="button" onClick={() => changeType(idx, 'contact')}
-                            style={{
-                              flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
-                              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-                              cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
-                              transition: 'all 0.15s', textAlign: 'left',
-                            }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Contact Property</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by profile fields</div>
-                          </button>
-                          <button type="button" onClick={() => changeType(idx, 'gtm')}
-                            style={{
-                              flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
-                              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-                              cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
-                              transition: 'all 0.15s', textAlign: 'left',
-                            }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>GTM / Analytics Event</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by tracked events</div>
-                          </button>
-                          <button type="button" onClick={() => changeType(idx, 'giveaway')}
-                            style={{
-                              flex: 1, padding: '10px 14px', fontSize: 13, fontWeight: 500,
-                              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-                              cursor: 'pointer', background: 'var(--card)', color: 'var(--foreground)',
-                              transition: 'all 0.15s', textAlign: 'left',
-                            }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Giveaway</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Filter by giveaway activity</div>
-                          </button>
-                        </div>
+            {conditions.map((cond, idx) => {
+              const setCond = (patch: Partial<SegmentCondition>) => updateCondition(idx, { ...cond, ...patch });
+              const invalid = !!cond.type && !isConditionValid(cond);
+              return (
+                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {idx > 0 && (
+                    <div className={b.join}>
+                      <span className={b.joinLine} />
+                      <div className={b.seg} role="group" aria-label={`Join rule ${idx} and rule ${idx + 1}`}>
+                        {['AND', 'OR'].map(op => (
+                          <button key={op} type="button" className={b.segBtn} aria-pressed={conditions[idx - 1].joinOp === op}
+                            onClick={() => updateCondition(idx - 1, { ...conditions[idx - 1], joinOp: op })}>{op}</button>
+                        ))}
                       </div>
-                    )}
+                      <span className={b.joinLine} />
+                    </div>
+                  )}
 
-                    {/* ── Contact Property ── */}
-                    {cond.type === 'contact' && (
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Contact Property</span>
-                          <button type="button" onClick={() => changeType(idx, '')}
-                            title="Change type"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
-                            ✕
+                  <div className={b.rule} data-exclude={cond.exclude ? 'true' : undefined} data-invalid={invalid ? 'true' : undefined}>
+                    <div className={b.ruleBody}>
+                      {!cond.type ? (
+                        <>
+                          <span className={b.note}>Choose what this rule looks at:</span>
+                          <div className={b.kindPicker}>
+                            {RULE_KINDS.map(k => (
+                              <button key={k.type} type="button" className={b.kind} onClick={() => changeType(idx, k.type)}>
+                                <span className={b.kindName}>{k.name}</span>
+                                <span className={b.help}>{k.desc}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className={b.ruleHead}>
+                          <span className={b.ruleKind}>{kindName(cond.type)}</span>
+                          <button type="button" onClick={() => changeType(idx, '')} title="Change type" aria-label="Change rule type"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink3)', lineHeight: 1, padding: 2, display: 'flex' }}>
+                            <X size={14} />
                           </button>
                         </div>
-                        <select
-                          value={cond.field || ''}
-                          onChange={e => changeField(idx, e.target.value)}
-                          style={{ ...selectStyle, marginBottom: cond.field ? 10 : 0 }}>
-                          <option value="">Select a property...</option>
-                          {FIELD_KEYS.map(key => {
-                            const taken = usedFields.has(key) && cond.field !== key;
-                            return (
-                              <option key={key} value={key} disabled={taken}>
-                                {FIELD_CONFIG[key].label}{taken ? ' (already used)' : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        {cond.field && (
-                          <ConditionValueInput
-                            fieldKey={cond.field}
-                            condition={cond}
-                            onChange={updated => updateCondition(idx, updated)}
-                          />
+                      )}
+
+                      {cond.type === 'contact' && (
+                        <>
+                          <select aria-label="Field" value={cond.field || ''} onChange={e => changeField(idx, e.target.value)} style={selectStyle}>
+                            <option value="">Select a property...</option>
+                            {FIELD_KEYS.map(key => {
+                              const taken = usedFields.has(key) && cond.field !== key;
+                              return <option key={key} value={key} disabled={taken}>{FIELD_CONFIG[key].label}{taken ? ' (already used)' : ''}</option>;
+                            })}
+                          </select>
+                          {cond.field && <ConditionValueInput fieldKey={cond.field} condition={cond} onChange={updated => updateCondition(idx, updated)} />}
+                        </>
+                      )}
+
+                      {cond.type === 'gtm' && (
+                        <>
+                          <select aria-label="Website event" value={cond.gtmEvent || ''} onChange={e => setCond({ gtmEvent: e.target.value })} style={selectStyle}>
+                            <option value="">— Any event (total activity) —</option>
+                            {gtmEventNames.map(evtName => <option key={evtName} value={evtName}>{evtName}</option>)}
+                          </select>
+                          {countControls(cond, setCond, 'e.g. 5')}
+                        </>
+                      )}
+
+                      {cond.type === 'giveaway' && (
+                        <>
+                          <select aria-label="Giveaway event type" value={cond.giveawayType || ''} onChange={e => setCond({ giveawayType: e.target.value })} style={selectStyle}>
+                            <option value="">— Any type (all giveaway activity) —</option>
+                            {GIVEAWAY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <input type="text" aria-label="Giveaway name" placeholder="Giveaway name (optional, exact match)"
+                            value={cond.giveawayName || ''} onChange={e => setCond({ giveawayName: e.target.value })} style={inputStyle} />
+                          {countControls(cond, setCond, 'e.g. 3')}
+                        </>
+                      )}
+
+                      {invalid && <span className={b.err}>Finish this rule or remove it. Incomplete rules are not saved.</span>}
+                    </div>
+
+                    {(cond.type || conditions.length > 1) && (
+                      <div className={b.ruleFoot}>
+                        {cond.type ? (
+                          <div className={b.seg} role="group" aria-label="Include or leave out">
+                            <button type="button" className={b.segBtn} aria-pressed={!cond.exclude} onClick={() => setCond({ exclude: false })}>Include</button>
+                            <button type="button" className={b.segBtn} data-tone="bad" aria-pressed={!!cond.exclude} onClick={() => setCond({ exclude: true })}>Leave out</button>
+                          </div>
+                        ) : <span />}
+                        {conditions.length > 1 && (
+                          <Button variant="ghost" size="sm" onClick={() => removeCondition(idx)}><Trash2 size={14} aria-hidden="true" />Remove</Button>
                         )}
                       </div>
                     )}
-
-                    {/* ── GTM / Analytics Event ── */}
-                    {cond.type === 'gtm' && (
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em' }}>GTM / Analytics Event</span>
-                          <button type="button" onClick={() => changeType(idx, '')}
-                            title="Change type"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
-                            ✕
-                          </button>
-                        </div>
-                        <select
-                          value={cond.gtmEvent || ''}
-                          onChange={e => updateCondition(idx, { ...cond, gtmEvent: e.target.value })}
-                          style={selectStyle}>
-                          <option value="">— Any event (total activity) —</option>
-                          {gtmEventNames.map(evtName => (
-                            <option key={evtName} value={evtName}>{evtName}</option>
-                          ))}
-                        </select>
-
-                        {/* Count + time-window — e.g. "≥ 5 events in the last 90 days" */}
-                        {(() => {
-                          const countOp = cond.countOp || 'gte';
-                          const setCond = (patch: Partial<SegmentCondition>) => updateCondition(idx, { ...cond, ...patch });
-                          return (
-                            <>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Count</span>
-                                <select value={countOp}
-                                  onChange={e => { const op = e.target.value; setCond({ countOp: op, countValue: op === 'between' ? ['', ''] : '' }); }}
-                                  style={{ ...selectStyle, maxWidth: 130 }}>
-                                  <option value="gte">at least (≥)</option>
-                                  <option value="lte">at most (≤)</option>
-                                  <option value="between">between</option>
-                                </select>
-                                {countOp === 'between' ? (
-                                  <>
-                                    <input type="number" min="0" placeholder="min" value={cond.countValue?.[0] ?? ''}
-                                      onChange={e => setCond({ countValue: [e.target.value, cond.countValue?.[1] ?? ''] })}
-                                      style={{ ...inputStyle, maxWidth: 78 }} />
-                                    <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>–</span>
-                                    <input type="number" min="0" placeholder="max" value={cond.countValue?.[1] ?? ''}
-                                      onChange={e => setCond({ countValue: [cond.countValue?.[0] ?? '', e.target.value] })}
-                                      style={{ ...inputStyle, maxWidth: 78 }} />
-                                  </>
-                                ) : (
-                                  <input type="number" min="0" placeholder="e.g. 5"
-                                    value={typeof cond.countValue === 'object' ? '' : (cond.countValue ?? '')}
-                                    onChange={e => setCond({ countValue: e.target.value })}
-                                    style={{ ...inputStyle, maxWidth: 100 }} />
-                                )}
-                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>events</span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Within</span>
-                                <select value={cond.windowDays ?? ''}
-                                  onChange={e => setCond({ windowDays: e.target.value })}
-                                  style={{ ...selectStyle, maxWidth: 150 }}>
-                                  <option value="">All time</option>
-                                  <option value="7">Last 7 days</option>
-                                  <option value="30">Last 30 days</option>
-                                  <option value="90">Last 90 days</option>
-                                  <option value="180">Last 180 days</option>
-                                </select>
-                              </div>
-                            </>
-                          );
-                        })()}
-
-                        {/* Summary chip */}
-                        {(() => {
-                          const op = cond.countOp || 'gte';
-                          let cnt = '';
-                          if (Array.isArray(cond.countValue)) {
-                            if (cond.countValue.some(v => v !== '' && v != null)) cnt = `${cond.countValue[0] || '0'}–${cond.countValue[1] || '∞'}`;
-                          } else if (cond.countValue !== '' && cond.countValue != null) {
-                            cnt = `${op === 'lte' ? '≤' : '≥'} ${cond.countValue}`;
-                          }
-                          if (!cnt && !cond.gtmEvent) return null;
-                          const evt = cond.gtmEvent || 'any';
-                          const win = cond.windowDays ? ` · last ${cond.windowDays}d` : '';
-                          return (
-                            <div style={{ marginTop: 8 }}>
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 4,
-                                padding: '3px 9px', fontSize: 11, borderRadius: 20,
-                                background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
-                                border: '1px solid rgba(59,130,246,0.3)',
-                              }}>
-                                {`${cnt || 'fired'} ${evt} event${win}`}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
-
-                    {/* ── Giveaway ── */}
-                    {cond.type === 'giveaway' && (
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Giveaway</span>
-                          <button type="button" onClick={() => changeType(idx, '')}
-                            title="Change type"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', lineHeight: 1, fontSize: 14, padding: '0 2px' }}>
-                            ✕
-                          </button>
-                        </div>
-                        {(() => {
-                          const setCond = (patch: Partial<SegmentCondition>) => updateCondition(idx, { ...cond, ...patch });
-                          const countOp = cond.countOp || 'gte';
-                          return (
-                            <>
-                              {/* Event type */}
-                              <select value={cond.giveawayType || ''}
-                                onChange={e => setCond({ giveawayType: e.target.value })}
-                                style={selectStyle}>
-                                <option value="">— Any type (all giveaway activity) —</option>
-                                {GIVEAWAY_TYPES.map(t => (
-                                  <option key={t} value={t}>{t}</option>
-                                ))}
-                              </select>
-
-                              {/* Giveaway name (optional) */}
-                              <input type="text" placeholder="Giveaway name (optional, exact match)"
-                                value={cond.giveawayName || ''}
-                                onChange={e => setCond({ giveawayName: e.target.value })}
-                                style={{ ...inputStyle, marginTop: 8 }} />
-
-                              {/* Count + time-window — e.g. "≥ 3 winner events in the last 30 days" */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Count</span>
-                                <select value={countOp}
-                                  onChange={e => { const op = e.target.value; setCond({ countOp: op, countValue: op === 'between' ? ['', ''] : '' }); }}
-                                  style={{ ...selectStyle, maxWidth: 130 }}>
-                                  <option value="gte">at least (≥)</option>
-                                  <option value="lte">at most (≤)</option>
-                                  <option value="between">between</option>
-                                </select>
-                                {countOp === 'between' ? (
-                                  <>
-                                    <input type="number" min="0" placeholder="min" value={cond.countValue?.[0] ?? ''}
-                                      onChange={e => setCond({ countValue: [e.target.value, cond.countValue?.[1] ?? ''] })}
-                                      style={{ ...inputStyle, maxWidth: 78 }} />
-                                    <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>–</span>
-                                    <input type="number" min="0" placeholder="max" value={cond.countValue?.[1] ?? ''}
-                                      onChange={e => setCond({ countValue: [cond.countValue?.[0] ?? '', e.target.value] })}
-                                      style={{ ...inputStyle, maxWidth: 78 }} />
-                                  </>
-                                ) : (
-                                  <input type="number" min="0" placeholder="e.g. 3"
-                                    value={typeof cond.countValue === 'object' ? '' : (cond.countValue ?? '')}
-                                    onChange={e => setCond({ countValue: e.target.value })}
-                                    style={{ ...inputStyle, maxWidth: 100 }} />
-                                )}
-                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>events</span>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', minWidth: 40 }}>Within</span>
-                                <select value={cond.windowDays ?? ''}
-                                  onChange={e => setCond({ windowDays: e.target.value })}
-                                  style={{ ...selectStyle, maxWidth: 150 }}>
-                                  <option value="">All time</option>
-                                  <option value="7">Last 7 days</option>
-                                  <option value="30">Last 30 days</option>
-                                  <option value="90">Last 90 days</option>
-                                  <option value="180">Last 180 days</option>
-                                </select>
-                              </div>
-                            </>
-                          );
-                        })()}
-
-                        {/* Summary chip */}
-                        {(() => {
-                          const op = cond.countOp || 'gte';
-                          let cnt = '';
-                          if (Array.isArray(cond.countValue)) {
-                            if (cond.countValue.some(v => v !== '' && v != null)) cnt = `${cond.countValue[0] || '0'}–${cond.countValue[1] || '∞'}`;
-                          } else if (cond.countValue !== '' && cond.countValue != null) {
-                            cnt = `${op === 'lte' ? '≤' : '≥'} ${cond.countValue}`;
-                          }
-                          if (!cnt && !cond.giveawayType && !cond.giveawayName) return null;
-                          const t = cond.giveawayType || 'any';
-                          const nm = cond.giveawayName ? ` · "${cond.giveawayName}"` : '';
-                          const win = cond.windowDays ? ` · last ${cond.windowDays}d` : '';
-                          return (
-                            <div style={{ marginTop: 8 }}>
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 4,
-                                padding: '3px 9px', fontSize: 11, borderRadius: 20,
-                                background: 'rgba(245,158,11,0.1)', color: '#f59e0b',
-                                border: '1px solid rgba(245,158,11,0.3)',
-                              }}>
-                                {`${cnt || 'has'} ${t} giveaway${nm}${win}`}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
                   </div>
-
-                  {/* Bottom bar — only shown when type is selected or Remove is needed */}
-                  {(cond.type || conditions.length > 1) && (
-                    <div style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '6px 12px', borderTop: '1px solid var(--border)',
-                      background: 'var(--card)',
-                    }}>
-                      {cond.type ? (
-                        <div style={{ display: 'flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                          {[{ label: 'Include', val: false }, { label: 'Exclude', val: true }].map(({ label, val }) => {
-                            const active = !!cond.exclude === val;
-                            return (
-                              <button key={label} type="button"
-                                onClick={() => updateCondition(idx, { ...cond, exclude: val })}
-                                style={{
-                                  padding: '4px 14px', fontSize: 11, fontWeight: active ? 600 : 400,
-                                  cursor: 'pointer', border: 'none',
-                                  background: active ? (val ? '#ef4444' : '#22c55e') : 'transparent',
-                                  color: active ? '#fff' : 'var(--muted-foreground)',
-                                  transition: 'all 0.15s',
-                                }}>
-                                {label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : <div />}
-
-                      {conditions.length > 1 && (
-                        <button onClick={() => removeCondition(idx)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: '2px 4px', fontSize: 11 }}>
-                          <Trash2 size={12} /> Remove
-                        </button>
-                      )}
-                    </div>
-                  )}
                 </div>
-              </div>
-            ))}
-          </div>
+              );
+            })}
 
-          {/* Add condition button */}
-          <button onClick={addCondition}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              marginTop: 10, width: '100%',
-              padding: '9px 16px', fontSize: 12, fontWeight: 500,
-              color: 'var(--primary)',
-              background: 'rgba(59,130,246,0.05)',
-              border: '1.5px dashed rgba(59,130,246,0.35)',
-              borderRadius: 'var(--radius)',
-              cursor: 'pointer', transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.1)'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.6)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.05)'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.35)'; }}>
-            <Plus size={14} /> Add Condition
-          </button>
-        </div>
+            <button type="button" className={b.addRule} onClick={addCondition}><Plus size={14} aria-hidden="true" />Add rule</button>
+          </section>
 
-        {/* Preview */}
-        <div style={{
-          padding: '14px 16px', background: 'var(--background)', borderRadius: 'var(--radius)',
-          border: '1px solid var(--border)', marginBottom: 20,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Users size={16} style={{ color: 'var(--muted-foreground)' }} />
-            <span style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Matching contacts:</span>
+          <aside className={b.aside} aria-label="Who matches" aria-live="polite">
+            <span className={b.eyebrow}>Who matches</span>
             {previewLoading ? (
-              <Loader2 size={16} className="spin" style={{ color: 'var(--primary)' }} />
+              <>
+                <Skeleton height={40} width="60%" />
+                <span className={b.help}>Counting…</span>
+              </>
+            ) : previewError ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <b style={{ color: 'var(--bad)' }}>Couldn&apos;t count contacts</b>
+                <span className={b.note}>Your rules are kept; the count service didn&apos;t respond.</span>
+                <Button size="sm" style={{ alignSelf: 'flex-start' }} onClick={() => refreshPreview(validConditions)}>Count again</Button>
+              </div>
             ) : previewCount != null ? (
-              <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--primary)' }}>
-                {previewCount.toLocaleString()}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span className={b.count}>{previewCount.toLocaleString()}</span>
+                <span className={b.note}>contacts match {validConditions.length} complete rule{validConditions.length !== 1 ? 's' : ''}</span>
+              </div>
             ) : (
-              <span style={{ fontSize: 13, color: 'var(--muted-foreground)', fontStyle: 'italic' }}>
-                Add conditions to see count
-              </span>
+              <span className={b.note}>Add a complete rule to see how many contacts match.</span>
             )}
-          </div>
+            {incompleteCount > 0 && <span className={b.err}>{incompleteCount} incomplete rule{incompleteCount !== 1 ? 's are' : ' is'} left out of the count.</span>}
+          </aside>
         </div>
-
-        {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <button onClick={onClose}
-            style={{
-              padding: '8px 20px', fontSize: 13, background: 'var(--secondary)',
-              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-              cursor: 'pointer', color: 'var(--foreground)',
-            }}>
-            Cancel
-          </button>
-          <button onClick={handleSave}
-            disabled={saving || !name.trim() || validConditions.length === 0}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '8px 20px', fontSize: 13, fontWeight: 500,
-              background: 'var(--primary)', color: 'var(--primary-foreground)',
-              border: 'none', borderRadius: 'var(--radius)',
-              cursor: (saving || !name.trim() || validConditions.length === 0) ? 'not-allowed' : 'pointer',
-              opacity: (saving || !name.trim() || validConditions.length === 0) ? 0.6 : 1,
-            }}>
-            {saving && <Loader2 size={14} className="spin" />}
-            {saving ? (isEditMode ? 'Saving...' : 'Creating...') : (isEditMode ? 'Save Changes' : 'Create Segment')}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }

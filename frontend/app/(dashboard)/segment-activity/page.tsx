@@ -13,6 +13,11 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { Variants } from 'framer-motion';
 import type { QueryParams } from '@/types/api';
+import { PageHeader, Button, Select, Table, EmptyState, Skeleton } from '@/components/ui';
+import { SegmentStat } from '@/components/ui/SegmentStat';
+import { SegmentBars, type SegmentBarRow } from '@/components/ui/SegmentBars';
+import { segmentStatusMeta } from '@/components/ui/SegmentStatus';
+import s from '@/components/ui/Segment.module.css';
 
 interface SegmentLogRow { log_date?: string; segment_label: string; total_count?: number; entered: number; exited: number; converted: number; emails_sent?: number; whatsapp_sent?: number; push_sent?: number; total_reached?: number; journey_active?: number; revenue?: number | string }
 interface LiveSegment { segment_label: string; total_count?: number; revenue?: string | number }
@@ -32,90 +37,15 @@ interface BookingColumn { key: string; label: string; render?: (v: never, row: B
 const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
 const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
-/* ── Skeleton primitives ─────────────────────────────── */
-const shimmer = {
-  background: 'linear-gradient(90deg, var(--secondary) 25%, var(--border) 50%, var(--secondary) 75%)',
-  backgroundSize: '200% 100%',
-  animation: 'shimmer 1.5s infinite',
-};
-
-interface SkeletonBoxProps { width: number | string; height?: number; borderRadius?: number | string; style?: React.CSSProperties }
-function SkeletonBox({ width, height = 20, borderRadius = 'var(--radius)', style = {} }: SkeletonBoxProps) {
-  return <div style={{ width, height, borderRadius, ...shimmer, ...style }} />;
-}
-
-function SkeletonKPICards() {
-  return (
-    <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
-      {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-            <SkeletonBox width={14} height={14} borderRadius={4} />
-            <SkeletonBox width={70} height={10} />
-          </div>
-          <SkeletonBox width={90} height={24} />
-        </div>
-      ))}
-    </motion.div>
-  );
-}
-
-function SkeletonLiveSegments() {
-  return (
-    <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
-        <SkeletonBox width={14} height={14} borderRadius={4} />
-        <SkeletonBox width={240} height={13} />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} style={{ padding: '12px 14px', borderRadius: 'var(--radius)', background: 'var(--secondary)', borderLeft: '3px solid var(--border)' }}>
-            <SkeletonBox width={60} height={10} style={{ marginBottom: 8 }} />
-            <SkeletonBox width={70} height={24} style={{ marginBottom: 6 }} />
-            <SkeletonBox width={80} height={10} />
-          </div>
-        ))}
-      </div>
-    </motion.div>
-  );
-}
-
-function SkeletonTable() {
-  return (
-    <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
-      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <SkeletonBox width={80} height={13} />
-        <SkeletonBox width={70} height={26} borderRadius={'var(--radius)'} />
-      </div>
-      <div style={{ padding: '0' }}>
-        {/* Header row */}
-        <div style={{ display: 'flex', gap: 0, padding: '10px 14px', background: 'var(--secondary)' }}>
-          {[60, 80, 50, 50, 50, 55, 50, 40, 40, 55, 50, 70, 30].map((w, i) => (
-            <div key={i} style={{ flex: 1, padding: '0 4px' }}><SkeletonBox width={w} height={10} /></div>
-          ))}
-        </div>
-        {/* Data rows */}
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div key={i} style={{ display: 'flex', gap: 0, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
-            {[70, 80, 60, 40, 40, 40, 35, 35, 35, 45, 40, 75, 16].map((w, j) => (
-              <div key={j} style={{ flex: 1, padding: '0 4px' }}><SkeletonBox width={w} height={14} /></div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </motion.div>
-  );
-}
-
 const fmt = (n: number | undefined) => (n || 0).toLocaleString();
 const fmtAED = (n: number | string | undefined) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  ON_TRIP:         { label: 'On Trip',        color: '#22c55e' },
-  FUTURE_TRAVEL:   { label: 'Future Travel',  color: '#3b82f6' },
-  PAST_BOOKING:    { label: 'Past Booking',   color: '#8b5cf6' },
-  CANCELLED:       { label: 'Cancelled',      color: '#ef4444' },
-  PROSPECT:        { label: 'Prospect',       color: '#64748b' },
+  ON_TRIP:         { label: 'On Trip',        color: 'var(--ok)' },
+  FUTURE_TRAVEL:   { label: 'Future Travel',  color: 'var(--info)' },
+  PAST_BOOKING:    { label: 'Past Booking',   color: 'var(--gold)' },
+  CANCELLED:       { label: 'Cancelled',      color: 'var(--bad)' },
+  PROSPECT:        { label: 'Prospect',       color: 'var(--ink3)' },
 };
 
 function formatDate(d: string | number | null | undefined) {
@@ -224,225 +154,177 @@ export default function SegmentActivity() {
   for (const log of logs) { const d = log.log_date?.slice(0, 10) as string; if (!logsByDate[d]) logsByDate[d] = []; logsByDate[d].push(log); }
   const dates = Object.keys(logsByDate).sort((a, b) => b.localeCompare(a));
 
+  const filterParams = { days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) };
+  const liveRows: SegmentBarRow[] = liveToday.map(seg => {
+    const m = segmentStatusMeta(seg.segment_label);
+    return {
+      key: seg.segment_label,
+      label: m.label,
+      value: Number(seg.total_count) || 0,
+      color: m.color,
+      selected: detailSegment === seg.segment_label,
+      onSelect: () => openDetail(seg.segment_label),
+      figures: <><b>{fmt(seg.total_count)}</b> <span className={s.help}>{fmtAED(seg.revenue)}</span></>,
+    };
+  });
+  const periodLabel = days === 1 ? 'last 24 hours' : `last ${days} days`;
+
   return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div className={s.page}>
+      <PageHeader
+        breadcrumbs={[{ label: 'Audience' }, { label: 'Segments', href: '/segmentation' }, { label: 'Changes over time' }]}
+        title="Segment activity"
+        description="Daily segment entries, exits, conversions and reach. Click a segment to load its customers."
+        actions={
+          <>
+            <Button onClick={handleSnapshot} disabled={snapshotting}>
+              {snapshotting ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} aria-hidden="true" />} Snapshot now
+            </Button>
+            <Button variant="primary" onClick={() => downloadSegmentActivity(filterParams)}>
+              <Download size={14} aria-hidden="true" /> Download CSV
+            </Button>
+          </>
+        }
+      />
 
-      {/* Header */}
-      <motion.div variants={fadeInUp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Segment Activity</h2>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted-foreground)' }}>
-            Daily segment entries, exits, conversions & reach &middot; Click any segment to view customers
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) })}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--primary)', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, color: '#fff', fontWeight: 500 }}>
-            <Download size={14} /> Download CSV
-          </button>
-          <button onClick={handleSnapshot} disabled={snapshotting}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13, color: 'var(--foreground)' }}>
-            {snapshotting ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Snapshot Now
-          </button>
-        </div>
-      </motion.div>
-
-      {/* KPI Cards */}
-      {loading ? <SkeletonKPICards /> : (
-        <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
-          {[
-            { label: 'Total Customers', value: fmt(totalCustomers), icon: Users, color: 'var(--primary)' },
-            { label: 'Entered', value: fmt(totalEntered), icon: TrendingUp, color: '#22c55e' },
-            { label: 'Exited', value: fmt(totalExited), icon: TrendingDown, color: '#ef4444' },
-            { label: 'Converted', value: fmt(totalConverted), icon: ArrowRightLeft, color: '#8b5cf6' },
-            { label: 'Reached', value: fmt(totalReached), icon: Mail, color: '#3b82f6' },
-            { label: 'Revenue', value: fmtAED(totalRevenue), icon: DollarSign, color: '#f59e0b' },
-          ].map((kpi) => (
-            <div key={kpi.label} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <kpi.icon size={14} style={{ color: kpi.color }} />
-                <span style={{ fontSize: 11, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{kpi.label}</span>
-              </div>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{kpi.value}</div>
-            </div>
-          ))}
-        </motion.div>
-      )}
-
-      {/* Live Today — Clickable Segment Cards */}
-      {loading ? <SkeletonLiveSegments /> : (
-        <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Calendar size={14} /> Live Segment Counts (Today) — click to view customers
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
-            {liveToday.map(seg => {
-              const cfg = STATUS_CONFIG[seg.segment_label] || { label: seg.segment_label, color: '#64748b' };
-              const isSelected = detailSegment === seg.segment_label;
-              return (
-                <div key={seg.segment_label} onClick={() => openDetail(seg.segment_label)}
-                  style={{ padding: '12px 14px', borderRadius: 'var(--radius)', background: 'var(--secondary)', borderLeft: `3px solid ${cfg.color}`, cursor: 'pointer', transition: 'all 0.2s', boxShadow: isSelected ? `0 0 0 2px ${cfg.color}` : 'none' }}>
-                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 4 }}>{cfg.label}</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: cfg.color }}>{fmt(seg.total_count)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 2 }}>{fmtAED(seg.revenue)}</div>
-                </div>
-              );
-            })}
-          </div>
-        </motion.div>
-      )}
-
-      {/* Daily Changes — Before / After / Change */}
-      {changes?.changes?.length as number > 0 && (
-        <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ArrowRightLeft size={14} /> Segment Changes
-            </span>
-            <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-              {changes!.before?.date} → {changes!.after?.date}
-            </span>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: 'var(--secondary)' }}>
-                  <th style={thStyle}>Status</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Before ({changes!.before?.date?.slice(5)})</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>After ({changes!.after?.date?.slice(5)})</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Change</th>
-                </tr>
-              </thead>
-              <tbody>
-                {changes!.changes!.map(c => {
-                  const cfg = STATUS_CONFIG[c.segment] || { label: c.segment, color: '#64748b' };
-                  return (
-                    <tr key={c.segment} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={tdStyle}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: 2, background: cfg.color, flexShrink: 0 }} />
-                          {cfg.label}
-                        </span>
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(c.before)}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{fmt(c.after)}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600,
-                        color: c.change > 0 ? '#22c55e' : c.change < 0 ? '#ef4444' : 'var(--muted-foreground)' }}>
-                        {c.change > 0 ? `+${fmt(c.change)}` : c.change < 0 ? fmt(c.change) : '0'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </motion.div>
-      )}
-
-      {/* Filters */}
-      <motion.div variants={fadeInUp} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <Filter size={14} style={{ color: 'var(--muted-foreground)' }} />
-        <select value={days} onChange={e => setDays(parseInt(e.target.value))}
-          style={{ padding: '6px 10px', fontSize: 13, borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
+      <div className={s.toolbar} role="group" aria-label="Filters">
+        <Select aria-label="Period" value={days} onChange={e => setDays(parseInt(e.target.value))} style={{ width: 'auto', minWidth: 160, height: 36 }}>
           <option value={1}>Last 24 hours</option>
           <option value={2}>Last 2 days</option>
           <option value={7}>Last 7 days</option>
           <option value={14}>Last 14 days</option>
           <option value={30}>Last 30 days</option>
           <option value={90}>Last 90 days</option>
-        </select>
-        <select value={segmentFilter} onChange={e => setSegmentFilter(e.target.value)}
-          style={{ padding: '6px 10px', fontSize: 13, borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
+        </Select>
+        <Select aria-label="Segment" value={segmentFilter} onChange={e => setSegmentFilter(e.target.value)} style={{ width: 'auto', minWidth: 180, height: 36 }}>
           <option value="">All Segments</option>
           {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
             <option key={key} value={key}>{cfg.label}</option>
           ))}
-        </select>
-      </motion.div>
+        </Select>
+      </div>
 
-      {/* Daily Activity Table */}
-      {loading ? <SkeletonTable /> : (
-      <motion.div variants={fadeInUp} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Log</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={refreshLog} disabled={logLoading}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: logLoading ? 'not-allowed' : 'pointer', fontSize: 11, color: 'var(--muted-foreground)', opacity: logLoading ? 0.6 : 1 }}>
-              {logLoading ? <Loader2 size={11} className="spin" /> : <RefreshCw size={11} />} Refresh
-            </button>
-            <button onClick={() => downloadSegmentActivity({ days, segment: segmentFilter, ...(businessType !== 'All' && { businessType }) })}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 11, color: 'var(--muted-foreground)' }}>
-              <Download size={11} /> Export
-            </button>
+      {loading ? (
+        <div className={s.stats}>
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className={s.stat}><Skeleton width={80} height={12} /><Skeleton width={110} height={24} /></div>)}
+        </div>
+      ) : (
+        <div className={s.stats}>
+          <SegmentStat label="Total customers" value={fmt(totalCustomers)} help="In segments today" />
+          <SegmentStat label="Joined a segment" value={fmt(totalEntered)} help={periodLabel} color="var(--ok)" />
+          <SegmentStat label="Left a segment" value={fmt(totalExited)} help={periodLabel} color="var(--bad)" />
+          <SegmentStat label="Converted" value={fmt(totalConverted)} help={periodLabel} />
+          <SegmentStat label="Reached" value={fmt(totalReached)} help={periodLabel} />
+          <SegmentStat label="Revenue" value={fmtAED(totalRevenue)} help="Segments today" />
+        </div>
+      )}
+
+      <section className={s.card} aria-label="Live segment counts">
+        <div className={s.cardHead}>
+          <h2 className={s.cardTitle}>Live segment counts</h2>
+          <span className={s.help}>Today · bar length is to scale · click a segment to load its customers</span>
+        </div>
+        {loading
+          ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} height={22} />)
+          : liveRows.length > 0 ? <SegmentBars label="Live segment counts" rows={liveRows} /> : <span className={s.note}>No live counts yet.</span>}
+      </section>
+
+      {changes?.changes?.length as number > 0 && (
+        <section className={s.card} aria-label="Segment changes">
+          <div className={s.cardHead}>
+            <h2 className={s.cardTitle}>Segment changes</h2>
+            <span className={s.help}>{changes!.before?.date} → {changes!.after?.date}</span>
           </div>
+          <Table label="Segment changes" style={{ minWidth: 480 }}>
+            <thead>
+              <tr>
+                <th>Booking status</th>
+                <th className={s.r}>Before ({changes!.before?.date?.slice(5)})</th>
+                <th className={s.r}>After ({changes!.after?.date?.slice(5)})</th>
+                <th className={s.r}>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {changes!.changes!.map(c => {
+                const m = segmentStatusMeta(c.segment);
+                return (
+                  <tr key={c.segment}>
+                    <td><span className={s.row} style={{ gap: 8 }}><span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: m.color }} />{m.label}</span></td>
+                    <td className={`${s.r} ${s.num}`}>{fmt(c.before)}</td>
+                    <td className={`${s.r} ${s.num}`} style={{ fontWeight: 600 }}>{fmt(c.after)}</td>
+                    <td className={`${s.r} ${s.num}`} style={{ fontWeight: 600, color: c.change > 0 ? 'var(--ok)' : c.change < 0 ? 'var(--bad)' : 'var(--ink3)' }}>
+                      {c.change > 0 ? `+${fmt(c.change)}` : c.change < 0 ? fmt(c.change) : '0'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </section>
+      )}
+
+      {loading ? (
+        <div className={s.card}>{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} height={18} />)}</div>
+      ) : (
+      <section className={s.card} aria-label="Daily log">
+        <div className={s.cardHead}>
+          <h2 className={s.cardTitle}>Daily log</h2>
+          <span className={s.spacer} />
+          <Button size="sm" variant="ghost" onClick={refreshLog} disabled={logLoading}>
+            {logLoading ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} aria-hidden="true" />} Refresh
+          </Button>
+          <Button size="sm" onClick={() => downloadSegmentActivity(filterParams)}>
+            <Download size={12} aria-hidden="true" /> Export
+          </Button>
         </div>
         {logLoading ? (
-          <div style={{ padding: 32, textAlign: 'center' }}><Loader2 size={18} className="spin" style={{ color: 'var(--muted-foreground)' }} /></div>
+          <div style={{ padding: 32, textAlign: 'center' }}><Loader2 size={18} className="spin" style={{ color: 'var(--ink3)' }} /></div>
         ) : dates.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted-foreground)' }}>
-            No daily logs yet. Click "Snapshot Now" to capture today's data.
-          </div>
+          <EmptyState title="No daily logs yet" description={'Click "Snapshot now" to capture today\'s data.'} />
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: 'var(--secondary)' }}>
-                  <th style={thStyle}>Date</th>
-                  <th style={thStyle}>Segment</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Total</th>
-                  <th style={{ ...thStyle, textAlign: 'right', color: '#22c55e' }}>Entered</th>
-                  <th style={{ ...thStyle, textAlign: 'right', color: '#ef4444' }}>Exited</th>
-                  <th style={{ ...thStyle, textAlign: 'right', color: '#8b5cf6' }}>Converted</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}><Mail size={12} /> Email</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}><MessageCircle size={12} /> WA</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}><Bell size={12} /> Push</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Reached</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Active</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Revenue</th>
-                  <th style={{ ...thStyle, width: 40 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {dates.map(date => {
-                  const rows = logsByDate[date];
-                  return rows.map((row, i) => {
-                    const cfg = STATUS_CONFIG[row.segment_label] || { label: row.segment_label, color: '#64748b' };
-                    return (
-                      <tr key={`${date}-${row.segment_label}`} style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
-                        onClick={() => openDetail(row.segment_label)}>
-                        <td style={tdStyle}>{i === 0 ? formatDate(date) : ''}</td>
-                        <td style={tdStyle}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: 2, background: cfg.color, flexShrink: 0 }} />
-                            {cfg.label}
-                          </span>
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{fmt(row.total_count)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right', color: row.entered > 0 ? '#22c55e' : 'var(--muted-foreground)' }}>
-                          {row.entered > 0 ? `+${fmt(row.entered)}` : '0'}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', color: row.exited > 0 ? '#ef4444' : 'var(--muted-foreground)' }}>
-                          {row.exited > 0 ? `-${fmt(row.exited)}` : '0'}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', color: row.converted > 0 ? '#8b5cf6' : 'var(--muted-foreground)' }}>
-                          {fmt(row.converted)}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(row.emails_sent)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(row.whatsapp_sent)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(row.push_sent)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 500 }}>{fmt(row.total_reached)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right' }}>{fmt(row.journey_active)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right', color: '#f59e0b', fontWeight: 500 }}>{fmtAED(row.revenue)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'center' }}><Eye size={13} style={{ color: 'var(--muted-foreground)' }} /></td>
-                      </tr>
-                    );
-                  });
-                })}
-              </tbody>
-            </table>
-          </div>
+          <Table label="Daily log" style={{ minWidth: 1040 }}>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Segment</th>
+                <th className={s.r}>Total</th>
+                <th className={s.r}>Entered</th>
+                <th className={s.r}>Exited</th>
+                <th className={s.r}>Converted</th>
+                <th className={s.r}>Email</th>
+                <th className={s.r}>WhatsApp</th>
+                <th className={s.r}>Push</th>
+                <th className={s.r}>Reached</th>
+                <th className={s.r}>In journeys</th>
+                <th className={s.r}>Revenue</th>
+                <th><span className={s.srOnly}>Open</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {dates.map(date => logsByDate[date].map((row, i) => {
+                const m = segmentStatusMeta(row.segment_label);
+                return (
+                  <tr key={`${date}-${row.segment_label}`} className={s.clickRow} onClick={() => openDetail(row.segment_label)}>
+                    <td className={s.help}>{i === 0 ? formatDate(date) : ''}</td>
+                    <td><span className={s.row} style={{ gap: 8, flexWrap: 'nowrap' }}><span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 2, background: m.color }} />{m.label}</span></td>
+                    <td className={`${s.r} ${s.num}`} style={{ fontWeight: 600 }}>{fmt(row.total_count)}</td>
+                    <td className={`${s.r} ${s.num}`} style={{ color: row.entered > 0 ? 'var(--ok)' : 'var(--ink3)' }}>{row.entered > 0 ? `+${fmt(row.entered)}` : '0'}</td>
+                    <td className={`${s.r} ${s.num}`} style={{ color: row.exited > 0 ? 'var(--bad)' : 'var(--ink3)' }}>{row.exited > 0 ? `-${fmt(row.exited)}` : '0'}</td>
+                    <td className={`${s.r} ${s.num}`}>{fmt(row.converted)}</td>
+                    <td className={`${s.r} ${s.num}`}>{fmt(row.emails_sent)}</td>
+                    <td className={`${s.r} ${s.num}`}>{fmt(row.whatsapp_sent)}</td>
+                    <td className={`${s.r} ${s.num}`}>{fmt(row.push_sent)}</td>
+                    <td className={`${s.r} ${s.num}`} style={{ fontWeight: 500 }}>{fmt(row.total_reached)}</td>
+                    <td className={`${s.r} ${s.num}`}>{fmt(row.journey_active)}</td>
+                    <td className={`${s.r} ${s.num}`} style={{ fontWeight: 500 }}>{fmtAED(row.revenue)}</td>
+                    <td className={s.r}><Eye size={13} aria-hidden="true" style={{ color: 'var(--ink3)' }} /></td>
+                  </tr>
+                );
+              }))}
+            </tbody>
+          </Table>
         )}
-      </motion.div>
+      </section>
       )}
       {/* Customer Detail Panel — below daily log */}
       {/* <AnimatePresence>
@@ -451,7 +333,7 @@ export default function SegmentActivity() {
             style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: STATUS_CONFIG[detailSegment]?.color || '#64748b' }} />
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: STATUS_CONFIG[detailSegment]?.color || 'var(--ink3)' }} />
                 <span style={{ fontWeight: 600, fontSize: 14 }}>{STATUS_CONFIG[detailSegment]?.label || detailSegment} Customers</span>
                 {detailCustomers && <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>({fmt(detailCustomers.total)} total)</span>}
               </div>
@@ -533,11 +415,10 @@ export default function SegmentActivity() {
       {/* Contact Detail Modal */}
       <AnimatePresence>
         {(contactDetail || contactLoading) && (
-          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setContactDetail(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <motion.div className={s.backdrop} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setContactDetail(null)}>
             <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              onClick={e => e.stopPropagation()}
-              style={{ maxWidth: 800, width: '92vw', maxHeight: '85vh', overflow: 'auto', background: 'var(--card)', borderRadius: 'var(--radius-xl)', border: '1px solid var(--border)', padding: 24 }}>
+              onClick={e => e.stopPropagation()} className={s.modal} role="dialog" aria-modal="true" aria-label="Contact details" style={{ maxWidth: 800, gap: 0 }}>
               {contactLoading && !contactDetail ? (
                 <div style={{ padding: 40, textAlign: 'center' }}><Loader2 size={24} className="spin" /></div>
               ) : contactDetail && (
@@ -548,7 +429,7 @@ export default function SegmentActivity() {
                       <span style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'monospace' }}>ID: {contactDetail.id}</span>
                       <div style={{ marginTop: 6 }}>{contactDetail.sources?.split(',').map(s => <span key={s} className={`badge badge-blue`} style={{ fontSize: 10, marginRight: 4 }}>{s.trim()}</span>)}</div>
                     </div>
-                    <button onClick={() => setContactDetail(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted-foreground)', padding: 4 }}><X size={16} /></button>
+                    <Button variant="ghost" size="sm" icon aria-label="Close" onClick={() => setContactDetail(null)}><X size={16} /></Button>
                   </div>
 
                   <ModalSection title="Segment">
@@ -596,7 +477,7 @@ export default function SegmentActivity() {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   );
 }
 
@@ -606,7 +487,7 @@ function ModalSection({ title, children }: { title: string; children: React.Reac
   return (
     <div style={{ background: 'var(--secondary)', borderRadius: 'var(--radius)', padding: 16, marginBottom: 12 }}>
       <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--muted-foreground)', marginBottom: 10, letterSpacing: 0.5, fontWeight: 600 }}>{title}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px' }}>{children}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px 24px' }}>{children}</div>
     </div>
   );
 }

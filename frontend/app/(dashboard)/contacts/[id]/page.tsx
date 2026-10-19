@@ -1,27 +1,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type React from 'react';
+import type { ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
 import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity } from '@/lib/api';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
 import {
-  ArrowLeft, Globe, MessageSquare, Mail, Phone, Building2,
-  Calendar, Clock, Ticket, DollarSign, Plane, Hotel, MessageCircle,
-  Layers, FileText, Palmtree, Hash, MapPin, ChevronDown, ChevronUp,
-  Zap, Activity, User, Pencil, X, Check, Loader2, GitBranch,
-  Eye, MousePointerClick, Send, ExternalLink, Sparkles, Heart,
+  ChevronDown, ChevronUp, ExternalLink, Check, Loader2, Send, Eye, MousePointerClick,
+  ShoppingBag, Mail, Globe, MessageCircle, UserPlus, Pencil,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-
-const fadeIn: Variants = { hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0, transition: { duration: 0.35 } } };
-const stagger: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.07 } } };
+import { Button, Chip, StatusChip, Field, Input, Select, Skeleton, Table, Tabs, EmptyState } from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
+import { ContactStatusChip } from '@/components/ui/ContactStatusChip';
+import { ContactAvatar } from '@/components/ui/ContactAvatar';
+import s from '../contacts.module.css';
 
 type DateInput = string | number | Date | null | undefined;
 type TableRow = Record<string, string>;
-interface TableColumn { key: string; label: string; render?: (v: string, r: TableRow) => React.ReactNode }
+interface TableColumn { key: string; label: string; render?: (v: string, r: TableRow) => ReactNode }
 
 interface ContactDetail {
   id?: string | number; unified_id?: string | number;
@@ -32,7 +29,7 @@ interface ContactDetail {
   sources?: string; booking_status: string; product_tier?: string; geography?: string; segment_label?: string;
   total_tour_bookings?: number; total_package_bookings?: number; total_hotel_bookings?: number;
   total_visa_bookings?: number; total_other_bookings?: number; total_flight_bookings?: number;
-  total_booking_revenue?: number;
+  total_booking_revenue?: number | string;
   rayna_tours?: TableRow[]; rayna_packages?: TableRow[]; rayna_hotels?: TableRow[];
   rayna_visas?: TableRow[]; rayna_others?: TableRow[]; rayna_flights?: TableRow[];
   total_chats: number; chat_departments?: string; first_chat_at?: string; last_chat_at?: string;
@@ -63,17 +60,10 @@ interface ContactAffinity {
   services: AffinityServiceRow[];
   products: AffinityProductRow[];
 }
-interface JourneyStatusStyle { bg: string; color: string; label: string }
-interface EntryStatusStyle { color: string; label: string }
-interface StatChipProps { icon: LucideIcon; label: string; value: React.ReactNode; color: string }
-interface SectionProps { title: string; children?: React.ReactNode }
-interface AffinitySectionProps { affinity: ContactAffinity }
-interface RankListProps<T extends AffinityRankRow> { title: string; rows: T[]; name: (r: T) => React.ReactNode; sub?: (r: T) => string }
-interface AIRecommendationSectionProps { rec: AiRecommendation }
-interface DetailRowProps { icon: LucideIcon; label: string; value: React.ReactNode; color?: string }
-interface BookingTableProps { icon: LucideIcon; title: string; color: string; rows?: TableRow[]; columns: TableColumn[] }
-interface EditFieldProps { label: string; value: string; onChange: (v: string) => void; type?: string }
-interface EditSelectProps { label: string; value: string; onChange: (v: string) => void; options: (string | { value: string; label: string })[] }
+
+type TimelineKind = 'booking' | 'message' | 'website' | 'chat' | 'profile';
+interface TimelineItem { at: Date; dateOnly: boolean; kind: TimelineKind; title: string; sub?: string }
+type ProfileTab = 'activity' | 'bookings' | 'website' | 'messages';
 
 function parseDate(d: DateInput) {
   if (!d) return null;
@@ -81,15 +71,34 @@ function parseDate(d: DateInput) {
   const dt = ddmmyyyy ? new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`) : new Date(d);
   return isNaN(dt.getTime()) ? null : dt;
 }
+function isDateOnly(d: DateInput) { return /^(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})$/.test(String(d ?? '')); }
 function formatDate(d: DateInput) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function formatDateTime(d: DateInput) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
 function formatAED(n: string | number | null | undefined) { return `AED ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
-function formatCurrency(v: string | number | null | undefined) { if (v == null) return '—'; return `AED ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+function formatCurrency(v: string | number | null | undefined) { if (v == null || v === '') return '—'; return formatAED(v); }
+function pathOf(u?: string) { if (!u) return ''; try { return new URL(u).pathname; } catch { return u; } }
+function humanize(v: string) { const t = v.replace(/[_-]+/g, ' ').trim(); return t.charAt(0).toUpperCase() + t.slice(1); }
+const isUnsub = (v?: string) => (v || '').toLowerCase() === 'yes';
 
-const STATUS_COLOR: Record<string, string> = {
-  ON_TRIP: 'var(--green)', FUTURE_TRAVEL: '#3b82f6', ACTIVE_ENQUIRY: '#f59e0b',
-  PAST_BOOKING: 'var(--text-secondary)', PROSPECT: 'var(--text-tertiary)',
+const GEO_LABEL: Record<string, string> = { LOCAL: 'Lives in UAE', INTERNATIONAL: 'Lives abroad' };
+const AFFINITY_SERVICE_LABEL: Record<string, string> = { tours: 'Tours', packages: 'Packages', hotels: 'Hotels', visas: 'Visas', flights: 'Flights', others: 'Others' };
+
+const KIND_STYLE: Record<TimelineKind, { icon: LucideIcon; bg: string; fg: string }> = {
+  booking: { icon: ShoppingBag, bg: 'var(--gold-soft)', fg: 'var(--gold-ink)' },
+  message: { icon: Mail, bg: 'var(--info-soft)', fg: 'var(--info)' },
+  website: { icon: Globe, bg: 'var(--sunken)', fg: 'var(--ink2)' },
+  chat: { icon: MessageCircle, bg: 'var(--ok-soft)', fg: 'var(--ok)' },
+  profile: { icon: UserPlus, bg: 'var(--sunken)', fg: 'var(--ink2)' },
 };
+const KIND_FILTERS: { key: TimelineKind | 'all'; label: string }[] = [
+  { key: 'all', label: 'Everything' }, { key: 'booking', label: 'Bookings' }, { key: 'message', label: 'Messages' },
+  { key: 'website', label: 'Website' }, { key: 'chat', label: 'Chats' },
+];
+const JOURNEY_STATUS: Record<string, { tone: ChipTone; label: string }> = {
+  active: { tone: 'ok', label: 'Active' }, draft: { tone: 'mute', label: 'Draft' },
+  paused: { tone: 'warn', label: 'Paused' }, completed: { tone: 'info', label: 'Completed' },
+};
+const PAGE = 30;
 
 export default function ContactProfile() {
   const { id } = useParams<{ id: string }>();
@@ -101,13 +110,16 @@ export default function ContactProfile() {
   const [gtmLoading, setGtmLoading] = useState(true);
   const [journeys, setJourneys] = useState<ContactJourney[]>([]);
   const [journeysLoading, setJourneysLoading] = useState(true);
-  const [aiRec, setAiRec] = useState<AiRecommendation | null>(null);   // { recommendationType, products[], ... } or null
-  const [affinity, setAffinity] = useState<ContactAffinity | null>(null); // { customer, services[], products[] } or null
+  const [aiRec, setAiRec] = useState<AiRecommendation | null>(null);
+  const [affinity, setAffinity] = useState<ContactAffinity | null>(null);
   const [expandedJourneys, setExpandedJourneys] = useState(() => new Set<string | number>());
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<Record<string, string>>({});
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [tab, setTab] = useState<ProfileTab>('activity');
+  const [kind, setKind] = useState<TimelineKind | 'all'>('all');
+  const [shown, setShown] = useState(PAGE);
 
   useEffect(() => {
     if (!id) return;
@@ -129,8 +141,7 @@ export default function ContactProfile() {
       .catch(() => setJourneys([]))
       .finally(() => setJourneysLoading(false));
 
-    // Load most recent AI recommendation for this contact. Silently ignored
-    // when the user has no cached recs — the section just doesn't render.
+    // Cached AI recommendation — the card is hidden when there is none.
     (getContactRecommendations(id) as Promise<{ recommendation?: AiRecommendation } | null>)
       .then(res => setAiRec(res?.recommendation || null))
       .catch(() => setAiRec(null));
@@ -143,24 +154,19 @@ export default function ContactProfile() {
 
   if (contactLoading) return <ProfileSkeleton />;
   if (!contact) return (
-    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-tertiary)' }}>
-      Contact not found. <button className="btn btn-ghost btn-sm" onClick={() => router.push('/contacts')}>Back to Contacts</button>
+    <div className={s.page}>
+      <EmptyState title="Contact not found."
+        description="It may have been deleted or merged into another contact."
+        action={<Button size="sm" onClick={() => router.push('/contacts')}>Back to Contacts</Button>} />
     </div>
   );
 
   const startEdit = () => {
     setEditForm({
-      name:              contact.name || '',
-      email:             contact.email || '',
-      mobile:            contact.mobile || '',
-      city:              contact.city || '',
-      country:           contact.country || '',
-      contact_type:      contact.contact_type || '',
-      wa_unsubscribe:    contact.wa_unsubscribe || 'no',
-      email_unsubscribe: contact.email_unsubscribe || 'no',
-      actual_email:      contact.actual_email || '',
-      actual_mobile:     contact.actual_mobile || '',
-      mobile_country:    contact.mobile_country || '',
+      name: contact.name || '', email: contact.email || '', mobile: contact.mobile || '',
+      city: contact.city || '', country: contact.country || '', contact_type: contact.contact_type || '',
+      wa_unsubscribe: contact.wa_unsubscribe || 'no', email_unsubscribe: contact.email_unsubscribe || 'no',
+      actual_email: contact.actual_email || '', actual_mobile: contact.actual_mobile || '', mobile_country: contact.mobile_country || '',
     });
     setSaveError(null);
     setEditing(true);
@@ -182,625 +188,510 @@ export default function ContactProfile() {
   };
 
   const types = [
-    { key: 'tour',    label: 'Tours',    icon: Palmtree,     color: '#10b981', count: contact.total_tour_bookings || 0,    rows: contact.rayna_tours },
-    { key: 'package', label: 'Packages', icon: Layers,       color: '#8b5cf6', count: contact.total_package_bookings || 0, rows: contact.rayna_packages },
-    { key: 'hotel',   label: 'Hotels',   icon: Hotel,        color: '#6366f1', count: contact.total_hotel_bookings || 0,   rows: contact.rayna_hotels },
-    { key: 'visa',    label: 'Visas',    icon: FileText,     color: '#f59e0b', count: contact.total_visa_bookings || 0,    rows: contact.rayna_visas },
-    { key: 'other',   label: 'Others',   icon: Ticket,       color: '#ec4899', count: contact.total_other_bookings || 0,   rows: contact.rayna_others },
-    { key: 'flight',  label: 'Flights',  icon: Plane,        color: '#3b82f6', count: contact.total_flight_bookings || 0,  rows: contact.rayna_flights },
+    { key: 'tour', label: 'Tours', count: contact.total_tour_bookings || 0, rows: contact.rayna_tours },
+    { key: 'package', label: 'Packages', count: contact.total_package_bookings || 0, rows: contact.rayna_packages },
+    { key: 'hotel', label: 'Hotels', count: contact.total_hotel_bookings || 0, rows: contact.rayna_hotels },
+    { key: 'visa', label: 'Visas', count: contact.total_visa_bookings || 0, rows: contact.rayna_visas },
+    { key: 'other', label: 'Others', count: contact.total_other_bookings || 0, rows: contact.rayna_others },
+    { key: 'flight', label: 'Flights', count: contact.total_flight_bookings || 0, rows: contact.rayna_flights },
   ];
-  const totalBookings = types.reduce((s, t) => s + t.count, 0);
-  const totalRevenue = contact.total_booking_revenue || 0;
+  const totalBookings = types.reduce((sum, t) => sum + t.count, 0);
+  const totalRevenue = Number(contact.total_booking_revenue) || 0;
   const allRows = types.flatMap(t => t.rows || []);
   const cancelledCount = allRows.filter(r => r.is_cancel === '1').length;
-  const cancelledRevenue = allRows.filter(r => r.is_cancel === '1').reduce((s, r) => s + (parseFloat(r.selling_price) || 0), 0);
+  const cancelledRevenue = allRows.filter(r => r.is_cancel === '1').reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+  const gtmTotal = (gtmData?.summary || []).reduce((sum, e) => sum + (Number(e.count) || 0), 0);
+  const gtmLast = (gtmData?.summary || []).map(e => parseDate(e.last_seen)).filter((d): d is Date => !!d).sort((a, b) => b.getTime() - a.getTime())[0];
+  const phone = contact.phone || contact.mobile;
+  const sources = (contact.sources || '').split(',').map(x => x.trim()).filter(Boolean);
+  const hasMessages = Boolean(contact.first_msg_text || contact.last_msg_text);
+
+  // ── Activity timeline: merged from data the APIs already return, newest first ──
+  const timeline: TimelineItem[] = [];
+  const push = (when: DateInput, kindKey: TimelineKind, title: string, sub?: string) => {
+    const at = parseDate(when);
+    if (at) timeline.push({ at, dateOnly: isDateOnly(when), kind: kindKey, title, sub });
+  };
+  types.forEach(t => (t.rows || []).forEach(r => {
+    const price = parseFloat(r.selling_price) > 0 ? ` — ${formatAED(r.selling_price)}` : '';
+    const sub = [t.label.replace(/s$/, ''), r.bill_no && `Bill ${r.bill_no}`, r.travel_date && `travel ${formatDate(r.travel_date)}`, r.is_cancel === '1' && 'Cancelled'].filter(Boolean).join(' · ');
+    push(r.booking_date, 'booking', `Booked ${r.service_name || t.label.toLowerCase()}${price}`, sub);
+  }));
+  journeys.forEach(j => (j.nodes || []).forEach(n => {
+    const what = n.subject || n.label || n.node_id;
+    const jn = j.name || `Journey ${j.journey_id}`;
+    const step = n.day_number ? ` · day ${n.day_number}` : '';
+    if (n.sent_at) push(n.sent_at, 'message', `Sent email “${what}”`, `${jn}${step}`);
+    if (n.opened_at) push(n.opened_at, 'message', `Opened email “${what}”`, `${jn}${step}`);
+    if (n.clicked_at) push(n.clicked_at, 'message', `Clicked a link in “${what}”`, `${jn}${step}`);
+  }));
+  (gtmData?.events || []).forEach(e => {
+    const page = e.page_title || pathOf(e.page_url);
+    const sub = [page && e.page_title ? pathOf(e.page_url) : '', parseFloat(e.event_value) > 0 ? formatAED(e.event_value) : '', e.device_type, e.city, e.utm_source && `from ${e.utm_source}`].filter(Boolean).join(' · ');
+    push(e.created_at, 'website', `${humanize(e.event_name || 'Website event')}${page ? ` · ${page}` : ''}`, sub || undefined);
+  });
+  if (contact.first_chat_at) push(contact.first_chat_at, 'chat', 'First chat', contact.first_msg_text || contact.chat_departments);
+  if (contact.last_chat_at && contact.last_chat_at !== contact.first_chat_at) push(contact.last_chat_at, 'chat', 'Latest chat', contact.last_msg_text || contact.chat_departments);
+  if (contact.created_at) push(contact.created_at, 'profile', 'Contact created', sources.length ? `From ${sources.join(', ')}` : undefined);
+  if (contact.first_seen_at && contact.first_seen_at !== contact.created_at) push(contact.first_seen_at, 'profile', 'First seen');
+  timeline.sort((a, b) => b.at.getTime() - a.at.getTime());
+  const kindsPresent = new Set(timeline.map(t => t.kind));
+  const visibleTimeline = timeline.filter(t => kind === 'all' || t.kind === kind);
+
+  const tabs: { key: ProfileTab; label: ReactNode }[] = [
+    { key: 'activity', label: <>Activity {timeline.length > 0 && <Chip className={s.miniChip}>{timeline.length}</Chip>}</> },
+    { key: 'bookings', label: <>Bookings <Chip className={s.miniChip}>{totalBookings}</Chip></> },
+    { key: 'website', label: <>Website {gtmTotal > 0 && <Chip className={s.miniChip}>{gtmTotal}</Chip>}</> },
+    ...(hasMessages ? [{ key: 'messages' as const, label: 'Chat messages' }] : []),
+  ];
 
   return (
-    <motion.div initial="hidden" animate="visible" variants={stagger}>
+    <div className={s.page}>
+      <nav className={s.crumbs} aria-label="Breadcrumb">
+        <span>Audience</span><span aria-hidden="true">/</span>
+        <button type="button" onClick={() => router.push('/contacts')}>Contacts</button><span aria-hidden="true">/</span>
+        <span className={s.crumbCurrent} aria-current="page">{contact.name || 'Unknown'}</span>
+      </nav>
 
-      {/* Back + Header */}
-      <motion.div variants={fadeIn} style={{ marginBottom: 24 }}>
-        <button
-          onClick={() => router.push('/contacts')}
-          className="btn btn-ghost btn-sm"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16, color: 'var(--text-secondary)' }}
-        >
-          <ArrowLeft size={15} /> Back to Contacts
-        </button>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-          {/* Left: avatar + name + id + badges */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-            <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(201,169,110,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
-              <User size={22} color="var(--brand-primary, #C9A96E)" />
+      <div className={s.ph}>
+        <div className={s.identity}>
+          <ContactAvatar name={contact.name} fallback={contact.email || phone} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+            <h1>{contact.name || 'Unknown'}</h1>
+            <div className={s.chips}>
+              <ContactStatusChip status={contact.booking_status} />
+              {contact.contact_type && <Chip>{contact.contact_type}</Chip>}
+              {contact.product_tier && <Chip tone={contact.product_tier === 'LUXURY' ? 'gold' : 'mute'}>{humanize(contact.product_tier.toLowerCase())}</Chip>}
+              {contact.geography && <Chip>{GEO_LABEL[contact.geography] || contact.geography}{contact.country ? ` · ${contact.country}` : ''}</Chip>}
+              {sources.length > 0 && <Chip>From: {sources.join(', ')}</Chip>}
             </div>
-            <div>
-              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, lineHeight: 1.2 }}>{contact.name || 'Unknown'}</h2>
-              <span style={{ fontSize: 12, color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>ID: {contact.id || contact.unified_id}</span>
-              <div style={{ marginTop: 8, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                {contact.sources?.split(', ').map(s => (
-                  <span key={s} className={`badge ${s === 'chat' ? 'badge-green' : s === 'ticket' ? 'badge-orange' : s === 'rayna' ? 'badge-blue' : 'badge-gray'}`} style={{ fontSize: 10 }}>{s}</span>
-                ))}
-                {contact.booking_status && (
-                  <span className="badge" style={{ fontSize: 10, background: `${STATUS_COLOR[contact.booking_status] ?? '#64748b'}20`, color: STATUS_COLOR[contact.booking_status] ?? '#64748b' }}>
-                    {contact.booking_status}
-                  </span>
-                )}
-                {contact.product_tier && (
-                  <span className={`badge ${contact.product_tier === 'LUXURY' ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: 10 }}>{contact.product_tier}</span>
-                )}
-                {contact.geography && (
-                  <span className={`badge ${contact.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 10 }}>{contact.geography}</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right: quick stat chips */}
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <StatChip icon={Ticket}      label="Bookings"   value={totalBookings}          color="var(--brand-primary, #C9A96E)" />
-            <StatChip icon={DollarSign}  label="Revenue"    value={formatAED(totalRevenue)} color="#10b981" />
-            {(gtmData?.summary?.length as number) > 0 && (
-              <StatChip icon={Zap} label="GTM Events" value={gtmData!.summary!.reduce((s, e) => s + e.count, 0)} color="#f59e0b" />
-            )}
+            <span className={`${s.mono} ${s.help}`}>ID: {contact.id || contact.unified_id}</span>
           </div>
         </div>
-      </motion.div>
-
-      {/* Segment */}
-      <motion.div variants={fadeIn}>
-        <Section title="Segment">
-          <DetailRow icon={Hash}  label="Status"       value={contact.booking_status} color={STATUS_COLOR[contact.booking_status]} />
-          <DetailRow icon={Hash}  label="Product Tier" value={contact.product_tier || 'N/A'} color={contact.product_tier === 'LUXURY' ? 'var(--orange)' : undefined} />
-          <DetailRow icon={Globe} label="Geography"    value={contact.geography || 'Unknown'} />
-          {contact.segment_label && <DetailRow icon={Layers} label="Full Segment" value={contact.segment_label} />}
-        </Section>
-      </motion.div>
-
-      {/* Contact Info — inline edit */}
-      <motion.div variants={fadeIn}>
-        <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-          {/* Section header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-            <span style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5, fontWeight: 600 }}>Contact Information</span>
-            {!editing ? (
-              <button className="btn btn-ghost btn-sm" onClick={startEdit}
-                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-secondary)' }}>
-                <Pencil size={13} /> Edit
-              </button>
-            ) : (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button className="btn btn-ghost btn-sm" onClick={cancelEdit} disabled={saveLoading}
-                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                  <X size={13} /> Cancel
-                </button>
-                <button className="btn btn-primary btn-sm" onClick={saveEdit} disabled={saveLoading}
-                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                  {saveLoading
-                    ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
-                    : <Check size={13} />}
-                  {saveLoading ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Error banner */}
-          {saveError && (
-            <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444', fontSize: 12, color: '#ef4444' }}>
-              {saveError}
-            </div>
-          )}
-
-          {/* Edit mode */}
-          {editing ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 32px' }}>
-              <EditField label="Name"    value={editForm.name}    onChange={v => setField('name', v)} />
-              <EditField label="Email"   value={editForm.email}   onChange={v => setField('email', v)}  type="email" />
-              <EditField label="Phone"   value={editForm.mobile}  onChange={v => setField('mobile', v)} type="tel" />
-              <EditField label="City"    value={editForm.city}    onChange={v => setField('city', v)} />
-              <EditField label="Country" value={editForm.country} onChange={v => setField('country', v)} />
-              <EditSelect label="Type" value={editForm.contact_type} onChange={v => setField('contact_type', v)}
-                options={CONTACT_TYPES.map(t => ({ value: t, label: t }))} />
-              <EditSelect label="Email Status" value={editForm.email_unsubscribe} onChange={v => setField('email_unsubscribe', v)}
-                options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
-              <EditSelect label="WA Status" value={editForm.wa_unsubscribe} onChange={v => setField('wa_unsubscribe', v)}
-                options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
-              <EditField label="Actual Email"  value={editForm.actual_email}   onChange={v => setField('actual_email', v)}  type="email" />
-              <EditField label="Actual Mobile" value={editForm.actual_mobile}  onChange={v => setField('actual_mobile', v)} type="tel" />
-              <EditField label="Mobile Country" value={editForm.mobile_country} onChange={v => setField('mobile_country', v)} />
-            </div>
-          ) : (
-            /* View mode */
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 32px' }}>
-              {contact.email                        && <DetailRow icon={Mail}          label="Email"          value={contact.email} />}
-              {(contact.phone || contact.mobile)    && <DetailRow icon={Phone}         label="Phone"          value={contact.phone || contact.mobile} />}
-              {contact.actual_email                 && <DetailRow icon={Mail}          label="Actual Email"   value={contact.actual_email} />}
-              {contact.actual_mobile                && <DetailRow icon={Phone}         label="Actual Mobile"  value={contact.actual_mobile} />}
-              {contact.mobile_country               && <DetailRow icon={Globe}         label="Mobile Country" value={contact.mobile_country} />}
-              {contact.company_name                 && <DetailRow icon={Building2}     label="Company"        value={contact.company_name} />}
-              {contact.designation                  && <DetailRow icon={Hash}          label="Designation"    value={contact.designation} />}
-              {contact.city                         && <DetailRow icon={MapPin}        label="City"           value={contact.city} />}
-              {contact.country                      && <DetailRow icon={Globe}         label="Country"        value={contact.country} />}
-              {contact.contact_type                 && <DetailRow icon={Hash}          label="Type"           value={contact.contact_type} />}
-              <DetailRow icon={Mail}         label="Email Status"
-                value={(contact.email_unsubscribe || '').toLowerCase() === 'yes' ? 'Unsubscribed' : 'Active'}
-                color={(contact.email_unsubscribe || '').toLowerCase() === 'yes' ? 'var(--red)' : 'var(--green)'} />
-              <DetailRow icon={MessageSquare} label="WA Status"
-                value={(contact.wa_unsubscribe || '').toLowerCase() === 'yes' ? 'Unsubscribed' : 'Active'}
-                color={(contact.wa_unsubscribe || '').toLowerCase() === 'yes' ? 'var(--red)' : 'var(--green)'} />
-            </div>
-          )}
+        <div className={s.actions}>
+          {!editing && <Button variant="primary" onClick={startEdit}><Pencil size={14} aria-hidden="true" /> Edit details</Button>}
         </div>
-      </motion.div>
+      </div>
 
-      {/* Booking Overview */}
-      {totalBookings > 0 && (
-        <motion.div variants={fadeIn}>
-          <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-            <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600 }}>Booking Overview</div>
-
-            {/* Summary KPIs */}
-            <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-              <div style={{ padding: '10px 18px', borderRadius: 10, background: 'rgba(201,169,110,0.1)', border: '1px solid rgba(201,169,110,0.4)' }}>
-                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 2 }}>Total Bookings</div>
-                <div style={{ fontSize: 26, fontWeight: 700, color: 'var(--brand-primary, #C9A96E)' }}>{totalBookings}</div>
-              </div>
-              <div style={{ padding: '10px 18px', borderRadius: 10, background: 'rgba(16,185,129,0.08)', border: '1px solid #10b981' }}>
-                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 2 }}>Confirmed Revenue</div>
-                <div style={{ fontSize: 26, fontWeight: 700, color: '#10b981' }}>{formatAED(totalRevenue)}</div>
-              </div>
-              {cancelledCount > 0 && (
-                <div style={{ padding: '10px 18px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444' }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 2 }}>Cancelled</div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                    <span style={{ fontSize: 26, fontWeight: 700, color: '#ef4444' }}>{cancelledCount}</span>
-                    <span style={{ fontSize: 11, color: '#ef4444', opacity: 0.7 }}>{formatAED(cancelledRevenue)}</span>
-                  </div>
+      <div className={s.layout}>
+        <aside className={s.aside}>
+          <section className={s.card} aria-labelledby="cp-details">
+            <div className={s.cardHead}>
+              <h2 id="cp-details" className={s.cardTitle}>Contact details</h2>
+              {editing && (
+                <div className={s.actions}>
+                  <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={saveLoading}>Cancel</Button>
+                  <Button size="sm" variant="primary" onClick={saveEdit} disabled={saveLoading}>
+                    {saveLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                    {saveLoading ? 'Saving…' : 'Save'}
+                  </Button>
                 </div>
               )}
             </div>
-
-            {/* Per-type grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-              {types.map(t => {
-                const rev = (t.rows || []).filter(r => r.is_cancel !== '1').reduce((s, r) => s + (parseFloat(r.selling_price) || 0), 0);
-                const pct = totalRevenue > 0 ? (rev / totalRevenue * 100) : 0;
-                return (
-                  <div key={t.key} style={{ padding: '10px 14px', borderRadius: 10, background: `${t.color}08`, border: `1px solid ${t.color}30` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                      <t.icon size={14} style={{ color: t.color }} />
-                      <span style={{ fontSize: 12, fontWeight: 600, color: t.color }}>{t.label}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <span style={{ fontSize: 18, fontWeight: 700 }}>{t.count}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{formatAED(rev)}</span>
-                    </div>
-                    <div style={{ height: 4, borderRadius: 2, background: `${t.color}20`, marginTop: 6 }}>
-                      <div style={{ height: '100%', borderRadius: 2, background: t.color, width: `${Math.min(pct, 100)}%`, transition: 'width 0.4s ease' }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Expandable per-type booking tables */}
-          {types.filter(t => t.count > 0).map(t => (
-            <BookingTable key={t.key} icon={t.icon} title={`${t.label} Bookings`} color={t.color} rows={t.rows} columns={bookingColumns} />
-          ))}
-        </motion.div>
-      )}
-
-      {/* Affinity — top services and products ranked from bookings */}
-      {affinity && (
-        <motion.div variants={fadeIn}>
-          <AffinitySection affinity={affinity} />
-        </motion.div>
-      )}
-
-      {/* Journeys this contact is enrolled in */}
-      <motion.div variants={fadeIn}>
-        <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-          <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <GitBranch size={13} color="#8b5cf6" /> Journeys
-            {!journeysLoading && journeys.length > 0 && (
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: 0 }}>{journeys.length} enrolled</span>
+            {saveError && <div className={s.alert} role="alert">{saveError}</div>}
+            {editing ? (
+              <div className={s.editGrid}>
+                <EditField label="Name" value={editForm.name} onChange={v => setField('name', v)} />
+                <EditField label="Email" value={editForm.email} onChange={v => setField('email', v)} type="email" />
+                <EditField label="Phone" value={editForm.mobile} onChange={v => setField('mobile', v)} type="tel" />
+                <EditField label="City" value={editForm.city} onChange={v => setField('city', v)} />
+                <EditField label="Country" value={editForm.country} onChange={v => setField('country', v)} />
+                <EditSelect label="Type" value={editForm.contact_type} onChange={v => setField('contact_type', v)}
+                  options={CONTACT_TYPES.map(t => ({ value: t, label: t }))} />
+                <EditSelect label="Email status" value={editForm.email_unsubscribe} onChange={v => setField('email_unsubscribe', v)}
+                  options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
+                <EditSelect label="WhatsApp status" value={editForm.wa_unsubscribe} onChange={v => setField('wa_unsubscribe', v)}
+                  options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
+                <EditField label="Actual email" value={editForm.actual_email} onChange={v => setField('actual_email', v)} type="email" />
+                <EditField label="Actual mobile" value={editForm.actual_mobile} onChange={v => setField('actual_mobile', v)} type="tel" />
+                <EditField label="Mobile country" value={editForm.mobile_country} onChange={v => setField('mobile_country', v)} />
+              </div>
+            ) : (
+              <dl className={s.dl}>
+                {contact.email && <><dt>Email</dt><dd>{contact.email}</dd></>}
+                {phone && <><dt>Mobile</dt><dd>{phone}</dd></>}
+                {contact.actual_email && <><dt>Actual email</dt><dd>{contact.actual_email}</dd></>}
+                {contact.actual_mobile && <><dt>Actual mobile</dt><dd>{contact.actual_mobile}</dd></>}
+                {contact.mobile_country && <><dt>Mobile country</dt><dd>{contact.mobile_country}</dd></>}
+                {(contact.city || contact.country) && <><dt>City</dt><dd>{[contact.city, contact.country].filter(Boolean).join(', ')}</dd></>}
+                {contact.company_name && <><dt>Company</dt><dd>{contact.company_name}</dd></>}
+                {contact.designation && <><dt>Designation</dt><dd>{contact.designation}</dd></>}
+                {contact.contact_type && <><dt>Type</dt><dd>{contact.contact_type}</dd></>}
+                {contact.first_seen_at && <><dt>First seen</dt><dd>{formatDateTime(contact.first_seen_at)}</dd></>}
+                {contact.last_seen_at && <><dt>Last seen</dt><dd>{formatDateTime(contact.last_seen_at)}</dd></>}
+                {contact.created_at && <><dt>Created</dt><dd>{formatDateTime(contact.created_at)}</dd></>}
+                <dt>Customer ID</dt><dd className={s.mono}>{contact.id || contact.unified_id}</dd>
+              </dl>
             )}
-          </div>
+          </section>
 
-          {journeysLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[...Array<undefined>(2)].map((_, i) => <div key={i} className="skeleton" style={{ width: '100%', height: 52, borderRadius: 8 }} />)}
+          <section className={s.card} aria-labelledby="cp-consent">
+            <h2 id="cp-consent" className={s.cardTitle}>Can we message them?</h2>
+            <div className={s.line}><span>Email</span>
+              <Chip tone={isUnsub(contact.email_unsubscribe) ? 'bad' : 'ok'}>{isUnsub(contact.email_unsubscribe) ? 'Unsubscribed' : 'Active'}</Chip></div>
+            <div className={s.line}><span>WhatsApp</span>
+              <Chip tone={isUnsub(contact.wa_unsubscribe) ? 'bad' : 'ok'}>{isUnsub(contact.wa_unsubscribe) ? 'Unsubscribed' : 'Active'}</Chip></div>
+            <span className={s.help}>Change these with Edit details.</span>
+          </section>
+
+          <section className={s.card} aria-labelledby="cp-segment">
+            <h2 id="cp-segment" className={s.cardTitle}>Segment</h2>
+            <dl className={s.dl}>
+              <dt>Status</dt><dd><ContactStatusChip status={contact.booking_status} /></dd>
+              <dt>Product tier</dt><dd>{contact.product_tier || 'N/A'}</dd>
+              <dt>Geography</dt><dd>{contact.geography || 'Unknown'}</dd>
+              {contact.segment_label && <><dt>Full segment</dt><dd>{contact.segment_label}</dd></>}
+            </dl>
+          </section>
+
+          {affinity && <AffinitySection affinity={affinity} />}
+
+          <section className={s.card} aria-labelledby="cp-journeys">
+            <div className={s.cardHead}>
+              <h2 id="cp-journeys" className={s.cardTitle}>Journeys</h2>
+              {!journeysLoading && journeys.length > 0 && <span className={s.help}>{journeys.length} enrolled</span>}
             </div>
-          ) : journeys.length === 0 ? (
-            <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              Not enrolled in any journey
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {journeys.map(j => {
-                const JSTATUS = ({
-                  active:    { bg: 'rgba(34,197,94,0.12)',  color: '#22c55e', label: 'ACTIVE' },
-                  draft:     { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', label: 'DRAFT' },
-                  paused:    { bg: 'rgba(251,146,60,0.15)',  color: '#fb923c', label: 'PAUSED' },
-                  completed: { bg: 'rgba(59,130,246,0.12)',  color: '#3b82f6', label: 'COMPLETED' },
-                } as Record<string, JourneyStatusStyle>)[j.journey_status] || { bg: 'rgba(156,163,175,0.15)', color: '#9ca3af', label: (j.journey_status || '').toUpperCase() };
-                const ESTATUS = ({
-                  active:    { color: '#22c55e', label: 'In progress' },
-                  completed: { color: '#3b82f6', label: 'Completed' },
-                  exited:    { color: '#ef4444', label: `Exited${j.exit_reason ? ` · ${j.exit_reason}` : ''}` },
-                  converted: { color: '#22c55e', label: 'Converted' },
-                  snapshot:  { color: '#9ca3af', label: 'Queued' },
-                } as Record<string, EntryStatusStyle>)[j.entry_status] || { color: 'var(--text-tertiary)', label: j.entry_status || '—' };
-                const nodes = j.nodes || [];
-                const isOpen = expandedJourneys.has(j.journey_id);
-                const toggle = () => setExpandedJourneys(prev => {
-                  const next = new Set(prev);
-                  next.has(j.journey_id) ? next.delete(j.journey_id) : next.add(j.journey_id);
-                  return next;
-                });
-                return (
-                  <div
-                    key={j.journey_id}
-                    style={{
-                      borderRadius: 10, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {/* Header row — click toggles per-node breakdown */}
-                    <div
-                      onClick={toggle}
-                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', cursor: 'pointer' }}
-                    >
+            {journeysLoading ? (
+              <><Skeleton height={44} /><Skeleton height={44} /></>
+            ) : journeys.length === 0 ? (
+              <span className={s.help}>Not enrolled in any journey</span>
+            ) : journeys.map(j => {
+              const js = JOURNEY_STATUS[j.journey_status] || { tone: 'mute' as const, label: humanize(j.journey_status || '—') };
+              const entry = ({
+                active: 'In progress', completed: 'Completed', converted: 'Converted', snapshot: 'Queued',
+                exited: `Exited${j.exit_reason ? ` · ${j.exit_reason}` : ''}`,
+              } as Record<string, string>)[j.entry_status] || j.entry_status || '—';
+              const nodes = j.nodes || [];
+              const isOpen = expandedJourneys.has(j.journey_id);
+              const toggle = () => setExpandedJourneys(prev => {
+                const next = new Set(prev);
+                if (next.has(j.journey_id)) next.delete(j.journey_id); else next.add(j.journey_id);
+                return next;
+              });
+              return (
+                <div key={j.journey_id} className={s.journey}>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <button type="button" className={s.journeyHead} onClick={toggle} aria-expanded={isOpen}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {j.name || `Journey ${j.journey_id}`}
-                        </div>
-                        <div style={{ fontSize: 11, color: ESTATUS.color, marginTop: 2 }}>
-                          {ESTATUS.label}
-                          {j.current_node_id && j.entry_status === 'active' && <span style={{ color: 'var(--text-tertiary)' }}> · at {j.current_node_id}</span>}
-                          {nodes.length > 0 && <span style={{ color: 'var(--text-tertiary)' }}> · {nodes.length} email{nodes.length > 1 ? 's' : ''}</span>}
+                        <div className={s.journeyName}>{j.name || `Journey ${j.journey_id}`}</div>
+                        <div className={s.help}>
+                          {entry}
+                          {j.current_node_id && j.entry_status === 'active' && <> · at {j.current_node_id}</>}
+                          {nodes.length > 0 && <> · {nodes.length} email{nodes.length > 1 ? 's' : ''}</>}
                         </div>
                       </div>
-                      <span style={{ fontSize: 9, fontWeight: 800, padding: '3px 9px', borderRadius: 20, background: JSTATUS.bg, color: JSTATUS.color, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
-                        {JSTATUS.label}
-                      </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); router.push(`/journeys?id=${j.journey_id}`); }}
-                        title="Open journey"
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', flexShrink: 0 }}
-                      >
-                        <ExternalLink size={13} />
-                      </button>
-                      <ChevronDown size={15} color="var(--text-tertiary)" style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .18s', flexShrink: 0 }} />
-                    </div>
-
-                    {/* Per-node delivered / opened / clicked breakdown */}
-                    {isOpen && (
-                      <div style={{ borderTop: '1px solid var(--border-color)', padding: '8px 14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {nodes.length === 0 ? (
-                          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '8px 0', textAlign: 'center' }}>
-                            No emails sent to this contact in this journey yet
-                          </div>
-                        ) : nodes.map((n, i) => {
-                          const stages = [
-                            { on: n.delivered, at: n.sent_at,    Icon: Send,              label: 'Delivered', color: '#3b82f6' },
-                            { on: n.opened,    at: n.opened_at,   Icon: Eye,               label: 'Opened',    color: '#8b5cf6' },
-                            { on: n.clicked,   at: n.clicked_at,  Icon: MousePointerClick, label: 'Clicked',   color: '#22c55e' },
-                          ];
-                          return (
-                            <div key={`${n.node_id}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                                {n.day_number ? <span style={{ fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 5, background: 'rgba(139,92,246,0.12)', color: '#8b5cf6', flexShrink: 0 }}>DAY {n.day_number}</span> : null}
-                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.label || n.subject || n.node_id}</span>
-                                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>· {n.node_id}</span>
-                              </div>
-                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                {stages.map(({ on, at, Icon, label, color }) => (
-                                  <span key={label} title={at ? formatDateTime(at) : 'Not yet'}
-                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 600, padding: '4px 9px', borderRadius: 20,
-                                      background: on ? `${color}1f` : 'var(--bg-secondary)',
-                                      color: on ? color : 'var(--text-tertiary)',
-                                      border: `1px solid ${on ? color + '40' : 'var(--border-color)'}`,
-                                      opacity: on ? 1 : 0.6 }}>
-                                    <Icon size={11} />
-                                    {label}
-                                    {on ? <Check size={11} /> : null}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                      <StatusChip tone={js.tone}>{js.label}</StatusChip>
+                      <ChevronDown size={15} aria-hidden="true" style={{ color: 'var(--ink3)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .18s', flexShrink: 0 }} />
+                    </button>
+                    <Button size="sm" variant="ghost" icon aria-label="Open journey" style={{ marginRight: 6 }}
+                      onClick={() => router.push(`/journeys?id=${j.journey_id}`)}><ExternalLink size={13} /></Button>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </motion.div>
+                  {isOpen && (
+                    <div className={s.journeyBody}>
+                      {nodes.length === 0 ? (
+                        <span className={s.help} style={{ textAlign: 'center', padding: 6 }}>No emails sent to this contact in this journey yet</span>
+                      ) : nodes.map((n, i) => (
+                        <div key={`${n.node_id}-${i}`} className={s.node}>
+                          <div className={s.nodeTitle}>
+                            {n.day_number ? <Chip tone="info" className={s.miniChip}>Day {n.day_number}</Chip> : <span />}
+                            <span>{n.label || n.subject || n.node_id}</span>
+                          </div>
+                          <div className={s.chips}>
+                            {([
+                              { on: n.delivered, at: n.sent_at, Icon: Send, label: 'Delivered' },
+                              { on: n.opened, at: n.opened_at, Icon: Eye, label: 'Opened' },
+                              { on: n.clicked, at: n.clicked_at, Icon: MousePointerClick, label: 'Clicked' },
+                            ]).map(({ on, at, Icon, label }) => (
+                              <Chip key={label} tone={on ? 'ok' : 'mute'} className={s.miniChip} title={at ? formatDateTime(at) : 'Not yet'}>
+                                <Icon size={11} aria-hidden="true" /> {label}{on ? <Check size={11} aria-label="yes" /> : null}
+                              </Chip>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </section>
 
-      {/* GTM Events */}
-      <motion.div variants={fadeIn}>
-        <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-          <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Zap size={13} color="#f59e0b" /> GTM Events
+          {contact.total_chats > 0 && (
+            <section className={s.card} aria-labelledby="cp-chats">
+              <h2 id="cp-chats" className={s.cardTitle}>Chat activity</h2>
+              <dl className={s.dl}>
+                <dt>Total chats</dt><dd className={s.num}>{contact.total_chats}</dd>
+                {contact.chat_departments && <><dt>Departments</dt><dd>{contact.chat_departments}</dd></>}
+                {contact.first_chat_at && <><dt>First chat</dt><dd>{formatDateTime(contact.first_chat_at)}</dd></>}
+                {contact.last_chat_at && <><dt>Last chat</dt><dd>{formatDateTime(contact.last_chat_at)}</dd></>}
+              </dl>
+            </section>
+          )}
+        </aside>
+
+        <section className={s.main} aria-label="Activity and bookings">
+          <div className={s.kpis} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+            <Kpi label="Bookings" value={totalBookings} sub={cancelledCount > 0 ? `${cancelledCount} cancelled · ${formatAED(cancelledRevenue)}` : 'None cancelled'} />
+            <Kpi label="Revenue" value={formatAED(totalRevenue)} sub="Confirmed only" />
+            <Kpi label="Website events" value={gtmLoading ? '…' : gtmTotal} sub={gtmLast ? `Last: ${formatDate(gtmLast)}` : 'None recorded'} />
+            <Kpi label="Chats" value={contact.total_chats || 0} sub={contact.last_chat_at ? `Last: ${formatDate(contact.last_chat_at)}` : 'None'} />
           </div>
 
-          {gtmLoading ? (
-            <div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-                {[...Array<undefined>(6)].map((_, i) => <div key={i} className="skeleton" style={{ width: 120, height: 38, borderRadius: 10 }} />)}
-              </div>
-              <div className="skeleton" style={{ width: '100%', height: 48, borderRadius: 8 }} />
-            </div>
-          ) : !gtmData?.summary?.length ? (
-            <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-              No GTM events recorded for this contact
-            </div>
-          ) : (
-            <>
-              {/* Event summary chips */}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-                {gtmData.summary.map(s => (
-                  <div key={s.event_name} style={{ padding: '8px 14px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Zap size={12} color="#f59e0b" />
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{s.event_name}</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, background: '#f59e0b', color: '#fff', borderRadius: 10, padding: '2px 8px', minWidth: 22, textAlign: 'center' }}>{s.count}</span>
-                    {parseFloat(s.total_value) > 0 && (
-                      <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>{formatAED(s.total_value as unknown as number)}</span>
-                    )}
-                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Last: {formatDate(s.last_seen)}</span>
-                  </div>
-                ))}
-              </div>
+          <Tabs label="Profile sections" items={tabs} value={tab} onChange={k => setTab(k)} />
 
-              {/* Full event log table */}
-              <BookingTable icon={Activity} title="Full Event Log" color="#f59e0b" rows={gtmData.events} columns={gtmEventColumns} />
-            </>
+          {tab === 'activity' && (
+            <div className={s.card} style={{ gap: 4 }}>
+              <div className={s.cardHead} style={{ marginBottom: 8 }}>
+                <h2 className={s.cardTitle}>Activity timeline</h2>
+                <div role="group" aria-label="Show" className={s.pills}>
+                  {KIND_FILTERS.filter(f => f.key === 'all' || kindsPresent.has(f.key)).map(f => (
+                    <button key={f.key} type="button" aria-pressed={kind === f.key}
+                      className={`${s.pill} ${kind === f.key ? s.pillOn : ''}`}
+                      onClick={() => { setKind(f.key); setShown(PAGE); }}>{f.label}</button>
+                  ))}
+                </div>
+              </div>
+              {(gtmLoading || journeysLoading) && timeline.length === 0 ? (
+                <><Skeleton height={36} /><Skeleton height={36} /></>
+              ) : visibleTimeline.length === 0 ? (
+                <span className={s.help} style={{ padding: '12px 0' }}>No activity recorded for this contact yet.</span>
+              ) : (
+                <Timeline items={visibleTimeline.slice(0, shown)} />
+              )}
+              {visibleTimeline.length > shown && (
+                <Button size="sm" variant="ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setShown(n => n + PAGE)}>
+                  Show older activity ({visibleTimeline.length - shown} more)
+                </Button>
+              )}
+            </div>
           )}
-        </div>
-      </motion.div>
 
-      {/* Chat Activity */}
-      {contact.total_chats > 0 && (
-        <motion.div variants={fadeIn}>
-          <Section title="Chat Activity">
-            <DetailRow icon={MessageSquare} label="Total Chats" value={contact.total_chats} color="#25D366" />
-            {contact.chat_departments && <DetailRow icon={Hash}  label="Departments" value={contact.chat_departments} />}
-            {contact.first_chat_at     && <DetailRow icon={Clock} label="First Chat"  value={formatDateTime(contact.first_chat_at)} />}
-            {contact.last_chat_at      && <DetailRow icon={Clock} label="Last Chat"   value={formatDateTime(contact.last_chat_at)} />}
-          </Section>
-        </motion.div>
-      )}
+          {tab === 'bookings' && (
+            totalBookings === 0 ? (
+              <div className={s.card}><EmptyState title="No bookings yet" description="Bookings from tours, packages, hotels, visas, flights and others show here." /></div>
+            ) : (
+              <>
+                <div className={s.card}>
+                  <h2 className={s.cardTitle}>Booking overview</h2>
+                  <div className={s.typeGrid}>
+                    {types.map(t => {
+                      const rev = (t.rows || []).filter(r => r.is_cancel !== '1').reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+                      const pct = totalRevenue > 0 ? (rev / totalRevenue * 100) : 0;
+                      return (
+                        <div key={t.key} className={s.typeCell}>
+                          <span className={s.help} style={{ fontWeight: 600 }}>{t.label}</span>
+                          <div className={s.line}><b className={s.num} style={{ fontSize: 18 }}>{t.count}</b><span className={s.help}>{formatAED(rev)}</span></div>
+                          <div className={s.bar}><div className={s.barFill} style={{ width: `${Math.min(pct, 100)}%` }} /></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {types.filter(t => t.count > 0).map(t => (
+                  <CollapsibleTable key={t.key} title={`${t.label} bookings`} rows={t.rows} columns={bookingColumns} defaultOpen={types.filter(x => x.count > 0).length === 1} />
+                ))}
+              </>
+            )
+          )}
 
-      {/* Messages */}
-      {(contact.first_msg_text || contact.last_msg_text) && (
-        <motion.div variants={fadeIn}>
-          <Section title="Messages">
-            {contact.first_msg_text && (
-              <div style={{ gridColumn: '1 / -1', fontSize: 13, padding: '8px 12px', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', marginBottom: 8, maxHeight: 60, overflow: 'auto' }}>
-                <MessageCircle size={13} style={{ color: '#25D366', marginRight: 6, verticalAlign: 'middle' }} />
-                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginRight: 4 }}>First:</span>
-                {contact.first_msg_text}
-              </div>
-            )}
-            {contact.last_msg_text && (
-              <div style={{ gridColumn: '1 / -1', fontSize: 13, padding: '8px 12px', background: 'var(--card-bg)', borderRadius: 8, border: '1px solid var(--border)', maxHeight: 60, overflow: 'auto' }}>
-                <MessageCircle size={13} style={{ color: 'var(--orange)', marginRight: 6, verticalAlign: 'middle' }} />
-                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginRight: 4 }}>Last:</span>
-                {contact.last_msg_text}
-              </div>
-            )}
-          </Section>
-        </motion.div>
-      )}
+          {tab === 'website' && (
+            <div className={s.card}>
+              <h2 className={s.cardTitle}>Website events</h2>
+              {gtmLoading ? (
+                <><Skeleton height={38} /><Skeleton height={48} /></>
+              ) : !gtmData?.summary?.length ? (
+                <span className={s.help}>No website events recorded for this contact</span>
+              ) : (
+                <>
+                  <div className={s.gtmChips}>
+                    {gtmData.summary.map(ev => (
+                      <div key={ev.event_name} className={s.gtmChip}>
+                        <b>{ev.event_name}</b>
+                        <Chip tone="warn" className={s.miniChip}>{ev.count}</Chip>
+                        {parseFloat(ev.total_value) > 0 && <span className={s.num}>{formatAED(ev.total_value)}</span>}
+                        <span className={s.help}>Last: {formatDate(ev.last_seen)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <CollapsibleTable title="Full event log" rows={gtmData.events} columns={gtmEventColumns} />
+                </>
+              )}
+            </div>
+          )}
 
-      {/* AI Recommendations — only rendered if this contact has a cached row */}
-      {aiRec && Array.isArray(aiRec.products) && aiRec.products.length > 0 && (
-        <motion.div variants={fadeIn}>
-          <AIRecommendationSection rec={aiRec} />
-        </motion.div>
-      )}
+          {tab === 'messages' && hasMessages && (
+            <div className={s.card}>
+              <h2 className={s.cardTitle}>Chat messages</h2>
+              {contact.first_msg_text && <><span className={s.help}>First message{contact.first_chat_at ? ` · ${formatDateTime(contact.first_chat_at)}` : ''}</span><div className={s.quote}>{contact.first_msg_text}</div></>}
+              {contact.last_msg_text && <><span className={s.help}>Last message{contact.last_chat_at ? ` · ${formatDateTime(contact.last_chat_at)}` : ''}</span><div className={s.quote}>{contact.last_msg_text}</div></>}
+            </div>
+          )}
 
-      {/* Timeline */}
-      {(contact.first_seen_at || contact.last_seen_at || contact.created_at) && (
-        <motion.div variants={fadeIn}>
-          <Section title="Timeline">
-            {contact.first_seen_at && <DetailRow icon={Calendar} label="First Seen" value={formatDateTime(contact.first_seen_at)} />}
-            {contact.last_seen_at  && <DetailRow icon={Clock}    label="Last Seen"  value={formatDateTime(contact.last_seen_at)} />}
-            {contact.created_at    && <DetailRow icon={Calendar} label="Created"    value={formatDateTime(contact.created_at)} />}
-          </Section>
-        </motion.div>
-      )}
-    </motion.div>
-  );
-}
-
-// ── Reusable sub-components ─────────────────────────────────────────────────
-
-function StatChip({ icon: Icon, label, value, color }: StatChipProps) {
-  return (
-    <div style={{ padding: '10px 18px', borderRadius: 10, background: `${color}12`, border: `1px solid ${color}35`, textAlign: 'center', minWidth: 90 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginBottom: 3 }}>
-        <Icon size={12} style={{ color }} />
-        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{label}</span>
+          {aiRec && Array.isArray(aiRec.products) && aiRec.products.length > 0 && <AIRecommendationSection rec={aiRec} />}
+        </section>
       </div>
-      <div style={{ fontSize: 16, fontWeight: 700, color, lineHeight: 1.2 }}>{value}</div>
     </div>
   );
 }
 
-function Section({ title, children }: SectionProps) {
+// ── Sub-components ─────────────────────────────────────────────────────────
+
+function Kpi({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
   return (
-    <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 16, letterSpacing: 0.5, fontWeight: 600 }}>{title}</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 32px' }}>{children}</div>
+    <div className={s.kpi}>
+      <span className={s.kpiLabel}>{label}</span>
+      <span className={s.kpiValue}>{value}</span>
+      {sub && <span className={s.kpiSub}>{sub}</span>}
     </div>
   );
 }
 
-const AFFINITY_SERVICE_LABEL: Record<string, string> = { tours: 'Tours', packages: 'Packages', hotels: 'Hotels', visas: 'Visas', flights: 'Flights', others: 'Others' };
+function dayLabel(d: Date) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today.getTime() - day.getTime()) / 86400000);
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: day.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+  return diff === 0 ? `Today · ${date}` : diff === 1 ? `Yesterday · ${date}` : date;
+}
 
-// Affinity section — the contact's services and products ranked by affinity score
-// (each booking adds 10 points, halving every 6 months). Top 3 by default, "Show all" expands.
-function AffinitySection({ affinity }: AffinitySectionProps) {
+function Timeline({ items }: { items: TimelineItem[] }) {
+  const groups: { day: string; items: TimelineItem[] }[] = [];
+  items.forEach(it => {
+    const day = dayLabel(it.at);
+    const last = groups[groups.length - 1];
+    if (last && last.day === day) last.items.push(it); else groups.push({ day, items: [it] });
+  });
+  return (
+    <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+      {groups.map(g => (
+        <li key={g.day}>
+          <div className={s.day}>{g.day}</div>
+          <ol style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {g.items.map((e, i) => {
+              const st = KIND_STYLE[e.kind];
+              return (
+                <li key={i} className={s.event}>
+                  <span className={`${s.mono} ${s.eventTime}`}>{e.dateOnly ? '' : e.at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className={s.eventIcon} style={{ background: st.bg, color: st.fg }} aria-hidden="true"><st.icon size={15} /></span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                    <span className={s.eventTitle}>{e.title}</span>
+                    {e.sub && <span className={s.eventSub}>{e.sub}</span>}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+// Affinity — the contact's services and products ranked by affinity score
+// (each booking adds 10 points, halving every 6 months). Top 3 by default.
+function AffinitySection({ affinity }: { affinity: ContactAffinity }) {
   const [showAll, setShowAll] = useState(false);
   const { customer, services, products } = affinity;
-  const shownServices = showAll ? services : services.slice(0, 3);
-  const shownProducts = showAll ? products : products.slice(0, 3);
   const hasMore = services.length > 3 || products.length > 3;
   const score = (n: number | string | null | undefined) => (n == null ? '—' : Number(n).toFixed(Number(n) < 1 ? 2 : 1));
-  const day = (s: string | null | undefined) => (s ? formatDate(String(s).slice(0, 10)) : '—');
+  const day = (v: string | null | undefined) => (v ? formatDate(String(v).slice(0, 10)) : '—');
 
-  const RankList = <T extends AffinityRankRow,>({ title, rows, name, sub }: RankListProps<T>) => (
-    <div style={showAll ? { maxHeight: 420, overflowY: 'auto', paddingRight: 4 } : undefined}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>{title}</div>
+  const rankList = <T extends AffinityRankRow,>(title: string, rows: T[], name: (r: T) => ReactNode, sub?: (r: T) => string) => (
+    <div style={showAll ? { maxHeight: 420, overflowY: 'auto' } : undefined}>
+      <div className={s.help} style={{ fontWeight: 600, marginBottom: 4 }}>{title}</div>
       {rows.length === 0 ? (
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>None — only fee or add-on lines.</div>
+        <span className={s.help}>None — only fee or add-on lines.</span>
       ) : rows.map(r => (
-        <div key={r.rank} style={{ display: 'grid', gridTemplateColumns: '26px 1fr auto', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border-color)' }}>
-          <span style={{ width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, background: r.rank === 1 ? 'rgba(236,72,153,0.12)' : 'var(--bg-secondary)', color: r.rank === 1 ? '#ec4899' : 'var(--text-secondary)' }}>#{r.rank}</span>
+        <div key={r.rank} className={s.rank}>
+          <span className={`${s.rankNo} ${r.rank === 1 ? s.rankNoTop : ''}`}>{r.rank}</span>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name(r)}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{r.bookings} booking{r.bookings === 1 ? '' : 's'} · last {day(r.last_booking_date)}{sub ? ` · ${sub(r)}` : ''}</div>
+            <div className={s.ellipsis} style={{ fontWeight: 600 }}>{name(r)}</div>
+            <div className={s.help}>{r.bookings} booking{r.bookings === 1 ? '' : 's'} · last {day(r.last_booking_date)}{sub ? ` · ${sub(r)}` : ''}</div>
           </div>
-          <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{score(r.affinity_score)}</span>
+          <span className={s.num} style={{ fontWeight: 700 }} title="Affinity score">{score(r.affinity_score)}</span>
         </div>
       ))}
     </div>
   );
 
   return (
-    <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: 14, letterSpacing: 0.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Heart size={13} color="#ec4899" /> Affinity
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: 0 }}>
-          From bookings · score {score(customer.affinity_score)}{customer.is_bulk ? ' · bulk / internal account' : ''}
-        </span>
+    <section className={s.card} aria-labelledby="cp-affinity">
+      <div className={s.cardHead}>
+        <h2 id="cp-affinity" className={s.cardTitle}>Booking interests</h2>
+        <Chip tone="gold">Score {score(customer.affinity_score)}</Chip>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
-        <RankList title={`Top services${showAll ? ` (${services.length})` : ''}`} rows={shownServices} name={r => AFFINITY_SERVICE_LABEL[r.service] || r.service} sub={r => formatAED(Number(r.revenue))} />
-        <RankList title={`Top products${showAll ? ` (${customer.product_count})` : ''}`} rows={shownProducts} name={r => r.product_name} sub={r => (r.services || []).map(s => AFFINITY_SERVICE_LABEL[s] || s).join(', ')} />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', marginTop: 12, fontSize: 11, color: 'var(--text-tertiary)' }}>
-        <span>Each booking adds 10 points, halving every 6 months · built {customer.built_at ? formatDateTime(customer.built_at) : '—'}</span>
-        {hasMore && (
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowAll(v => !v)} style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-            {showAll ? <>Top 3 only <ChevronUp size={13} /></> : <>Show all <ChevronDown size={13} /></>}
-          </button>
-        )}
-      </div>
-    </div>
+      {customer.is_bulk && <Chip tone="warn">Bulk / internal account</Chip>}
+      {rankList(`Top services${showAll ? ` (${services.length})` : ''}`, showAll ? services : services.slice(0, 3), r => AFFINITY_SERVICE_LABEL[r.service] || r.service, r => formatAED(Number(r.revenue)))}
+      {rankList(`Top products${showAll ? ` (${customer.product_count})` : ''}`, showAll ? products : products.slice(0, 3), r => r.product_name, r => (r.services || []).map(x => AFFINITY_SERVICE_LABEL[x] || x).join(', '))}
+      <span className={s.help}>Each booking adds 10 points, halving every 6 months · built {customer.built_at ? formatDateTime(customer.built_at) : '—'}</span>
+      {hasMore && (
+        <Button size="sm" variant="ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setShowAll(v => !v)}>
+          {showAll ? <>Top 3 only <ChevronUp size={13} aria-hidden="true" /></> : <>Show all <ChevronDown size={13} aria-hidden="true" /></>}
+        </Button>
+      )}
+    </section>
   );
 }
 
-// AI recommendation section — one card with 5 product tiles in a horizontal grid.
-// Only rendered by the caller when a non-empty rec exists for this contact.
-function AIRecommendationSection({ rec }: AIRecommendationSectionProps) {
-  const TYPE_LABEL: Record<string, string> = { on_trip: 'On Trip', future_trip: 'Future Trip', past_trip: 'Past Trip' };
+function AIRecommendationSection({ rec }: { rec: AiRecommendation }) {
+  const TYPE_LABEL: Record<string, string> = { on_trip: 'On trip', future_trip: 'Future trip', past_trip: 'Past trip' };
   const label = TYPE_LABEL[rec.recommendationType] || rec.recommendationType;
   const computedAgo = (() => {
     if (!rec.computedAt) return '—';
-    const d = new Date(rec.computedAt);
-    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+    const days = Math.floor((Date.now() - new Date(rec.computedAt).getTime()) / 86400000);
+    if (isNaN(days)) return '—';
     if (days === 0) return 'today';
     if (days === 1) return 'yesterday';
     return `${days} days ago`;
   })();
-
   return (
-    <div className="card" style={{ padding: 20, marginBottom: 12 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5, fontWeight: 600 }}>
-          <Sparkles size={13} style={{ color: '#8b5cf6' }} />
-          AI Recommendations — {label}
-        </div>
-        <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: rec.source === 'claude' ? 'rgba(139,92,246,0.1)' : 'rgba(148,163,184,0.15)', color: rec.source === 'claude' ? '#8b5cf6' : 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          {rec.source || 'fallback'}
-        </span>
+    <section className={s.card} aria-labelledby="cp-recs">
+      <div className={s.cardHead}>
+        <h2 id="cp-recs" className={s.cardTitle}>Suggested next · {label}</h2>
+        <Chip tone={rec.source === 'claude' ? 'gold' : 'mute'}>{rec.source || 'fallback'}</Chip>
       </div>
-
-      {/* Meta line */}
-      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 14 }}>
-        {rec.basedOnProductName ? <>Based on <strong style={{ color: 'var(--text-secondary)' }}>{rec.basedOnProductName}</strong></> : 'Based on their booking'}
-        {rec.destinationCity && <> in <strong style={{ color: 'var(--text-secondary)' }}>{rec.destinationCity}</strong></>}
-        {' · '}Computed {computedAgo}
-      </div>
-
-      {/* Product grid — 5 tiles across */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+      <span className={s.help}>
+        {rec.basedOnProductName ? <>Based on <b>{rec.basedOnProductName}</b></> : 'Based on their booking'}
+        {rec.destinationCity && <> in <b>{rec.destinationCity}</b></>} · computed {computedAgo}
+      </span>
+      <div className={s.recGrid}>
         {rec.products.map(p => (
-          <a key={p.product_id} href={p.url || 'https://www.raynatours.com'} target="_blank" rel="noopener noreferrer"
-             style={{ textDecoration: 'none', color: 'inherit', border: '1px solid var(--border, #e5e7eb)', borderRadius: 8, overflow: 'hidden', background: 'var(--card-bg, #fff)', display: 'flex', flexDirection: 'column' }}>
-            {p.image && <img src={p.image} alt={p.name} style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', display: 'block' }} />}
+          <a key={p.product_id} href={p.url || 'https://www.raynatours.com'} target="_blank" rel="noopener noreferrer" className={s.recTile}>
+            {p.image && <img src={p.image} alt={p.name || ''} />}
             <div style={{ padding: 10, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.name}</div>
-              {p.category && <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{p.category}</div>}
-              <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
-                  {p.sale_price != null ? `AED ${Math.round(Number(p.sale_price))}` : '—'}
-                </span>
-                <ExternalLink size={11} style={{ color: 'var(--text-tertiary)' }} />
+              <div className={s.recName}>{p.name}</div>
+              {p.category && <span className={s.help}>{p.category}</span>}
+              <div className={s.line} style={{ marginTop: 'auto' }}>
+                <b className={s.num}>{p.sale_price != null ? `AED ${Math.round(Number(p.sale_price))}` : '—'}</b>
+                <ExternalLink size={11} aria-hidden="true" style={{ color: 'var(--ink3)' }} />
               </div>
             </div>
           </a>
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 
-function DetailRow({ icon: Icon, label, value, color }: DetailRowProps) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '16px 100px 1fr', alignItems: 'center', gap: '0 8px', minHeight: 26 }}>
-      <Icon size={13} style={{ color: color || 'var(--text-tertiary)' }} />
-      <span style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: color || 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</span>
-    </div>
-  );
-}
-
-function BookingTable({ icon: Icon, title, color, rows, columns }: BookingTableProps) {
-  const [expanded, setExpanded] = useState(false);
+function CollapsibleTable({ title, rows, columns, defaultOpen = false }: { title: string; rows?: TableRow[]; columns: TableColumn[]; defaultOpen?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultOpen);
   const count = rows?.length || 0;
   if (count === 0) return null;
   return (
-    <div className="card" style={{ padding: 0, marginBottom: 10, overflow: 'hidden' }}>
-      <div onClick={() => setExpanded(e => !e)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', cursor: 'pointer', userSelect: 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Icon size={14} style={{ color }} />
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{title}</span>
-          <span className="badge" style={{ background: `${color}20`, color, fontSize: 11 }}>{count}</span>
-        </div>
-        {expanded ? <ChevronUp size={16} style={{ color: 'var(--text-tertiary)' }} /> : <ChevronDown size={16} style={{ color: 'var(--text-tertiary)' }} />}
-      </div>
+    <div className={`${s.card} ${s.flush}`}>
+      <button type="button" className={s.collapse} onClick={() => setExpanded(e => !e)} aria-expanded={expanded}>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b>{title}</b><Chip className={s.miniChip}>{count}</Chip></span>
+        {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+      </button>
       {expanded && (
-        <div className="table-wrap" style={{ maxHeight: 320, overflow: 'auto' }}>
-          <table style={{ fontSize: 12 }}>
-            <thead>
-              <tr>{columns.map(c => <th key={c.key} style={{ whiteSpace: 'nowrap', fontSize: 11, padding: '8px 12px' }}>{c.label}</th>)}</tr>
-            </thead>
-            <tbody>
-              {rows!.map((r, i) => (
-                <tr key={i}>
-                  {columns.map(c => (
-                    <td key={c.key} style={{ padding: '7px 12px', whiteSpace: 'nowrap' }}>
-                      {c.render ? c.render(r[c.key], r) : (r[c.key] ?? '—')}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table label={title}>
+          <thead><tr>{columns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+          <tbody>
+            {rows!.map((r, i) => (
+              <tr key={i}>{columns.map(c => <td key={c.key} style={{ whiteSpace: 'nowrap' }}>{c.render ? c.render(r[c.key], r) : (r[c.key] ?? '—')}</td>)}</tr>
+            ))}
+          </tbody>
+        </Table>
       )}
     </div>
   );
@@ -808,81 +699,53 @@ function BookingTable({ icon: Icon, title, color, rows, columns }: BookingTableP
 
 function ProfileSkeleton() {
   return (
-    <div style={{ padding: 4 }}>
-      <div className="skeleton" style={{ width: 130, height: 28, borderRadius: 6, marginBottom: 20 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24 }}>
-        <div className="skeleton" style={{ width: 48, height: 48, borderRadius: '50%' }} />
-        <div>
-          <div className="skeleton" style={{ width: 200, height: 22, borderRadius: 6, marginBottom: 8 }} />
-          <div className="skeleton" style={{ width: 100, height: 12, borderRadius: 4 }} />
-        </div>
+    <div className={s.page} aria-busy="true">
+      <Skeleton width={180} height={14} />
+      <div className={s.identity}>
+        <Skeleton width={56} height={56} radius="50%" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}><Skeleton width={200} height={24} /><Skeleton width={140} height={14} /></div>
       </div>
-      {[...Array<undefined>(3)].map((_, i) => (
-        <div key={i} className="card" style={{ padding: 20, marginBottom: 12 }}>
-          <div className="skeleton" style={{ width: 80, height: 10, borderRadius: 4, marginBottom: 14 }} />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px' }}>
-            {[...Array<undefined>(4)].map((_, j) => <div key={j} className="skeleton" style={{ height: 14, borderRadius: 4 }} />)}
-          </div>
-        </div>
-      ))}
+      <div className={s.layout}>
+        <div className={s.aside}>{[0, 1].map(i => <div key={i} className={s.card}><Skeleton width={100} height={14} /><Skeleton height={14} /><Skeleton height={14} /></div>)}</div>
+        <div className={s.main}><div className={s.kpis}>{[0, 1, 2, 3].map(i => <div key={i} className={s.kpi}><Skeleton width={70} height={12} /><Skeleton width={90} height={22} /></div>)}</div><div className={s.card}><Skeleton height={120} /></div></div>
+      </div>
     </div>
   );
 }
 
-function EditField({ label, value, onChange, type = 'text' }: EditFieldProps) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{ width: '100%', padding: '7px 10px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
-        onFocus={e => { e.target.style.borderColor = 'var(--brand-primary, #C9A96E)'; }}
-        onBlur={e => { e.target.style.borderColor = 'var(--border)'; }}
-      />
-    </div>
-  );
+function EditField({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
+  return <Field label={label}>{p => <Input {...p} type={type} value={value} onChange={e => onChange(e.target.value)} />}</Field>;
 }
 
-function EditSelect({ label, value, onChange, options }: EditSelectProps) {
+function EditSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
   return (
-    <div>
-      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>{label}</label>
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{ width: '100%', padding: '7px 10px', fontSize: 13, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
-      >
-        {options.map(o => {
-          const val = typeof o === 'string' ? o : o.value;
-          const lbl = typeof o === 'string' ? o : o.label;
-          return <option key={val} value={val}>{lbl}</option>;
-        })}
-      </select>
-    </div>
+    <Field label={label}>{p => (
+      <Select {...p} value={value} onChange={e => onChange(e.target.value)}>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </Select>
+    )}</Field>
   );
 }
 
 // ── Column definitions ──────────────────────────────────────────────────────
 
 const bookingColumns: TableColumn[] = [
-  { key: 'bill_no',       label: 'Bill #' },
-  { key: 'service_name',  label: 'Service',      render: v => v ? (v.length > 35 ? v.slice(0, 35) + '…' : v) : '—' },
-  { key: 'travel_date',   label: 'Travel Date',  render: v => formatDate(v) },
-  { key: 'booking_date',  label: 'Booked',       render: v => formatDate(v) },
-  { key: 'guest_name',    label: 'Guest' },
-  { key: 'nationality',   label: 'Nationality' },
-  { key: 'selling_price', label: 'Amount',       render: v => formatCurrency(v) },
-  { key: 'is_cancel',     label: 'Status',       render: v => v === '1' ? '❌ Cancelled' : '✅ Active' },
+  { key: 'bill_no', label: 'Bill #', render: v => <span className={s.mono}>{v || '—'}</span> },
+  { key: 'service_name', label: 'Service', render: v => v ? (v.length > 35 ? v.slice(0, 35) + '…' : v) : '—' },
+  { key: 'travel_date', label: 'Travel date', render: v => formatDate(v) },
+  { key: 'booking_date', label: 'Booked', render: v => formatDate(v) },
+  { key: 'guest_name', label: 'Guest' },
+  { key: 'nationality', label: 'Nationality' },
+  { key: 'selling_price', label: 'Amount', render: v => <span className={s.num}>{formatCurrency(v)}</span> },
+  { key: 'is_cancel', label: 'Status', render: v => v === '1' ? <Chip tone="bad">Cancelled</Chip> : <Chip tone="ok">Active</Chip> },
 ];
 
 const gtmEventColumns: TableColumn[] = [
-  { key: 'event_name',  label: 'Event' },
-  { key: 'page_url',    label: 'Page',       render: v => { try { return new URL(v).pathname; } catch { return v || '—'; } } },
-  { key: 'event_value', label: 'Value',      render: v => parseFloat(v) > 0 ? formatCurrency(v) : '—' },
-  { key: 'device_type', label: 'Device',     render: v => v || '—' },
-  { key: 'city',        label: 'City',       render: v => v || '—' },
-  { key: 'utm_source',  label: 'UTM Source', render: v => v || '—' },
-  { key: 'created_at',  label: 'Time',       render: v => formatDateTime(v) },
+  { key: 'event_name', label: 'Event' },
+  { key: 'page_url', label: 'Page', render: v => pathOf(v) || '—' },
+  { key: 'event_value', label: 'Value', render: v => parseFloat(v) > 0 ? formatCurrency(v) : '—' },
+  { key: 'device_type', label: 'Device', render: v => v || '—' },
+  { key: 'city', label: 'City', render: v => v || '—' },
+  { key: 'utm_source', label: 'UTM source', render: v => v || '—' },
+  { key: 'created_at', label: 'Time', render: v => formatDateTime(v) },
 ];

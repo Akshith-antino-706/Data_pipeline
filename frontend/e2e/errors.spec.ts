@@ -6,7 +6,7 @@ test.describe('API 500 handling', () => {
     await page.goto('/contacts');
     await expect(page.getByText('Database unavailable')).toBeVisible();
     await expect(page.getByText('Something went wrong')).toHaveCount(0);
-    await expect(page.getByPlaceholder('Search by name, email, phone or company...')).toBeVisible();
+    await expect(page.getByRole('searchbox', { name: 'Search contacts' })).toBeVisible();
   });
 
   test('journey dashboard 500 shows an error state with a working Retry', async ({ authed: page, api }) => {
@@ -25,8 +25,9 @@ test.describe('API 500 handling', () => {
   test('500 with an HTML body (proxy error page) is handled', async ({ authed: page, api }) => {
     api.use({ method: 'GET', path: /^\/api\/v3\/unified-contacts\?/, status: 502, body: '<html>Bad Gateway</html>' });
     await page.goto('/contacts');
+    await expect(page.getByRole('status').filter({ hasText: /\S/ })).toBeVisible();
     await expect(page.getByText('Something went wrong')).toHaveCount(0);
-    await expect(page.getByPlaceholder('Search by name, email, phone or company...')).toBeVisible();
+    await expect(page.getByRole('searchbox', { name: 'Search contacts' })).toBeVisible();
   });
 
   // BUG: app/(dashboard)/affinity/page.tsx stores the customers response as-is (setList(d)) and

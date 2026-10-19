@@ -54,7 +54,7 @@ describe('Contacts list page (extra coverage)', () => {
     asMock('getUnifiedContacts').mockReturnValue(new Promise(() => {}));
     asMock('getUnifiedStats').mockReturnValue(new Promise(() => {}));
     const { container } = renderPage();
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(8);
+    expect(container.querySelectorAll('.ui-skel').length).toBeGreaterThan(8);
   });
 
   it('renders typical rows: booking total sum, PROSPECT fallback, dashes; no NaN/undefined', async () => {
@@ -62,9 +62,10 @@ describe('Contacts list page (extra coverage)', () => {
     mockOk('getUnifiedStats', { data: { total_contacts: 2, total_bookings: 3, total_revenue: 100 } });
     renderPage();
     await screen.findByText('Ann');
-    expect(screen.getByText('Ann').closest('tr')!.querySelector('.badge.badge-blue:not([style*="font-size: 11"])')).toBeTruthy();
-    expect(screen.getByText('Ann').closest('tr')!.textContent).toContain('3');
-    expect(screen.getByText('PROSPECT')).toBeTruthy();
+    const annCells = [...screen.getByText('Ann').closest('tr')!.querySelectorAll('td')].map(td => td.textContent);
+    expect(annCells).toContain('3');
+    expect(annCells).toContain('On trip');
+    expect(screen.getByText('Prospect')).toBeTruthy();
     expect(screen.getByText('noname@x.com')).toBeTruthy();
     expect(screen.getByText(/1–2 of 2/)).toBeTruthy();
     expect(lastContactsCall()).toMatchObject({ page: 1, limit: 20, sortBy: 'last_seen_at', sortDir: 'DESC', businessType: 'B2C' });
@@ -74,11 +75,11 @@ describe('Contacts list page (extra coverage)', () => {
   it('shows the empty state including the search term, and sends search to the API', async () => {
     renderPage();
     await screen.findByText('No contacts found.');
-    fireEvent.change(screen.getByPlaceholderText(/Search by name/), { target: { value: 'zzz' } });
+    fireEvent.change(screen.getByPlaceholderText('Name, email or phone'), { target: { value: 'zzz' } });
     fireEvent.click(screen.getByText('Search'));
     await screen.findByText('No contacts found for "zzz".');
     expect(lastContactsCall()).toMatchObject({ search: 'zzz', page: 1 });
-    fireEvent.click(screen.getByText('Clear'));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     await waitFor(() => expect(lastContactsCall().search).toBeUndefined());
   });
 
@@ -92,9 +93,9 @@ describe('Contacts list page (extra coverage)', () => {
   it('sorting toggles direction on the same column and resets on a new one', async () => {
     renderPage();
     await screen.findByText('No contacts found.');
-    fireEvent.click(screen.getByText('Email'));
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Email' }));
     await waitFor(() => expect(lastContactsCall()).toMatchObject({ sortBy: 'email', sortDir: 'DESC' }));
-    fireEvent.click(screen.getByText('Email'));
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Email' }));
     await waitFor(() => expect(lastContactsCall()).toMatchObject({ sortBy: 'email', sortDir: 'ASC' }));
   });
 
@@ -102,13 +103,14 @@ describe('Contacts list page (extra coverage)', () => {
     mockOk('getUnifiedContacts', { data: rows, total: 90, totalPages: 3 });
     renderPage();
     await screen.findByText('Ann');
-    expect(screen.getByText('1 / 3')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Page 1' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: 'Page 3' })).toBeTruthy();
     expect((screen.getByText('«') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByText('Next'));
     await waitFor(() => expect(lastContactsCall()).toMatchObject({ page: 2 }));
     fireEvent.click(screen.getByText('»'));
     await waitFor(() => expect(lastContactsCall()).toMatchObject({ page: 3 }));
-    fireEvent.click(screen.getByRole('button', { name: '50' }));
+    fireEvent.change(screen.getByLabelText('Rows'), { target: { value: '50' } });
     await waitFor(() => expect(lastContactsCall()).toMatchObject({ page: 1, limit: 50 }));
   });
 
@@ -140,7 +142,7 @@ describe('Contacts list page (extra coverage)', () => {
     const annRow = (await screen.findByText('Ann')).closest('tr')!;
     const buttons = annRow.querySelectorAll('button');
     fireEvent.click(buttons[buttons.length - 1]);
-    expect(await screen.findByText('Delete Contact')).toBeTruthy();
+    expect(await screen.findByText('Delete contact')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }));
     await screen.findByText('Contact deleted');
     expect(api.deleteUnifiedContact).toHaveBeenCalledWith(1);
@@ -162,12 +164,12 @@ describe('Contacts list page (extra coverage)', () => {
     mockOk('createUnifiedContact', { data: { id: 99 } });
     renderPage();
     await screen.findByText('No contacts found.');
-    fireEvent.click(screen.getByText('Add Contact'));
-    fireEvent.click(await screen.findByText('Create Contact'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add contact' }));
+    fireEvent.click(await screen.findByText('Create contact'));
     await screen.findByText('Provide at least a name, email, or phone.');
     expect(api.createUnifiedContact).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText('e.g. john@example.com'), { target: { value: 'new@x.com' } });
-    fireEvent.click(screen.getByText('Create Contact'));
+    fireEvent.click(screen.getByText('Create contact'));
     await waitFor(() => expect(api.createUnifiedContact).toHaveBeenCalledWith(expect.objectContaining({ email: 'new@x.com', contact_type: 'B2C', name: '' })));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/contacts/99'));
   });
@@ -176,10 +178,10 @@ describe('Contacts list page (extra coverage)', () => {
     asMock('createUnifiedContact').mockRejectedValue(new Error('Duplicate email'));
     renderPage();
     await screen.findByText('No contacts found.');
-    fireEvent.click(screen.getByText('Add Contact'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add contact' }));
     fireEvent.change(await screen.findByPlaceholderText('e.g. John Smith'), { target: { value: 'Zed' } });
-    fireEvent.click(screen.getByText('Create Contact'));
+    fireEvent.click(screen.getByText('Create contact'));
     await screen.findByText('Duplicate email');
-    expect(screen.getByText('Add New Contact')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Add contact' })).toBeTruthy();
   });
 });

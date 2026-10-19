@@ -98,19 +98,35 @@ describe('Contact profile page', () => {
   beforeEach(() => { nav.params = { id: '42' }; });
   const contact = (extra: Record<string, unknown>) => ({ data: { id: 42, name: 'Zed', email: 'z@x.com', ...extra } });
 
-  it('STATUS_COLOR falls back to slate for an unknown booking_status (regression)', async () => {
-    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'PAST_ENQUIRY' }));
+  it('status chip falls back to a neutral tone and readable label for an unknown booking_status (regression)', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'SOME_NEW_STATUS' }));
     render(<ContactProfile />);
-    const badges = await screen.findAllByText('PAST_ENQUIRY');
-    const badge = badges.find(el => el.classList.contains('badge'));
-    expect(badge?.style.color).toBe('rgb(100, 116, 139)');
+    const chips = await screen.findAllByText('Some new status');
+    expect(chips.length).toBeGreaterThan(0);
+    for (const chip of chips) expect(chip.classList.contains('ui-chip--mute')).toBe(true);
   });
 
-  it('known status uses its mapped colour', async () => {
+  it('known status uses its mapped tone', async () => {
     vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'FUTURE_TRAVEL' }));
     render(<ContactProfile />);
-    const badge = (await screen.findAllByText('FUTURE_TRAVEL')).find(el => el.classList.contains('badge'));
-    expect(badge?.style.color).toBe('rgb(59, 130, 246)');
+    const chips = await screen.findAllByText('Upcoming trip');
+    for (const chip of chips) expect(chip.classList.contains('ui-chip--info')).toBe(true);
+  });
+
+  it('activity timeline merges bookings, GTM events and journey emails, newest first', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({
+      booking_status: 'PAST_BOOKING', total_tour_bookings: 1,
+      rayna_tours: [{ bill_no: 'B1', service_name: 'Desert safari', booking_date: '01/03/2025', selling_price: '640', is_cancel: '0' }],
+    }));
+    vi.mocked(api.getContactGTMEvents).mockResolvedValue({ summary: [{ event_name: 'page_view', count: 1, total_value: '0' }], events: [{ event_name: 'page_view', page_url: 'https://x.com/dubai', created_at: '2026-05-02T10:00:00Z' }] });
+    vi.mocked(api.getContactJourneys).mockResolvedValue({ data: [{ journey_id: 7, name: 'Welcome', journey_status: 'active', entry_status: 'active', nodes: [{ node_id: 'n1', subject: 'Hi', delivered: true, sent_at: '2025-06-01T09:00:00Z' }] }] });
+    render(<ContactProfile />);
+    const web = await screen.findByText('Page view · /dubai');
+    const mail = screen.getByText('Sent email “Hi”');
+    const booking = screen.getByText('Booked Desert safari — AED 640');
+    expect(web.compareDocumentPosition(mail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mail.compareDocumentPosition(booking) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined|Invalid Date/);
   });
 
   it('shows "Contact not found" when the API errors', async () => {
@@ -125,7 +141,7 @@ describe('Contact profile page', () => {
   it('profile formatAED formats string revenue', async () => {
     vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'ON_TRIP', total_booking_revenue: '12345.6' }));
     render(<ContactProfile />);
-    await screen.findByText('Zed');
+    await screen.findByRole('heading', { level: 1, name: 'Zed' });
     expect(bodyText()).toContain('AED 12,346');
   });
 });

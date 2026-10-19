@@ -137,7 +137,7 @@ describe('All segments page', () => {
     render(<AllSegmentsPage />);
     await screen.findByText('High Spenders');
     fireEvent.click(screen.getAllByTitle('Delete')[0]);
-    expect(screen.getByText('Delete Segment')).toBeTruthy();
+    expect(screen.getByText('Delete segment?')).toBeTruthy();
     expect(screen.getByText(/5 conditions/)).toBeTruthy();
     fireEvent.click(screen.getByText('Cancel'));
     expect(api.deleteCustomSegment).not.toHaveBeenCalled();
@@ -161,8 +161,8 @@ describe('All segments page', () => {
   it('Create Segment opens the modal', async () => {
     render(<AllSegmentsPage />);
     await screen.findByText('No custom segments yet');
-    fireEvent.click(screen.getAllByText('Create Segment')[0]);
-    await screen.findByText('Create Custom Segment');
+    fireEvent.click(screen.getAllByText('Create segment')[0]);
+    await screen.findByText('New segment');
   });
 
   // BUG: all-segments/page.tsx:50 calls s.name.toLowerCase() unguarded, so a segment

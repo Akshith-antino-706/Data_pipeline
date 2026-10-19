@@ -56,7 +56,7 @@ describe('Segment activity page', () => {
     vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
     vi.mocked(api.getSegmentChanges).mockResolvedValue(changes as unknown as ChRes);
     renderPage();
-    await screen.findByText('Daily Log');
+    await screen.findByText('Daily log');
     expect(screen.getAllByText((1200).toLocaleString()).length).toBeGreaterThan(0);
     expect(screen.getAllByText('AED 50,000').length).toBeGreaterThan(0);
     expect(screen.getByText('ODD_SEG')).toBeTruthy();
@@ -64,7 +64,7 @@ describe('Segment activity page', () => {
     expect(screen.getByText('-5')).toBeTruthy();
     expect(screen.getByText('18 Oct 2026')).toBeTruthy();
     expect(screen.getByText('17 Oct 2026')).toBeTruthy();
-    await screen.findByText('Segment Changes');
+    await screen.findByText('Segment changes');
     expect(screen.getByText('2026-10-17 → 2026-10-18')).toBeTruthy();
     expect(screen.getByText('+20')).toBeTruthy();
     expect(screen.getByText('-10')).toBeTruthy();
@@ -77,14 +77,14 @@ describe('Segment activity page', () => {
     vi.mocked(api.getSegmentActivity).mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(screen.queryByText('Total Customers')).toBeNull();
-    expect(screen.queryByText('Daily Log')).toBeNull();
+    expect(screen.queryByText('Daily log')).toBeNull();
   });
 
   it('empty data shows the empty log message and zero KPIs', async () => {
     renderPage();
     await screen.findByText(/No daily logs yet/);
     expect(screen.getByText('AED 0')).toBeTruthy();
-    expect(screen.queryByText('Segment Changes')).toBeNull();
+    expect(screen.queryByText('Segment changes')).toBeNull();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
@@ -98,7 +98,7 @@ describe('Segment activity page', () => {
 
   it('days and segment filters refetch with right params', async () => {
     renderPage();
-    await screen.findByText('Daily Log');
+    await screen.findByText('Daily log');
     const [daysSel, segSel] = screen.getAllByRole('combobox');
     fireEvent.change(daysSel, { target: { value: '30' } });
     await waitFor(() => expect(api.getSegmentActivity).toHaveBeenLastCalledWith({ days: 30, businessType: 'B2C' }));
@@ -108,7 +108,7 @@ describe('Segment activity page', () => {
 
   it('Download CSV / Export call downloadSegmentActivity with current filters', async () => {
     renderPage();
-    await screen.findByText('Daily Log');
+    await screen.findByText('Daily log');
     fireEvent.click(screen.getByText('Download CSV'));
     expect(api.downloadSegmentActivity).toHaveBeenCalledWith({ days: 2, segment: '', businessType: 'B2C' });
     fireEvent.click(screen.getByText('Export'));
@@ -117,8 +117,8 @@ describe('Segment activity page', () => {
 
   it('Snapshot Now snapshots, reloads and refetches changes', async () => {
     renderPage();
-    await screen.findByText('Daily Log');
-    fireEvent.click(screen.getByText('Snapshot Now'));
+    await screen.findByText('Daily log');
+    fireEvent.click(screen.getByText('Snapshot now'));
     await waitFor(() => expect(api.snapshotDailySegments).toHaveBeenCalled());
     await waitFor(() => expect(api.getSegmentActivity).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(api.getSegmentChanges).toHaveBeenCalledTimes(2));
@@ -127,8 +127,8 @@ describe('Segment activity page', () => {
   it('Snapshot failure does not crash', async () => {
     vi.mocked(api.snapshotDailySegments).mockRejectedValue(new Error('x'));
     renderPage();
-    await screen.findByText('Daily Log');
-    fireEvent.click(screen.getByText('Snapshot Now'));
+    await screen.findByText('Daily log');
+    fireEvent.click(screen.getByText('Snapshot now'));
     await waitFor(() => expect(api.snapshotDailySegments).toHaveBeenCalled());
     expect(api.getSegmentActivity).toHaveBeenCalledTimes(1);
   });
@@ -158,7 +158,7 @@ describe('Segment activity page', () => {
       liveToday: [], logs: [{ log_date: '2026-10-18', segment_label: 'ON_TRIP', entered: 0, exited: 0, converted: 0, revenue: '12345.6' }],
     } as unknown as ActRes);
     renderPage();
-    await screen.findByText('Daily Log');
+    await screen.findByText('Daily log');
     await screen.findByText('AED 12,346', {}, { timeout: 300 });
   });
 

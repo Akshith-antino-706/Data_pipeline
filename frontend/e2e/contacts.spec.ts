@@ -7,7 +7,7 @@ test.describe('contacts', () => {
     await expect(table.getByText('Aisha Khan')).toBeVisible();
     await expect(table.getByText('Rahul Mehta')).toBeVisible();
 
-    const search = page.getByPlaceholder('Search by name, email, phone or company...');
+    const search = page.getByRole('searchbox', { name: 'Search contacts' });
     await search.fill('rahul');
     await search.press('Enter');
 
@@ -19,7 +19,7 @@ test.describe('contacts', () => {
     await search.press('Enter');
     await expect(page.getByText('No contacts found for "zzz-nobody".')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Clear' }).first().click();
+    await page.getByRole('button', { name: 'Clear search' }).click();
     await expect(table.getByText('Aisha Khan')).toBeVisible();
   });
 });

@@ -1,0 +1,125 @@
+/* Page-local styles for the Leads screen. Uses the design tokens from app/globals.css. */
+
+.page { display: flex; flex-direction: column; gap: 18px; min-width: 0; max-width: 1280px; }
+
+.brand { display: flex; align-items: center; gap: 12px; }
+.brandLogo { height: 40px; width: 96px; object-fit: contain; display: block; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; box-sizing: content-box; }
+
+.headerActions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ── Period card ── */
+.periodCard { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+.periodRow { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; }
+.periodRow > * { min-width: 0; }
+.label { font-size: 13px; font-weight: 600; color: var(--ink); }
+.help { font-size: 12px; color: var(--ink3); font-weight: 400; }
+.note { font-size: 13px; color: var(--ink2); }
+.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; color: var(--ink3); }
+.num { font-variant-numeric: tabular-nums; }
+.spacer { flex: 1 1 auto; }
+.inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inline :global(.ui-input) { height: 32px; width: auto; max-width: 100%; }
+.dateField { display: flex; align-items: center; gap: 6px; }
+.dateField :global(.ui-input) { height: 32px; width: 150px; }
+
+/* Segmented control */
+.seg { display: inline-flex; flex-wrap: wrap; background: var(--sunken); padding: 3px; border-radius: 8px; gap: 2px; max-width: 100%; }
+.segBtn {
+  font: inherit; font-size: 13px; font-weight: 600; height: 30px; padding: 0 12px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink2); cursor: pointer; white-space: nowrap;
+}
+.segBtn[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(18, 24, 32, 0.08); }
+.segBtn:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+/* Pills */
+.pill {
+  font: inherit; font-size: 13px; font-weight: 600; height: 32px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink2); cursor: pointer; white-space: nowrap;
+}
+.pill[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+
+/* ── KPI cards ── */
+.kpiGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.kpi { padding: 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.kpiValue { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.2; overflow-wrap: anywhere; }
+.kpiValueText { font-size: 20px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.kpiTrend { font-size: 13px; font-weight: 600; color: var(--ink2); }
+.up { color: var(--ok); }
+.down { color: var(--bad); }
+.flat { color: var(--ink3); }
+
+/* ── Cards with a header row ── */
+.cardPad { padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cardHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cardTitle { font-size: 15px; font-weight: 700; margin: 0; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink2); flex-wrap: wrap; }
+.legendItem { display: inline-flex; gap: 6px; align-items: center; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.chartEmpty { height: 120px; display: flex; align-items: center; justify-content: center; color: var(--ink3); font-size: 13px; }
+.chartSkel { height: 220px; display: flex; align-items: flex-end; gap: 3%; padding: 0 3%; border-bottom: 1px solid var(--line); }
+
+/* ── Tables ── */
+.tableBox { max-height: 560px; overflow: auto; }
+.r { text-align: right !important; }
+.stickyCol { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+.th2 { display: block; font-size: 11px; font-weight: 400; color: var(--ink3); }
+.rowClickable { cursor: pointer; }
+.rowOpen td { background: var(--gold-soft); }
+.muted { color: var(--ink3); font-style: italic; }
+.drill td { background: var(--sunken); }
+.drillInner { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.emptyLine { padding: 20px 12px; text-align: center; color: var(--ink3); font-size: 13px; }
+.cellNew { color: var(--info); font-weight: 600; }
+.cellOld { color: var(--warn); font-weight: 600; }
+.sep { color: var(--ink3); }
+.pager { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; }
+.searchRow { display: flex; gap: 8px; flex: 1 1 280px; min-width: 0; }
+.searchRow :global(.ui-input) { flex: 1; min-width: 0; }
+.dim { opacity: 0.6; }
+
+/* ── Department groups ── */
+.groupList { display: flex; flex-direction: column; gap: 10px; }
+.groupItem { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.groupHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.groupName { font-weight: 600; font-size: 14px; }
+.groupActions { margin-left: auto; display: flex; gap: 4px; }
+.chipWrap { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ── Registration source picker ── */
+.sourceRow { display: flex; gap: 10px; flex-wrap: wrap; }
+.sourceBtn {
+  font: inherit; display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink2); font-weight: 600; font-size: 14px;
+}
+.sourceBtn[aria-checked="true"] { border-color: var(--gold); background: var(--gold-soft); color: var(--gold-ink); }
+
+/* ── Group modal ── */
+.modal { max-width: 540px; width: 100%; max-height: 86vh; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; }
+.modalHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modalHead h2 { margin: 0; font-size: 18px; }
+.modalBody { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; min-height: 0; }
+.modalList { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.modalItem { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.modalItem:last-child { border-bottom: 0; }
+.modalItem[data-checked] { background: var(--gold-soft); }
+.modalItem[data-disabled] { cursor: not-allowed; opacity: 0.6; }
+.modalItemText { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 500; }
+.check { width: 16px; height: 16px; flex-shrink: 0; margin: 0; accent-color: var(--gold); cursor: inherit; }
+
+.spin { animation: leadsSpin 1s linear infinite; }
+@keyframes leadsSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .periodCard { padding: 12px; }
+  .spacer { display: none; }
+  .dateField { flex: 1 1 100%; }
+  .dateField :global(.ui-input) { flex: 1; width: auto; }
+  .kpiGrid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpiValue { font-size: 22px; }
+  .cardPad { padding: 14px; }
+  .stickyCol { position: static; }
+}
+@media (max-width: 380px) {
+  .kpiGrid { grid-template-columns: 1fr; }
+}

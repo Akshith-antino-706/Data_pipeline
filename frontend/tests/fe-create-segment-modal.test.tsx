@@ -21,15 +21,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 
 function pickContactField(field: string): void {
-  fireEvent.click(screen.getByText('Contact Property'));
+  fireEvent.click(screen.getByText('Contact property'));
   fireEvent.change(screen.getByDisplayValue('Select a property...'), { target: { value: field } });
 }
 
 describe('CreateSegmentModal', () => {
   it('renders the type picker and loads GTM event names (empty names filtered)', async () => {
     render(<CreateSegmentModal onClose={() => {}} />);
-    expect(screen.getByText('Contact Property')).toBeTruthy();
-    expect(screen.getByText('GTM / Analytics Event')).toBeTruthy();
+    expect(screen.getByText('Contact property')).toBeTruthy();
+    expect(screen.getByText('Website event (GTM)')).toBeTruthy();
     expect(api.getGTMAnalytics).toHaveBeenCalledTimes(1);
   });
 
@@ -39,7 +39,7 @@ describe('CreateSegmentModal', () => {
     cleanup();
     vi.mocked(api.getGTMAnalytics).mockResolvedValueOnce(null);
     render(<CreateSegmentModal onClose={() => {}} />);
-    expect(screen.getByText('Contact Property')).toBeTruthy();
+    expect(screen.getByText('Contact property')).toBeTruthy();
   });
 
   it('revenue "between": min=0 and max=0 are kept (not dropped as falsy)', async () => {
@@ -69,7 +69,7 @@ describe('CreateSegmentModal', () => {
 
   it('GTM count "between": min=0 is kept and makes the condition valid', async () => {
     render(<CreateSegmentModal onClose={() => {}} />);
-    fireEvent.click(screen.getByText('GTM / Analytics Event'));
+    fireEvent.click(screen.getByText('Website event (GTM)'));
     fireEvent.change(screen.getByDisplayValue('at least (≥)'), { target: { value: 'between' } });
     const min = screen.getByPlaceholderText('min') as HTMLInputElement;
     fireEvent.change(min, { target: { value: '0' } });
@@ -93,12 +93,12 @@ describe('CreateSegmentModal', () => {
     render(<CreateSegmentModal onClose={onClose} onCreated={onCreated} />);
     pickContactField('revenue');
     fireEvent.change(screen.getByPlaceholderText('Min'), { target: { value: '0' } });
-    fireEvent.click(screen.getByText('Create Segment'));
+    fireEvent.click(screen.getByText('Save segment'));
     expect(create).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText('e.g. High-Value Local Travelers'), { target: { value: '  VIP  ' } });
     fireEvent.change(screen.getByPlaceholderText('Optional description'), { target: { value: '   ' } });
-    fireEvent.click(screen.getByText('Create Segment'));
+    fireEvent.click(screen.getByText('Save segment'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith({
       name: 'VIP', description: null,
@@ -114,7 +114,7 @@ describe('CreateSegmentModal', () => {
     pickContactField('revenue');
     fireEvent.change(screen.getByPlaceholderText('Min'), { target: { value: '5' } });
     fireEvent.change(screen.getByPlaceholderText('e.g. High-Value Local Travelers'), { target: { value: 'X' } });
-    fireEvent.click(screen.getByText('Create Segment'));
+    fireEvent.click(screen.getByText('Save segment'));
     await waitFor(() => expect(create).toHaveBeenCalled());
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -126,6 +126,31 @@ describe('CreateSegmentModal', () => {
     }} />);
     expect((screen.getByPlaceholderText('Min') as HTMLInputElement).value).toBe('0');
     expect((screen.getByPlaceholderText('Max') as HTMLInputElement).value).toBe('500');
-    expect(screen.getByText('Save Changes')).toBeTruthy();
+    expect(screen.getByText('Save changes')).toBeTruthy();
+  });
+  it('shows a plain-words summary and live count, and "Save as draft" sends status draft', async () => {
+    const onClose = vi.fn<() => void>();
+    render(<CreateSegmentModal onClose={onClose} />);
+    pickContactField('revenue');
+    fireEvent.change(screen.getByDisplayValue('Between'), { target: { value: 'gte' } });
+    fireEvent.change(screen.getByPlaceholderText('Min value'), { target: { value: '5000' } });
+    expect(screen.getByText('have revenue (aed) of at least 5000')).toBeTruthy();
+    await screen.findByText('1,234');
+    expect(screen.getByText('contacts match 1 complete rule')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('e.g. High-Value Local Travelers'), { target: { value: 'Big spenders' } });
+    fireEvent.click(screen.getByText('Save as draft'));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Big spenders', status: 'draft' }));
+  });
+
+  it('incomplete rules are flagged and preview failure offers a retry', async () => {
+    preview.mockRejectedValueOnce(new Error('HTTP 500'));
+    render(<CreateSegmentModal onClose={() => {}} />);
+    pickContactField('revenue');
+    expect(screen.getByText('Finish this rule or remove it. Incomplete rules are not saved.')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Min'), { target: { value: '10' } });
+    await screen.findByText("Couldn't count contacts", {}, { timeout: 2000 });
+    fireEvent.click(screen.getByText('Count again'));
+    await screen.findByText('1,234');
   });
 });

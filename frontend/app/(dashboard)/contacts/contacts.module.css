@@ -1,0 +1,129 @@
+/* Shared styles for the Contacts list and Contact profile. Uses design tokens from globals.css. */
+
+.page { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kpiLabel { font-size: 12px; color: var(--ink3); }
+.kpiValue { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.25; overflow-wrap: anywhere; }
+.kpiSub { font-size: 12px; color: var(--ink3); }
+
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.search { position: relative; flex: 1 1 260px; max-width: 420px; display: flex; gap: 6px; }
+.searchIcon { position: absolute; left: 12px; top: 12px; color: var(--ink3); pointer-events: none; }
+.searchInput { padding-left: 36px !important; }
+.filterChip { height: 32px !important; padding: 0 6px 0 12px !important; }
+.chipX { border: 0; background: transparent; color: inherit; cursor: pointer; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.chipX:hover { background: var(--line); }
+.spacer { flex: 1; }
+.badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--gold); color: #121820; font-size: 11px; font-weight: 700; }
+
+.filterPanel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.filterGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.filterGroup { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); grid-column: 1 / -1; margin-top: 4px; }
+.fsWrap { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fsButton { display: flex; justify-content: space-between; align-items: center; gap: 6px; text-align: left; cursor: pointer; }
+.fsButton span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fsMenu { position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; z-index: 30; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 16px rgba(16, 24, 32, .14); max-height: 240px; display: flex; flex-direction: column; overflow: hidden; }
+.fsMenuList { overflow-y: auto; flex: 1; padding: 4px; }
+.fsOption { display: block; width: 100%; text-align: left; font: inherit; font-size: 13px; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+.fsOption:hover { background: var(--sunken); }
+.fsOptionOn { color: var(--gold-ink); font-weight: 600; background: var(--gold-soft); }
+.dateRange { grid-column: span 2; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dateRow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+.meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink2); }
+.num { font-variant-numeric: tabular-nums; }
+.r { text-align: right !important; }
+.help { font-size: 12px; color: var(--ink3); }
+.mono { font-family: var(--font-mono, 'IBM Plex Mono'), ui-monospace, monospace; font-size: 12px; }
+
+.table { min-width: 980px; }
+.row { cursor: pointer; }
+.row:hover td { background: var(--sunken); }
+.nameLink { color: var(--ink); font-weight: 600; text-decoration: none; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.nameLink:hover { color: var(--gold-ink); }
+.sortBtn { font: inherit; font-size: 12px; font-weight: 600; color: var(--ink3); background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.sortBtnOn { color: var(--ink); }
+.sortSep { color: var(--line); margin: 0 6px; }
+.miniChip { height: 22px !important; font-size: 11px !important; padding: 0 8px !important; }
+.rowActions { display: flex; gap: 4px; justify-content: flex-end; }
+
+.pager { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.pageOn { background: var(--gold-soft) !important; border-color: var(--gold) !important; color: var(--gold-ink) !important; }
+.rowsSel { height: 32px !important; width: 76px !important; }
+
+.modalBody { width: 100%; max-width: 560px; max-height: calc(100vh - 40px); overflow-y: auto; }
+.formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+.alert { padding: 9px 12px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 13px; }
+
+/* ---------- Profile ---------- */
+.crumbs { display: flex; gap: 8px; font-size: 13px; color: var(--ink3); align-items: center; flex-wrap: wrap; }
+.crumbs a, .crumbs button { color: var(--ink3); text-decoration: none; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+.crumbCurrent { color: var(--ink); font-weight: 600; }
+.ph { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.ph h1 { font-size: 26px; line-height: 34px; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
+.identity { display: flex; gap: 14px; align-items: center; min-width: 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.aside { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.main { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cardHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cardTitle { font-size: 15px; font-weight: 700; margin: 0; }
+.dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px 10px; font-size: 13px; margin: 0; }
+.dl dt { font-size: 12px; color: var(--ink3); }
+.dl dd { margin: 0; overflow-wrap: anywhere; }
+.line { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; }
+.editGrid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+
+.journey { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.journeyHead { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; width: 100%; background: none; border: 0; font: inherit; color: inherit; text-align: left; }
+.journeyName { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.journeyBody { border-top: 1px solid var(--line); padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+.node { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); }
+.nodeTitle { font-size: 12px; font-weight: 600; display: flex; gap: 6px; align-items: center; min-width: 0; }
+.nodeTitle span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rank { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.rankNo { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--sunken); color: var(--ink2); }
+.rankNoTop { background: var(--gold-soft); color: var(--gold-ink); }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { font: inherit; font-size: 13px; font-weight: 600; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink2); cursor: pointer; white-space: nowrap; }
+.pillOn { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.day { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); padding: 10px 0 6px; }
+.event { display: grid; grid-template-columns: 48px 28px minmax(0, 1fr); gap: 10px; padding: 8px 0; align-items: start; }
+.eventTime { color: var(--ink3); padding-top: 4px; }
+.eventIcon { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+.eventTitle { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.eventSub { font-size: 13px; color: var(--ink2); overflow-wrap: anywhere; }
+
+.typeGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.typeCell { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); display: flex; flex-direction: column; gap: 4px; }
+.bar { height: 4px; border-radius: 2px; background: var(--sunken); }
+.barFill { height: 100%; border-radius: 2px; background: var(--gold); }
+.collapse { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 16px; width: 100%; cursor: pointer; background: none; border: 0; font: inherit; color: inherit; text-align: left; }
+.flush { padding: 0; overflow: hidden; gap: 0; }
+.flush :global(.ui-table-wrap) { border: 0; border-top: 1px solid var(--line); border-radius: 0; max-height: 360px; overflow: auto; }
+.gtmChips { display: flex; gap: 8px; flex-wrap: wrap; }
+.gtmChip { padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--ink); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+
+.recGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.recTile { text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); display: flex; flex-direction: column; }
+.recTile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+.recName { font-size: 13px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.quote { font-size: 13px; padding: 8px 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--line); max-height: 80px; overflow: auto; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .formGrid { grid-template-columns: 1fr; }
+  .dateRange { grid-column: auto; }
+  .search { max-width: none; }
+  .ph h1 { font-size: 22px; line-height: 28px; }
+  .dl { grid-template-columns: 96px minmax(0, 1fr); }
+  .event { grid-template-columns: 40px 28px minmax(0, 1fr); gap: 8px; }
+  .kpiValue { font-size: 19px; }
+}

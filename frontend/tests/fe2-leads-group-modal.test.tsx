@@ -176,4 +176,14 @@ describe('GroupDepartmentModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).toHaveBeenCalledTimes(2);
   });
+
+  it('marks the dialog for assistive tech, shows a labelled loader and closes on Escape', async () => {
+    vi.mocked(api.getDepartments).mockReturnValue(new Promise<Depts>(() => {}));
+    const onClose = vi.fn();
+    render(<GroupDepartmentModal open onClose={onClose} />);
+    expect(screen.getByRole('dialog', { name: 'Add Department Group' })).toBeTruthy();
+    expect(screen.getByLabelText('Loading departments')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

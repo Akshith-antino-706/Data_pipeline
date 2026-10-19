@@ -79,7 +79,7 @@ describe('Affinity page', () => {
     expect(screen.getByText('0.46')).toBeTruthy();
     expect(screen.getByText('Bulk')).toBeTruthy();
     expect(screen.getByText('score 12.3 · 1 booking')).toBeTruthy();
-    expect(screen.getByText(/1 customers · booked all time · page 1 of 1/)).toBeTruthy();
+    expect(bodyText()).toMatch(/1 customers · booked all time · page 1 of 1/);
     const visas = screen.getByText('No bookings').closest('button')!;
     expect(visas.disabled).toBe(true);
     expect(lastCall('getAffinityCustomers')).toMatchObject({ businessType: 'B2C', period: 'all', excludeBulk: 1, view: 'service', sort: 'score', limit: 25, page: 1 });
@@ -95,7 +95,7 @@ describe('Affinity page', () => {
   it('shows "not built yet" and Build now calls rebuildAffinity', async () => {
     mockOk('getAffinitySummary', { status: 'idle' });
     renderPage();
-    await screen.findByText(/hasn.t been built yet/);
+    await screen.findByText(/haven.t been built yet/);
     fireEvent.click(screen.getByText('Build now'));
     await waitFor(() => expect(api.rebuildAffinity).toHaveBeenCalledTimes(1));
     await screen.findByText('Building… (a few minutes)');
@@ -128,11 +128,11 @@ describe('Affinity page', () => {
     expect(lastCall('getAffinitySummary')).toMatchObject({ period: 'week' });
     fireEvent.click(screen.getByRole('checkbox'));
     await waitFor(() => expect(lastCall('getAffinityCustomers')).toMatchObject({ excludeBulk: 0 }));
-    fireEvent.click(screen.getByText('customers with #1').closest('button')!);
+    fireEvent.click(screen.getByText('Tours').closest('button')!);
     await waitFor(() => expect(lastCall('getAffinityCustomers')).toMatchObject({ service: 'tours' }));
-    fireEvent.click(screen.getByText('Revenue'));
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'revenue' } });
     await waitFor(() => expect(lastCall('getAffinityCustomers')).toMatchObject({ sort: 'revenue' }));
-    fireEvent.click(screen.getByRole('button', { name: '50' }));
+    fireEvent.change(screen.getByLabelText('Rows'), { target: { value: '50' } });
     await waitFor(() => expect(lastCall('getAffinityCustomers')).toMatchObject({ limit: 50 }));
     const input = screen.getByPlaceholderText(/Search name, email/);
     fireEvent.change(input, { target: { value: '  safari ' } });
@@ -146,7 +146,7 @@ describe('Affinity page', () => {
     mockOk('getAffinityTopProducts', { data: [{ product_key: 'p1', product_name: 'Desert Safari', customers: 30 }] });
     renderPage();
     await screen.findByText(/No customers booked/);
-    fireEvent.click(screen.getByRole('tab', { name: /Product affinity/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Products' }));
     await waitFor(() => expect(api.getAffinityTopProducts).toHaveBeenCalledWith(expect.objectContaining({ limit: 12 })));
     expect(localStorage.getItem('affinity-view')).toBe('product');
     fireEvent.click(await screen.findByText('Desert Safari'));

@@ -1,60 +1,56 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
 import { getUnifiedContacts, getUnifiedStats, getUnifiedFilters, createUnifiedContact, deleteUnifiedContact } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { CONTACT_TYPES, CONTACT_TYPE_LABELS, SCOPE_DESCRIPTIONS } from '@/lib/contactTypes';
-import {
-  Users, Search, Ticket,
-  ArrowUpDown, ChevronLeft, ChevronRight, Eye,
-  DollarSign,
-  Filter, RotateCcw, ChevronDown, UserPlus, X, Check, Loader2, Trash2,
-} from 'lucide-react';
-import type { Variants } from 'framer-motion';
-import type { CSSProperties, FormEvent } from 'react';
+import { Search, Plus, SlidersHorizontal, X, Eye, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from 'lucide-react';
+import type { FormEvent } from 'react';
 import type { QueryParams, UnifiedStats } from '@/types/api';
+import { Button, Card, Chip, ConfirmDialog, Field, Input, PageHeader, Select, Skeleton, Table, EmptyState } from '@/components/ui';
+import { ContactStatusChip } from '@/components/ui/ContactStatusChip';
+import { ContactFilterPanel, EMPTY_FILTERS, describeFilter, type ContactFilterKey, type ContactFilterState, type FilterOptions } from './ContactFilters';
+import s from './contacts.module.css';
 
 interface UnifiedContactRow {
   id?: string | number; unified_id?: string | number;
-  name?: string; email?: string; phone?: string; mobile?: string; country?: string;
+  name?: string; email?: string; phone?: string; mobile?: string; country?: string; city?: string;
+  contact_type?: string; wa_unsubscribe?: string; email_unsubscribe?: string;
   booking_status?: string; product_tier?: string; geography?: string;
   total_tour_bookings?: number; total_package_bookings?: number; total_hotel_bookings?: number;
   total_visa_bookings?: number; total_other_bookings?: number; total_flight_bookings?: number;
-  total_booking_revenue: string;
+  total_booking_revenue: string; updated_at?: string; created_at?: string;
 }
 interface ContactsListResponse { data?: UnifiedContactRow[]; total?: number; totalPages?: number }
-interface FilterOptions {
-  countries?: string[]; contactTypes?: string[]; sources?: string[];
-  bookingStatuses?: string[]; productTiers?: string[]; geographies?: string[];
-}
 interface ToastState { msg: string; type: string }
 interface DeleteTarget { id: string | number | undefined; name: string }
-interface UCFilterSelectProps { label: string; value: string; onChange: (v: string) => void; options: string[]; labels?: string[] }
-interface DateRangeFilterProps { label: string; from: string; to: string; onFrom: (v: string) => void; onTo: (v: string) => void }
-interface AddFieldProps { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }
-interface AddSelectProps { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }
-
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 const PAGE_SIZE_OPTIONS = [20, 30, 50];
+const EMPTY_ADD = { name: '', email: '', mobile: '', city: '', country: '', contact_type: 'B2C', geography: '', wa_unsubscribe: 'no', email_unsubscribe: 'no' };
 
-function formatNum(n?: number) { return (n || 0).toLocaleString(); }
+function formatNum(n?: number) { return (Number(n) || 0).toLocaleString(); }
 function formatAED(n?: number | string) { return `AED ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
+function formatShortDate(d?: string) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? '—' : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+const isUnsub = (v?: string) => (v || '').toLowerCase() === 'yes';
 
-const COLUMNS = [
-  { key: 'name', label: 'Name', sortable: true },
-  { key: 'email', label: 'Email', sortable: true },
-  { key: 'phone', label: 'Phone', sortable: true },
-  { key: 'country', label: 'Country', sortable: true },
-  { key: 'booking_status', label: 'Status', sortable: true },
-  { key: 'product_tier', label: 'Tier', sortable: true },
-  { key: 'geography', label: 'Geo', sortable: true },
-  { key: 'total_bookings', label: 'Bookings', sortable: true },
-  { key: 'total_booking_revenue', label: 'Revenue', sortable: true },
-];
+const SORT_LABELS: Record<string, string> = {
+  name: 'Name', email: 'Email', phone: 'Phone', country: 'Country', booking_status: 'Status', product_tier: 'Tier',
+  geography: 'Geo', total_bookings: 'Bookings', total_booking_revenue: 'Revenue', updated_at: 'Updated', created_at: 'Date added', last_seen_at: 'Date added',
+};
+
+/** Page numbers to show: first, last, current ±1, with null for gaps. */
+function pageList(page: number, totalPages: number): (number | null)[] {
+  const set = new Set([1, totalPages, page - 1, page, page + 1].filter(p => p >= 1 && p <= totalPages));
+  const sorted = [...set].sort((a, b) => a - b);
+  const out: (number | null)[] = [];
+  sorted.forEach((p, i) => { if (i > 0 && p - sorted[i - 1] > 1) out.push(null); out.push(p); });
+  return out;
+}
 
 export default function UnifiedContacts() {
   const [contacts, setContacts] = useState<UnifiedContactRow[]>([]);
@@ -68,24 +64,25 @@ export default function UnifiedContacts() {
   const [sortBy, setSortBy] = useState('last_seen_at');
   const [sortDir, setSortDir] = useState('DESC');
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null); // { id, name }
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addForm, setAddForm] = useState({ name: '', email: '', mobile: '', city: '', country: '', contact_type: 'B2C', geography: '', wa_unsubscribe: 'no', email_unsubscribe: 'no' });
+  const [addForm, setAddForm] = useState(EMPTY_ADD);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
-  const [filters, setFilters] = useState({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '', bookingDateFrom: '', bookingDateTo: '', travelDateFrom: '', travelDateTo: '' });
+  const [filters, setFilters] = useState<ContactFilterState>(EMPTY_FILTERS);
   const [limit, setLimit] = useState(20);
   const { businessType } = useBusinessType();
   const router = useRouter();
 
   const showToast = (msg: string, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
-  const updateFilter = (key: string, value: string) => { setFilters(f => ({ ...f, [key]: value })); setPage(1); };
-  const clearFilters = () => { setFilters({ country: '', contactType: '', source: '', bookingStatus: '', productTier: '', geography: '', chatDepartment: '', hasChats: '', hasBookings: '', waStatus: '', emailStatus: '', bookingDateFrom: '', bookingDateTo: '', travelDateFrom: '', travelDateTo: '' }); setPage(1); };
+  const activeFilters = (Object.entries(filters) as [ContactFilterKey, string][]).filter(([, v]) => Boolean(v));
+  const activeFilterCount = activeFilters.length;
+  const updateFilter = (key: ContactFilterKey, value: string) => { setFilters(f => ({ ...f, [key]: value })); setPage(1); };
+  const clearFilters = () => { setFilters(EMPTY_FILTERS); setPage(1); };
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
@@ -93,7 +90,7 @@ export default function UnifiedContacts() {
       const params: QueryParams = { page, limit, sortBy, sortDir };
       if (businessType !== 'All') params.businessType = businessType;
       if (search) params.search = search;
-      Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
+      (Object.entries(filters) as [string, string][]).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await getUnifiedContacts(params) as ContactsListResponse;
       setContacts(res.data || []);
       setTotal(res.total || 0);
@@ -108,11 +105,11 @@ export default function UnifiedContacts() {
     const btParam = businessType === 'All' ? {} : { businessType };
     getUnifiedStats(btParam).then(res => setStats(res.data)).catch(() => {});
     getUnifiedFilters(btParam).then(res => setFilterOptions((res as { data: FilterOptions }).data)).catch(() => {});
-    // Reset page when the business scope changes so the user sees the first page of filtered results
     setPage(1);
   }, [businessType]);
 
   const handleSearch = (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); setPage(1); setSearch(searchInput); };
+  const clearSearch = () => { setSearchInput(''); setSearch(''); setPage(1); };
   const handleSort = (col: string) => {
     if (sortBy === col) setSortDir(d => d === 'ASC' ? 'DESC' : 'ASC');
     else { setSortBy(col); setSortDir('DESC'); }
@@ -137,12 +134,9 @@ export default function UnifiedContacts() {
     }
   };
 
-  const setAddField = (k: string, v: string) => setAddForm(f => ({ ...f, [k]: v }));
-  const openAddModal = () => {
-    setAddForm({ name: '', email: '', mobile: '', city: '', country: '', contact_type: 'B2C', geography: '', wa_unsubscribe: 'no', email_unsubscribe: 'no' });
-    setAddError(null);
-    setShowAddModal(true);
-  };
+  const setAddField = (k: keyof typeof EMPTY_ADD, v: string) => setAddForm(f => ({ ...f, [k]: v }));
+  const openAddModal = () => { setAddForm(EMPTY_ADD); setAddError(null); setShowAddModal(true); };
+  const closeAddModal = () => { if (!addLoading) setShowAddModal(false); };
   const handleAddSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!addForm.name && !addForm.email && !addForm.mobile) { setAddError('Provide at least a name, email, or phone.'); return; }
@@ -162,444 +156,261 @@ export default function UnifiedContacts() {
   };
 
   const kpis = [
-    { label: 'Total Contacts', value: formatNum(stats?.total_contacts), icon: Users, color: 'var(--brand-primary)' },
-    { label: 'Total Bookings', value: formatNum(stats?.total_bookings), icon: Ticket, color: 'var(--green)' },
-    { label: 'Total Revenue', value: formatAED(stats?.total_revenue), icon: DollarSign, color: 'var(--yellow)' },
+    { label: 'Contacts', value: formatNum(stats?.total_contacts) },
+    { label: 'Bookings', value: formatNum(stats?.total_bookings) },
+    { label: 'Revenue', value: formatAED(stats?.total_revenue) },
   ];
 
-  return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <motion.div variants={fadeInUp} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Unified Contacts</h2>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, padding: '3px 10px', borderRadius: 12, background: '#C9A96E', color: '#fff' }}>{businessType}</span>
-          </div>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-            {SCOPE_DESCRIPTIONS[businessType] || SCOPE_DESCRIPTIONS.All} &middot; across chats, tickets, CRM &amp; bookings &middot; {formatNum(total)} records
-          </p>
-        </div>
-        <button className="btn btn-primary" onClick={openAddModal}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600 }}>
-          <UserPlus size={16} /> Add Contact
-        </button>
-      </motion.div>
+  const sortHead = (col: string, label: string) => {
+    const on = sortBy === col;
+    return (
+      <button type="button" className={`${s.sortBtn} ${on ? s.sortBtnOn : ''}`} onClick={() => handleSort(col)}
+        aria-label={`Sort by ${label}`}>
+        {label}
+        {on ? (sortDir === 'ASC' ? <ArrowUp size={12} aria-hidden="true" /> : <ArrowDown size={12} aria-hidden="true" />)
+          : <ArrowUpDown size={11} aria-hidden="true" style={{ opacity: 0.35 }} />}
+      </button>
+    );
+  };
+  const ariaSort = (...cols: string[]): 'ascending' | 'descending' | 'none' =>
+    cols.includes(sortBy) ? (sortDir === 'ASC' ? 'ascending' : 'descending') : 'none';
 
-      <motion.div variants={fadeInUp} className="kpi-strip">
+  const COLS = 10;
+  const from = Math.min((page - 1) * limit + 1, total);
+  const to = Math.min(page * limit, total);
+
+  return (
+    <div className={s.page}>
+      <PageHeader
+        title="Contacts"
+        breadcrumbs={[{ label: 'Audience' }, { label: 'Contacts' }]}
+        description={<>{SCOPE_DESCRIPTIONS[businessType] || SCOPE_DESCRIPTIONS.All} · merged from chats, tickets, CRM and bookings.</>}
+        actions={
+          <Button variant="primary" onClick={openAddModal}>
+            <Plus size={16} aria-hidden="true" /> Add contact
+          </Button>
+        }
+      />
+
+      <div className={s.kpis}>
         {!stats ? (
-          [...Array<undefined>(5)].map((_, i) => (
-            <div key={i} className="card" style={{ padding: '14px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div className="skeleton" style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0 }} />
-                <div>
-                  <div className="skeleton" style={{ width: 70, height: 10, borderRadius: 4, marginBottom: 6 }} />
-                  <div className="skeleton" style={{ width: 50, height: 18, borderRadius: 4 }} />
-                </div>
-              </div>
-            </div>
+          [0, 1, 2].map(i => (
+            <div key={i} className={s.kpi}><Skeleton width={70} height={12} /><Skeleton width={110} height={24} /></div>
           ))
         ) : kpis.map(k => (
-          <div key={k.label} className="card" style={{ padding: '14px 18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: `${k.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <k.icon size={18} style={{ color: k.color }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{k.label}</div>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>{k.value}</div>
-              </div>
-            </div>
+          <div key={k.label} className={s.kpi}>
+            <span className={s.kpiLabel}>{k.label}</span>
+            <span className={s.kpiValue}>{k.value}</span>
           </div>
         ))}
-      </motion.div>
+      </div>
 
-      <motion.div variants={fadeInUp}>
-        <form onSubmit={handleSearch} className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Search size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-          <input type="text" placeholder="Search by name, email, phone or company..."
-            value={searchInput} onChange={e => setSearchInput(e.target.value)}
-            style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', color: 'var(--text-primary)', fontSize: 14 }} />
-          <button type="submit" className="btn btn-primary btn-sm">Search</button>
-          {search && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>Clear</button>}
-          <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} />
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowFilters(f => !f)}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, position: 'relative' }}>
-            <Filter size={14} /> Filters
-            {activeFilterCount > 0 && (
-              <span style={{ position: 'absolute', top: -6, right: -6, background: 'var(--brand-primary)', color: '#fff', fontSize: 10, fontWeight: 700, width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
+      <div className={s.toolbar}>
+        <form onSubmit={handleSearch} className={s.search} role="search">
+          <Search size={16} className={s.searchIcon} aria-hidden="true" />
+          <label htmlFor="contacts-q" className="sr-only" style={{ position: 'absolute', left: -9999 }}>Search contacts</label>
+          <Input id="contacts-q" type="search" className={s.searchInput} placeholder="Name, email or phone"
+            value={searchInput} onChange={e => setSearchInput(e.target.value)} />
+          <Button type="submit" size="sm" style={{ height: 40 }}>Search</Button>
         </form>
-      </motion.div>
-
-      {/* Filters Panel */}
-      <AnimatePresence>
-        {showFilters && (
-          <motion.div variants={fadeInUp} initial="hidden" animate="visible" exit="hidden"
-            className="card" style={{ padding: '16px 20px', position: 'relative', zIndex: 100, overflow: 'visible' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>Filters</span>
-              {activeFilterCount > 0 && (
-                <button className="btn btn-ghost btn-sm" onClick={clearFilters} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                  <RotateCcw size={12} /> Reset all
-                </button>
-              )}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 12 }}>
-              <UCFilterSelect label="Country" value={filters.country} onChange={v => updateFilter('country', v)}
-                options={filterOptions?.countries || []} />
-              <UCFilterSelect label="Type" value={filters.contactType} onChange={v => updateFilter('contactType', v)}
-                options={filterOptions?.contactTypes || []} />
-              <UCFilterSelect label="Source" value={filters.source} onChange={v => updateFilter('source', v)}
-                options={filterOptions?.sources || []} />
-              <UCFilterSelect label="Booking Status" value={filters.bookingStatus} onChange={v => updateFilter('bookingStatus', v)}
-                options={filterOptions?.bookingStatuses || []} />
-              <UCFilterSelect label="Tier" value={filters.productTier} onChange={v => updateFilter('productTier', v)}
-                options={filterOptions?.productTiers || []} />
-              <UCFilterSelect label="Geography" value={filters.geography} onChange={v => updateFilter('geography', v)}
-                options={filterOptions?.geographies || []} />
-              <UCFilterSelect label="Chat Dept" value={filters.chatDepartment} onChange={v => updateFilter('chatDepartment', v)}
-                options={['B2B', 'B2C']} />
-              <UCFilterSelect label="Has Chats" value={filters.hasChats} onChange={v => updateFilter('hasChats', v)}
-                options={['yes', 'no']} labels={['Yes', 'No']} />
-              <UCFilterSelect label="Has Bookings" value={filters.hasBookings} onChange={v => updateFilter('hasBookings', v)}
-                options={['yes', 'no']} labels={['Yes', 'No']} />
-              <UCFilterSelect label="WA Status" value={filters.waStatus} onChange={v => updateFilter('waStatus', v)}
-                options={['active', 'unsubscribed']} labels={['Active', 'Unsubscribed']} />
-              <UCFilterSelect label="Email Status" value={filters.emailStatus} onChange={v => updateFilter('emailStatus', v)}
-                options={['active', 'unsubscribed']} labels={['Active', 'Unsubscribed']} />
-              <DateRangeFilter label="Booking Date"
-                from={filters.bookingDateFrom} to={filters.bookingDateTo}
-                onFrom={v => updateFilter('bookingDateFrom', v)} onTo={v => updateFilter('bookingDateTo', v)} />
-              <DateRangeFilter label="Travel Date"
-                from={filters.travelDateFrom} to={filters.travelDateTo}
-                onFrom={v => updateFilter('travelDateFrom', v)} onTo={v => updateFilter('travelDateTo', v)} />
-            </div>
-          </motion.div>
+        <Chip tone="gold" className={s.filterChip} style={{ paddingRight: 12 }}>Audience: {businessType}</Chip>
+        {search && (
+          <Chip tone="mute" className={s.filterChip}>
+            Search: {search}
+            <button type="button" className={s.chipX} onClick={clearSearch} aria-label="Clear search"><X size={12} /></button>
+          </Chip>
         )}
-      </AnimatePresence>
+        {activeFilters.map(([k, v]) => (
+          <Chip key={k} tone="mute" className={s.filterChip}>
+            {describeFilter(k, v)}
+            <button type="button" className={s.chipX} onClick={() => updateFilter(k, '')} aria-label={`Remove filter ${describeFilter(k, v)}`}><X size={12} /></button>
+          </Chip>
+        ))}
+        <Button size="sm" onClick={() => setShowFilters(f => !f)} aria-expanded={showFilters}>
+          <SlidersHorizontal size={14} aria-hidden="true" /> Filters
+          {activeFilterCount > 0 && <span className={s.badge} aria-label={`${activeFilterCount} active`}>{activeFilterCount}</span>}
+        </Button>
+        {(activeFilterCount > 0 || search) && (
+          <Button size="sm" variant="ghost" onClick={() => { clearFilters(); if (search) clearSearch(); }}>Clear all</Button>
+        )}
+      </div>
 
-      <motion.div variants={fadeInUp} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                {COLUMNS.map(col => (
-                  <th key={col.key} onClick={col.sortable ? () => handleSort(col.key) : undefined}
-                    style={{ cursor: col.sortable ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      {col.label}
-                      {col.sortable && sortBy === col.key && <span style={{ fontSize: 10 }}>{sortDir === 'ASC' ? '\u25B2' : '\u25BC'}</span>}
-                      {col.sortable && sortBy !== col.key && <ArrowUpDown size={11} style={{ opacity: 0.3 }} />}
-                    </span>
-                  </th>
-                ))}
-                <th style={{ width: 50 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                [...Array<undefined>(8)].map((_, i) => (
-                  <tr key={i}>
-                    {COLUMNS.map(col => (
-                      <td key={col.key} style={{ padding: '12px 10px' }}>
-                        <div className="skeleton" style={{
-                          width: col.key === 'name' ? 120 : col.key === 'email' ? 150 : col.key === 'phone' ? 100 :
-                            col.key === 'company_name' ? 90 : col.key === 'country' ? 60 : col.key === 'last_seen_at' ? 80 : 55,
-                          height: 14, borderRadius: 4
-                        }} />
-                      </td>
-                    ))}
-                    <td><div className="skeleton" style={{ width: 24, height: 24, borderRadius: 4 }} /></td>
-                  </tr>
-                ))
-              ) : contacts.length === 0 ? (
-                <tr><td colSpan={COLUMNS.length + 1} style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>No contacts found{search ? ` for "${search}"` : ''}.</td></tr>
-              ) : contacts.map(c => {
-                const totalBookings = (c.total_tour_bookings||0)+(c.total_package_bookings||0)+(c.total_hotel_bookings||0)+(c.total_visa_bookings||0)+(c.total_other_bookings||0)+(c.total_flight_bookings||0);
-                return (
-                <tr key={c.id || c.unified_id} onClick={() => openDetail(c.id || c.unified_id)} style={{ cursor: 'pointer' }}>
-                  <td style={{ fontWeight: 500 }}>{c.name || '\u2014'}</td>
-                  <td style={{ fontSize: 12 }}>{c.email || '\u2014'}</td>
-                  <td style={{ fontSize: 12 }}>{c.phone || c.mobile || '\u2014'}</td>
-                  <td>{c.country ? <span className="badge badge-blue" style={{ fontSize: 11 }}>{c.country}</span> : '\u2014'}</td>
-                  <td><span className={`badge ${
-                    c.booking_status === 'ON_TRIP' ? 'badge-green' :
-                    c.booking_status === 'FUTURE_TRAVEL' ? 'badge-blue' :
-                    c.booking_status === 'ACTIVE_ENQUIRY' ? 'badge-orange' :
-                    c.booking_status === 'PAST_BOOKING' ? 'badge-gray' :
-                    c.booking_status === 'PAST_ENQUIRY' ? 'badge-red' : 'badge-gray'
-                  }`} style={{ fontSize: 9 }}>{c.booking_status || 'PROSPECT'}</span></td>
-                  <td>{c.product_tier ? <span className={`badge ${c.product_tier === 'LUXURY' ? 'badge-orange' : 'badge-gray'}`} style={{ fontSize: 9 }}>{c.product_tier}</span> : '\u2014'}</td>
-                  <td>{c.geography ? <span className={`badge ${c.geography === 'LOCAL' ? 'badge-green' : 'badge-blue'}`} style={{ fontSize: 9 }}>{c.geography}</span> : '\u2014'}</td>
-                  <td>{totalBookings > 0 ? <span className="badge badge-blue">{totalBookings}</span> : <span style={{ color: 'var(--text-tertiary)' }}>0</span>}</td>
-                  <td style={{ fontSize: 12, fontWeight: 500 }}>{parseFloat(c.total_booking_revenue) > 0 ? formatAED(c.total_booking_revenue) : <span style={{ color: 'var(--text-tertiary)' }}>{'\u2014'}</span>}</td>
+      {showFilters && (
+        <Card className={s.filterPanel} aria-label="Filters">
+          <div className={s.meta}>
+            <b style={{ color: 'var(--ink)' }}>Filters</b>
+            {activeFilterCount > 0 && <Button size="sm" variant="ghost" onClick={clearFilters}>Reset all</Button>}
+          </div>
+          <ContactFilterPanel filters={filters} options={filterOptions} onChange={updateFilter} />
+        </Card>
+      )}
+
+      <div className={s.meta}>
+        <span>
+          <b className={s.num} style={{ color: 'var(--ink)' }}>{formatNum(total)}</b> contacts match · sorted by <b>{SORT_LABELS[sortBy] || sortBy}</b>, {sortDir === 'ASC' ? 'oldest / lowest first' : 'newest / highest first'}
+        </span>
+      </div>
+
+        <Table label="Contacts" className={s.table}>
+          <thead>
+            <tr>
+              <th aria-sort={ariaSort('name', 'email', 'phone')}>
+                {sortHead('name', 'Name')}<span className={s.sortSep} aria-hidden="true">·</span>
+                {sortHead('email', 'Email')}<span className={s.sortSep} aria-hidden="true">·</span>
+                {sortHead('phone', 'Phone')}
+              </th>
+              <th aria-sort={ariaSort('booking_status')}>{sortHead('booking_status', 'Status')}</th>
+              <th aria-sort={ariaSort('product_tier')}>{sortHead('product_tier', 'Tier')}</th>
+              <th aria-sort={ariaSort('geography')}>{sortHead('geography', 'Geo')}</th>
+              <th aria-sort={ariaSort('country')}>{sortHead('country', 'Country')}</th>
+              <th className={s.r} aria-sort={ariaSort('total_bookings')}>{sortHead('total_bookings', 'Bookings')}</th>
+              <th className={s.r} aria-sort={ariaSort('total_booking_revenue')}>{sortHead('total_booking_revenue', 'Revenue')}</th>
+              <th>Can message</th>
+              <th aria-sort={ariaSort('updated_at')}>{sortHead('updated_at', 'Updated')}</th>
+              <th><span className="sr-only" style={{ position: 'absolute', left: -9999 }}>Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              Array.from({ length: 8 }, (_, i) => (
+                <tr key={i}><td colSpan={COLS}><Skeleton height={18} /></td></tr>
+              ))
+            ) : contacts.length === 0 ? (
+              <tr><td colSpan={COLS} style={{ padding: 0 }}>
+                <EmptyState
+                  title={`No contacts found${search ? ` for "${search}"` : ''}.`}
+                  description={activeFilterCount > 0 ? `Audience is ${businessType} with ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}.` : undefined}
+                  action={(activeFilterCount > 0 || search) ? (
+                    <Button size="sm" onClick={() => { clearFilters(); if (search) clearSearch(); }}>Clear filters</Button>
+                  ) : undefined}
+                />
+              </td></tr>
+            ) : contacts.map(c => {
+              const rowId = c.id || c.unified_id;
+              const totalBookings = (c.total_tour_bookings || 0) + (c.total_package_bookings || 0) + (c.total_hotel_bookings || 0) + (c.total_visa_bookings || 0) + (c.total_other_bookings || 0) + (c.total_flight_bookings || 0);
+              const phone = c.phone || c.mobile;
+              const subline = [c.email, phone].filter(Boolean).join(' · ');
+              return (
+                <tr key={rowId} className={s.row} onClick={() => openDetail(rowId)}>
                   <td>
-                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                      <button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); openDetail(c.id || c.unified_id); }}><Eye size={14} /></button>
-                      <button className="btn btn-ghost btn-icon btn-sm" onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: c.id || c.unified_id, name: c.name || c.email || 'this contact' }); }}
-                        style={{ color: '#ef4444' }}><Trash2 size={14} /></button>
+                    <button type="button" className={s.nameLink} onClick={e => { e.stopPropagation(); openDetail(rowId); }}>
+                      {c.name || c.email || phone || '—'}
+                    </button>
+                    {c.name && subline && <div className={s.help}>{subline}</div>}
+                    {!c.name && c.email && phone && <div className={s.help}>{phone}</div>}
+                  </td>
+                  <td><ContactStatusChip status={c.booking_status} /></td>
+                  <td>{c.product_tier ? <Chip tone={c.product_tier === 'LUXURY' ? 'gold' : 'mute'}>{c.product_tier === 'LUXURY' ? 'Luxury' : c.product_tier}</Chip> : <span className={s.help}>—</span>}</td>
+                  <td className={s.help}>{c.geography === 'LOCAL' ? 'Local (UAE)' : c.geography === 'INTERNATIONAL' ? 'International' : (c.geography || '—')}</td>
+                  <td style={{ color: 'var(--ink2)' }}>{c.country || '—'}</td>
+                  <td className={`${s.r} ${s.num}`}>{totalBookings}</td>
+                  <td className={`${s.r} ${s.num}`}>{parseFloat(c.total_booking_revenue) > 0 ? formatAED(c.total_booking_revenue) : <span className={s.help}>—</span>}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {c.email && <Chip tone={isUnsub(c.email_unsubscribe) ? 'mute' : 'ok'} className={s.miniChip} title={isUnsub(c.email_unsubscribe) ? 'Email: unsubscribed' : 'Email: active'}>Email</Chip>}
+                      {phone && <Chip tone={isUnsub(c.wa_unsubscribe) ? 'mute' : 'ok'} className={s.miniChip} title={isUnsub(c.wa_unsubscribe) ? 'WhatsApp: unsubscribed' : 'WhatsApp: active'}>WhatsApp</Chip>}
+                      {!c.email && !phone && <span className={s.help}>—</span>}
+                    </div>
+                  </td>
+                  <td className={s.help} style={{ whiteSpace: 'nowrap' }}>{formatShortDate(c.updated_at || c.created_at)}</td>
+                  <td>
+                    <div className={s.rowActions}>
+                      <Button size="sm" variant="ghost" icon aria-label={`Open ${c.name || c.email || 'contact'}`} onClick={e => { e.stopPropagation(); openDetail(rowId); }}><Eye size={14} /></Button>
+                      <Button size="sm" variant="ghost" icon aria-label={`Delete ${c.name || c.email || 'contact'}`} style={{ color: 'var(--bad)' }}
+                        onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: rowId, name: c.name || c.email || 'this contact' }); }}><Trash2 size={14} /></Button>
                     </div>
                   </td>
                 </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border-color)', flexWrap: 'wrap', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Rows per page:</span>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {PAGE_SIZE_OPTIONS.map(n => (
-                <button key={n} onClick={() => { setLimit(n); setPage(1); }}
-                  style={{ padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${limit === n ? 'var(--brand-primary)' : 'var(--border-color)'}`, background: limit === n ? 'color-mix(in srgb, var(--brand-primary) 12%, transparent)' : 'transparent', color: limit === n ? 'var(--brand-primary)' : 'var(--text-secondary)', transition: 'all 0.15s' }}>
-                  {n}
-                </button>
-              ))}
-            </div>
-            {total > 0 && (
-              <span style={{ fontSize: 13, color: 'var(--text-tertiary)', marginLeft: 4 }}>
-                {formatNum(Math.min((page - 1) * limit + 1, total))}–{formatNum(Math.min(page * limit, total))} of {formatNum(total)}
-              </span>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button onClick={() => setPage(1)} disabled={page === 1} style={pageBtn(page === 1)}>«</button>
-            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pageBtn(page === 1)}><ChevronLeft size={14} /> Prev</button>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)', padding: '4px 10px' }}>{page} / {totalPages}</span>
-            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pageBtn(page === totalPages)}>Next <ChevronRight size={14} /></button>
-            <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={pageBtn(page === totalPages)}>»</button>
-          </div>
-        </div>
-      </motion.div>
-
-
-      {/* Delete Confirm Dialog */}
-      <AnimatePresence>
-        {deleteConfirm && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500, padding: 20 }}
-            onClick={() => !deleteLoading && setDeleteConfirm(null)}>
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 12 }}
-              onClick={e => e.stopPropagation()}
-              className="card" style={{ width: '100%', maxWidth: 400, padding: 28 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Trash2 size={18} style={{ color: '#ef4444' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>Delete Contact</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>This action cannot be undone.</div>
-                </div>
-              </div>
-              <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-secondary)' }}>
-                Are you sure you want to permanently delete <strong style={{ color: 'var(--text-primary)' }}>{deleteConfirm.name}</strong>?
-              </p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button className="btn btn-ghost" onClick={() => setDeleteConfirm(null)} disabled={deleteLoading}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleDelete} disabled={deleteLoading}
-                  style={{ background: '#ef4444', borderColor: '#ef4444', display: 'flex', alignItems: 'center', gap: 6, minWidth: 100 }}>
-                  {deleteLoading
-                    ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Deleting…</>
-                    : <><Trash2 size={14} /> Delete</>}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Add Contact Modal */}
-      <AnimatePresence>
-        {showAddModal && (
-          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => !addLoading && setShowAddModal(false)}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500, padding: 20 }}>
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 16 }}
-              onClick={e => e.stopPropagation()}
-              className="card" style={{ width: '100%', maxWidth: 560, padding: 28, position: 'relative' }}>
-
-              {/* Header */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Add New Contact</h3>
-                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Booking status will be set to</span>
-                    <span className="badge badge-gray" style={{ fontSize: 10, fontWeight: 700 }}>PROSPECT</span>
-                  </div>
-                </div>
-                <button className="btn btn-ghost btn-icon btn-sm" onClick={() => !addLoading && setShowAddModal(false)}>
-                  <X size={16} />
-                </button>
-              </div>
-
-              {addError && (
-                <div style={{ marginBottom: 16, padding: '9px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444', fontSize: 13, color: '#ef4444' }}>
-                  {addError}
-                </div>
-              )}
-
-              <form onSubmit={handleAddSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' }}>
-                  <AddField label="Full Name *" value={addForm.name} onChange={v => setAddField('name', v)} placeholder="e.g. John Smith" />
-                  <AddField label="Email" value={addForm.email} onChange={v => setAddField('email', v)} type="email" placeholder="e.g. john@example.com" />
-                  <AddField label="Phone / Mobile" value={addForm.mobile} onChange={v => setAddField('mobile', v)} type="tel" placeholder="e.g. +971501234567" />
-                  <AddField label="City" value={addForm.city} onChange={v => setAddField('city', v)} placeholder="e.g. Dubai" />
-                  <AddField label="Country" value={addForm.country} onChange={v => setAddField('country', v)} placeholder="e.g. United Arab Emirates" />
-                  <AddSelect label="Contact Type" value={addForm.contact_type} onChange={v => setAddField('contact_type', v)}
-                    options={CONTACT_TYPES.map(t => ({ value: t, label: CONTACT_TYPE_LABELS[t] }))} />
-                  <AddSelect label="Geography" value={addForm.geography} onChange={v => setAddField('geography', v)}
-                    options={[{ value: '', label: 'Unknown' }, { value: 'LOCAL', label: 'Local (UAE)' }, { value: 'INTERNATIONAL', label: 'International' }]} />
-                  <AddSelect label="WA Status" value={addForm.wa_unsubscribe} onChange={v => setAddField('wa_unsubscribe', v)}
-                    options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
-                  <AddSelect label="Email Status" value={addForm.email_unsubscribe} onChange={v => setAddField('email_unsubscribe', v)}
-                    options={[{ value: 'no', label: 'Active' }, { value: 'yes', label: 'Unsubscribed' }]} />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
-                  <button type="button" className="btn btn-ghost" onClick={() => !addLoading && setShowAddModal(false)} disabled={addLoading}>
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary" disabled={addLoading}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 110 }}>
-                    {addLoading
-                      ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Creating…</>
-                      : <><Check size={14} /> Create Contact</>}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {toast && (
-          <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 30 }}
-            className={`toast toast-${toast.type}`} style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1000 }}>
-            {toast.msg}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
-
-function UCFilterSelect({ label, value, onChange, options, labels }: UCFilterSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [filterText, setFilterText] = useState('');
-  const ref = useRef<HTMLDivElement>(null);
-  const showSearch = options.length > 10;
-  const filtered = filterText
-    ? options.filter((o, i) => (labels ? labels[i] : o).toLowerCase().includes(filterText.toLowerCase()))
-    : options;
-  const displayValue = value ? (labels ? labels[options.indexOf(value)] || value : value) : 'All';
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <label style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, display: 'block', marginBottom: 4 }}>{label}</label>
-      <button type="button" onClick={() => { setOpen(o => !o); setFilterText(''); }}
-        style={{ width: '100%', padding: '7px 10px', fontSize: 13, borderRadius: 6, textAlign: 'left',
-          border: '1px solid var(--border)', background: 'var(--bg-card)', color: value ? 'var(--text-primary)' : 'var(--text-tertiary)',
-          cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayValue}</span>
-        <ChevronDown size={13} style={{ flexShrink: 0, opacity: 0.5 }} />
-      </button>
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 300,
-          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.2)', maxHeight: 220, display: 'flex', flexDirection: 'column' }}>
-          {showSearch && (
-            <input autoFocus type="text" placeholder="Search..." value={filterText}
-              onChange={e => setFilterText(e.target.value)}
-              style={{ padding: '8px 10px', fontSize: 12, border: 'none', borderBottom: '1px solid var(--border)', outline: 'none', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
-          )}
-          <div style={{ overflowY: 'auto', flex: 1 }}>
-            <div onClick={() => { onChange(''); setOpen(false); }}
-              style={{ padding: '7px 10px', fontSize: 12, cursor: 'pointer', color: !value ? 'var(--brand-primary)' : 'var(--text-primary)', fontWeight: !value ? 600 : 400 }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>All</div>
-            {filtered.map((o) => {
-              const display = labels ? labels[options.indexOf(o)] || o : o;
-              const isSelected = value === o;
-              return (
-                <div key={o} onClick={() => { onChange(o); setOpen(false); }}
-                  style={{ padding: '7px 10px', fontSize: 12, cursor: 'pointer', color: isSelected ? 'var(--brand-primary)' : 'var(--text-primary)', fontWeight: isSelected ? 600 : 400 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-card-hover)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>{display}</div>
               );
             })}
-            {filtered.length === 0 && <div style={{ padding: '12px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>No matches</div>}
+          </tbody>
+        </Table>
+
+      <div className={s.meta}>
+        <span>{total > 0 ? <>Showing {formatNum(from)}–{formatNum(to)} of {formatNum(total)}</> : 'No results'}</span>
+        <nav aria-label="Pagination" className={s.pager}>
+          <Button size="sm" variant="ghost" onClick={() => setPage(1)} disabled={page === 1} aria-label="First page">«</Button>
+          <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Previous</Button>
+          {pageList(page, totalPages).map((p, i) => p === null
+            ? <span key={`gap-${i}`} className={s.help}>…</span>
+            : <Button key={p} size="sm" variant={p === page ? 'secondary' : 'ghost'} className={p === page ? s.pageOn : undefined}
+                aria-current={p === page ? 'page' : undefined} aria-label={`Page ${p}`} onClick={() => setPage(p)}>{formatNum(p)}</Button>)}
+          <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next</Button>
+          <Button size="sm" variant="ghost" onClick={() => setPage(totalPages)} disabled={page === totalPages} aria-label="Last page">»</Button>
+          <label htmlFor="contacts-pp" className={s.help} style={{ marginLeft: 8 }}>Rows</label>
+          <Select id="contacts-pp" className={s.rowsSel} value={limit} onChange={e => { setLimit(Number(e.target.value)); setPage(1); }}>
+            {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+          </Select>
+        </nav>
+      </div>
+
+      <ConfirmDialog
+        open={!!deleteConfirm}
+        title="Delete contact"
+        description={<p>Permanently delete <b>{deleteConfirm?.name}</b>? This can&apos;t be undone.</p>}
+        confirmLabel={deleteLoading ? 'Deleting…' : 'Delete'}
+        danger
+        busy={deleteLoading}
+        onConfirm={handleDelete}
+        onCancel={() => { if (!deleteLoading) setDeleteConfirm(null); }}
+      />
+
+      {showAddModal && (
+        <div className="ui-dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) closeAddModal(); }}>
+          <div className={`ui-dialog ${s.modalBody}`} role="dialog" aria-modal="true" aria-labelledby="add-contact-title">
+            <div className={s.meta} style={{ alignItems: 'flex-start' }}>
+              <div>
+                <h2 id="add-contact-title">Add contact</h2>
+                <p className={s.help} style={{ margin: '4px 0 0' }}>Booking status starts as <Chip tone="mute" className={s.miniChip}>Prospect</Chip></p>
+              </div>
+              <Button size="sm" variant="ghost" icon aria-label="Close" onClick={closeAddModal}><X size={16} /></Button>
+            </div>
+            {addError && <div className={s.alert} role="alert">{addError}</div>}
+            <form onSubmit={handleAddSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div className={s.formGrid}>
+                <Field label="Full name">{p => <Input {...p} value={addForm.name} onChange={e => setAddField('name', e.target.value)} placeholder="e.g. John Smith" />}</Field>
+                <Field label="Email">{p => <Input {...p} type="email" value={addForm.email} onChange={e => setAddField('email', e.target.value)} placeholder="e.g. john@example.com" />}</Field>
+                <Field label="Phone / mobile">{p => <Input {...p} type="tel" value={addForm.mobile} onChange={e => setAddField('mobile', e.target.value)} placeholder="e.g. +971501234567" />}</Field>
+                <Field label="City">{p => <Input {...p} value={addForm.city} onChange={e => setAddField('city', e.target.value)} placeholder="e.g. Dubai" />}</Field>
+                <Field label="Country">{p => <Input {...p} value={addForm.country} onChange={e => setAddField('country', e.target.value)} placeholder="e.g. United Arab Emirates" />}</Field>
+                <Field label="Contact type">{p => (
+                  <Select {...p} value={addForm.contact_type} onChange={e => setAddField('contact_type', e.target.value)}>
+                    {CONTACT_TYPES.map(t => <option key={t} value={t}>{CONTACT_TYPE_LABELS[t]}</option>)}
+                  </Select>
+                )}</Field>
+                <Field label="Geography">{p => (
+                  <Select {...p} value={addForm.geography} onChange={e => setAddField('geography', e.target.value)}>
+                    <option value="">Unknown</option><option value="LOCAL">Local (UAE)</option><option value="INTERNATIONAL">International</option>
+                  </Select>
+                )}</Field>
+                <Field label="WhatsApp status">{p => (
+                  <Select {...p} value={addForm.wa_unsubscribe} onChange={e => setAddField('wa_unsubscribe', e.target.value)}>
+                    <option value="no">Active</option><option value="yes">Unsubscribed</option>
+                  </Select>
+                )}</Field>
+                <Field label="Email status">{p => (
+                  <Select {...p} value={addForm.email_unsubscribe} onChange={e => setAddField('email_unsubscribe', e.target.value)}>
+                    <option value="no">Active</option><option value="yes">Unsubscribed</option>
+                  </Select>
+                )}</Field>
+              </div>
+              <p className={s.help} style={{ margin: 0 }}>Give at least a name, email or phone.</p>
+              <div className="ui-dialog-actions">
+                <Button variant="ghost" onClick={closeAddModal} disabled={addLoading}>Cancel</Button>
+                <Button type="submit" variant="primary" disabled={addLoading}>
+                  {addLoading ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} aria-hidden="true" /> Creating…</> : 'Create contact'}
+                </Button>
+              </div>
+            </form>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div role="status" className={`toast toast-${toast.type}`} style={{ position: 'fixed', bottom: 24, right: 16, left: 'auto', zIndex: 1000, maxWidth: 'calc(100vw - 32px)' }}>
+          {toast.msg}
         </div>
       )}
     </div>
   );
 }
-
-function DateRangeFilter({ label, from, to, onFrom, onTo }: DateRangeFilterProps) {
-  const inputStyle: CSSProperties = {
-    width: '100%', padding: '7px 8px', fontSize: 12, borderRadius: 6, boxSizing: 'border-box',
-    border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)',
-    outline: 'none', cursor: 'pointer',
-  };
-  return (
-    <div style={{ gridColumn: 'span 2' }}>
-      <label style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600, display: 'block', marginBottom: 4 }}>{label}</label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-        <div>
-          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>From</div>
-          <input type="date" value={from} onChange={e => onFrom(e.target.value)} style={inputStyle}
-            onFocus={e => { e.target.style.borderColor = '#C9A96E'; }}
-            onBlur={e => { e.target.style.borderColor = 'var(--border)'; }} />
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>To</div>
-          <input type="date" value={to} onChange={e => onTo(e.target.value)} style={inputStyle}
-            onFocus={e => { e.target.style.borderColor = '#C9A96E'; }}
-            onBlur={e => { e.target.style.borderColor = 'var(--border)'; }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AddField({ label, value, onChange, type = 'text', placeholder }: AddFieldProps) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: '100%', padding: '8px 10px', fontSize: 13, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box' }}
-        onFocus={e => { e.target.style.borderColor = '#C9A96E'; }}
-        onBlur={e => { e.target.style.borderColor = 'var(--border)'; }} />
-    </div>
-  );
-}
-
-function AddSelect({ label, value, onChange, options }: AddSelectProps) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600, marginBottom: 4 }}>{label}</label>
-      <select value={value} onChange={e => onChange(e.target.value)}
-        style={{ width: '100%', padding: '8px 10px', fontSize: 13, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--card-bg)', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}>
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
-  );
-}
-
-function pageBtn(disabled: boolean): CSSProperties {
-  return { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1 };
-}
-

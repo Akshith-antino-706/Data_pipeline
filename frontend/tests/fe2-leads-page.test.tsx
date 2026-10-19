@@ -73,6 +73,8 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const bodyText = (): string => document.body.textContent ?? '';
+const deptTable = () => screen.findByRole('region', { name: 'Leads by department' });
+const findDept = async (name: string) => within(await deptTable()).findByText(name);
 const noBadText = () => { expect(bodyText()).not.toContain('NaN'); expect(bodyText()).not.toContain('undefined'); };
 
 function mockWhatsapp() {
@@ -97,16 +99,22 @@ describe('Leads page — WhatsApp / Email tabs', () => {
   it('loads WhatsApp KPIs, trend and department table with the default filters', async () => {
     mockWhatsapp();
     render(<Leads />);
-    await screen.findByText('Sales');
+    await findDept('Sales');
     expect(api.getChatLeadsSummary).toHaveBeenCalledWith(daysAgo(7), today());
     expect(api.getChatLeadsTrend).toHaveBeenCalledWith(daysAgo(7), today(), 'day');
     expect(api.getChatLeadsDepartmentPeriods).toHaveBeenCalledWith('week', 7);
     expect(api.getDepartmentGroups).toHaveBeenCalled();
-    expect(screen.getByText('1,200')).toBeTruthy();
-    expect(screen.getByText('800')).toBeTruthy();
-    expect(screen.getByText('New Users')).toBeTruthy();
-    expect(screen.getByText('Returning Users')).toBeTruthy();
-    expect(bodyText()).toContain('2026-10-12  to  2026-10-19');
+    expect(within(screen.getByRole('region', { name: 'Total chats' })).getByText('1,200')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Leads' })).getByText('800')).toBeTruthy();
+    expect(within(screen.getByRole('tab', { name: /WhatsApp chats/ })).getByText('1,200')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'New contacts' })).getByText('300')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'New contacts' })).getByText('38% of leads')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Returning' })).getByText('500')).toBeTruthy();
+    expect(bodyText()).toContain('2026-10-12 to 2026-10-19');
+    // Busiest department is derived from the department table (Sales: 1,500 + 5 of 1,507 chats)
+    const busiest = screen.getByRole('region', { name: 'Busiest department' });
+    expect(within(busiest).getByText('Sales')).toBeTruthy();
+    expect(busiest.textContent).toContain('1,505 chats · 100%');
     expect(bodyText()).toContain('Oct 13-19 · PARTIAL');
     expect(screen.getByText('No department match')).toBeTruthy();
     expect(screen.getByText('1,500')).toBeTruthy();
@@ -154,16 +162,16 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     mockWhatsapp();
     vi.mocked(api.getMailLeadsSummary).mockResolvedValue(as(api.getMailLeadsSummary, { totalEmails: 42, totalLeads: 40, from: 'a', to: 'b' }));
     render(<Leads />);
-    await screen.findByText('Sales');
-    fireEvent.click(screen.getByRole('tab', { name: /Email Tickets/ }));
-    await screen.findByText('42');
+    await findDept('Sales');
+    fireEvent.click(screen.getByRole('tab', { name: /Email enquiries/ }));
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Total emails' })).getByText('42')).toBeTruthy());
     expect(api.getMailLeadsSummary).toHaveBeenCalledWith(daysAgo(7), today());
     expect(api.getMailLeadsTrend).toHaveBeenCalledWith(daysAgo(7), today(), 'day');
     expect(api.getMailLeadsDepartmentPeriods).toHaveBeenCalledWith('week', 7);
-    expect(screen.queryByText('New Users')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'New contacts' })).toBeNull();
     expect(localStorage.getItem('leads-active-tab')).toBe('mail');
     expect(window.location.search).toBe('?tab=mail');
-    expect(screen.getByRole('tab', { name: /Email Tickets/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /Email enquiries/ }).getAttribute('aria-selected')).toBe('true');
   });
 
   it('restores the saved tab from localStorage', async () => {
@@ -176,10 +184,10 @@ describe('Leads page — WhatsApp / Email tabs', () => {
   it('quick presets, Load button and trend granularity call the API with the right args', async () => {
     mockWhatsapp();
     render(<Leads />);
-    await screen.findByText('Sales');
+    await findDept('Sales');
     fireEvent.click(screen.getByRole('button', { name: 'Today' }));
     await waitFor(() => expect(api.getChatLeadsSummary).toHaveBeenLastCalledWith(today(), today()));
-    fireEvent.click(screen.getByRole('button', { name: 'week-wise' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
     await waitFor(() => expect(api.getChatLeadsTrend).toHaveBeenLastCalledWith(today(), today(), 'week'));
     const [fromInput] = document.querySelectorAll('input[type="date"]');
     fireEvent.change(fromInput, { target: { value: '2026-09-01' } });
@@ -190,7 +198,7 @@ describe('Leads page — WhatsApp / Email tabs', () => {
   it('month picker loads that calendar month', async () => {
     mockWhatsapp();
     render(<Leads />);
-    await screen.findByText('Sales');
+    await findDept('Sales');
     const year = new Date().getFullYear();
     const monthSelect = screen.getByDisplayValue('Select month…');
     fireEvent.change(monthSelect, { target: { value: `${year}-02` } });
@@ -202,11 +210,11 @@ describe('Leads page — WhatsApp / Email tabs', () => {
   it('department period unit / count / reset re-fetch with the right args', async () => {
     mockWhatsapp();
     render(<Leads />);
-    await screen.findByText('Sales');
+    await findDept('Sales');
     fireEvent.click(screen.getByRole('button', { name: 'Month on Month' }));
     await waitFor(() => expect(api.getChatLeadsDepartmentPeriods).toHaveBeenLastCalledWith('month', 3));
     fireEvent.click(screen.getByRole('button', { name: 'Week on Week' }));
-    await screen.findByText('Sales');
+    await findDept('Sales');
     fireEvent.change(screen.getByDisplayValue('Last 7'), { target: { value: '12' } });
     await waitFor(() => expect(api.getChatLeadsDepartmentPeriods).toHaveBeenLastCalledWith('week', 12));
     expect(screen.getByText('Filtered')).toBeTruthy();
@@ -221,10 +229,10 @@ describe('Leads page — WhatsApp / Email tabs', () => {
       .mockResolvedValueOnce(as(api.getChatLeadsDepartmentUsers, { users: [{ wa_id: '971555000111', wa_name: 'Ali', first_msg: 'Hi there', first_msg_at: '2026-10-18 10:00' }], has_more: true }))
       .mockResolvedValueOnce(as(api.getChatLeadsDepartmentUsers, { users: [{ wa_id: '971555000222' }], has_more: false }));
     render(<Leads />);
-    fireEvent.click(await screen.findByText('Sales'));
+    fireEvent.click(await findDept('Sales'));
     await screen.findByText('Hi there');
     expect(api.getChatLeadsDepartmentUsers).toHaveBeenCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50 });
-    expect(bodyText()).toContain('New users for Sales — showing 1+');
+    expect(bodyText()).toContain('New contacts for Sales · showing 1+');
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     await screen.findByText('971555000222');
     expect(api.getChatLeadsDepartmentUsers).toHaveBeenLastCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50, offset: 1 });
@@ -232,7 +240,7 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
     noBadText();
     // collapse
-    fireEvent.click(screen.getByText('Sales'));
+    fireEvent.click(await findDept('Sales'));
     expect(screen.queryByText('Hi there')).toBeNull();
   });
 
@@ -240,10 +248,54 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     mockWhatsapp();
     vi.mocked(api.getChatLeadsDepartmentUsers).mockRejectedValueOnce(new Error('users failed'));
     render(<Leads />);
-    fireEvent.click(await screen.findByText('Sales'));
+    fireEvent.click(await findDept('Sales'));
     await screen.findByText('users failed');
     fireEvent.click(screen.getByText('No department match'));
     await screen.findByText('No new users found for this department in the current window.');
+  });
+
+  it('compares KPIs with the previous period and with the same period last year', async () => {
+    mockWhatsapp();
+    vi.mocked(api.getChatLeadsSummary).mockImplementation((from: string) => Promise.resolve(as(api.getChatLeadsSummary,
+      from === daysAgo(7) ? SUMMARY : { ...SUMMARY, totalChats: 1000, totalLeads: 1000 })));
+    render(<Leads />);
+    await findDept('Sales');
+    // previous window = the 8 days right before the current 8-day window
+    expect(api.getChatLeadsSummary).toHaveBeenCalledWith(daysAgo(15), daysAgo(8));
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Total chats' })).getByText('▲ 20% vs previous period')).toBeTruthy());
+    expect(within(screen.getByRole('region', { name: 'Leads' })).getByText('▼ 20% vs previous period')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Compare with'), { target: { value: 'year' } });
+    const shift = (s: string) => `${Number(s.slice(0, 4)) - 1}${s.slice(4)}`;
+    await waitFor(() => expect(api.getChatLeadsSummary).toHaveBeenCalledWith(shift(daysAgo(7)), shift(today())));
+    expect(api.getChatLeadsSummary).toHaveBeenLastCalledWith(daysAgo(7), today());
+    await screen.findByText('▲ 20% vs same period last year');
+    noBadText();
+  });
+
+  it('shows no comparison when the previous-period call fails or has no data', async () => {
+    mockWhatsapp();
+    vi.mocked(api.getChatLeadsSummary).mockImplementation((from: string) =>
+      from === daysAgo(7) ? Promise.resolve(as(api.getChatLeadsSummary, SUMMARY)) : Promise.reject(new Error('prev down')));
+    render(<Leads />);
+    await findDept('Sales');
+    expect(screen.queryByText(/vs previous period/)).toBeNull();
+    expect(screen.queryByText('prev down')).toBeNull();
+    noBadText();
+  });
+
+  it('department table shows totals and the latest full period vs the one before', async () => {
+    mockWhatsapp();
+    vi.mocked(api.getChatLeadsDepartmentPeriods).mockResolvedValue(as(api.getChatLeadsDepartmentPeriods, {
+      periods: [{ label: 'W40' }, { label: 'W41' }, { label: 'W42', partial: true }],
+      rows: [{ receiver: '1', department: 'Sales', values: [{ chats: 100, newUsers: 1, oldUsers: 1 }, { chats: 150, newUsers: 1, oldUsers: 1 }, { chats: 9, newUsers: 0, oldUsers: 0 }] }],
+    }));
+    render(<Leads />);
+    const table = await deptTable();
+    await within(table).findByText('Sales');
+    expect(table.textContent).toContain('W41 vs W40');
+    expect(within(table).getByText('259')).toBeTruthy();
+    expect(within(table).getByText('▲ 50%')).toBeTruthy();
   });
 
   it('shows a session countdown for public visitors and skips the check when signed in', async () => {
@@ -269,8 +321,9 @@ describe('Leads page — department groups (signed in)', () => {
   it('is hidden for the public view', async () => {
     mockWhatsapp();
     render(<Leads />);
-    await screen.findByText('Sales');
-    expect(screen.queryByText('Department Groups')).toBeNull();
+    await findDept('Sales');
+    expect(screen.queryByRole('heading', { name: /Department groups/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Manage department groups' })).toBeNull();
   });
 
   it('lists groups, filters the department table by group, and clears the filter', async () => {
@@ -278,7 +331,8 @@ describe('Leads page — department groups (signed in)', () => {
     mockWhatsapp();
     vi.mocked(api.getDepartmentGroups).mockResolvedValue(as(api.getDepartmentGroups, GROUPS));
     render(<Leads />);
-    await screen.findByText('Department Groups');
+    await screen.findByRole('heading', { name: /Department groups/ });
+    expect(screen.getByRole('button', { name: 'Manage department groups' })).toBeTruthy();
     await screen.findByText('· 1 dept');
     fireEvent.change(screen.getByDisplayValue('All departments'), { target: { value: '5' } });
     await waitFor(() => expect(screen.queryByText('No department match')).toBeNull());
@@ -297,35 +351,46 @@ describe('Leads page — department groups (signed in)', () => {
     expect(api.getDepartments).toHaveBeenCalled();
   });
 
-  it('deletes a group only after confirmation and reloads the list', async () => {
+  it('deletes a group only after confirming in the dialog and reloads the list', async () => {
     h.isAuthenticated = true;
     mockWhatsapp();
     vi.mocked(api.getDepartmentGroups).mockResolvedValue(as(api.getDepartmentGroups, GROUPS));
-    const confirmSpy = vi.fn(() => false);
-    vi.stubGlobal('confirm', confirmSpy);
     render(<Leads />);
     await screen.findByText('· 1 dept');
     fireEvent.click(screen.getByTitle('Delete'));
-    expect(confirmSpy).toHaveBeenCalled();
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('Delete group "UAE Sales"?');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(api.deleteDepartmentGroup).not.toHaveBeenCalled();
-    confirmSpy.mockReturnValue(true);
     fireEvent.click(screen.getByTitle('Delete'));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete group' }));
     await waitFor(() => expect(api.deleteDepartmentGroup).toHaveBeenCalledWith(5));
     await waitFor(() => expect(api.getDepartmentGroups).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
   });
 
-  it('alerts when deleting a group fails', async () => {
+  it('shows an inline error when deleting a group fails', async () => {
     h.isAuthenticated = true;
     mockWhatsapp();
     vi.mocked(api.getDepartmentGroups).mockResolvedValue(as(api.getDepartmentGroups, GROUPS));
     vi.mocked(api.deleteDepartmentGroup).mockRejectedValue(new Error('in use'));
-    vi.stubGlobal('confirm', vi.fn(() => true));
-    const alertSpy = vi.fn();
-    vi.stubGlobal('alert', alertSpy);
     render(<Leads />);
     await screen.findByText('· 1 dept');
     fireEvent.click(screen.getByTitle('Delete'));
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('in use'));
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete group' }));
+    await screen.findByText('in use');
+    expect(screen.getByText("Couldn't delete the group")).toBeTruthy();
+  });
+
+  it('shows each department\'s group in the table', async () => {
+    h.isAuthenticated = true;
+    mockWhatsapp();
+    vi.mocked(api.getDepartmentGroups).mockResolvedValue(as(api.getDepartmentGroups, GROUPS));
+    render(<Leads />);
+    const table = await deptTable();
+    await within(table).findByText('UAE Sales');
+    expect(within(table).getAllByText('—').length).toBeGreaterThan(0);
   });
 
   it('Edit opens the modal pre-filled with the group', async () => {

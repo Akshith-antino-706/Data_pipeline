@@ -18,13 +18,14 @@ import {
 } from '@/lib/api';
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
+import JourneyList, { useJourneyListState } from './JourneyList';
 import {
   GitBranch, Play, ArrowLeft, Users, Zap, Clock, Target, MessageSquare,
-  ChevronRight, ChevronLeft, RefreshCw, AlertCircle, Plus, Search, BarChart3,
+  ChevronRight, RefreshCw, AlertCircle, Plus, Search, BarChart3,
   Activity, Settings, Eye, Trash2, Edit3, Copy, CheckCircle2, XCircle,
   Send, Mail, Smartphone, Bell, Globe, MessageCircle, Radio,
-  TrendingUp, Pause, MoreVertical, Layers, ArrowRight,
-  ChevronDown, ChevronUp, Sparkles, LayoutGrid, List, AlertTriangle
+  Pause, MoreVertical, Layers, ArrowRight,
+  ChevronDown, ChevronUp, Sparkles
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import hotToast from 'react-hot-toast';
@@ -632,13 +633,8 @@ export default function Journeys() {
   const [starting, setStarting] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name?: string } | null>(null); // { id, name } for list/card delete
-  const [deletingId, setDeletingId] = useState<number | null>(null);       // journey_id whose delete is in flight
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('active'); // default view = running journeys ('All' still one click away)
-  const [viewMode, setViewMode] = useState('cards');
-  const [journeyPage, setJourneyPage] = useState(1);   // client-side pagination for the journey list
-  const JOURNEYS_PER_PAGE = 24;
+  const listState = useJourneyListState(); // list filters / view / page — kept here so they survive opening a journey
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedNode, setExpandedNode] = useState<string | null>(null);
   const [techExpanded, setTechExpanded] = useState<Record<string, boolean>>({});
   const [showActions, setShowActions] = useState<boolean | null>(null);
@@ -828,9 +824,10 @@ export default function Journeys() {
     try {
       // Load all journeys (backend default page size is 20) so client-side search /
       // status filter / pagination below work across the full list, not just page 1.
-      const j = await getJourneys({ limit: 1000 }).catch(() => ({ data: [] })) as ApiData<JourneySummary[]>;
+      const j = await getJourneys({ limit: 1000 }) as ApiData<JourneySummary[]>;
       setJourneys(j.data || []);
-    } catch (err) { console.error(err); }
+      setLoadError(null);
+    } catch (err) { console.error(err); setLoadError((err as Error)?.message || 'Request failed'); }
     setLoading(false);
   }, []);
 
@@ -1431,86 +1428,26 @@ export default function Journeys() {
     setSuggestLoading(false);
   };
 
-  // ── Filtered Journeys ─────────────────────────────────────────
-  const filteredJourneys = useMemo(() => {
-    let filtered = journeys;
-    // Scope filter.
-    //   'All'       → show every journey.
-    //   'B2B'       → journeys whose NAME or SEGMENT mentions B2B (e.g. "All B2B users").
-    //   'Affiliate' → journeys whose NAME or SEGMENT mentions Affiliate.
-    //   'B2C'       → everything that is neither B2B nor Affiliate.
-    // Classify by name OR segment containing "B2B" (substring, not startsWith — so segments
-    // like "All B2B users" are caught; the old startsWith only matched names, which hid
-    // B2B-segment journeys whose title didn't literally start with "B2B").
-    filtered = filtered.filter(j => {
-      if (businessType === 'All') return true;
-      const name = (j.name || '').toUpperCase();
-      const seg = (j.segment_name || '').toUpperCase();
-      const isB2B = name.includes('B2B') || seg.includes('B2B');
-      const isAffiliate = name.includes('AFFILIATE') || seg.includes('AFFILIATE');
-      if (businessType === 'B2B') return isB2B;
-      if (businessType === 'Affiliate') return isAffiliate;
-      return !isB2B && !isAffiliate;
-    });
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(j => j.status === statusFilter);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      filtered = filtered.filter(j =>
-        j.name?.toLowerCase().includes(q) ||
-        j.segment_name?.toLowerCase().includes(q)
-      );
-    }
-    return filtered;
-  }, [journeys, statusFilter, searchQuery, businessType]);
-
-  // ── Client-side pagination over the filtered list ─────────────
-  const journeyPageCount = Math.max(1, Math.ceil(filteredJourneys.length / JOURNEYS_PER_PAGE));
-  // Reset to page 1 whenever the filters change (so we never sit on an out-of-range page).
-  useEffect(() => { setJourneyPage(1); }, [statusFilter, searchQuery, businessType, viewMode]);
-  // Clamp if the list shrank (e.g. after a delete) below the current page.
-  useEffect(() => { if (journeyPage > journeyPageCount) setJourneyPage(journeyPageCount); }, [journeyPage, journeyPageCount]);
-  const pagedJourneys = useMemo(
-    () => filteredJourneys.slice((journeyPage - 1) * JOURNEYS_PER_PAGE, journeyPage * JOURNEYS_PER_PAGE),
-    [filteredJourneys, journeyPage]
-  );
-
-  // ── Summary Stats ─────────────────────────────────────────────
-  const summaryStats = useMemo(() => {
-    const total = journeys.length;
-    const active = journeys.filter(j => j.status === 'active').length;
-    const totalEntries = journeys.reduce((sum, j) => sum + (j.total_entries || 0), 0);
-    const avgConversion = journeys.length > 0
-      ? (journeys.reduce((sum, j) => sum + (parseFloat(j.conversion_rate) || 0), 0) / journeys.length)
-      : 0;
-    return { total, active, totalEntries, avgConversion };
-  }, [journeys]);
 
   // ══════════════════════════════════════════════════════════════
-  // LOADING STATE
+  // JOURNEY LIST (header, KPIs, tabs, filters, cards/table, pagination,
+  // loading / empty / error states) — see ./JourneyList.tsx
   // ══════════════════════════════════════════════════════════════
-  if (loading) return (
-    <div>
-      <div className="page-header">
-        <div>
-          <h2 style={{ margin: 0 }}>Journey Builder</h2>
-          <div className="page-header-sub">Design, automate, and optimize customer journey flows across channels</div>
-        </div>
-      </div>
-      <div className="card-grid card-grid-4 mb-6">
-        {[
-          'Total Journeys', 'Active Journeys', 'Total Entries', 'Avg. Conversion',
-        ].map(label => (
-          <div key={label} className="card" style={{ padding: '16px 14px' }}>
-            <div style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 600, marginBottom: 8 }}>{label}</div>
-            <div className="skeleton" style={{ width: 70, height: 24, borderRadius: 6 }} />
-          </div>
-        ))}
-      </div>
-      {[1,2,3].map(i => <div key={i} className="card skeleton" style={{ height: 80, marginBottom: 8 }} />)}
-    </div>
+  const listView = (
+    <JourneyList
+      journeys={journeys}
+      loading={loading}
+      error={loadError}
+      businessType={businessType}
+      state={listState}
+      onRefresh={loadData}
+      onCreate={() => setShowCreate(true)}
+      onOpen={openJourney}
+    >
+      {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
+    </JourneyList>
   );
+  if (loading) return listView;
 
   // ══════════════════════════════════════════════════════════════
   // JOURNEY DETAIL VIEW
@@ -4503,431 +4440,5 @@ export default function Journeys() {
   // ══════════════════════════════════════════════════════════════
   // JOURNEY LIST VIEW
   // ══════════════════════════════════════════════════════════════
-  return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
-      {/* ── Page Header ───────────────────────────────────────── */}
-      <motion.div variants={fadeInUp}>
-      <div className="page-header">
-        <div>
-          <h2>Journey Builder</h2>
-          <div className="page-header-sub">Design, automate, and optimize customer journey flows across channels</div>
-        </div>
-        <div className="page-actions">
-          <button className="btn btn-secondary" onClick={loadData}><RefreshCw size={14} /></button>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
-            <Plus size={14} /> New Journey
-          </button>
-        </div>
-      </div>
-      </motion.div>
-
-      {/* ── Summary KPIs ──────────────────────────────────────── */}
-      <motion.div variants={fadeInUp}>
-      <div className="card-grid card-grid-4 mb-6">
-        {[
-          { label: 'Total Journeys', value: summaryStats.total, color: 'kpi-blue', icon: GitBranch },
-          { label: 'Active Journeys', value: summaryStats.active, color: 'kpi-green', icon: Play },
-          { label: 'Total Entries', value: fmt(summaryStats.totalEntries), color: 'kpi-purple', icon: Users },
-          { label: 'Avg. Conversion', value: pct(summaryStats.avgConversion), color: 'kpi-orange', icon: TrendingUp },
-        ].map((kpi, i) => (
-          <div key={i} className="card" style={{ padding: '20px 16px' }}>
-            <div className="flex items-center justify-between">
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 500, marginBottom: 4 }}>{kpi.label}</div>
-                <div className={`kpi-value ${kpi.color}`} style={{ fontSize: 26 }}>{kpi.value}</div>
-              </div>
-              <div className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--bg-secondary)' }}>
-                <kpi.icon size={20} color="var(--text-secondary)" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Filters & Search ──────────────────────────────────── */}
-      <div className="flex gap-3 mb-5 items-center flex-wrap">
-        <div style={{ position: 'relative', flex: 1, maxWidth: 320 }}>
-          <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
-          <input
-            type="text"
-            placeholder="Search journeys..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            style={{ paddingLeft: 36, width: '100%' }}
-          />
-        </div>
-        <div className="flex gap-1" style={{ background: 'var(--bg-hover)', padding: 3, borderRadius: 8, border: '1px solid var(--border-color)' }}>
-          {['all', 'active', 'draft', 'paused', 'completed'].map(status => (
-            <button
-              key={status}
-              onClick={() => setStatusFilter(status)}
-              style={{
-                padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                fontSize: 12, fontWeight: 500, transition: 'all 0.15s',
-                background: statusFilter === status ? 'var(--red)' : 'transparent',
-                color: statusFilter === status ? 'var(--bg-card)' : 'var(--text-secondary)',
-              }}
-            >
-              {status === 'all' ? 'All' : STATUS_CONFIG[status]?.label || status}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-0.5" style={{ background: 'var(--bg-hover)', padding: 3, borderRadius: 8, border: '1px solid var(--border-color)' }}>
-          <button
-            onClick={() => setViewMode('cards')}
-            className="flex items-center"
-            style={{
-              padding: 5, borderRadius: 5, border: 'none', cursor: 'pointer',
-              background: viewMode === 'cards' ? 'var(--bg-card)' : 'transparent',
-              color: viewMode === 'cards' ? 'var(--text-primary)' : 'var(--text-muted)',
-              boxShadow: viewMode === 'cards' ? 'var(--shadow)' : 'none'
-            }}
-          >
-            <LayoutGrid size={14} />
-          </button>
-          <button
-            onClick={() => setViewMode('list')}
-            className="flex items-center"
-            style={{
-              padding: 5, borderRadius: 5, border: 'none', cursor: 'pointer',
-              background: viewMode === 'list' ? 'var(--bg-card)' : 'transparent',
-              color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
-              boxShadow: viewMode === 'list' ? 'var(--shadow)' : 'none'
-            }}
-          >
-            <List size={14} />
-          </button>
-        </div>
-        {searchQuery && (
-          <span className="text-secondary" style={{ fontSize: 12 }}>
-            {filteredJourneys.length} result{filteredJourneys.length !== 1 ? 's' : ''}
-          </span>
-        )}
-      </div>
-
-      {/* ── Journey List / Cards ──────────────────────────────── */}
-      {filteredJourneys.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: '60px 20px' }}>
-          {journeys.length === 0 ? (
-            <>
-              <GitBranch size={48} color="var(--text-secondary)" style={{ opacity: 0.3 }} />
-              <h3 className="mt-4 mb-2">No Journeys Yet</h3>
-              <p className="text-secondary" style={{ maxWidth: 440, margin: '0 auto 20px', lineHeight: 1.6 }}>
-                Create automated customer journeys to engage users across WhatsApp, Email, SMS, Push, and more.
-              </p>
-              <div className="flex gap-2 justify-center">
-                <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
-                  <Plus size={14} /> Create Journey
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <Search size={40} color="var(--text-secondary)" style={{ opacity: 0.3 }} />
-              <h4 className="mt-3 mb-1.5">No journeys match your filters</h4>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setSearchQuery(''); setStatusFilter('all'); }}>Clear filters</button>
-            </>
-          )}
-        </div>
-      ) : viewMode === 'cards' ? (
-        /* ── Card View ──────────────────────────────────────── */
-        <div className="card-grid card-grid-2">
-          {pagedJourneys.map(j => {
-            const statusConf = STATUS_CONFIG[j.status] || STATUS_CONFIG.draft;
-            const channels = getJourneyChannels(j.nodes);
-            const convRate = parseFloat(j.conversion_rate) || 0;
-
-            return (
-              <div
-                key={j.journey_id}
-                className="card"
-                role="button"
-                tabIndex={0}
-                onClick={() => openJourney(j.journey_id)}
-                onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && openJourney(j.journey_id)}
-                style={{ cursor: 'pointer', padding: '20px' }}
-              >
-                {/* Top row: name + status */}
-                <div className="flex justify-between items-start mb-3">
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div className="flex items-center justify-center shrink-0" style={{
-                        width: 32, height: 32, borderRadius: 8,
-                        background: statusConf.bg
-                      }}>
-                        <GitBranch size={16} color={statusConf.color} />
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div className="font-semibold" style={{ fontSize: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.name}</div>
-                        {j.segment_name && <div className="text-secondary" style={{ fontSize: 11 }}>{j.segment_name}</div>}
-                      </div>
-                    </div>
-                  </div>
-                  <span className="shrink-0" style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    background: statusConf.bg, color: statusConf.color
-                  }}>
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusConf.color }} />
-                    {statusConf.label}
-                  </span>
-                </div>
-
-                {/* Channel pills */}
-                {channels.length > 0 && (
-                  <div className="flex gap-1 flex-wrap mb-3">
-                    {channels.map(ch => {
-                      const conf = CHANNEL_CONFIG[ch] || {};
-                      const Icon = conf.icon || MessageSquare;
-                      return (
-                        <span key={ch} style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 3,
-                          padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
-                          background: (conf.color || '#78716c') + '10', color: conf.color || '#78716c'
-                        }}>
-                          <Icon size={10} /> {conf.label || ch}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Stats row */}
-                <div className="flex gap-4 text-secondary mb-2.5" style={{ fontSize: 12 }}>
-                  <span className="flex items-center gap-1">
-                    <Layers size={12} /> {j.node_count || 0} nodes
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Users size={12} /> {fmt(j.total_entries)} entries
-                  </span>
-                </div>
-
-                {/* Conversion progress bar */}
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-secondary" style={{ fontSize: 11 }}>Conversion</span>
-                    <span className="font-semibold" style={{ fontSize: 11, color: convRate >= 10 ? 'var(--green)' : convRate > 0 ? 'var(--orange)' : 'var(--text-muted)' }}>
-                      {pct(convRate)}
-                    </span>
-                  </div>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{
-                      width: `${Math.min(convRate, 100)}%`,
-                      background: convRate >= 10 ? 'var(--green)' : convRate > 0 ? 'var(--orange)' : 'var(--border-color)'
-                    }} />
-                  </div>
-                </div>
-
-                {/* Scheduled-start mini badge on card */}
-                {j.status === 'draft' && j.scheduled_start_at && new Date(j.scheduled_start_at) > new Date() && (
-                  <div className="flex items-center gap-1.5 mt-2.5 mb-0.5" style={{
-                    padding: '5px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                    background: 'var(--orange-dim)', color: 'var(--orange)',
-                    border: '1px solid rgba(255,153,51,0.3)',
-                  }}>
-                    <Clock size={11} />
-                    Starts {new Date(j.scheduled_start_at).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })} Dubai
-                  </div>
-                )}
-
-                {/* Footer: date + delete */}
-                <div className="flex justify-between items-center" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
-                  <span className="text-secondary" style={{ fontSize: 11 }}>{j.created_at ? new Date(j.created_at).toLocaleDateString() : ''}</span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: j.journey_id, name: j.name }); }}
-                    title={deletingId === j.journey_id ? 'Deleting…' : 'Delete journey'}
-                    disabled={deletingId === j.journey_id}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: deletingId === j.journey_id ? 'var(--red)' : 'var(--text-muted)', cursor: deletingId === j.journey_id ? 'default' : 'pointer', transition: 'all 0.15s' }}
-                    onMouseEnter={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
-                    onMouseLeave={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                  >
-                    {deletingId === j.journey_id
-                      ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                      : <Trash2 size={14} />}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        /* ── List View ──────────────────────────────────────── */
-        <div className="card" style={{ padding: 0 }}>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Journey</th>
-                  <th>Status</th>
-                  <th>Segment</th>
-                  <th>Channels</th>
-                  <th>Nodes</th>
-                  <th>Entries</th>
-                  <th>Conversion</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagedJourneys.map(j => {
-                  const statusConf = STATUS_CONFIG[j.status] || STATUS_CONFIG.draft;
-                  const channels = getJourneyChannels(j.nodes);
-
-                  return (
-                    <tr
-                      key={j.journey_id}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => openJourney(j.journey_id)}
-                    >
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <GitBranch size={14} color={statusConf.color} />
-                          <span className="font-semibold">{j.name}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 4,
-                          padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                          background: statusConf.bg, color: statusConf.color
-                        }}>
-                          <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusConf.color }} />
-                          {statusConf.label}
-                        </span>
-                      </td>
-                      <td className="text-secondary text-sm">{j.segment_name || '—'}</td>
-                      <td>
-                        <div className="flex gap-0.5">
-                          {channels.slice(0, 3).map(ch => {
-                            const conf = CHANNEL_CONFIG[ch] || {};
-                            const Icon = conf.icon || MessageSquare;
-                            return (
-                              <span key={ch} title={conf.label || ch} className="inline-flex items-center justify-center" style={{
-                                width: 24, height: 24, borderRadius: 6,
-                                background: (conf.color || '#78716c') + '10', color: conf.color || '#78716c'
-                              }}>
-                                <Icon size={12} />
-                              </span>
-                            );
-                          })}
-                          {channels.length > 3 && <span style={{ fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center' }}>+{channels.length - 3}</span>}
-                          {channels.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
-                        </div>
-                      </td>
-                      <td>{j.node_count || 0}</td>
-                      <td className="font-medium">{fmt(j.total_entries)}</td>
-                      <td>
-                        <span className="font-semibold" style={{ color: (j.conversion_rate as unknown as number || 0) >= 10 ? 'var(--green)' : 'var(--text-secondary)' }}>
-                          {pct(j.conversion_rate)}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ id: j.journey_id, name: j.name }); }}
-                            title={deletingId === j.journey_id ? 'Deleting…' : 'Delete journey'}
-                            disabled={deletingId === j.journey_id}
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6, border: 'none', background: 'transparent', color: deletingId === j.journey_id ? 'var(--red)' : 'var(--text-muted)', cursor: deletingId === j.journey_id ? 'default' : 'pointer' }}
-                            onMouseEnter={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'var(--red-dim)'; e.currentTarget.style.color = 'var(--red)'; }}
-                            onMouseLeave={e => { if (deletingId === j.journey_id) return; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                          >
-                            {deletingId === j.journey_id
-                              ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                              : <Trash2 size={14} />}
-                          </button>
-                          <ChevronRight size={14} color="var(--text-muted)" />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── Pagination ─────────────────────────────────────────── */}
-      {filteredJourneys.length > JOURNEYS_PER_PAGE && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Showing <strong>{(journeyPage - 1) * JOURNEYS_PER_PAGE + 1}</strong>–<strong>{Math.min(journeyPage * JOURNEYS_PER_PAGE, filteredJourneys.length)}</strong> of <strong>{filteredJourneys.length}</strong> journeys
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className="btn btn-secondary btn-sm" disabled={journeyPage <= 1}
-              onClick={() => setJourneyPage(p => Math.max(1, p - 1))}
-              style={{ opacity: journeyPage <= 1 ? 0.5 : 1, cursor: journeyPage <= 1 ? 'not-allowed' : 'pointer' }}>
-              <ChevronLeft size={14} /> Prev
-            </button>
-            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', minWidth: 90, textAlign: 'center' }}>
-              Page <strong>{journeyPage}</strong> of <strong>{journeyPageCount}</strong>
-            </span>
-            <button className="btn btn-secondary btn-sm" disabled={journeyPage >= journeyPageCount}
-              onClick={() => setJourneyPage(p => Math.min(journeyPageCount, p + 1))}
-              style={{ opacity: journeyPage >= journeyPageCount ? 0.5 : 1, cursor: journeyPage >= journeyPageCount ? 'not-allowed' : 'pointer' }}>
-              Next <ChevronRight size={14} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
-
-      {/* ── Delete Confirmation Modal ─────────────────────────── */}
-      <AnimatePresence>
-        {deleteConfirm && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setDeleteConfirm(null)}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              onClick={e => e.stopPropagation()}
-              style={{ background: 'var(--card)', borderRadius: 16, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--red-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <AlertTriangle size={20} color="var(--red)" />
-                </div>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>Delete Journey</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This action cannot be undone</div>
-                </div>
-              </div>
-              <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-secondary)', marginBottom: 20, fontSize: 13 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Journey: </span>
-                <span style={{ fontWeight: 600 }}>{deleteConfirm.name}</span>
-              </div>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
-                This will permanently delete this journey and all associated entries and events.
-              </p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button onClick={() => setDeleteConfirm(null)} disabled={!!deletingId}
-                  style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', cursor: deletingId ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, opacity: deletingId ? 0.5 : 1 }}>
-                  Cancel
-                </button>
-                {/* Stays open with a spinner while the request is in flight — deleting a journey
-                    also clears its entries, so it is not instant on a large one. */}
-                <button disabled={!!deletingId} onClick={async () => {
-                  const id = deleteConfirm.id;
-                  setDeletingId(id);
-                  try {
-                    await deleteJourney(id);
-                    setDeleteConfirm(null);
-                    hotToast.success('Journey deleted successfully');
-                    await loadData();
-                  } catch (err) { hotToast.error((err as Error).message || 'Failed to delete journey'); }
-                  finally { setDeletingId(null); }
-                }}
-                  style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--red)', color: '#fff', cursor: deletingId ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, opacity: deletingId ? 0.8 : 1 }}>
-                  {deletingId
-                    ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Deleting…</>
-                    : <><Trash2 size={14} /> Delete</>}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      </motion.div>
-    </motion.div>
-  );
+  return listView;
 }

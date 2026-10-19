@@ -69,44 +69,93 @@ describe('Journeys list page', () => {
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
-  it('shows the "No Journeys Yet" empty state', async () => {
+  it('shows the "Create your first journey" empty state', async () => {
     mockList([]);
     renderPage();
-    await screen.findByText('No Journeys Yet');
+    await screen.findByText('Create your first journey');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
-  it('falls back to an empty list when the API errors', async () => {
-    vi.mocked(api.getJourneys).mockRejectedValue(new Error('HTTP 500'));
+  it('shows an error state with retry when the API errors', async () => {
+    vi.mocked(api.getJourneys).mockRejectedValueOnce(new Error('HTTP 500'));
     renderPage();
-    await screen.findByText('No Journeys Yet');
+    await screen.findByText("Couldn't load journeys");
+    expect(bodyText()).toContain('HTTP 500');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
+    mockList(LIST);
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('Welcome Series');
+    expect(api.getJourneys).toHaveBeenCalledTimes(2);
+  });
+
+  it('status tabs show counts that follow the filters', async () => {
+    mockList(LIST);
+    renderPage();
+    await screen.findByText('Welcome Series');
+    expect(screen.getByRole('tab', { name: 'All 4' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Running 2' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Drafts 1' })).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Search by name or segment'), { target: { value: 'b2b' } });
+    expect(screen.getByRole('tab', { name: 'All 1' })).toBeTruthy();
+  });
+
+  it('a draft with a future start shows under Scheduled, not Drafts', async () => {
+    mockList([...LIST, J(5, 'Future Launch', 'draft', { scheduled_start_at: '2999-01-01T00:00:00Z' })]);
+    renderPage();
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByRole('tab', { name: /^Scheduled/ }));
+    expect(screen.getByText('Future Launch')).toBeTruthy();
+    expect(screen.queryByText('Old Draft')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: /^Drafts/ }));
+    expect(screen.queryByText('Future Launch')).toBeNull();
+  });
+
+  it('sorts by name and by most joined', async () => {
+    mockList(LIST);
+    renderPage();
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
+    const want = ['Welcome Series', 'B2B Onboarding', 'Old Draft', 'Paused One'];
+    const names = () => Array.from(document.querySelectorAll('button')).map(b => b.textContent ?? '').filter(t => want.includes(t));
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'name' } });
+    expect(names()).toEqual(['B2B Onboarding', 'Old Draft', 'Paused One', 'Welcome Series']);
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'joined' } });
+    expect(names()).toEqual(['Paused One', 'B2B Onboarding', 'Welcome Series', 'Old Draft']);
+  });
+
+  it('type filter uses journey_type', async () => {
+    mockList([J(1, 'Fixed One', 'active'), J(2, 'Live One', 'active', { journey_type: 'gtm' })]);
+    renderPage();
+    await screen.findByText('Fixed One');
+    fireEvent.change(screen.getByLabelText('Journey type'), { target: { value: 'always' } });
+    expect(screen.getByText('Live One')).toBeTruthy();
+    expect(screen.queryByText('Fixed One')).toBeNull();
   });
 
   it('shows skeleton KPIs while loading', () => {
     vi.mocked(api.getJourneys).mockReturnValue(new Promise(() => {}));
     const { container } = renderPage();
-    expect(screen.getByText('Journey Builder')).toBeTruthy();
-    expect(screen.getByText('Total Journeys')).toBeTruthy();
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThanOrEqual(4);
+    expect(screen.getByRole('heading', { name: 'Journeys' })).toBeTruthy();
+    expect(screen.getByText('Total journeys')).toBeTruthy();
+    expect(container.querySelectorAll('.ui-skel').length).toBeGreaterThanOrEqual(4);
   });
 
   it('status filter, search and clear filters', async () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
-    fireEvent.click(screen.getByRole('button', { name: 'Draft' }));
+    fireEvent.click(screen.getByRole('tab', { name: /^Drafts/ }));
     expect(screen.getByText('Old Draft')).toBeTruthy();
     expect(screen.queryByText('Welcome Series')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
     expect(screen.getByText('Paused One')).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText('Search journeys...'), { target: { value: 'b2b users' } });
+    fireEvent.change(screen.getByPlaceholderText('Search by name or segment'), { target: { value: 'b2b users' } });
     expect(screen.getByText('B2B Onboarding')).toBeTruthy();
     expect(screen.queryByText('Welcome Series')).toBeNull();
     expect(screen.getByText('1 result')).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText('Search journeys...'), { target: { value: 'zzz' } });
+    fireEvent.change(screen.getByPlaceholderText('Search by name or segment'), { target: { value: 'zzz' } });
     expect(screen.getByText('No journeys match your filters')).toBeTruthy();
-    fireEvent.click(screen.getByText('Clear filters'));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByText('Old Draft')).toBeTruthy();
   });
 
@@ -122,9 +171,8 @@ describe('Journeys list page', () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
-    const toggles = document.querySelectorAll('button.flex.items-center');
-    fireEvent.click(toggles[toggles.length - 1]);
+    fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Table view' }));
     const table = await screen.findByRole('table');
     expect(within(table).getByText('Seg 1')).toBeTruthy();
     expect(within(table).getAllByText('12.5%').length).toBe(3);
@@ -137,9 +185,8 @@ describe('Journeys list page', () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
-    const toggles = document.querySelectorAll('button.flex.items-center');
-    fireEvent.click(toggles[toggles.length - 1]);
+    fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Table view' }));
     await screen.findByRole('table');
     expect(bodyText()).not.toContain('NaN');
   });
@@ -150,11 +197,11 @@ describe('Journeys list page', () => {
     await screen.findByText('Journey 1');
     expect(bodyText()).toContain('Showing 1–24 of 30 journeys');
     expect(screen.queryByText('Journey 25')).toBeNull();
-    fireEvent.click(screen.getByText('Next'));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('Journey 25')).toBeTruthy();
-    expect(bodyText()).toContain('Page 2 of 2');
-    expect((screen.getByText('Next').closest('button') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByText('Prev'));
+    expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page');
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
     expect(screen.getByText('Journey 1')).toBeTruthy();
   });
 
@@ -194,7 +241,7 @@ describe('Journeys list page', () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
-    fireEvent.click(screen.getByText('New Journey'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create journey' }));
     await screen.findByText('Create New Journey');
     const createBtn = screen.getAllByRole('button', { name: /Create Journey/ })[0] as HTMLButtonElement;
     expect(createBtn.disabled).toBe(true);
