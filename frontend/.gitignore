@@ -37,3 +37,7 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# playwright
+test-results/
+playwright-report/
