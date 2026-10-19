@@ -417,3 +417,20 @@ describe('slow Home section keeps computing after the response limit', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('series14d per-day computation', () => {
+  it('runs one small count per channel per day and fills 14 days', async () => {
+    mockQuery.mockResolvedValue({ rows: [{ n: '2' }] });
+    const r = await getHomeSection('series14d');
+    expect(r.available).toBe(true);
+    if (r.available) {
+      expect(r.days).toHaveLength(14);
+      expect(r.days[13]).toMatchObject({ email: 2, whatsapp: 2, sms: 2, total: 6 });
+    }
+    expect(mockQuery.mock.calls.length).toBe(42);
+    for (const sql of sqlCalls()) {
+      expect(sql).not.toMatch(/GROUP BY|to_char/);
+      expect(sql).toMatch(/^\s*SELECT COUNT\(\*\)/);
+    }
+  });
+});

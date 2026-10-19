@@ -130,6 +130,23 @@ async function homeSentBetween(startExpr: string, endExpr: string) {
   return { email, whatsapp, sms, total: email + whatsapp + sms };
 }
 
+type ChannelCounts = { email: number; whatsapp: number; sms: number; total: number };
+/** Past-day counts are immutable; keep them long. Today's count stays fresh. */
+const SERIES_PAST_TTL_MS = 6 * 60 * 60 * 1000;
+const SERIES_TODAY_TTL_MS = 120_000;
+const seriesDayCache = new Map<string, { at: number; v: ChannelCounts }>();
+/** Dubai-midnight timestamp `k` days ago; k is an internal integer 0–14, never user input. */
+const dubaiDayStart = (k: number) => `((date_trunc('day', NOW() AT TIME ZONE 'Asia/Dubai') - INTERVAL '${Math.trunc(k)} days') AT TIME ZONE 'Asia/Dubai')`;
+async function seriesDay(date: string, k: number): Promise<ChannelCounts> {
+  const hit = seriesDayCache.get(date);
+  const ttl = k === 0 ? SERIES_TODAY_TTL_MS : SERIES_PAST_TTL_MS;
+  if (hit && Date.now() - hit.at < ttl) return hit.v;
+  const v = await homeSentBetween(dubaiDayStart(k), k === 0 ? DUBAI_TOMORROW : dubaiDayStart(k - 1));
+  seriesDayCache.set(date, { at: Date.now(), v });
+  if (seriesDayCache.size > 40) for (const key of [...seriesDayCache.keys()].sort().slice(0, seriesDayCache.size - 40)) seriesDayCache.delete(key);
+  return v;
+}
+
 /** Cap for the per-journey "joined" counts on Home (keeps each count bounded). */
 const JOINED_COUNT_CAP = 100_000;
 
@@ -207,25 +224,18 @@ const HOME_SECTION_FNS = {
   },
 
   series14d: async () => {
-    // The Dubai-day bucketing is applied only in the SELECT/GROUP BY; every WHERE is a
-    // plain [start, end) range on the raw timestamp column.
-    const day = (col: string) => `to_char((${col} AT TIME ZONE 'Asia/Dubai')::date, 'YYYY-MM-DD')`;
-    const start = `(${DUBAI_TODAY} - INTERVAL '13 days')`;
-    const [e, w, s] = await Promise.all([
-      hq(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM email_send_log
-        WHERE sent_at >= ${start} AND sent_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued') GROUP BY 1`),
-      hq(`SELECT ${day('created_at')} AS d, COUNT(*) AS n FROM whatsapp_send_log
-        WHERE created_at >= ${start} AND created_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued') GROUP BY 1`),
-      hq(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM sms_send_log
-        WHERE sent_at >= ${start} AND sent_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued','blocked') GROUP BY 1`),
-    ]);
+    // One cheap one-day count per Dubai day (same query shape as sentToday). Past days never
+    // change, so each is computed once and kept for 6 hours; only today is recomputed.
     const today = dubaiTodayIso();
-    const days = Array.from({ length: 14 }, (_, i) => ({ date: addDays(today, i - 13), email: 0, whatsapp: 0, sms: 0, total: 0 }));
-    const byDate = new Map(days.map(d => [d.date, d]));
-    const add = (rows: CountRow[], k: 'email' | 'whatsapp' | 'sms') => {
-      for (const r of rows) { const d = byDate.get(String(r.d)); if (d) { d[k] += num(r.n); d.total += num(r.n); } }
-    };
-    add(e.rows, 'email'); add(w.rows, 'whatsapp'); add(s.rows, 'sms');
+    const offsets = Array.from({ length: 14 }, (_, i) => 13 - i); // 13 … 0 days ago
+    const days: ({ date: string } & ChannelCounts)[] = [];
+    for (let i = 0; i < offsets.length; i += 3) {
+      const batch = await Promise.all(offsets.slice(i, i + 3).map(async k => {
+        const date = addDays(today, -k);
+        return { date, ...(await seriesDay(date, k)) };
+      }));
+      days.push(...batch);
+    }
     return { days };
   },
 } as const;
@@ -246,6 +256,7 @@ const homeInFlight = new Map<HomeSectionName, Promise<AnyHomeResult>>();
 /** Test hook: clears the Home section cache. */
 export function resetHomeCache(): void {
   homeCache.clear();
+  seriesDayCache.clear();
   homeInFlight.clear();
 }
 
