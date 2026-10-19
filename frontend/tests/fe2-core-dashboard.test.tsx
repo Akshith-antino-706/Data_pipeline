@@ -251,12 +251,27 @@ describe('Dashboard page', () => {
       expect(bodyText()).not.toMatch(/NaN|undefined/);
     });
 
-    it('a timed-out card retries only that section with "Try again"', async () => {
+    it('a timed-out card keeps loading and fills in automatically (server finishes in background)', async () => {
+      let calls = 0;
+      mockHome(fullHome, section => {
+        if (section !== 'conversions30d') return undefined;
+        calls += 1;
+        return Promise.resolve(calls === 1 ? { available: false, reason: 'timeout' } as const : fullHome.conversions30d);
+      });
+      renderPage();
+      await screen.findByText('1,545');
+      expect(screen.queryByText(/Not available right now/)).toBeNull(); // still loading, not an error
+      await screen.findByText('321', undefined, { timeout: 7000 });
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+    }, 10000);
+
+    it('an unavailable card retries only that section with "Try again"', async () => {
       let conversionCalls = 0;
       mockHome(fullHome, section => {
         if (section !== 'conversions30d') return undefined;
         conversionCalls += 1;
-        return Promise.resolve(conversionCalls === 1 ? { available: false, reason: 'timeout' } as const : fullHome.conversions30d);
+        return Promise.resolve(conversionCalls === 1 ? { available: false, reason: 'unavailable' } as const : fullHome.conversions30d);
       });
       renderPage();
       await screen.findByText('1,545');

@@ -21,7 +21,7 @@ vi.mock('../src/config/database.js', () => ({ default: { query: poolQuery }, que
 vi.mock('../src/services/queue/index.js', () => ({ queueCounts: mockQueueCounts }));
 vi.mock('../src/services/UTMService.js', () => ({ default: { getUserLinkStats: mockLinkStats } }));
 
-import overviewRouter, { parseRange, resetHomeCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
+import overviewRouter, { parseRange, resetHomeCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_QUERY_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
 
 type Json = Record<string, unknown>;
 let server: Server;
@@ -125,7 +125,7 @@ describe('GET /home/:section', () => {
     await get('/home');
     const configs = mockQuery.mock.calls.map(c => c[2] as { query_timeout?: number } | undefined);
     expect(configs.length).toBeGreaterThan(0);
-    for (const c of configs) expect(c?.query_timeout).toBe(HOME_SECTION_TIMEOUT_MS);
+    for (const c of configs) expect(c?.query_timeout).toBe(HOME_QUERY_TIMEOUT_MS);
   });
 
   it('delivery7d uses email_send_log status (no ses_events join), bounded by sent_at', async () => {
@@ -397,5 +397,23 @@ describe('GET /home/sendingToday', () => {
     const sql = sqlCalls().find(s => s.includes('gtm_journey_entries')) ?? '';
     expect(sql).toMatch(/next_fire_at IS NULL/);
     expect(sql).toMatch(/^\s*WITH/);
+  });
+});
+
+describe('slow Home section keeps computing after the response limit', () => {
+  it('returns timeout first, then serves the finished result from cache', async () => {
+    vi.useFakeTimers();
+    try {
+      let release: (v: { rows: Record<string, unknown>[] }) => void = () => {};
+      mockQuery.mockImplementation(() => new Promise(r => { release = r; }));
+      const first = getHomeSection('conversions30d');
+      await vi.advanceTimersByTimeAsync(HOME_SECTION_TIMEOUT_MS + 10);
+      expect(await first).toEqual({ available: false, reason: 'timeout' });
+      release({ rows: [{ n: '5' }] });
+      await vi.advanceTimersByTimeAsync(1);
+      const calls = mockQuery.mock.calls.length;
+      expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 5 });
+      expect(mockQuery.mock.calls.length).toBe(calls);
+    } finally { vi.useRealTimers(); }
   });
 });

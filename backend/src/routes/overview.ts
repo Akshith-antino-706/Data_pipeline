@@ -93,6 +93,12 @@ type CountRow = Record<string, string | number | null>;
 
 /** Wall-clock limit per Home section; the same limit is passed to pg as query_timeout. */
 export const HOME_SECTION_TIMEOUT_MS = 8_000;
+/**
+ * pg query_timeout for Home queries. Longer than the wall-clock limit on purpose: when a
+ * section misses the 8s response window, its queries keep running in the background and the
+ * result is cached when they finish, so the next request is served instantly.
+ */
+export const HOME_QUERY_TIMEOUT_MS = 60_000;
 /** Fresh window for a successful section result. */
 export const HOME_CACHE_TTL_MS = 120_000;
 /** A successful result older than the TTL is still served (and refreshed in the background) up to this age. */
@@ -107,7 +113,7 @@ export const HOME_FAIL_TTL_MS = 15_000;
  */
 type TimedQueryConfig = QueryConfig & { query_timeout: number };
 function hq(text: string, values: unknown[] = []) {
-  const config: TimedQueryConfig = { text, values, query_timeout: HOME_SECTION_TIMEOUT_MS };
+  const config: TimedQueryConfig = { text, values, query_timeout: HOME_QUERY_TIMEOUT_MS };
   return db.query<CountRow>(config);
 }
 
@@ -195,7 +201,7 @@ const HOME_SECTION_FNS = {
       SELECT d.journey_id, jf.name, COUNT(*) AS due, SUM(COUNT(*)) OVER () AS all_due
       FROM due d JOIN journey_flows jf ON jf.journey_id = d.journey_id
       WHERE jf.status = 'active'
-      GROUP BY d.journey_id, jf.name ORDER BY due DESC LIMIT 10`);
+      GROUP BY d.journey_id, jf.name ORDER BY due DESC LIMIT 5`);
     const journeys = rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), due: num(r.due) }));
     return { journeys, total: rows.length ? num(rows[0].all_due) : 0 };
   },
@@ -233,19 +239,6 @@ function isHomeSection(s: string): s is HomeSectionName {
   return Object.prototype.hasOwnProperty.call(HOME_SECTION_FNS, s);
 }
 
-/** Runs a section with the wall-clock limit; never throws. */
-async function runHomeSection(name: HomeSectionName): Promise<AnyHomeResult> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<TimedOut>(resolve => {
-    timer = setTimeout(() => resolve({ available: false, reason: 'timeout' }), HOME_SECTION_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race<AnyHomeResult>([section<object>(name, HOME_SECTION_FNS[name]) as Promise<AnyHomeResult>, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 interface HomeCacheEntry { value: AnyHomeResult; at: number }
 const homeCache = new Map<HomeSectionName, HomeCacheEntry>();
 const homeInFlight = new Map<HomeSectionName, Promise<AnyHomeResult>>();
@@ -256,20 +249,40 @@ export function resetHomeCache(): void {
   homeInFlight.clear();
 }
 
-/** Computes a section once for all concurrent callers and stores the result. */
-function refreshHomeSection(name: HomeSectionName): Promise<AnyHomeResult> {
+/** Stores a finished result, keeping a still-usable good value rather than a failure. */
+function storeHomeSection(name: HomeSectionName, value: AnyHomeResult): AnyHomeResult {
+  const prev = homeCache.get(name);
+  const keepPrev = !value.available && prev?.value.available && Date.now() - prev.at < HOME_STALE_MAX_MS;
+  if (!keepPrev) homeCache.set(name, { value, at: Date.now() });
+  return keepPrev && prev ? prev.value : value;
+}
+
+/**
+ * Starts (or joins) the background computation of a section. The computation is NOT cut off
+ * at the response limit — it runs until done (bounded by HOME_QUERY_TIMEOUT_MS in pg) and its
+ * result is cached, so a slow section fills in on a later request instead of timing out forever.
+ */
+function computeHomeSection(name: HomeSectionName): Promise<AnyHomeResult> {
   const pending = homeInFlight.get(name);
   if (pending) return pending;
-  const p = runHomeSection(name).then(value => {
-    const prev = homeCache.get(name);
-    // Keep serving a still-usable good value rather than replacing it with a failure.
-    const keepPrev = !value.available && prev?.value.available && Date.now() - prev.at < HOME_STALE_MAX_MS;
-    if (!keepPrev) homeCache.set(name, { value, at: Date.now() });
-    homeInFlight.delete(name);
-    return keepPrev && prev ? prev.value : value;
-  });
+  const p = (section<object>(name, HOME_SECTION_FNS[name]) as Promise<AnyHomeResult>)
+    .then(value => storeHomeSection(name, value))
+    .finally(() => { homeInFlight.delete(name); });
   homeInFlight.set(name, p);
   return p;
+}
+
+/** Waits for a section up to the response limit; never throws. A timeout leaves it computing. */
+async function refreshHomeSection(name: HomeSectionName): Promise<AnyHomeResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<TimedOut>(resolve => {
+    timer = setTimeout(() => resolve({ available: false, reason: 'timeout' }), HOME_SECTION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race<AnyHomeResult>([computeHomeSection(name), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Cached section: fresh for 120s, stale-while-revalidate up to 10 min, failures for 15s. */

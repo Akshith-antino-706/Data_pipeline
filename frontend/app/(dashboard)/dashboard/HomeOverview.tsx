@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GitBranch, Send } from 'lucide-react';
 import { getOverviewHomeSection, getOverviewStatus } from '@/lib/api';
 import type { OverviewHomeSectionName, OverviewSection } from '@/lib/api';
@@ -41,6 +41,10 @@ function Unavailable({ onRetry, retrying }: { onRetry?: () => void; retrying?: b
   );
 }
 
+const MAX_POLLS = 24;
+const isTimeout = (sec: unknown): boolean =>
+  !!sec && typeof sec === 'object' && (sec as { available?: unknown }).available === false && (sec as { reason?: unknown }).reason === 'timeout';
+
 interface CardState<T> { data: T | null; loading: boolean; retry: () => void; retrying: boolean }
 /** One Home card's query (its own request, cache entry and loading state), narrowed to { data | null, loading, retry }. */
 function useHomeCard<T>(section: OverviewHomeSectionName, fetchSection: () => Promise<OverviewSection<T>>): CardState<T> {
@@ -49,11 +53,16 @@ function useHomeCard<T>(section: OverviewHomeSectionName, fetchSection: () => Pr
     queryFn: fetchSection,
     staleTime: STALE_MS,
     refetchOnWindowFocus: false,
+    // A 'timeout' means the server is still computing this card in the background and will
+    // cache it when done — poll every 5s (up to ~2 min) and keep showing the skeleton meanwhile.
+    refetchInterval: query => (isTimeout(query.state.data) && query.state.dataUpdateCount <= MAX_POLLS ? 5_000 : false),
   });
   const result: OverviewSection<T> | undefined = q.data;
+  const polls = useQueryClient().getQueryState(['dashboard', 'home', section])?.dataUpdateCount ?? 0;
+  const stillComputing = isTimeout(result) && polls <= MAX_POLLS;
   return {
     data: avail(result),
-    loading: q.isPending,
+    loading: q.isPending || stillComputing,
     retry: () => { void q.refetch(); },
     retrying: q.isFetching,
   };
@@ -192,7 +201,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
                 <p className={s.note}>Nothing is scheduled to send today.</p>
               ) : (
                 <ul className={s.list}>
-                  {sending.journeys.map(j => (
+                  {sending.journeys.slice(0, 5).map(j => (
                     <li key={j.id} className={s.listItem}>
                       <Link href={`/journeys?id=${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
                       <span className={s.listMeta}>{fmt(j.due)} due</span>
@@ -200,6 +209,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
                   ))}
                 </ul>
               )}
+              {sending && sending.journeys.length > 0 && <p className={s.note}>Top 5 journeys by messages due today (including overdue).</p>}
             </Card>
           </div>
 
