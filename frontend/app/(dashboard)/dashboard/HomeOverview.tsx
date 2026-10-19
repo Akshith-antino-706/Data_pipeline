@@ -114,7 +114,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
         <div className={`${s.actions} page-actions`}>
           {extraActions}
           <Link href="/journeys" className={buttonClass('secondary')}><GitBranch size={16} aria-hidden="true" />Create journey</Link>
-          <Link href="/test-sends" className={buttonClass('primary')}><Send size={16} aria-hidden="true" />Send a message</Link>
+          <Link href="/sends/new" className={buttonClass('primary')}><Send size={16} aria-hidden="true" />Send a message</Link>
         </div>
       </div>
 

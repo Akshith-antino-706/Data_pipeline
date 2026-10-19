@@ -68,6 +68,8 @@ export const defaultMocks: Mock[] = [
   // ── Segmentation ──
   get('/api/v3/segments/general', ok([])),
   get('/api/v3/custom-segments', ok([])),
+  // Send a message wizard (/sends/new) reads the v3 funnel for its segment list.
+  get('/api/v3/segments/funnel', ok([{ stage_name: 'Awareness', stage_color: '#C9A96E', segments: [{ segment_id: 1, segment_name: 'New Leads', customer_count: 120 }] }])),
   { method: 'POST', path: p('/api/v3/custom-segments/preview-count'), body: { success: true, count: 42 } },
   { method: 'POST', path: p('/api/v3/custom-segments'), body: ok({ id: 900 }) },
 

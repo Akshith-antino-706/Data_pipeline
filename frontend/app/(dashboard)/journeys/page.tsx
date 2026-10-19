@@ -19,6 +19,7 @@ import {
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
 import JourneyList, { useJourneyListState } from './JourneyList';
+import JourneyWizard from './JourneyWizard';
 import { JourneyDetailOverview, JourneyDetailSkeleton } from './JourneyDetail';
 import styles from './JourneyDetail.module.css';
 import { Button } from '@/components/ui';
@@ -3558,284 +3559,76 @@ export default function Journeys() {
   // CREATE JOURNEY — full-page early return
   // ══════════════════════════════════════════════════════════════
   if (showCreate) {
+    const resetCreate = () => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setEditCreateNodeIdx(null); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' }); };
     return (
-      <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
-        {/* Header */}
-        <div style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--card)', borderBottom: '1px solid var(--border-color)', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <button
-              onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' }); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
-              <ArrowLeft size={15} /> Back
-            </button>
-            <div style={{ width: 1, height: 24, background: 'var(--border-color)' }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 9, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <GitBranch size={17} color="var(--red)" />
-              </div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>Create New Journey</div>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Build an automated customer journey flow</div>
-              </div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {createForm.name.trim() && (
-              <span style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{createForm.name}</span>
-            )}
-            <button className="btn btn-ghost" disabled={creating} onClick={() => { setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' }); }}>
-              Cancel
-            </button>
-            <button className="btn btn-primary" onClick={handleCreate}
-              disabled={!createForm.name.trim() || !createForm.segmentId || createNodes.length === 0 || creating}
-              title={createNodes.length === 0 ? 'Add at least one node after the entry trigger' : undefined}>
-              {creating
-                ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Creating…</>
-                : <><Plus size={14} /> Create Journey</>}
-            </button>
-          </div>
-        </div>
-
-        {/* Body — 2 column */}
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '400px 1fr', gap: 0, maxWidth: 1200, margin: '0 auto', width: '100%', padding: '32px 28px', alignItems: 'start' }}>
-
-          {/* LEFT — Journey settings */}
-          <div style={{ paddingRight: 24 }}>
-            <div style={{ background: 'var(--card)', borderRadius: 14, border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Settings size={14} color="var(--text-tertiary)" />
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Journey Settings</span>
-              </div>
-              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-                {/* Name */}
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Journey Name *</label>
-                  <input className="form-input" type="text"
-                    placeholder="e.g., Welcome Series — New Customers"
-                    value={createForm.name}
-                    onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
-                </div>
-                {/* Description */}
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>Description</label>
-                  <textarea className="form-input"
-                    placeholder="Describe the purpose and target audience..."
-                    value={createForm.description}
-                    onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-                    style={{ minHeight: 72, resize: 'vertical' }} />
-                </div>
-                {/* Segment */}
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Segment <span style={{ color: 'var(--red)' }}>*</span></label>
-                    {segmentsLoading && <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}><RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> Loading…</span>}
-                  </div>
-                  <SearchableSegmentSelect
-                    segments={allSegments}
-                    value={createForm.segmentId}
-                    loading={segmentsLoading}
-                    onChange={(val) => setCreateForm(f => ({ ...f, segmentId: val }))}
-                  />
-                </div>
-
-                {/* Journey Type — Fixed (occasion / seasonal snapshot) vs Continuous (always-on per-user) */}
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>Journey Type</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {[
-                      { key: 'fixed', title: 'Fixed (Occasion / Seasonal)', desc: 'Runs in a date window against the segment — e.g. Diwali, Eid, holiday campaigns. Snapshots the audience once, sends on schedule, then ends.' },
-                      { key: 'continuous', title: 'Continuous (Always-on)', desc: 'Per-user automation that runs forever. Users enter anytime (GTM event / lifecycle) and progress independently node-by-node — e.g. product-view, cart, payment-failed, on-trip, future-trip.' },
-                    ].map(opt => {
-                      const active = createForm.journeyType === opt.key;
-                      return (
-                        <button key={opt.key} type="button"
-                          onClick={() => setCreateForm(f => ({ ...f, journeyType: opt.key }))}
-                          style={{ flex: 1, textAlign: 'left', cursor: 'pointer', padding: '10px 12px', borderRadius: 10,
-                            background: active ? 'rgba(139,92,246,0.10)' : 'var(--bg-secondary)',
-                            border: `1px solid ${active ? 'rgba(139,92,246,0.45)' : 'var(--border)'}` }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 700, color: active ? '#8b5cf6' : 'var(--text-primary)' }}>
-                            {active ? '● ' : '○ '}{opt.title}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3, lineHeight: 1.4 }}>{opt.desc}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {createForm.journeyType === 'continuous' && (
-                    <div style={{ marginTop: 10 }}>
-                      {/* Trigger source: GTM analytics events OR giveaway events (email-website feed) */}
-                      <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Trigger Source</label>
-                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                        {[{ k: 'gtm', label: 'GTM Event', c: '#3b82f6' }, { k: 'giveaway', label: 'Giveaway', c: '#f59e0b' }].map(o => {
-                          const active = (createForm.triggerSource || 'gtm') === o.k;
-                          return (
-                            <button key={o.k} type="button"
-                              onClick={() => setCreateForm(f => ({ ...f, triggerSource: o.k, triggerEvent: '' }))}
-                              style={{ flex: 1, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                                borderRadius: 8, textAlign: 'center', transition: 'all 0.15s',
-                                border: `1px solid ${active ? o.c : 'var(--border)'}`,
-                                background: active ? `${o.c}1a` : 'var(--card)', color: active ? o.c : 'var(--text-secondary)' }}>
-                              {o.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {createForm.triggerSource === 'giveaway' ? (
-                        <>
-                          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
-                            Giveaway Type(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(select one or more)</span>
-                          </label>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            {['participation', 'eligible', 'winner', 'loser'].map(t => {
-                              const list = (createForm.triggerEvent || '').split(',').map(s => s.trim()).filter(Boolean);
-                              const on = list.includes(t);
-                              return (
-                                <button key={t} type="button"
-                                  onClick={() => {
-                                    const next = on ? list.filter(x => x !== t) : [...list, t];
-                                    setCreateForm(f => ({ ...f, triggerEvent: next.join(',') }));
-                                  }}
-                                  style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', borderRadius: 20, textTransform: 'capitalize',
-                                    border: `1px solid ${on ? '#f59e0b' : 'var(--border)'}`,
-                                    background: on ? 'rgba(245,158,11,0.12)' : 'var(--card)', color: on ? '#f59e0b' : 'var(--text-secondary)' }}>
-                                  {on ? '✓ ' : ''}{t}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
-                            {createForm.triggerEvent
-                              ? <>A <strong>segment</strong> user who fires <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on the giveaway site enters — one entry per event (fires N times → N sends).</>
-                              : <>Pick one or more giveaway types. Only <strong>segment members</strong> who fire the selected type enter the journey.</>}
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
-                            Trigger GTM Event(s) <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional · select one or more)</span>
-                          </label>
-                          <TriggerEventMultiSelect
-                            value={createForm.triggerEvent}
-                            onChange={v => setCreateForm(f => ({ ...f, triggerEvent: v }))}
-                          />
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                            {createForm.triggerEvent
-                              ? <>Fans out one prefilled email per <strong>distinct item</strong> each segment user triggered <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on. Selecting multiple events combines their items.</>
-                              : <>No event → snapshot = <strong>one entry per segment user</strong> (e.g. 2). Pick one or more events to fan out per distinct item instead.</>}
-                          </div>
-                        </>
-                      )}
-                      <div style={{ marginTop: 12 }}>
-                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
-                          Trigger only for events on or after <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>
-                        </label>
-                        <input type="date" className="form-input" value={createForm.triggerFromDate}
-                          onChange={e => setCreateForm(f => ({ ...f, triggerFromDate: e.target.value }))}
-                          style={{ width: '100%' }} />
-                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                          Pick a date → only users who fire the event <strong>on/after that date</strong> (Dubai time) enter. Leave blank → <strong>all events</strong> (every past trigger is included too).
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* AI Recommendation Type — optional, per-journey. NULL = legacy behavior (no recs).
-                    On send, the worker looks up user_product_recommendations for the selected
-                    context and expands {{#products}}...{{/products}} blocks in the template. */}
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>AI Recommendation Type</label>
-                  <SearchableSelect
-                    options={RECOMMENDATION_TYPE_OPTIONS}
-                    value={createForm.recommendationType || ''}
-                    onChange={val => setCreateForm(f => ({ ...f, recommendationType: val }))}
-                    placeholder="None — no AI recommendations"
-                    searchPlaceholder="Search recommendation types…"
-                  />
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                    Pick a context → templates in this journey with a <code>{'{{#products}}'}...{'{{/products}}'}</code> block will be filled with 5 personalized AI-picked products at send time. Precomputed nightly at 3:35 AM Dubai.
-                  </div>
-                </div>
-                {/* Email sender — which SMTP credential this journey's EMAIL nodes send from.
-                    Email-only: WhatsApp / SMS / RCS / push are unaffected. */}
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', display: 'block', marginBottom: 6 }}>Email Sender</label>
-                  <SearchableSelect
-                    options={EMAIL_CREDENTIAL_OPTIONS}
-                    value={createForm.emailCredential || 'default'}
-                    onChange={val => setCreateForm(f => ({ ...f, emailCredential: val || 'default' }))}
-                    placeholder="Default — Marketing (explore@…)"
-                    searchPlaceholder="Search senders…"
-                  />
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                    Which mailbox <strong>email</strong> nodes send from. WhatsApp, SMS, RCS &amp; push are unaffected.
-                  </div>
-                </div>
-                {/* Exit on Conversion */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 10, background: createForm.exitOnConversion ? 'rgba(34,197,94,0.06)' : 'rgba(251,191,36,0.06)', border: `1px solid ${createForm.exitOnConversion ? 'rgba(34,197,94,0.15)' : 'rgba(251,191,36,0.15)'}` }}>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{createForm.exitOnConversion ? 'Exit on Booking' : 'Awareness Mode'}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{createForm.exitOnConversion ? 'Users who book will exit the journey automatically' : 'All users receive every message — no exit on booking'}</div>
-                  </div>
-                  <button onClick={() => setCreateForm(f => ({ ...f, exitOnConversion: !f.exitOnConversion }))}
-                    style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: createForm.exitOnConversion ? 'var(--green)' : 'var(--text-tertiary)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
-                    <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#fff', position: 'absolute', top: 3, left: createForm.exitOnConversion ? 23 : 3, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
-                  </button>
-                </div>
-                {/* Scheduled Start */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Start Date &amp; Time</label>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--orange)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', display: 'inline-block', animation: 'simDot 1s ease-in-out infinite' }} />
-                      Dubai: {dubaiClock}
-                    </span>
-                  </div>
-                  <input type="datetime-local" className="form-input"
-                    value={createForm.scheduledStartAt}
-                    min={dubaiNowForInput(10)}
-                    onChange={e => {
-                      const val = e.target.value;
-                      if (val) {
-                        // val is local time string — compare against Dubai now+10min
-                        const selectedMs = new Date(val).getTime();
-                        const minMs = new Date(dubaiNowForInput(10).replace('T', ' ')).getTime();
-                        if (selectedMs < minMs) {
-                          setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput(10) }));
-                          return;
-                        }
-                      }
-                      setCreateForm(f => ({ ...f, scheduledStartAt: val }));
-                    }}
-                    style={{ fontSize: 13 }} />
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 5 }}>
-                    {createForm.scheduledStartAt
-                      ? '✓ Journey will auto-start at this Dubai time'
-                      : 'Defaults to 10 minutes from now if left empty'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* RIGHT — Journey Flow */}
-          <div>
-            <div style={{ background: 'var(--card)', borderRadius: 14, border: '1px solid var(--border-color)', overflow: 'hidden' }}>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <GitBranch size={14} color="var(--text-tertiary)" />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Journey Flow</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '1px 8px', borderRadius: 20 }}>{createNodes.length + 1} nodes</span>
-                </div>
+      <>
+        <JourneyWizard
+          form={createForm}
+          setForm={setCreateForm}
+          nodes={createNodes}
+          nodeEditorOpen={showCreateNodeForm || editCreateNodeIdx !== null}
+          segments={allSegments}
+          segmentsLoading={segmentsLoading}
+          creating={creating}
+          onCreate={handleCreate}
+          onClose={resetCreate}
+          dubaiClock={dubaiClock}
+          minScheduledStart={dubaiNowForInput(10)}
+          onScheduledStartChange={val => {
+            if (val) {
+              // val is local time string — compare against Dubai now+10min
+              const selectedMs = new Date(val).getTime();
+              const minMs = new Date(dubaiNowForInput(10).replace('T', ' ')).getTime();
+              if (selectedMs < minMs) {
+                setCreateForm(f => ({ ...f, scheduledStartAt: dubaiNowForInput(10) }));
+                return;
+              }
+            }
+            setCreateForm(f => ({ ...f, scheduledStartAt: val }));
+          }}
+          segmentPicker={(
+            <SearchableSegmentSelect
+              segments={allSegments}
+              value={createForm.segmentId}
+              loading={segmentsLoading}
+              onChange={(val) => setCreateForm(f => ({ ...f, segmentId: val }))}
+            />
+          )}
+          triggerEventPicker={(
+            <TriggerEventMultiSelect
+              value={createForm.triggerEvent}
+              onChange={v => setCreateForm(f => ({ ...f, triggerEvent: v }))}
+            />
+          )}
+          recommendationPicker={(
+            <SearchableSelect
+              options={RECOMMENDATION_TYPE_OPTIONS}
+              value={createForm.recommendationType || ''}
+              onChange={val => setCreateForm(f => ({ ...f, recommendationType: val }))}
+              placeholder="None — no AI recommendations"
+              searchPlaceholder="Search recommendation types…"
+            />
+          )}
+          emailSenderPicker={(
+            <SearchableSelect
+              options={EMAIL_CREDENTIAL_OPTIONS}
+              value={createForm.emailCredential || 'default'}
+              onChange={val => setCreateForm(f => ({ ...f, emailCredential: val || 'default' }))}
+              placeholder="Default — Marketing (explore@…)"
+              searchPlaceholder="Search senders…"
+            />
+          )}
+          nodesEditor={(
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{createNodes.length + 1} nodes</span>
                 {createNodes.length > 0 && !showCreateNodeForm && (
                   <button onClick={() => { setShowCreateNodeForm(true); loadTemplates(); setCreateNodeForm({ ...BLANK_CREATE_NODE }); }}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer', border: '1.5px solid var(--brand-primary)', background: 'transparent', color: 'var(--brand-primary)' }}>
                     <Plus size={11} /> Add Node
                   </button>
                 )}
-              </div>
-
-              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                </div>
                 {/* Entry trigger */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10, background: NODE_COLORS.trigger + '10', border: `1px solid ${NODE_COLORS.trigger}25` }}>
                   <div style={{ width: 30, height: 30, borderRadius: 8, background: NODE_COLORS.trigger + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3844,7 +3637,7 @@ export default function Journeys() {
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Entry Trigger</div>
                     <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-                      {createForm.segmentId ? `Segment: ${allSegments.find(s => s.value === createForm.segmentId)?.label?.split(' (')[0] || createForm.segmentId}` : 'Segment entry — selected on the left'}
+                      {createForm.segmentId ? `Segment: ${allSegments.find(s => s.value === createForm.segmentId)?.label?.split(' (')[0] || createForm.segmentId}` : 'Segment entry — chosen in the Audience step'}
                     </div>
                   </div>
                   <span style={{ fontSize: 10, fontWeight: 600, color: NODE_COLORS.trigger, background: NODE_COLORS.trigger + '15', padding: '2px 8px', borderRadius: 20 }}>Trigger</span>
@@ -4263,9 +4056,8 @@ export default function Journeys() {
                   ) : null}
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
+          )}
+        />
 
         {/* Toast */}
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
@@ -4294,7 +4086,7 @@ export default function Journeys() {
           </div>,
           document.body
         )}
-      </div>
+      </>
     );
   }
 

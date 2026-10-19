@@ -237,18 +237,21 @@ describe('Journeys list page', () => {
     expect(api.deleteJourney).not.toHaveBeenCalled();
   });
 
-  it('New Journey opens the create page with Create disabled until valid', async () => {
+  it('New Journey opens the create wizard and Next is blocked until the step is valid', async () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
     fireEvent.click(screen.getByRole('button', { name: 'Create journey' }));
-    await screen.findByText('Create New Journey');
-    const createBtn = screen.getAllByRole('button', { name: /Create Journey/ })[0] as HTMLButtonElement;
-    expect(createBtn.disabled).toBe(true);
-    fireEvent.change(screen.getByPlaceholderText('e.g., Welcome Series — New Customers'), { target: { value: 'My new journey' } });
-    expect(createBtn.disabled).toBe(true); // still no segment / nodes
+    await screen.findByRole('heading', { name: 'Create journey' });
+    expect(screen.getByRole('button', { name: /Basics/ }).getAttribute('aria-current')).toBe('step');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('Give the journey a name.')).toBeTruthy();
     expect(api.createJourney).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByText('Back'));
+    fireEvent.change(screen.getByPlaceholderText('e.g., Welcome Series — New Customers'), { target: { value: 'My new journey' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByRole('heading', { name: 'How do people join?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await screen.findByText('Welcome Series');
   });
 
