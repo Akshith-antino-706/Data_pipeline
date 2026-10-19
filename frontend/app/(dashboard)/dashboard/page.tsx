@@ -11,6 +11,7 @@ import type { Variants } from 'framer-motion';
 import type { QueryParams } from '@/types/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import HomeOverview from './HomeOverview';
+import ContactSourcesCard from './ContactSourcesCard';
 import homeStyles from './home.module.css';
 
 // Recharts is only needed for the Segment Distribution chart — load it on the client after
@@ -163,6 +164,7 @@ export default function Dashboard() {
   const activity = activityQ.data ?? null;
   const revData = filterActive ? (revQ.data ?? null) : null;
   const sourcesData = sourcesQ.data ?? null;
+  const sourceRangeText = sourceFrom && sourceTo ? `contacts added ${sourceFrom} → ${sourceTo}` : sourceFrom ? `contacts added on/after ${sourceFrom}` : sourceTo ? `contacts added on/before ${sourceTo}` : 'total contacts';
   // Skeletons on first load and on a manual refresh, as before.
   const treeLoading = treeQ.isPending || treeQ.isFetching;
   const activityLoading = activityQ.isPending || activityQ.isFetching;
@@ -393,35 +395,19 @@ export default function Dashboard() {
           ) : !sourcesData ? (
             <div style={{ padding: '20px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>Failed to load sources.</div>
           ) : (
-            <>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 16, padding: '0 4px' }}>
-                <span style={{ fontSize: 28, fontWeight: 700, color: 'var(--info)' }}>{fmt(sourcesData.total)}</span>
-                <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
-                  {sourceFrom && sourceTo ? `contacts added ${sourceFrom} → ${sourceTo}` : sourceFrom ? `contacts added on/after ${sourceFrom}` : sourceTo ? `contacts added on/before ${sourceTo}` : 'total contacts'} · {sourcesData.sources.length} source{sourcesData.sources.length !== 1 ? 's' : ''}
-                </span>
-              </div>
-              {sourcesData.sources.length === 0 ? (
-                <div style={{ padding: '12px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>
+            sourcesData.sources.length === 0 ? (
+              <>
+                <div style={{ padding: '0 4px 8px', fontSize: 13, color: 'var(--ink3)' }}>
+                  <b style={{ fontSize: 28, color: 'var(--ink)', marginRight: 8 }}>{fmt(sourcesData.total)}</b>
+                  {sourceRangeText} · 0 sources
+                </div>
+                <div style={{ padding: '12px 4px', color: 'var(--ink3)', fontSize: 13, textAlign: 'center' }}>
                   No contacts were added in the selected range.
                 </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 4px', maxHeight: 380, overflowY: 'auto' }}>
-                  {sourcesData.sources.map(s => {
-                    const maxc = sourcesData.sources[0]?.count || 1;
-                    const w = Math.max(2, Math.round((s.count / maxc) * 100));
-                    return (
-                      <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ width: 170, fontSize: 12.5, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={s.source}>{s.source}</div>
-                        <div style={{ flex: 1, background: 'var(--bg-secondary, #f1f5f9)', borderRadius: 6, height: 22, overflow: 'hidden' }}>
-                          <div style={{ width: `${w}%`, height: '100%', background: 'var(--gold)', borderRadius: 6 }} />
-                        </div>
-                        <div style={{ width: 90, textAlign: 'right', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(s.count)}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
+              </>
+            ) : (
+              <ContactSourcesCard total={sourcesData.total} sources={sourcesData.sources} rangeText={sourceRangeText} fmt={fmt} />
+            )
           )}
         </div>
       </motion.div>

@@ -1,0 +1,24 @@
+.summary { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; padding: 0 4px; }
+.total { font-size: 30px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; margin-right: 8px; }
+.sub { font-size: 13px; color: var(--ink3); }
+.seg { display: inline-flex; background: var(--sunken); padding: 3px; border-radius: 8px; gap: 2px; }
+.seg button { font: inherit; font-size: 13px; font-weight: 600; height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--ink2); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.seg button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.badge { font-size: 11px; font-weight: 600; background: var(--line); color: var(--ink2); border-radius: 999px; padding: 1px 7px; }
+.note { margin: 0 4px 10px; font-size: 12px; color: var(--ink3); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.row { display: grid; grid-template-columns: minmax(130px, 200px) minmax(0, 1fr) 90px 56px; gap: 14px; align-items: center; padding: 8px 6px; border-radius: 8px; font-size: 14px; }
+.row:hover { background: var(--sunken); }
+.label { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.track { height: 10px; background: var(--sunken); border-radius: 999px; overflow: hidden; }
+.bar { display: block; height: 100%; border-radius: 999px; transition: width .4s ease; }
+.count { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.share { text-align: right; font-size: 12px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+.more { margin: 10px 4px 0; font: inherit; font-size: 13px; font-weight: 600; background: transparent; border: 0; color: var(--gold-ink); cursor: pointer; padding: 6px 0; }
+.more:hover { text-decoration: underline; }
+@media (max-width: 560px) {
+  .row { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 6px; }
+  .track { grid-column: 1 / -1; grid-row: 2; }
+}

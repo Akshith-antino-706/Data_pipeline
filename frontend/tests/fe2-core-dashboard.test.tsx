@@ -70,7 +70,7 @@ describe('Dashboard page', () => {
     expect(screen.getByTestId('chart').textContent).toBe('On Trip,Custom X');
     expect(screen.getByText('9,999')).toBeTruthy();
     expect(screen.getByText('77')).toBeTruthy();
-    expect(screen.getByText('website')).toBeTruthy();
+    expect(screen.getByText('Website')).toBeTruthy();
     expect(screen.getByText('5')).toBeTruthy(); // entered 3 + 2
     expect(screen.getByText('B2C Overview', { exact: false })).toBeTruthy();
     expect(api.getUnifiedStats).toHaveBeenCalledWith({ businessType: 'B2C', cached: 1 });
@@ -159,7 +159,7 @@ describe('Dashboard page', () => {
   it('sources date filter passes from/to and Clear resets them', async () => {
     mockTypical();
     const { container } = renderPage();
-    await screen.findByText('website');
+    await screen.findByText('Website');
     const [from] = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="date"]'));
     fireEvent.change(from, { target: { value: '2026-10-01' } });
     await waitFor(() => expect(api.getContactSourcesBreakdown).toHaveBeenCalledWith('2026-10-01', undefined));
