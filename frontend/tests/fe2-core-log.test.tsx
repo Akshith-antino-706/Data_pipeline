@@ -41,6 +41,15 @@ const ROWS = [
 ];
 
 describe('Send Log page', () => {
+  it('shows 10,000+ and open-ended paging when the count is capped', async () => {
+    vi.mocked(api.getSendLog).mockResolvedValue({ data: { rows: ROWS, total: 10000, capped: true } } as unknown as SendLog);
+    render(<LogPage />);
+    await screen.findByText('Alice');
+    expect(screen.getByText('10,000+ records')).toBeTruthy();
+    expect(screen.getByText('1–2 of 10,000+')).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
   it('updates the URL when the tab or status changes', async () => {
     unified(MSGS, 2);
     sendLog(ROWS, 2);

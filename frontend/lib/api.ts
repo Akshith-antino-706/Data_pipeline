@@ -626,6 +626,8 @@ export interface OverviewMessages {
   page: number; limit: number; days: number; channel: 'all' | 'email' | 'whatsapp' | 'sms';
   messages: OverviewSection<{ rows: OverviewMessage[] }>;
   total: number | null;
+  /** true when the count stopped at the cap; show as "10,000+" */
+  capped?: boolean;
 }
 export interface OverviewMessagesParams {
   channel?: 'email' | 'whatsapp' | 'sms'; status?: string; journeyId?: number; q?: string; page?: number; limit?: number; days?: number;

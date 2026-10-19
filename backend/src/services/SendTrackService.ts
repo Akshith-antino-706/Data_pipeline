@@ -1,6 +1,11 @@
 import db from '../config/database.js';
 import type { BufferedLogRow, Id, LogId, LogSendArgs, MarkFailedArgs, MarkSentArgs, SendLogFilters, TrackingMeta, UtmLogFilters, UtmVisitArgs } from '../types/servicesSendTrack.js';
 
+/** Filtered send-log totals stop counting here; the UI shows "10,000+". */
+const SEND_LOG_COUNT_CAP = 10_000;
+const SEND_LOG_COUNT_TTL_MS = 120_000;
+const sendLogCountCache = new Map<string, { total: number; at: number }>();
+
 // ── Buffered batch insert (opt-in via JOURNEY_LOG_BATCH=true) ──
 // High-volume journey sends do one INSERT per email (+ index writes per row).
 // To cut that load, the worker can: reserveLogId() — an id from a pre-fetched
@@ -218,17 +223,33 @@ export class SendTrackService {
     // planner's row estimate (instant); with filters, count the (indexed) subset and only JOIN
     // unified_contacts when a subscription-status filter actually needs it.
     const needsUc = subscriptionStatus === 'unsubscribed' || subscriptionStatus === 'active';
+    // Filtered totals can match tens of millions of rows, and an exact count is what made the
+    // log slow. Count at most SEND_LOG_COUNT_CAP + 1 rows (stops early) and cache the result
+    // briefly per filter set, so paging and refreshing don't repeat the scan.
+    const countKey = JSON.stringify([needsUc, where, params]);
+    const cachedCount = conditions.length > 0 ? sendLogCountCache.get(countKey) : undefined;
     const countQ = conditions.length === 0
       ? db.query<{ total: string }>(`SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'email_send_log'`)
-      : db.query<{ total: string }>(`
-          SELECT COUNT(*) AS total
-          FROM email_send_log esl
-          ${needsUc ? 'LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id' : ''}
-          ${where}
+      : cachedCount && Date.now() - cachedCount.at < SEND_LOG_COUNT_TTL_MS
+        ? Promise.resolve({ rows: [{ total: String(cachedCount.total) }] })
+        : db.query<{ total: string }>(`
+          SELECT COUNT(*) AS total FROM (
+            SELECT 1
+            FROM email_send_log esl
+            ${needsUc ? 'LEFT JOIN unified_contacts uc ON uc.id = esl.unified_id' : ''}
+            ${where}
+            LIMIT ${SEND_LOG_COUNT_CAP + 1}
+          ) capped
         `, params);
 
     const [{ rows }, { rows: countRows }] = await Promise.all([listQ, countQ]);
-    return { rows, total: parseInt(countRows[0].total), page, limit, estimated: conditions.length === 0 };
+    const counted = parseInt(countRows[0].total);
+    if (conditions.length > 0) {
+      sendLogCountCache.set(countKey, { total: counted, at: Date.now() });
+      if (sendLogCountCache.size > 200) sendLogCountCache.delete(sendLogCountCache.keys().next().value as string);
+    }
+    const capped = conditions.length > 0 && counted > SEND_LOG_COUNT_CAP;
+    return { rows, total: capped ? SEND_LOG_COUNT_CAP : counted, page, limit, estimated: conditions.length === 0, capped };
   }
 
   /**

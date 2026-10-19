@@ -83,6 +83,8 @@ export interface SendLogPage {
   limit: number;
   /** true when `total` is the planner estimate (no filters applied) */
   estimated: boolean;
+  /** true when a filtered count stopped at the cap; show as "10,000+" */
+  capped?: boolean;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────

@@ -448,3 +448,13 @@ describe('GET /messages failed filter', () => {
     }
   });
 });
+
+describe('GET /messages capped count', () => {
+  it('counts at most MSG_COUNT_CAP + 1 rows and reports capped', async () => {
+    mockQuery.mockImplementation((sql: string) => Promise.resolve({ rows: String(sql).includes('AS total') ? [{ total: '10001' }] : [] }));
+    const { body } = await get('/messages?channel=email&status=sent');
+    expect(body).toMatchObject({ total: 10000, capped: true });
+    const countSql = sqlCalls().find(s => s.includes('AS total')) ?? '';
+    expect(countSql).toMatch(/LIMIT 10001/);
+  });
+});

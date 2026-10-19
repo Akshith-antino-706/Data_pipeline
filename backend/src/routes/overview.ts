@@ -521,6 +521,9 @@ const MSG_SRC: Record<MsgChannel, { table: string; ts: string; recipient: string
   sms:      { table: 'sms_send_log',      ts: 'sent_at',    recipient: 'phone', name: 'contact_name', label: 'message_body',                      error: 'error',         extraSearch: 'message_body' },
 };
 
+/** Message-log totals stop counting here; the UI shows "10,000+". */
+export const MSG_COUNT_CAP = 10_000;
+
 router.get('/messages', async (req: Request, res: Response) => {
   const chQ = typeof req.query.channel === 'string' ? req.query.channel : '';
   const channels: MsgChannel[] = (MSG_CHANNELS as readonly string[]).includes(chQ) ? [chQ as MsgChannel] : [...MSG_CHANNELS];
@@ -578,9 +581,11 @@ router.get('/messages', async (req: Request, res: Response) => {
       };
     }),
     section('count', async () => {
-      const parts = channels.map(ch => `SELECT COUNT(*) AS n FROM ${MSG_SRC[ch].table} WHERE ${whereFor(ch)}`);
+      // Each channel stops counting at the cap, so a huge log never forces a full exact count.
+      const parts = channels.map(ch => `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${MSG_SRC[ch].table} WHERE ${whereFor(ch)} LIMIT ${MSG_COUNT_CAP + 1}) c`);
       const { rows } = await db.query<CountRow>(`SELECT ${parts.map((_, i) => `(${parts[i]})`).join(' + ')} AS total`, params);
-      return { total: num(rows[0]?.total) };
+      const t = num(rows[0]?.total);
+      return { total: Math.min(t, MSG_COUNT_CAP), capped: t > MSG_COUNT_CAP };
     }),
   ]);
 
@@ -588,6 +593,7 @@ router.get('/messages', async (req: Request, res: Response) => {
     page, limit, days, channel: channels.length === 1 ? channels[0] : 'all',
     messages: list,
     total: count.available ? count.total : null,
+    capped: count.available ? count.capped : false,
   });
 });
 

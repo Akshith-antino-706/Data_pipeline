@@ -81,7 +81,7 @@ const CHANNEL_LABEL: Record<string, string> = { email: 'Email', whatsapp: 'Whats
 type Selected = { kind: 'email'; row: SendLogRow } | { kind: 'unified'; row: OverviewMessage };
 
 type UnifiedState =
-  | { state: 'ok'; rows: OverviewMessage[]; total: number | null; days: number | null }
+  | { state: 'ok'; rows: OverviewMessage[]; total: number | null; days: number | null; capped: boolean }
   | { state: 'unavailable' }
   | { state: 'error'; message: string };
 
@@ -169,8 +169,8 @@ export default function LogPage() {
   const [nodeId, setNodeId] = useState('');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
-  const [data, setData] = useState<{ rows: SendLogRow[]; total: number; estimated: boolean }>({ rows: [], total: 0, estimated: false });
-  const [unified, setUnified] = useState<UnifiedState>({ state: 'ok', rows: [], total: 0, days: null });
+  const [data, setData] = useState<{ rows: SendLogRow[]; total: number; estimated: boolean; capped: boolean }>({ rows: [], total: 0, estimated: false, capped: false });
+  const [unified, setUnified] = useState<UnifiedState>({ state: 'ok', rows: [], total: 0, days: null, capped: false });
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Selected | null>(null);
 
@@ -238,9 +238,9 @@ export default function LogPage() {
         try {
           const res = await getSendLog(params);
           const d = res?.data;
-          setData({ rows: d?.rows ?? [], total: typeof d?.total === 'number' ? d.total : 0, estimated: d?.estimated === true });
+          setData({ rows: d?.rows ?? [], total: typeof d?.total === 'number' ? d.total : 0, estimated: d?.estimated === true, capped: d?.capped === true });
         } catch {
-          setData({ rows: [], total: 0, estimated: false });
+          setData({ rows: [], total: 0, estimated: false, capped: false });
         }
         return;
       }
@@ -263,6 +263,7 @@ export default function LogPage() {
           rows: Array.isArray(m.rows) ? m.rows : [],
           total: typeof res.total === 'number' && Number.isFinite(res.total) ? res.total : null,
           days: typeof res.days === 'number' && Number.isFinite(res.days) ? res.days : null,
+          capped: res.capped === true,
         });
       } catch (e) {
         setUnified({ state: 'error', message: e instanceof Error ? e.message : String(e) });
@@ -276,7 +277,9 @@ export default function LogPage() {
   useEffect(() => { setPage(1); }, [channel, subFilter, statusFilter, search, journeyId, nodeId, limit]);
 
   // Totals: email always numeric; unified may be null (unknown).
-  const total: number | null = isEmail ? data.total : unified.state === 'ok' ? unified.total : null;
+  // A capped total ("10,000+") isn't the real size, so paging becomes open-ended (Next until a short page).
+  const capped = isEmail ? data.capped : unified.state === 'ok' && unified.capped;
+  const total: number | null = capped ? null : isEmail ? data.total : unified.state === 'ok' ? unified.total : null;
   const rowCount = isEmail ? data.rows.length : unified.state === 'ok' ? unified.rows.length : 0;
   const totalPages = total != null ? Math.max(1, Math.ceil(total / limit)) : null;
   const lastPage = totalPages != null ? page >= totalPages : rowCount < limit;
@@ -298,13 +301,15 @@ export default function LogPage() {
 
   let headerMeta: string;
   if (loading) headerMeta = 'Loading…';
-  else if (isEmail) headerMeta = `${fmt(data.total)} records${data.estimated ? ' (estimated)' : ''}`;
-  else if (unified.state === 'ok' && unified.total != null) headerMeta = `${fmt(unified.total)} records`;
+  else if (isEmail) headerMeta = `${fmt(data.total)}${data.capped ? '+' : ''} records${data.estimated ? ' (estimated)' : ''}`;
+  else if (unified.state === 'ok' && unified.total != null) headerMeta = `${fmt(unified.total)}${unified.capped ? '+' : ''} records`;
   else headerMeta = 'Total unavailable';
 
-  const rangeText = total != null && total > 0
-    ? `${fmt(Math.min((page - 1) * limit + 1, total))}–${fmt(Math.min(page * limit, total))} of ${fmt(total)}`
-    : total == null && !isEmail ? 'Total unavailable' : '';
+  const rangeText = capped && rowCount > 0
+    ? `${fmt((page - 1) * limit + 1)}–${fmt((page - 1) * limit + rowCount)} of 10,000+`
+    : total != null && total > 0
+      ? `${fmt(Math.min((page - 1) * limit + 1, total))}–${fmt(Math.min(page * limit, total))} of ${fmt(total)}`
+      : total == null && !isEmail ? 'Total unavailable' : '';
 
   return (
     <div className={styles.page}>
