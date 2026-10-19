@@ -96,6 +96,20 @@ describe('Journey detail', () => {
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
+  it('handles the real timeline API shape ({ journeyId, timeline: [...] }) without crashing', async () => {
+    vi.mocked(api.getJourneyTimeline).mockResolvedValue({ data: { journeyId: 5, journeyStatus: 'active', scheduledStartAt: null, timeline: [{ nodeId: 'node_1', status: 'completed' }] } });
+    await openDetail();
+    await waitFor(() => expect(api.getJourneyTimeline).toHaveBeenCalledWith(5));
+    expect(screen.getByRole('heading', { name: 'Welcome Series' })).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('ignores a malformed timeline payload', async () => {
+    vi.mocked(api.getJourneyTimeline).mockResolvedValue({ data: { unexpected: true } });
+    await openDetail();
+    expect(screen.getByRole('heading', { name: 'Welcome Series' })).toBeTruthy();
+  });
+
   it('Pause calls pauseJourney', async () => {
     vi.mocked(api.pauseJourney).mockResolvedValue({ data: { status: 'paused' } });
     await openDetail();

@@ -120,7 +120,7 @@ export interface JourneyDetailOverviewProps {
 
 export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
   const { detail } = p;
-  const nodes = useMemo(() => detail.nodes || [], [detail.nodes]);
+  const nodes = useMemo(() => (Array.isArray(detail.nodes) ? detail.nodes : []), [detail.nodes]);
   const stats = detail.entryStats;
   const status = journeyStatusChip(detail.status);
   const isAlwaysOn = detail.journey_type === 'gtm' || detail.journey_type === 'continuous';
@@ -151,7 +151,7 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
   const selected = steps.find(n => n.id === selectedId) || steps[0] || null;
   const timelineMap = useMemo(() => {
     const m: Record<string, TimelineItem> = {};
-    (p.timeline || []).forEach(t => { m[t.nodeId] = t; });
+    (Array.isArray(p.timeline) ? p.timeline : []).forEach(t => { if (t && t.nodeId) m[t.nodeId] = t; });
     return m;
   }, [p.timeline]);
 
@@ -170,7 +170,7 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
 
   const nodeStats = (id: string) => detail.node_stats?.[id];
   const blockedFor = (id: string) =>
-    num((detail.nodeAnalytics || []).find(r => r.node_id === id && r.event_type === 'action_blocked')?.event_count);
+    num((Array.isArray(detail.nodeAnalytics) ? detail.nodeAnalytics : []).find(r => r.node_id === id && r.event_type === 'action_blocked')?.event_count);
 
   const queueChannels = p.channels.filter(c => p.queueStats?.[c]);
 

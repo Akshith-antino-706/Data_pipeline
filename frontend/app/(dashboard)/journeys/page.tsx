@@ -962,10 +962,16 @@ export default function Journeys() {
     // on arrival instead of holding the whole page in its skeleton state.
     const detailP = getJourney(id) as Promise<ApiData<JourneyDetail>>;
     const queueP  = getJourneyQueueCounts().catch(() => ({ data: null })) as Promise<ApiData<Record<string, QueueCounts> | null>>;
-    const timeP   = getJourneyTimeline(id).catch(() => ({ data: null })) as Promise<ApiData<TimelineItem[] | null>>;
+    const timeP   = getJourneyTimeline(id).catch(() => ({ data: null })) as Promise<ApiData<unknown>>;
 
     queueP.then(r => { if (isCurrent()) setQueueStats(r?.data ?? null); });
-    timeP.then(r => { if (isCurrent()) setTimeline(r?.data || null); });
+    timeP.then(r => {
+      if (!isCurrent()) return;
+      // API returns { journeyId, journeyStatus, scheduledStartAt, timeline: [...] }
+      const d: unknown = r?.data;
+      const list = Array.isArray(d) ? d : (d && typeof d === 'object' && Array.isArray((d as { timeline?: unknown }).timeline) ? (d as { timeline: unknown[] }).timeline : null);
+      setTimeline(list as TimelineItem[] | null);
+    });
 
     try {
       const d = await detailP;
