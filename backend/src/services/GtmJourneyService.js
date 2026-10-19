@@ -209,7 +209,7 @@ class GtmJourneyService {
     const gvId = String(itemId || eventId || '');
     if (gvId) {
       const { rows: [gv] } = await db.query(
-        `SELECT source, name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
+        `SELECT source, raw_payload, name, giveaway, giveaway_image, mechanic, prize, prize_image, prize_type, value,
                 rank, code, offer, offer_code, expiry, position, points,
                 coupon_id, valid_from, max_per_user, discount_type, max_discount_value, currency,
                 commission_rate, commission_prev_rate, effective_from,
@@ -477,13 +477,31 @@ class GtmJourneyService {
     // Fill {{ key }} from gvVars for the regex/subject paths (Liquid gets them via the vars object).
     const fillGv = (s) => gvVars ? String(s).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => (k in gvVars) ? String(gvVars[k] ?? '') : m) : s;
 
+    // The affiliate templates address the producer's payload by its own nested shape
+    // ({{ commission.ratePercent }}, {{ coupon.discounts }}, {{ to.name }}), which the flat
+    // gvVars map can't express — neither fillGv nor placeholderResolver matches a dotted key,
+    // so those tags used to reach the inbox as literal text. Hand the untouched payload blocks
+    // to Liquid alongside gvVars. Kept out of gvVars itself: fillGv would stringify an object
+    // into "[object Object]" on the regex path.
+    const pay = gvRow ? (gvRow.raw_payload || {}) : null;
+    const gvNested = pay ? {
+      to: pay.to || {}, coupon: pay.coupon || {}, commission: pay.commission || {},
+      link: pay.link || {}, cardOffer: pay.cardOffer || {},
+    } : null;
+
     // Liquid templates (contain {% … %}) render via LiquidRenderer with the full items[]
     // array so {% for item in items %} shows every cart product; plain {{KEY}}-only
     // templates keep the regex resolver (items[0] scalars only).
+    const liquidVars = { ...buildLiquidVars(ctx), ...(gvVars || {}), ...(gvNested || {}) };
     let html = /\{%/.test(tplBody)
-      ? await LiquidRenderer.render(tplBody, { ...buildLiquidVars(ctx), ...(gvVars || {}) })
+      ? await LiquidRenderer.render(tplBody, liquidVars)
       : fillGv(renderTemplate(tplBody, ctx));
-    let subject = fillGv(renderTemplate(tplSubject || 'Welcome to Rayna Tours 🌴', ctx));
+    // A subject carrying a dotted path or a Liquid tag can only be resolved by Liquid; every
+    // other subject keeps the regex path exactly as before.
+    const _subjTpl = tplSubject || 'Welcome to Rayna Tours 🌴';
+    let subject = /\{%/.test(_subjTpl) || /\{\{[^}]*\./.test(_subjTpl)
+      ? await LiquidRenderer.render(_subjTpl, liquidVars)
+      : fillGv(renderTemplate(_subjTpl, ctx));
 
     // Per-recipient review link (post-trip templates carry the %%REVIEW_URL%% sentinel).
     // placeholderResolver leaves it untouched, so swap it here for a feedback link
