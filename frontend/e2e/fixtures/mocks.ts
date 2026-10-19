@@ -74,6 +74,8 @@ export const defaultMocks: Mock[] = [
   get('/api/v3/test-sends/utm-log', ok({ rows: [], total: 0 })),
   get('/api/v3/test-sends/utm-log/summary', ok({ byCampaign: [], bySource: [] })),
   get('/api/v3/test-sends/contacts', { success: true, data: [], total: 0 }),
+  get('/api/v3/test-sends/contacts/filter-options', {}),
+  get('/api/v3/test-sends/schedule/list', []),
   get('/api/v2/content/templates', { success: true, data: [], total: 0 }),
   get('/api/v3/chathead/channels', ok([])),
   get('/api/v3/gupshup/sms/config', ok({})),

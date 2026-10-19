@@ -1,6 +1,23 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { Figtree, IBM_Plex_Mono } from 'next/font/google';
 import { Providers } from './providers';
+
+const figtree = Figtree({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-figtree',
+  display: 'swap',
+  fallback: ['Segoe UI', 'system-ui', '-apple-system', 'sans-serif'],
+});
+
+const plexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-plex-mono',
+  display: 'swap',
+  fallback: ['ui-monospace', 'monospace'],
+});
 
 export const metadata: Metadata = {
   title: 'Rayna Tours — Omnichannel Platform',
@@ -9,12 +26,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="light" suppressHydrationWarning>
+    <html lang="en" className={`light ${figtree.variable} ${plexMono.variable}`} suppressHydrationWarning>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-        <link href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css" rel="stylesheet" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

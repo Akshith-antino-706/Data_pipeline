@@ -1,31 +1,32 @@
 import { test, expect, expectNoBadText } from './fixtures/test';
 
-// Every sidebar entry (see app/(dashboard)/layout.tsx NAV) with a heading-ish text to wait for.
+// Every sidebar entry (see NAV_GROUPS in app/(dashboard)/layout.tsx), labelled as in the grouped sidebar.
 const PAGES: { label: string; href: string }[] = [
-  { label: 'Dashboard', href: '/dashboard' },
-  { label: 'Segmentation', href: '/segmentation' },
-  { label: 'Segment Activity', href: '/segment-activity' },
+  { label: 'Home', href: '/dashboard' },
   { label: 'Contacts', href: '/contacts' },
-  { label: 'Affinity', href: '/affinity' },
-  { label: 'Journeys', href: '/journeys' },
-  { label: 'Journey Dashboard', href: '/journeys/dashboard' },
-  { label: 'Journey Analytics', href: '/journeys/analytics' },
-  { label: 'Campaigns', href: '/campaigns' },
-  { label: 'Content', href: '/content' },
-  { label: 'Send Log', href: '/log' },
-  { label: 'UTM Tracking', href: '/utm' },
-  { label: 'GTM & BigQuery', href: '/tag-manager' },
-  { label: 'Data Pipeline', href: '/data-pipeline' },
-  { label: 'Daily Report', href: '/daily-report' },
+  { label: 'Segments', href: '/segmentation' },
+  { label: 'Segment changes', href: '/segment-activity' },
+  { label: 'Booking interests', href: '/affinity' },
   { label: 'Leads', href: '/leads' },
-  { label: 'System Docs', href: '/system' },
+  { label: 'Journeys', href: '/journeys' },
+  { label: 'Sends', href: '/test-sends' },
+  { label: 'Templates', href: '/content' },
+  { label: 'Performance', href: '/journeys/analytics' },
+  { label: 'Campaign results', href: '/campaigns' },
+  { label: 'Website & links', href: '/utm' },
+  { label: 'GTM & BigQuery', href: '/tag-manager' },
+  { label: 'Reports', href: '/daily-report' },
+  { label: 'Status center', href: '/data-pipeline' },
+  { label: 'Journey monitor', href: '/journeys/dashboard' },
+  { label: 'Message log', href: '/log' },
+  { label: 'System docs', href: '/system' },
 ];
 
 test.describe('sidebar navigation', () => {
   for (const { label, href } of PAGES) {
     test(`${label} (${href}) loads cleanly`, async ({ authed: page, consoleErrors }) => {
       await page.goto('/dashboard');
-      const link = page.locator(`aside a[href="${href}"]`).first();
+      const link = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: label, exact: true });
       await expect(link).toBeVisible();
       await link.click();
       await expect(page).toHaveURL(new RegExp(`${href.replace(/\//g, '\\/')}(\\?.*)?$`));
