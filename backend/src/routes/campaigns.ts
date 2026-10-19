@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import { CampaignService } from '../services/CampaignService.js';
+import { parseId } from '../utils/validate.js';
 
 const router = Router();
 
@@ -50,7 +51,9 @@ router.post('/', async (req, res, next) => {
 // POST /api/v2/campaigns/:id/execute — launch the campaign
 router.post('/:id/execute', async (req, res, next) => {
   try {
-    const result = await CampaignService.execute(parseInt(req.params.id));
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ success: false, error: 'id must be a positive integer' });
+    const result = await CampaignService.execute(id);
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
 });

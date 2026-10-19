@@ -30,6 +30,7 @@ import db from '../config/database.js';
 import { rankRecommendations } from '../services/RecommendationRankingService.js';
 import { renderRecommendationEmail } from '../services/RecommendationRenderer.js';
 import { EmailChannel } from '../services/channels/EmailChannel.js';
+import { escapeHtml } from '../utils/validate.js';
 
 const router = Router();
 
@@ -156,7 +157,7 @@ router.post('/test-send', async (req, res, next) => {
 
     // Prepend a bright banner so a real inbox sees "TEST" clearly.
     const banner = `<div style="background:#fef3c7;border:2px solid #d97706;color:#92400e;padding:12px;text-align:center;font-family:Arial;font-size:13px;">
-      ⚠️ TEST SEND — Rec journey preview. City: ${city}. templateId: ${templateId}. Ranking source: ${ranking.source}.
+      ⚠️ TEST SEND — Rec journey preview. City: ${escapeHtml(city)}. templateId: ${escapeHtml(templateId)}. Ranking source: ${escapeHtml(ranking.source)}.
     </div>`;
     const brandedHtml = banner + html;
 

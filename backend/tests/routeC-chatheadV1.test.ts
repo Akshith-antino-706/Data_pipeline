@@ -141,9 +141,9 @@ describe('POST /broadcasts', () => {
     ch.sendBroadcast.mockRejectedValue(new Error('upload failed'));
     expect((await call('/broadcasts', 'POST', { ...ok, contacts: [{ phone: '1' }] })).status).toBe(500);
   });
-  // BUG (src/routes/chatheadV1.ts:91): sendTime is never validated; "garbage" becomes an
+  // FIXED (was BUG) (src/routes/chatheadV1.ts:91): sendTime is never validated; "garbage" becomes an
   // Invalid Date that is passed straight to ChatHeadV1Service. Expected: 400.
-  it.fails('rejects an unparseable sendTime', async () => {
+  it('rejects an unparseable sendTime', async () => {
     ch.sendBroadcast.mockResolvedValue({ success: true });
     const r = await call('/broadcasts', 'POST', { ...ok, contacts: [{ phone: '1' }], sendTime: 'garbage' });
     expect(r.status).toBe(400);
@@ -184,9 +184,9 @@ describe('data files', () => {
     await call('/data-files?limit=abc');
     expect(mockQuery.mock.calls[1][1]).toEqual([50]);
   });
-  // BUG (src/routes/chatheadV1.ts:212 and :236): a negative ?limit is truthy, so
+  // FIXED (was BUG) (src/routes/chatheadV1.ts:212 and :236): a negative ?limit is truthy, so
   // Math.min(200, -5) = -5 reaches Postgres as LIMIT -5 (an error → 500). Expected clamp to >= 1.
-  it.fails('list endpoints clamp a negative limit', async () => {
+  it('list endpoints clamp a negative limit', async () => {
     await call('/broadcasts?limit=-5');
     expect(Number(mockQuery.mock.calls[0][1]?.[0])).toBeGreaterThanOrEqual(1);
   });

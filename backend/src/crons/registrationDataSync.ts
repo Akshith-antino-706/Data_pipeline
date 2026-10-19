@@ -162,7 +162,7 @@ async function syncType({ type, table, key }: RegistrationType, fromDate: string
 
     for (let i = 0; i < inserts.length; i += 200) {
       const chunk = inserts.slice(i, i + 200);
-      const cols = Object.keys(chunk[0]);
+      const cols = [...new Set(chunk.flatMap(r => Object.keys(r)))];   // union: records may differ in fields
       const params: string[] = [];
       const tuples = chunk.map(vals => `(${cols.map(col => { params.push(vals[col] ?? 'NULL'); return `$${params.length}`; }).join(', ')}, now())`);
       await client.query(

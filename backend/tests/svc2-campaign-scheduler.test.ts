@@ -129,7 +129,7 @@ describe('CampaignService', () => {
   // BUG: the aggregate sets sent_count = COUNT(status='sent') only. Once a message moves on to
   // delivered/read/clicked its status is no longer 'sent', so sent_count goes DOWN as engagement
   // goes up (and delivery_rate = delivered/sent can exceed 100%). CampaignService.ts:280,297.
-  it.fails('campaign sent_count includes messages that progressed past sent', async () => {
+  it('campaign sent_count includes messages that progressed past sent', async () => {
     await CampaignService.processQueue(1);
     const agg = m.query.mock.calls.at(-1)?.[0] ?? '';
     expect(agg).toMatch(/FILTER \(WHERE status IN \('sent',\s*'delivered',\s*'read',\s*'clicked'/);

@@ -100,7 +100,7 @@ describe('GtmJourneyService flow walking', () => {
   });
   // BUG: `parseFloat(waitDays) || 1` turns an explicit 0-day wait into a 1-day wait
   // (0 is falsy). GtmJourneyService.ts:52.
-  it.fails('_waitMs(0) is zero, not one day', () => {
+  it('_waitMs(0) is zero, not one day', () => {
     expect(GtmJourneyService._waitMs(0)).toBe(0);
   });
   it('_nextStep sums waits until the next action, stops at goal/end', () => {
@@ -187,7 +187,7 @@ describe('ContinuousJourneyService', () => {
   // SUSPECTED BUG: the per-item purchase exit has no attribution window — a purchase of the
   // same item from ANY time in the past (even long before the user entered the journey)
   // exits them. ContinuousJourneyService.ts:291-294 (same in GtmJourneyService.ts:198-203).
-  it.fails('purchase exit only counts purchases after entering the journey', async () => {
+  it('purchase exit only counts purchases after entering the journey', async () => {
     route([['SELECT email_unsubscribe', () => [{}]]]);
     await ContinuousJourneyService._exitReason(2, 'item');
     expect(calls("event_name = 'purchase'")[0][0]).toMatch(/entered_at|created_at\s*>=/);

@@ -133,7 +133,7 @@ describe('Journeys list page', () => {
   // BUG: app/(dashboard)/journeys/page.tsx:4816 — the list view renders {pct(j.conversion_rate)}
   // directly; pct() (line 578) does Number(n || 0).toFixed(1), so a non-numeric conversion_rate
   // string renders "NaN%". The card view guards with parseFloat(...) || 0, the list view does not.
-  it.fails('list view never renders NaN% for a non-numeric conversion_rate', async () => {
+  it('list view never renders NaN% for a non-numeric conversion_rate', async () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
@@ -229,7 +229,7 @@ describe('Journeys list page', () => {
   // openJourney sets showToast('Failed to load journey') but leaves selected set and detail null,
   // so the page stays on the detail skeleton (which renders no toast) forever: the user never
   // sees the error and has no way back except the browser.
-  it.fails('a failing journey detail load surfaces the error to the user', async () => {
+  it('a failing journey detail load surfaces the error to the user', async () => {
     mockList(LIST);
     vi.mocked(api.getJourney).mockRejectedValue(new Error('detail failed'));
     renderPage();

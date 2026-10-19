@@ -97,7 +97,7 @@ export default function DailyReport() {
     setPreview(null);
     try {
       const result = await getReportCounts(fromDate, toDate) as ReportCounts;
-      setData(result);
+      setData({ ...result, tables: result?.tables ?? {} });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -215,7 +215,7 @@ export default function DailyReport() {
                   { icon: FileSpreadsheet, label: 'Total Rows', value: formatNum(data.totalRows), bg: 'rgba(14,165,233,0.1)', color: 'var(--brand-primary)' },
                   { icon: Receipt, label: 'Total Bills', value: formatNum(data.totalBills), bg: 'rgba(168,85,247,0.1)', color: 'var(--purple)' },
                   { icon: DollarSign, label: 'Total Sales', value: formatAED(data.totalSales), bg: 'rgba(34,197,94,0.1)', color: 'var(--green)' },
-                  { icon: Calendar, label: 'Date Range', value: `${data.from}  to  ${data.to}`, bg: 'rgba(249,115,22,0.1)', color: 'var(--orange)' },
+                  { icon: Calendar, label: 'Date Range', value: `${data.from ?? fromDate}  to  ${data.to ?? toDate}`, bg: 'rgba(249,115,22,0.1)', color: 'var(--orange)' },
                 ].map(kpi => (
                   <div key={kpi.label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ width: 42, height: 42, borderRadius: 10, background: kpi.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

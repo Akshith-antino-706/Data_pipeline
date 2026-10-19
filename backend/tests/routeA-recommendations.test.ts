@@ -128,9 +128,9 @@ describe('POST /test-send', () => {
     m.send.mockRejectedValue(new Error('smtp'));
     expect((await call('POST', '/test-send', { to: 'akshith@raynatours.com', city: 'Dubai', templateId: 3 })).status).toBe(500);
   });
-  // BUG (src/routes/recommendations.ts:156-158): `city` from the request body is interpolated
+  // FIXED (was BUG) (src/routes/recommendations.ts:156-158): `city` from the request body is interpolated
   // unescaped into the HTML banner of the sent email (HTML injection into a real inbox).
-  it.fails('escapes the city in the TEST banner', async () => {
+  it('escapes the city in the TEST banner', async () => {
     await call('POST', '/test-send', { to: 'akshith@raynatours.com', city: '<script>x</script>', templateId: 3 });
     expect(m.send).toHaveBeenCalledWith(expect.objectContaining({ html: expect.not.stringContaining('<script>x</script>') as string }));
   });

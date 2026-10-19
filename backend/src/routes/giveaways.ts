@@ -73,7 +73,7 @@ router.get('/stats', async (_req, res) => {
 // Recent giveaway events (newest first) — powers the log view.
 router.get('/log', async (req: QueryRequest, res: Response) => {
   try {
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10) || 50));
     const [events, counts] = await Promise.all([recentGiveawayJobs(limit), giveawayQueueCounts()]);
     res.json({ ok: true, counts, events });
   } catch (err) {
@@ -84,7 +84,7 @@ router.get('/log', async (req: QueryRequest, res: Response) => {
 // Recent events captured by the RabbitMQ consumer (newest first) — powers the live toast feed.
 router.get('/mq-log', async (req: QueryRequest, res: Response) => {
   try {
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50')));
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10) || 50));
     const rows = await getConnection().lrange(MQ_EVENTS_KEY, 0, limit - 1);
     const events = rows.map(r => { try { return JSON.parse(r) as GiveawayMessage; } catch { return null; } }).filter(Boolean);
     res.json({ ok: true, events });

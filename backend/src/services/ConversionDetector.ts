@@ -59,7 +59,7 @@ export default class ConversionDetector {
         )
     `);
     if (rowCount! > 0) console.log(`[ConversionDetector] UTM clicks logged: ${rowCount}`);
-    return rowCount;
+    return rowCount ?? 0;
   }
 
   /**
@@ -86,6 +86,7 @@ export default class ConversionDetector {
         ) g
         WHERE je.customer_id = g.unified_id
           AND je.status = 'active'
+          AND g.event_ts > je.entered_at
       `);
       converted += rowCount!;
       if (rowCount! > 0) console.log(`[ConversionDetector] GTM conversions: ${rowCount}`);
@@ -110,6 +111,7 @@ export default class ConversionDetector {
         ) g
         WHERE je.customer_id = g.unified_id
           AND je.status = 'active'
+          AND g.event_ts > je.entered_at
       `);
       converted += rowCount!;
       if (rowCount! > 0) console.log(`[ConversionDetector] GA4 conversions: ${rowCount}`);

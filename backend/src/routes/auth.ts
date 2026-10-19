@@ -11,7 +11,7 @@ const router = Router();
  */
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body as { email: string; password: string };
+    const { email, password } = (req.body ?? {}) as { email: string; password: string };
     const result = await AuthService.login(email, password);
     res.json({ success: true, data: result });
   } catch (err) {

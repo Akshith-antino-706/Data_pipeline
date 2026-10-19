@@ -136,10 +136,10 @@ describe('getCustomersCsv', () => {
     expect(m.query.mock.calls[0]![0]).toContain('LIMIT 100000');
   });
 
-  // BUG (CSV/formula injection): a customer name such as "=HYPERLINK(...)" is written raw, so
+  // Regression (fixed): a customer name such as "=HYPERLINK(...)" is written raw, so
   // Excel/Sheets evaluate it when staff open the export (src/services/BookingAffinityService.ts:74-78,
   // csvCell does not neutralise leading = + - @).
-  it.fails('neutralises spreadsheet formulas in exported cells', async () => {
+  it('neutralises spreadsheet formulas in exported cells', async () => {
     m.query.mockResolvedValueOnce({ rows: [{ unified_id: 1, name: '=HYPERLINK("http://evil","x")' }] });
     const line = (await BookingAffinityService.getCustomersCsv({})).split('\n')[1]!;
     expect(line.split(',')[1]!.replace(/^"/, '').startsWith('=')).toBe(false);

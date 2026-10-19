@@ -13,14 +13,13 @@ async function fillBuilder(page: Page, url: string) {
 test.describe('utm builder', () => {
   test('bad URL rejected by the API does not crash the page', async ({ authed: page, api, consoleErrors }) => {
     api.use({ method: 'POST', path: /^\/api\/v3\/utm\/build$/, status: 400, body: { error: 'Invalid URL' } });
-    await fillBuilder(page, 'not a url');
+    await fillBuilder(page, 'https://rejected.example'); // passes client-side URL validation; the API rejects it
     await page.getByRole('button', { name: 'Generate UTM Link' }).click();
     await expect.poll(() => api.calls.includes('POST /api/v3/utm/build')).toBe(true);
 
     await expect(page.getByText('Fill in the form and click Generate')).toBeVisible();
     await expect(page.getByText('Generated UTM Link')).toHaveCount(0);
     await expect(page.getByText('Something went wrong')).toHaveCount(0);
-    // handleBuild only console.error()s the failure.
     expect(consoleErrors.every((e) => e.includes('Invalid URL'))).toBe(true);
   });
 
@@ -48,7 +47,6 @@ test.describe('utm builder', () => {
   // validates it, so "not a url" yields a junk "not a url?utm_source=..." link and there is
   // no user-visible error. Expected: the page rejects an invalid URL before calling the API.
   test('invalid landing page URL is rejected client-side', async ({ authed: page, api }) => {
-    test.fail(true, 'Known bug: no URL validation in the UTM builder');
     api.use({ method: 'POST', path: /^\/api\/v3\/utm\/build$/, body: { utm_url: 'not a url?utm_source=AI_marketer' } });
     await fillBuilder(page, 'not a url');
     const sent = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/api/v3/utm/build'), { timeout: 5_000 })

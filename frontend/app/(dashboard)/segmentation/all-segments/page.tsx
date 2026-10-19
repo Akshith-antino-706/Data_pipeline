@@ -47,7 +47,7 @@ export default function AllSegmentsPage() {
   useEffect(() => { loadSegments(); }, [loadSegments]);
 
   const filtered = segments.filter(s =>
-    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.name ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
     (s.description || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 

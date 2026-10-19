@@ -118,9 +118,16 @@ export default function UTMTracking() {
 
   async function handleBuild() {
     try {
+      new URL(builder.baseUrl);
+    } catch {
+      setGeneratedUrl('');
+      showToast('Please enter a valid landing page URL (e.g. https://www.raynatours.com/activities)', 'error');
+      return;
+    }
+    try {
       const result = await buildUTM(builder) as { utm_url: string };
       setGeneratedUrl(result.utm_url);
-    } catch (err) { console.error(err); }
+    } catch (err) { showToast((err as Error).message || 'Failed to build UTM link', 'error'); }
   }
 
   // User Links functions

@@ -73,20 +73,26 @@ class FirstMessageService {
     console.log('[FirstMsg] Starting sync...');
     let totalProcessed = 0;
     let totalUpdated = 0;
-    let hasMore = true;
+    // Keyset cursor: chats whose first message can't be fetched keep first_msg_text NULL,
+    // so re-running the same SELECT would return them forever. Only move forward by id.
+    let lastId = 0;
 
-    while (hasMore) {
-      const { rows } = await query<FirstMsgChatRow>(
+    while (true) {
+      const { rows: page } = await query<FirstMsgChatRow>(
         `SELECT id, wa_id, receiver
          FROM chats
          WHERE first_msg_text IS NULL
            AND wa_id IS NOT NULL AND receiver IS NOT NULL
+           AND id > $2
          ORDER BY id
          LIMIT $1`,
-        [this.BATCH_SIZE]
+        [this.BATCH_SIZE, lastId]
       );
 
-      if (rows.length === 0) { hasMore = false; break; }
+      // Defensive: never re-try an id already tried in this run; stop if a page makes no progress.
+      const rows = page.filter(r => Number(r.id) > lastId);
+      if (rows.length === 0) break;
+      lastId = Math.max(...rows.map(r => Number(r.id)));
 
       console.log(`[FirstMsg] Processing batch of ${rows.length} (total so far: ${totalProcessed})...`);
       const results = await this.processBatch(rows);
@@ -97,7 +103,8 @@ class FirstMessageService {
 
       console.log(`[FirstMsg] Batch: ${updated}/${rows.length} fetched. Total: ${totalUpdated}/${totalProcessed}`);
 
-      if (hasMore) await new Promise(r => setTimeout(r, this.DELAY_BETWEEN_BATCHES));
+      if (page.length < this.BATCH_SIZE) break;
+      await new Promise(r => setTimeout(r, this.DELAY_BETWEEN_BATCHES));
     }
 
     console.log(`[FirstMsg] Done. ${totalUpdated}/${totalProcessed} messages fetched`);

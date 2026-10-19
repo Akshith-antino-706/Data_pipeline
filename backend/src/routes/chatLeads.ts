@@ -5,6 +5,7 @@ import type { Period, PeriodUnit, DepartmentPeriodsArgs, Granularity, Registrati
 import type { DepartmentPeriodsRow, ChatSummaryRow, ChatTotalsRow, UserStatsRow, ChatTrendRow, MailSummaryRow, MailTotalsRow, MailTrendRow, RegistrationCountsRow, RegistrationPointRow, RegistrationPeriodsRow, InfoSchemaColumnRow, RegistrationRecordRow, FilledColumnsRow, ChatHeadFirstMsgResponse, ChatTimestampsRow, DepartmentUserRow, DepartmentCatalogRow, GroupMemberAssignmentRow, DepartmentGroupRow, DepartmentGroupMemberRow, GroupDepartmentEntry, TakenReceiverRow } from '../types/u3ChatLeads.js';
 import { mysqlQuery } from '../config/mysql.js';
 import db from '../config/database.js';
+import { clampInt } from '../utils/validate.js';
 
 const router = Router();
 
@@ -517,6 +518,7 @@ router.get('/department-periods', async (req: QueryRequest, res: Response) => {
   try {
     const { unit, count, from, to } = parsePeriodParams(req);
     const periods = buildPeriods(unit, count, from, to);
+    if (!periods.length) return res.status(400).json({ error: 'Invalid period range' });
 
     const rows = await queryDepartmentPeriods({
       table: 'chats',
@@ -540,6 +542,7 @@ router.get('/mail-department-periods', async (req: QueryRequest, res: Response) 
   try {
     const { unit, count, from, to } = parsePeriodParams(req);
     const periods = buildPeriods(unit, count, from, to);
+    if (!periods.length) return res.status(400).json({ error: 'Invalid period range' });
 
     const rows = await queryDepartmentPeriods({
       table: 'tickets',
@@ -579,7 +582,7 @@ const filledJson = (bindKey: string) => `NULLIF(NULLIF(btrim(data ->> ${bindKey}
 
 function parseRegistrationSource(req: QueryRequest, res: Response): RegistrationSource | null {
   const source = String(req.query.source || '').toLowerCase() as RegistrationSource;
-  if (!REGISTRATION_TABLES[source]) {
+  if (!Object.hasOwn(REGISTRATION_TABLES, source)) {
     res.status(400).json({ error: 'source must be one of: guestuser, agent, affiliate' });
     return null;
   }
@@ -660,7 +663,7 @@ router.get('/registrations/periods', async (req: QueryRequest, res: Response) =>
 router.get('/registrations', async (req: QueryRequest, res: Response) => {
   try {
     const source = String(req.query.source || 'all').toLowerCase() as RegistrationSource | 'all';
-    if (source !== 'all' && !REGISTRATION_TABLES[source]) {
+    if (source !== 'all' && !Object.hasOwn(REGISTRATION_TABLES, source)) {
       return res.status(400).json({ error: 'Invalid registration source' });
     }
     const page = Math.max(parseInt(req.query.page as string, 10) || 1, 1);
@@ -805,7 +808,7 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
       return res.status(400).json({ error: '"receiver", "from" and "to" are required' });
     }
     const onlyNew = String(req.query.only_new || '') === '1';
-    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+    const limit = clampInt(req.query.limit, 50, 200);
     const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
     // Users active with this receiver in the range, with their FIRST-EVER message time.

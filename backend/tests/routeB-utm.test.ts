@@ -82,9 +82,9 @@ describe('utm.ts', () => {
     expect((await post('/7/conversion', { revenue: 99 })).status).toBe(200);
     expect(m.recordConversion).toHaveBeenCalledWith('7', 99);
   });
-  // BUG utm.ts:94 — `(req.body as {...}).revenue` with no JSON body: req.body is undefined in
+  // FIXED (was BUG) utm.ts:94 — `(req.body as {...}).revenue` with no JSON body: req.body is undefined in
   // Express 5, so the property read throws and a revenue-less conversion is reported as 500.
-  it.fails('POST /:id/conversion without a body records the conversion', async () => {
+  it('POST /:id/conversion without a body records the conversion', async () => {
     m.recordConversion.mockResolvedValue(undefined);
     expect((await post('/7/conversion')).status).toBe(200);
   });

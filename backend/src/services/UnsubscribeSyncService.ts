@@ -38,7 +38,10 @@ export default class UnsubscribeSyncService {
       while (true) {
         // Fetch batch from MySQL
         const rows = await mysqlQuery<{ email: string | null; unsubscribe: number }[]>(
-          'SELECT email, unsubscribe FROM unsubscribed LIMIT ? OFFSET ?',
+          // Stable order so OFFSET paging never skips/duplicates rows. The PK of this table is
+          // not known here; (email, unsubscribe) covers every selected column, so any remaining
+          // ties are byte-identical rows and paging over them is harmless.
+          'SELECT email, unsubscribe FROM unsubscribed ORDER BY email, unsubscribe LIMIT ? OFFSET ?',
           [BATCH_SIZE, offset],
           'primary'
         );
@@ -52,23 +55,20 @@ export default class UnsubscribeSyncService {
 
         // Bulk update: unsubscribe = 1 → 'Yes'
         if (unsub.length > 0) {
+          // Flip and log in one statement: only rows actually changed by THIS update
+          // (RETURNING) are logged, so contacts already 'Yes' are never re-logged.
           const { rowCount } = await db.query(`
-            UPDATE unified_contacts
-            SET email_unsubscribe = 'Yes', updated_at = NOW()
-            WHERE LOWER(TRIM(email)) = ANY($1::text[])
-              AND email_unsubscribe <> 'Yes'
-          `, [unsub]);
-          setYes += rowCount!;
-
-          if (rowCount! > 0) {
-            await db.query(`
-              INSERT INTO unsubscribe_log (unified_id, email, campaign)
-              SELECT id, email, 'mysql_sync'
-              FROM unified_contacts
+            WITH flipped AS (
+              UPDATE unified_contacts
+              SET email_unsubscribe = 'Yes', updated_at = NOW()
               WHERE LOWER(TRIM(email)) = ANY($1::text[])
-                AND email_unsubscribe = 'Yes'
-            `, [unsub]);
-          }
+                AND email_unsubscribe <> 'Yes'
+              RETURNING id, email
+            )
+            INSERT INTO unsubscribe_log (unified_id, email, campaign)
+            SELECT id, email, 'mysql_sync' FROM flipped
+          `, [unsub]);
+          setYes += rowCount ?? 0;
         }
 
         // Bulk update: unsubscribe = 0 → 'No' (never for contacts who opted out with us)

@@ -58,7 +58,7 @@ describe('GET / (list) pagination + clamping', () => {
   });
   it('clamps limit to 200 and page/limit to >= 1', async () => {
     await get('/?limit=1000000&page=99999999999');
-    expect(lastArg(m.svc.getAll)).toMatchObject({ limit: 200, page: 99999999999 });
+    expect(lastArg(m.svc.getAll)).toMatchObject({ limit: 200, page: 100000 });
     await get('/?limit=-5&page=-9');
     expect(lastArg(m.svc.getAll)).toMatchObject({ limit: 1, page: 1 });
     await get('/?limit=abc&page=%27');
@@ -199,12 +199,12 @@ describe('segment activity / customers', () => {
     await get('/segment-activity?days=abc');
     expect(lastArg(m.svc.getSegmentDailyLog)).toMatchObject({ days: 30 });
   });
-  it('segment-customers defaults page 1 / limit 25, huge limit unclamped', async () => {
+  it('segment-customers defaults page 1 / limit 25, huge limit clamped to 500', async () => {
     m.svc.getSegmentCustomers.mockResolvedValue({ data: [] });
     await get('/segment-customers');
     expect(lastArg(m.svc.getSegmentCustomers)).toMatchObject({ page: 1, limit: 25 });
     await get('/segment-customers?limit=5000000');
-    expect(lastArg(m.svc.getSegmentCustomers)).toMatchObject({ limit: 5000000 });
+    expect(lastArg(m.svc.getSegmentCustomers)).toMatchObject({ limit: 500 });
   });
   it('segment-activity/download builds CSV', async () => {
     m.svc.getSegmentDailyLog.mockResolvedValue({ logs: [{ log_date: '2024-01-05T00:00', segment_label: 'S', total_count: 1 }] });
@@ -217,9 +217,9 @@ describe('segment activity / customers', () => {
     const text = await (await get('/segment-customers/download')).text();
     expect(text).toContain('"A ""B"""');
   });
-  // BUG unifiedContacts.ts:192 — only `name` has its quotes doubled; email/mobile/country/sources are
+  // FIXED (was BUG) unifiedContacts.ts:192 — only `name` has its quotes doubled; email/mobile/country/sources are
   // wrapped in quotes without escaping, so a value containing `"` breaks the CSV row.
-  it.fails('segment-customers/download escapes quotes in every quoted field', async () => {
+  it('segment-customers/download escapes quotes in every quoted field', async () => {
     m.svc.getSegmentCustomers.mockResolvedValue({ data: [{ name: 'n', email: 'x"y@x.com', booking_status: 'P' }] });
     const text = await (await get('/segment-customers/download')).text();
     expect(text).toContain('"x""y@x.com"');

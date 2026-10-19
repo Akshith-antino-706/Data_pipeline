@@ -170,7 +170,7 @@ export default function JourneyDashboardPage() {
     { label: 'Sends Today', value: kpis.sendsToday?.toLocaleString(), icon: Send, color: '#22c55e' },
     { label: 'Sends Tomorrow', value: kpis.sendsTomorrow?.toLocaleString(), icon: Calendar, color: '#14b8a6' },
     { label: 'Queued Now', value: kpis.queuedNow?.toLocaleString(), icon: Clock, color: '#f59e0b' },
-    { label: 'Open Rate (7d)', value: `${kpis.openRate7d}%`, icon: Eye, color: '#ec4899' },
+    { label: 'Open Rate (7d)', value: `${kpis.openRate7d ?? 0}%`, icon: Eye, color: '#ec4899' },
     { label: 'Conversions (7d)', value: kpis.conversions7d?.toLocaleString(), icon: TrendingUp, color: '#6366f1' },
   ];
 

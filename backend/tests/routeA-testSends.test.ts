@@ -92,9 +92,9 @@ describe('GET /contacts', () => {
     expect(r.status).toBe(200);
     expect((r.body.data as { total: unknown }).total).toBeNull();
   });
-  // BUG (src/routes/testSends.ts:246): `parseInt(limit)` for a non-numeric ?limit= is NaN and
+  // FIXED (was BUG) (src/routes/testSends.ts:246): `parseInt(limit)` for a non-numeric ?limit= is NaN and
   // Math.min(500, NaN) is NaN, so "LIMIT NaN" is sent to Postgres (500) instead of the default 50.
-  it.fails('non-numeric limit falls back to 50', async () => {
+  it('non-numeric limit falls back to 50', async () => {
     const r = await call('GET', '/contacts?limit=abc');
     expect((r.body.data as { limit: number }).limit).toBe(50);
   });
@@ -198,14 +198,14 @@ describe('send endpoints: validation', () => {
     expect((await call('POST', '/send-template', { templateId: 9, emails: ['a@b.c'] })).status).toBe(400);
     expect(m.emailSend).not.toHaveBeenCalled();
   });
-  // BUG (src/routes/testSends.ts:73-76 + 347/385): a missing/empty `emails` array is a client
+  // FIXED (was BUG) (src/routes/testSends.ts:73-76 + 347/385): a missing/empty `emails` array is a client
   // input error but resolveRecipients throws and the route answers 500 instead of 400.
-  it.fails('/send-template with no emails is a 400, not 500', async () => {
+  it('/send-template with no emails is a 400, not 500', async () => {
     expect((await call('POST', '/send-template', { templateId: 1 })).status).toBe(400);
   });
-  it('/day1 with an empty body → 500 (resolveRecipients throws) and sends nothing', async () => {
+  it('/day1 with an empty body → 400 (missing emails) and sends nothing', async () => {
     const r = await call('POST', '/day1');
-    expect(r.status).toBe(500);
+    expect(r.status).toBe(400);
     expect(r.body.error).toContain('emails[] is required');
     expect(m.emailSend).not.toHaveBeenCalled();
   });

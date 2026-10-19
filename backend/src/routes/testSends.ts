@@ -27,6 +27,7 @@ import { SAMPLE_AFFINITY_VARS } from '../services/affinityVars.js';
 import type { PlaceholderContext } from '../types/utilsPlaceholder.js';
 import type { U4TestSendRequest, U4ContentTemplateBodyRow, U4EmailHtmlTemplateRow, U4ContentTemplateFullRow, U4ValRow, U4CountryRow, U4IdNameRow, U4TotalRow, U4ContactListRow, U4ContactSearchRow, U4QaReportRow, U4SendLogRow } from '../types/u4TestSends.js';
 import type { QueryParams, Recipient, EmailTransport, SendAttemptResult, SendAndLogArgs, SendOutcome, ParallelFailure, BatchJob, ResolvedTemplate } from '../types/routesTestSends.js';
+import { clampInt } from '../utils/validate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -70,6 +71,11 @@ const batchJobs = new Map<string, BatchJob>(); // jobId → { status, total, sen
  * Resolve recipients from an `emails` array in the request body.
  * Looks up each email in unified_contacts to get the unified_id.
  */
+/** True when `emails` is a non-empty array with at least one non-blank entry (client input check → 400). */
+function hasEmails(emails: unknown): boolean {
+  return Array.isArray(emails) && emails.some(e => String(e ?? '').trim() !== '');
+}
+
 async function resolveRecipients(emails: unknown): Promise<Recipient[]> {
   if (!Array.isArray(emails) || emails.length === 0) {
     throw new Error('emails[] is required — select at least one recipient');
@@ -243,8 +249,8 @@ router.get('/contacts/filter-options', async (req, res, next) => {
 router.get('/contacts', async (req, res, next) => {
   try {
     const q      = String(req.query.q || '').trim();
-    const limit  = Math.min(500, parseInt((req.query.limit as string | undefined)  || '50'));
-    const offset = Math.max(0,   parseInt((req.query.offset as string | undefined) || '0'));
+    const limit  = clampInt(req.query.limit, 50, 500);
+    const offset = clampInt(req.query.offset, 0, Number.MAX_SAFE_INTEGER, 0);
     const hasQ   = q.length >= 2;
 
     // Build filter conditions
@@ -345,6 +351,7 @@ router.post('/send-daily-ai', async (req: U4TestSendRequest, res) => {
   try {
     const templateId = parseInt(req.body?.templateId);
     if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
 
@@ -383,6 +390,7 @@ router.post('/send-template', async (req: U4TestSendRequest, res) => {
   try {
     const templateId = parseInt(req.body?.templateId);
     if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ success: false, error: 'No valid recipients found' });
 
@@ -640,6 +648,7 @@ router.get('/schedule/:id/logs', async (req, res, next) => {
 
 router.post('/day1', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
@@ -705,6 +714,7 @@ router.post('/day1', async (req: U4TestSendRequest, res, next) => {
 
 router.post('/day2', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
@@ -753,6 +763,7 @@ router.post('/day2', async (req: U4TestSendRequest, res, next) => {
 
 router.post('/day3', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
@@ -801,6 +812,7 @@ router.post('/day3', async (req: U4TestSendRequest, res, next) => {
 
 router.post('/day4', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
@@ -840,6 +852,7 @@ router.post('/day4', async (req: U4TestSendRequest, res, next) => {
 
 router.post('/day5', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
@@ -879,6 +892,7 @@ router.post('/day5', async (req: U4TestSendRequest, res, next) => {
 
 router.post('/day6', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 
@@ -933,6 +947,7 @@ router.post('/day6', async (req: U4TestSendRequest, res, next) => {
 
 router.post('/day7', async (req: U4TestSendRequest, res, next) => {
   try {
+    if (!hasEmails(req.body?.emails)) return res.status(400).json({ success: false, error: 'emails[] is required — select at least one recipient' });
     const recipients = await resolveRecipients(req.body?.emails);
     if (recipients.length === 0) return res.status(404).json({ error: 'No valid recipients found in unified_contacts' });
 

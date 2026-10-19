@@ -294,7 +294,7 @@ export class CampaignService {
       FROM (
         SELECT
           campaign_id,
-          COUNT(*) FILTER (WHERE status = 'sent') AS sent,
+          COUNT(*) FILTER (WHERE status IN ('sent', 'delivered', 'read', 'clicked', 'bounced', 'unsubscribed')) AS sent,
           COUNT(*) FILTER (WHERE status = 'delivered') AS delivered,
           COUNT(*) FILTER (WHERE status = 'read') AS read,
           COUNT(*) FILTER (WHERE status = 'clicked') AS clicked,

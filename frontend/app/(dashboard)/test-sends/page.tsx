@@ -676,7 +676,7 @@ export default function TestSends() {
                         {(result.results || []).map((r, i) => (
                           <div key={i} style={{ color: r.success ? 'var(--foreground)' : '#ef4444', display: 'flex', justifyContent: 'space-between' }}>
                             <span>{r.success ? '✓' : '✗'} {r.email}</span>
-                            <span style={{ color: 'var(--muted-foreground)' }}>{r.success ? `${r.ms}ms` : (r.error || '').slice(0, 30)}</span>
+                            <span style={{ color: 'var(--muted-foreground)' }}>{r.success ? `${r.ms ?? 0}ms` : (r.error || '').slice(0, 30)}</span>
                           </div>
                         ))}
                       </div>

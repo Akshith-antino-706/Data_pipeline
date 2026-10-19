@@ -104,7 +104,7 @@ class ContinuousJourneyService {
     // Non-WhatsApp: exit-check + enqueue per entry (unchanged behaviour).
     let enqueued = 0, exited = 0;
     for (const e of others) {
-      const exit = await this._exitReason(e.unified_id, e.item_id);
+      const exit = await this._exitReason(e.unified_id, e.item_id, e.id);
       if (exit) {
         await db.query(`UPDATE gtm_journey_entries SET status='exited', exit_reason=$2, next_fire_at=NULL, updated_at=NOW() WHERE id=$1`, [e.id, exit]);
         exited++; continue;
@@ -151,7 +151,7 @@ class ContinuousJourneyService {
 
     const valid: ContinuousWaRecipient[] = [];
     for (const e of entries) {
-      const exit = await this._exitReason(e.unified_id, e.item_id);
+      const exit = await this._exitReason(e.unified_id, e.item_id, e.id);
       if (exit) {
         await db.query(`UPDATE gtm_journey_entries SET status='exited', exit_reason=$2, next_fire_at=NULL, updated_at=NOW() WHERE id=$1`, [e.id, exit]);
         exited++; continue;
@@ -284,14 +284,16 @@ class ContinuousJourneyService {
   }
 
   /** Exit conditions re-checked at every node: unsubscribe + per-item purchase. */
-  static async _exitReason(unifiedId: number | string, itemId: string | number | null | undefined) {
+  static async _exitReason(unifiedId: number | string, itemId: string | number | null | undefined, entryId?: number | string | null) {
     const { rows: [c] } = await db.query<{ email_unsubscribe: string | null }>('SELECT email_unsubscribe FROM unified_contacts WHERE id = $1', [unifiedId]);
     if (String(c?.email_unsubscribe || '').toLowerCase() === 'yes') return 'unsubscribed';
     if (itemId && itemId !== '_noitem') {
       const { rows: [b] } = await db.query<{ '?column?': number }>(
         `SELECT 1 FROM gtm_events WHERE unified_id = $1 AND event_name = 'purchase'
-           AND COALESCE(raw_payload->>'itemId','') = $2 LIMIT 1`,
-        [unifiedId, String(itemId)]
+           AND COALESCE(raw_payload->>'itemId','') = $2
+           AND created_at >= COALESCE((SELECT entered_at FROM gtm_journey_entries WHERE id = $3), '-infinity'::timestamptz)
+         LIMIT 1`,
+        [unifiedId, String(itemId), entryId ?? null]
       );
       if (b) return 'purchased';
     }

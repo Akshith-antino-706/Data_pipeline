@@ -107,8 +107,8 @@ describe('POST /:id/execute and /process-queue', () => {
     expect(r.body).toEqual({ success: true, data: { queued: 3 } });
     expect(cs.execute).toHaveBeenCalledWith(12);
   });
-  // BUG (src/routes/campaigns.ts:53): non-numeric id becomes NaN and is executed instead of 400.
-  it.fails('execute rejects a non-numeric id with 400', async () => {
+  // FIXED (was BUG) (src/routes/campaigns.ts:53): non-numeric id becomes NaN and is executed instead of 400.
+  it('execute rejects a non-numeric id with 400', async () => {
     cs.execute.mockResolvedValue({});
     expect((await call('POST', '/abc/execute')).status).toBe(400);
   });

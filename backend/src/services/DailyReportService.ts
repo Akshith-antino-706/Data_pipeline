@@ -178,7 +178,7 @@ class DailyReportService {
 
   // ── Get Preview (50% of data, capped at 500) ─
   static async getPreview(tableName: string, from: string, to: string) {
-    const config = this.TABLES[tableName];
+    const config = Object.hasOwn(this.TABLES, tableName) ? this.TABLES[tableName] : undefined;
     if (!config) throw new Error(`Unknown table: ${tableName}`);
 
     const { columns, dateColumn } = config;
@@ -226,7 +226,7 @@ class DailyReportService {
 
   // ── Generate CSV String ──────────────────────────────────────
   static async generateCSV(tableName: string, from: string, to: string) {
-    const config = this.TABLES[tableName];
+    const config = Object.hasOwn(this.TABLES, tableName) ? this.TABLES[tableName] : undefined;
     if (!config) throw new Error(`Unknown table: ${tableName}`);
 
     const { columns } = config;

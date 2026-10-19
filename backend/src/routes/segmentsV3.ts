@@ -4,6 +4,7 @@ import type { QueryRequest } from '../types/routesCommon.js';
 import SegmentEngine from '../services/SegmentEngine.js';
 import type { RedisCacheStub } from '../types/routesMisc.js';
 import type { GeneralCounts, CountNRow, GeneralJourneyRow } from '../types/u5Routes.js';
+import { clampInt, MAX_PAGE } from '../utils/validate.js';
 const router = Router();
 
 // Get full funnel overview (7 stages with segments + customer counts)
@@ -132,8 +133,8 @@ router.get('/:id/customers', async (req: QueryRequest, res: Response, next: Next
   try {
     const { page, limit, search, sortBy, sortDir } = req.query;
     const data = await SegmentEngine.getSegmentCustomers(parseInt(req.params.id), {
-      page: parseInt(page) || 1,
-      limit: parseInt(limit) || 25,
+      page: clampInt(page, 1, MAX_PAGE),
+      limit: clampInt(limit, 25, 500),
       search,
       sortBy,
       sortDir

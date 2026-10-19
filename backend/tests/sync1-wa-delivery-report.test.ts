@@ -132,10 +132,10 @@ describe('DailyReportService', () => {
     expect(m.query).not.toHaveBeenCalled();
   });
 
-  // BUG: TABLES lookup has no own-property check, so inherited names like
+  // Regression (fixed): TABLES lookup has no own-property check, so inherited names like
   // 'constructor' pass the "Unknown table" guard and reach SQL as a table name
   // (DailyReportService.ts:181-188 and 229-230).
-  it.fails('rejects inherited object keys as table names', async () => {
+  it('rejects inherited object keys as table names', async () => {
     m.query.mockResolvedValue({ rows: [{ cnt: '0' }] });
     await expect(DailyReportService.getPreview('constructor', 'a', 'b')).rejects.toThrow('Unknown table');
     expect(m.query).not.toHaveBeenCalled();

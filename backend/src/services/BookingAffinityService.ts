@@ -73,7 +73,9 @@ function likePattern(s: unknown): string {
 
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return '';
-  const s = v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+  let s = v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+  // Neutralise spreadsheet formula injection (numbers like -5 are left alone).
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

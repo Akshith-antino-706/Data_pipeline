@@ -658,7 +658,7 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
     if (!conds.length) { setPreviewCount(null); return; }
     setPreviewLoading(true);
     try {
-      const res = await (previewSegmentCount as (conditions: JsonBody) => Promise<unknown>)(conds) as { count: number };
+      const res = await previewSegmentCount(conds, 'AND') as { count: number };
       setPreviewCount(res.count);
     } catch (err) {
       console.error('Preview count failed:', err);

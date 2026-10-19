@@ -69,7 +69,7 @@ const RANKS = [1, 2, 3];
 function formatNum(n: unknown) { return (Number(n) || 0).toLocaleString(); }
 function formatAED(n: unknown) { return `AED ${Math.round(Number(n) || 0).toLocaleString()}`; }
 // Old bookings decay to small scores — keep 2 decimals below 1 so they still read differently.
-function formatScore(n: unknown) { return n == null ? '—' : Number(n).toFixed(Number(n) < 1 ? 2 : 1); }
+function formatScore(n: unknown) { const v = Number(n); return n == null || !Number.isFinite(v) ? '—' : v.toFixed(v < 1 ? 2 : 1); }
 // 'YYYY-MM-DD' → '12 Mar 2025' (no Date parsing, so no timezone shift)
 function formatDay(s: string | null | undefined) {
   if (!s) return '—';
@@ -321,7 +321,7 @@ export default function AffinityPage() {
     setListLoading(true);
     setListError(null);
     (getAffinityCustomers({ ...listParams, limit, page }) as Promise<AffinityCustomerList>)
-      .then(d => { if (active) setList(d); })
+      .then(d => { if (active) setList({ ...d, customers: d?.customers ?? [] }); })
       .catch((err: Error) => { if (active) setListError(err.message || 'Failed to load customers'); })
       .finally(() => { if (active) setListLoading(false); });
     return () => { active = false; };
@@ -434,7 +434,7 @@ export default function AffinityPage() {
           {view === 'service' ? (
             <motion.div variants={fadeInUp} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 24 }}>
               {[{ service: null, customers: summary?.totalCustomers }, ...(summary?.topService || [])].map(s => {
-                const cfg = s.service ? SERVICES[s.service] : { label: 'All customers', icon: Users, color: 'var(--brand-primary)' };
+                const cfg = s.service ? (SERVICES[s.service] ?? { label: s.service, icon: Users, color: 'var(--text-secondary)' }) : { label: 'All customers', icon: Users, color: 'var(--brand-primary)' };
                 const selected = serviceFilter === s.service;
                 const empty = s.service && !s.customers;
                 return (

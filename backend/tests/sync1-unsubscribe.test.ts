@@ -67,17 +67,21 @@ describe('UnsubscribeSyncService.sync', () => {
     expect(findCall(/sync_metadata/)![1]![1]).toBe(2);
   });
 
-  it('writes to unsubscribe_log only when something flipped to Yes', async () => {
-    m.mysqlQuery.mockResolvedValueOnce([{ email: 'a@x.com', unsubscribe: 1 }]);
-    await UnsubscribeSyncService.sync();
-    expect(findCall(/INSERT INTO unsubscribe_log/)).toBeUndefined();
-
+  it('flips to Yes and logs only the flipped rows in one statement', async () => {
     m.mysqlQuery.mockResolvedValueOnce([{ email: 'a@x.com', unsubscribe: 1 }]);
     m.query.mockImplementation(async (sql) => ({ rows: [], rowCount: /SET email_unsubscribe = 'Yes'/.test(sql) ? 3 : 0 }));
-    await UnsubscribeSyncService.sync();
+    const r = await UnsubscribeSyncService.sync();
     const log = findCall(/INSERT INTO unsubscribe_log/);
     expect(log![0]).toContain("'mysql_sync'");
+    expect(log![0]).toContain('FROM flipped');
     expect(log![1]).toEqual([['a@x.com']]);
+    expect(r.setYes).toBe(3);
+  });
+
+  it('makes no unsubscribe_log call when there are no 1-rows', async () => {
+    m.mysqlQuery.mockResolvedValueOnce([{ email: 'a@x.com', unsubscribe: 0 }]);
+    await UnsubscribeSyncService.sync();
+    expect(findCall(/INSERT INTO unsubscribe_log/)).toBeUndefined();
   });
 
   it('resubscribe never overrides our own opt-outs or restrictions', async () => {
@@ -111,18 +115,17 @@ describe('UnsubscribeSyncService.sync', () => {
     await expect(UnsubscribeSyncService.sync()).resolves.toMatchObject({ totalRows: 0 });
   });
 
-  // BUG: OFFSET paging with no ORDER BY is non-deterministic in MySQL; rows can be
-  // skipped or seen twice between pages (UnsubscribeSyncService.ts:41).
-  it.fails('pages MySQL with a stable ORDER BY', async () => {
+  // Fixed: OFFSET paging now uses a stable ORDER BY (UnsubscribeSyncService.ts:41).
+  it('pages MySQL with a stable ORDER BY', async () => {
     m.mysqlQuery.mockResolvedValueOnce([]);
     await UnsubscribeSyncService.sync();
     expect(m.mysqlQuery.mock.calls[0]![0]).toMatch(/ORDER BY/i);
   });
 
-  // BUG: the unsubscribe_log insert logs EVERY matching 'Yes' contact in the batch,
+  // Regression (fixed): the unsubscribe_log insert logs EVERY matching 'Yes' contact in the batch,
   // including ones that were already 'Yes' before this run, so each run duplicates
   // log rows (UnsubscribeSyncService.ts:63-69).
-  it.fails('logs only the contacts that were flipped in this run', async () => {
+  it('logs only the contacts that were flipped in this run', async () => {
     m.mysqlQuery.mockResolvedValueOnce([{ email: 'a@x.com', unsubscribe: 1 }]);
     m.query.mockImplementation(async (sql) => ({ rows: [], rowCount: /SET email_unsubscribe = 'Yes'/.test(sql) ? 1 : 0 }));
     await UnsubscribeSyncService.sync();
@@ -191,10 +194,10 @@ describe('WhatsAppUnsubscribeSyncService.sync', () => {
     expect((meta[1]![1] as Date).toISOString()).toBe('2025-01-01T00:00:00.000Z');
   });
 
-  // BUG: the catch block awaits readWatermark() while building the writeMetadata
+  // Regression (fixed): the catch block awaits readWatermark() while building the writeMetadata
   // arguments, outside the .catch(); when Postgres is down the method throws even
   // though it is meant to return an error summary (WhatsAppUnsubscribeSyncService.ts:134).
-  it.fails('returns an error summary instead of throwing when Postgres is down', async () => {
+  it('returns an error summary instead of throwing when Postgres is down', async () => {
     m.query.mockRejectedValue(new Error('pg down'));
     await expect(WhatsAppUnsubscribeSyncService.sync()).resolves.toMatchObject({ status: 'error' });
   });

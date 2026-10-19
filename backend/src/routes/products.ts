@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import type { GenerateEmailBody, GenerateWaBody } from '../types/u5Routes.js';
 import ProductService from '../services/ProductService.js';
+import { clampInt } from '../utils/validate.js';
 
 const router = Router();
 
@@ -39,7 +40,7 @@ router.get('/:id', async (req, res) => {
 // GET /api/v3/products/segment/:label — get recommended products for a segment
 router.get('/segment/:label', async (req: QueryRequest, res: Response) => {
   try {
-    const limit = parseInt(req.query.limit) || 3;
+    const limit = clampInt(req.query.limit, 3, 50);
     const products = await ProductService.getForSegment(req.params.label, limit);
     res.json({ products, count: products.length, segment: req.params.label });
   } catch (err) {
@@ -50,7 +51,8 @@ router.get('/segment/:label', async (req: QueryRequest, res: Response) => {
 // POST /api/v3/products/generate-email — generate HTML email with products
 router.post('/generate-email', async (req, res) => {
   try {
-    const { segmentLabel, heading, subheading, ctaText, ctaUrl, couponCode, productCount } = req.body as GenerateEmailBody;
+    const { segmentLabel, heading, subheading, ctaText, ctaUrl, couponCode, productCount } = (req.body ?? {}) as GenerateEmailBody;
+    if (typeof segmentLabel !== 'string' || !segmentLabel.trim()) return res.status(400).json({ error: 'segmentLabel is required' });
     const products = await ProductService.getForSegment(segmentLabel, productCount || 3);
 
     const html = ProductService.generateProductEmailHTML({
@@ -78,7 +80,8 @@ router.post('/generate-email', async (req, res) => {
 // POST /api/v3/products/generate-wa — generate WhatsApp message with products
 router.post('/generate-wa', async (req, res) => {
   try {
-    const { segmentLabel, intro, couponCode, productCount } = req.body as GenerateWaBody;
+    const { segmentLabel, intro, couponCode, productCount } = (req.body ?? {}) as GenerateWaBody;
+    if (typeof segmentLabel !== 'string' || !segmentLabel.trim()) return res.status(400).json({ error: 'segmentLabel is required' });
     const products = await ProductService.getForSegment(segmentLabel, productCount || 3);
 
     const message = ProductService.generateProductWAMessage({

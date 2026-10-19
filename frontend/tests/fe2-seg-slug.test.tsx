@@ -147,7 +147,7 @@ describe('Segment slug detail page', () => {
 
   // BUG: [slug]/page.tsx:64 fmtAED does Number(n || 0); a non-numeric selling_price
   // string like 'abc' is truthy, so Number('abc') renders "AED NaN" in the booking list.
-  it.fails('non-numeric booking selling_price renders without NaN', async () => {
+  it('non-numeric booking selling_price renders without NaN', async () => {
     vi.mocked(api.getSegmentCustomers).mockResolvedValue(customers as unknown as CustRes);
     vi.mocked(api.getUnifiedContact).mockResolvedValue({ data: {
       name: 'Bad Price', total_tour_bookings: 1, rayna_tours: [{ service_name: 'Odd', selling_price: 'abc' }],

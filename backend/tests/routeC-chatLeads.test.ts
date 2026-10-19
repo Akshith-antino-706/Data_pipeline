@@ -128,14 +128,14 @@ describe('department periods', () => {
     const r = await call<{ periods: { label: string }[] }>('/department-periods?unit=month&from=2025-11&to=2026-01');
     expect(r.body.periods.map(p => p.label)).toEqual(['Nov 2025', 'Dec 2025', 'Jan 2026']);
   });
-  // BUG (src/routes/chatLeads.ts:207-227, 230-250): an invalid/reversed from/to range yields
+  // FIXED (was BUG) (src/routes/chatLeads.ts:207-227, 230-250): an invalid/reversed from/to range yields
   // zero periods and queryDepartmentPeriods dereferences periods[0] → TypeError → 500.
   // /registrations/periods already returns 400 for this case; these should too.
-  it.fails('/department-periods with a reversed range → 400', async () => {
+  it('/department-periods with a reversed range → 400', async () => {
     const r = await call('/department-periods?unit=month&from=2026-05&to=2026-01');
     expect(r.status).toBe(400);
   });
-  it.fails('/mail-department-periods with garbage week range → 400', async () => {
+  it('/mail-department-periods with garbage week range → 400', async () => {
     const r = await call('/mail-department-periods?from=x&to=y');
     expect(r.status).toBe(400);
   });
@@ -147,10 +147,10 @@ describe('registrations', () => {
     expect((await call('/registrations/summary?source=users&from=2026-01-01&to=2026-01-02')).status).toBe(400);
     expect(mockQuery).not.toHaveBeenCalled();
   });
-  // BUG (src/routes/chatLeads.ts:271-277 and :353-355): the source whitelist is a plain object
+  // FIXED (was BUG) (src/routes/chatLeads.ts:271-277 and :353-355): the source whitelist is a plain object
   // lookup, so "__proto__" / "constructor" pass validation (Object.prototype members are truthy)
   // and get interpolated into SQL as table names ("[object Object]", "function Object()...").
-  it.fails('rejects prototype keys as a registration source', async () => {
+  it('rejects prototype keys as a registration source', async () => {
     expect((await call('/registrations/periods?source=__proto__')).status).toBe(400);
     expect((await call('/registrations?source=constructor')).status).toBe(400);
     expect(mockQuery).not.toHaveBeenCalled();
@@ -227,9 +227,9 @@ describe('/department-users', () => {
     expect(mysqlQuery.mock.calls[0][1]).toHaveLength(9);
     expect(mysqlQuery.mock.calls[0][1]?.slice(-2)).toEqual([2, 0]);
   });
-  // BUG (src/routes/chatLeads.ts:499): parseInt('-5') || 50 keeps -5, so the SQL gets
+  // FIXED (was BUG) (src/routes/chatLeads.ts:499): parseInt('-5') || 50 keeps -5, so the SQL gets
   // LIMIT -4. Expected the limit to be clamped to at least 1.
-  it.fails('clamps a negative limit', async () => {
+  it('clamps a negative limit', async () => {
     await call('/department-users?receiver=r&from=2026-01-01&to=2026-01-02&limit=-5');
     expect(Number(mysqlQuery.mock.calls[0][1]?.at(-2))).toBeGreaterThanOrEqual(1);
   });

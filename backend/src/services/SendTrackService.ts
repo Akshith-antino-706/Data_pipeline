@@ -193,7 +193,7 @@ export class SendTrackService {
     }
 
     const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    const offset = (page - 1) * limit;
+    const offset = (Math.max(1, Number(page) || 1) - 1) * limit;
 
     // ORDER BY sent_at (idx_esl_sent_at) — created_at has NO index, so ordering by it forces
     // a full seq-scan of all ~63M rows (~53s → timeout). sent_at DESC NULLS LAST matches the
@@ -258,7 +258,7 @@ export class SendTrackService {
     }
 
     const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    const offset = (page - 1) * limit;
+    const offset = (Math.max(1, Number(page) || 1) - 1) * limit;
 
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query(`
@@ -384,7 +384,7 @@ export class SendTrackService {
     if (dateTo)      { conditions.push(`uv.created_at <= $${idx++}`);             params.push(dateTo); }
 
     const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    const offset = (page - 1) * limit;
+    const offset = (Math.max(1, Number(page) || 1) - 1) * limit;
 
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query(`

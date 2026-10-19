@@ -12,6 +12,9 @@
  *   GET  /api/v3/gupshup/config                         → which providers are live vs simulated
  */
 import { Router } from 'express';
+import type { Request } from 'express';
+import { timingSafeEqual } from 'node:crypto';
+import { parseId } from '../utils/validate.js';
 import GupshupService from '../services/GupshupService.js';
 import db from '../config/database.js';
 import type { SmsSendOutcome, RcsNode, RcsTemplate, RcsButton } from '../types/routesGupshup.js';
@@ -105,8 +108,24 @@ router.post('/bulk-submit', async (_req, res) => {
 
 // ── Webhooks ───────────────────────────────────────────────────
 
+/**
+ * Optional shared-secret check for Gupshup callbacks. Enforced ONLY when
+ * GUPSHUP_WEBHOOK_SECRET is set (so production keeps working until it is configured).
+ * The token may arrive as the `x-gupshup-secret` header or the `?token=` query param.
+ */
+function gupshupSecretOk(req: Request): boolean {
+  const secret = process.env.GUPSHUP_WEBHOOK_SECRET;
+  if (!secret) return true;
+  const header = req.get('x-gupshup-secret');
+  const query = req.query.token;
+  const supplied = header ?? (typeof query === 'string' ? query : '');
+  const a = Buffer.from(supplied, 'utf8');
+  const b = Buffer.from(secret, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 router.post('/webhook/wa', async (req, res) => {
-  // TODO: verify Gupshup signature once GUPSHUP_CALLBACK_SECRET is set
+  if (!gupshupSecretOk(req)) return res.status(401).json({ received: false, error: 'invalid webhook token' });
   try {
     const data = await GupshupService.handleWebhook(req.body as GupshupWebhookPayload);
     res.json({ received: true, ...data });
@@ -151,7 +170,8 @@ router.post('/sms/test-send', async (req, res) => {
   const { phone, templateId, name } = req.body as SmsTestSendBody | undefined || {};
   const digits = String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
   if (!/^\d{10,15}$/.test(digits)) return res.status(400).json({ success: false, error: 'valid phone required (10-15 digits, no +)' });
-  if (!templateId) return res.status(400).json({ success: false, error: 'templateId required' });
+  const tplId = parseId(templateId);
+  if (tplId === null) return res.status(400).json({ success: false, error: 'templateId must be a positive integer' });
 
   // Best-effort contact identity (stays null for ad-hoc numbers).
   let unifiedId = null;
@@ -164,14 +184,14 @@ router.post('/sms/test-send', async (req, res) => {
   // Render {{first_name}} the same way the SMS worker does, so the preview matches the send.
   let messageBody = null;
   try {
-    const { rows: [tpl] } = await db.query<{ body: string | null }>('SELECT body FROM content_templates WHERE id = $1', [parseInt(templateId)]);
+    const { rows: [tpl] } = await db.query<{ body: string | null }>('SELECT body FROM content_templates WHERE id = $1', [tplId]);
     const firstName = name ? String(name).split(' ')[0] : 'there';
     messageBody = (tpl?.body || '').replace(/\{\{first_name\}\}/g, firstName) || null;
   } catch { /* sendSMS falls back to tpl.body */ }
 
   let result: SmsSendOutcome;
   try {
-    result = await GupshupService.sendSMS({ to: digits, templateId: parseInt(templateId), messageBody });
+    result = await GupshupService.sendSMS({ to: digits, templateId: tplId, messageBody });
   } catch (err) {
     result = { success: false, error: (err as Error).message, blocked: /not approved/i.test((err as Error).message) };
   }
@@ -186,7 +206,7 @@ router.post('/sms/test-send', async (req, res) => {
           status, source, error, message_body, sent_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'test-send',$9,$10,
                CASE WHEN $8 IN ('sent','simulated') THEN NOW() ELSE NULL END)`,
-      [unifiedId, digits, name || null, parseInt(templateId), c.senderId || null,
+      [unifiedId, digits, name || null, tplId, c.senderId || null,
        result?.provider || 'gupshup-sms', result?.externalId || null, status,
        result?.success ? null : String(result?.error || 'send failed').slice(0, 500), messageBody]
     );

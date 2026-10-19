@@ -104,10 +104,10 @@ describe('DailyBillingSync.upsertRecords / upsertBatch', () => {
     expect(m.clientQuery).not.toHaveBeenCalled();
   });
 
-  // BUG: two API records with the same (ServiceId, BillSerial) in one batch make
+  // Regression (fixed): two API records with the same (ServiceId, BillSerial) in one batch make
   // Postgres fail with "ON CONFLICT DO UPDATE command cannot affect row a second time",
   // aborting the whole daily sync. No in-batch dedupe (DailyBillingSync.ts:126-142).
-  it.fails('dedupes rows with the same conflict key inside a batch', async () => {
+  it('dedupes rows with the same conflict key inside a batch', async () => {
     await DailyBillingSync.upsertRecords([rec({ BillSerial: 1, ServiceId: 9 }), rec({ BillSerial: 1, ServiceId: 9, SellingPrice: '20' })]);
     expect(m.clientQuery.mock.calls[0]![1]).toHaveLength(15);
   });

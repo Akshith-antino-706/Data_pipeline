@@ -46,9 +46,9 @@ function SkeletonBox({ width, height = 20, borderRadius = 'var(--radius)', style
 
 
 const fmt = (n: number | string | null | undefined) => (n || 0).toLocaleString();
-const fmtAED = (n: unknown) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtAED = (n: unknown) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtM = (n: unknown) => `AED ${(Number(n || 0) / 1000000).toFixed(2)}M`;
-const pct = (n: number | undefined, total: number | undefined) => total! > 0 ? ((n! / total!) * 100).toFixed(1) + '%' : '0%';
+const pct = (n: number | undefined, total: number | undefined) => { const v = ((n ?? 0) / (total ?? 0)) * 100; return (total ?? 0) > 0 && Number.isFinite(v) ? v.toFixed(1) + '%' : '0%'; };
 const fmtK = (n: unknown) => { const v = Number(n || 0); return v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${(v/1000).toFixed(1)}K` : v.toFixed(0); };
 
 const fmtDate = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });

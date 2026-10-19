@@ -154,10 +154,10 @@ describe('GET /active-on-date', () => {
     expect(m.cached).toHaveBeenCalledWith('journey:active-on-date:2026-01-02', expect.any(Function), 60);
     expect(m.js.getJourneysActiveOnDate).toHaveBeenCalledWith('2026-01-02');
   });
-  // BUG (src/routes/journeys.ts:255-257): an invalid ?date= is resolved to "today" for the
+  // FIXED (was BUG) (src/routes/journeys.ts:255-257): an invalid ?date= is resolved to "today" for the
   // cache key, but the RAW invalid string is still passed to the service, so the result for
   // the garbage date is cached under today's key. The service should receive the resolved date.
-  it.fails('does not pass an invalid date string to the service', async () => {
+  it('does not pass an invalid date string to the service', async () => {
     m.js.getJourneysActiveOnDate.mockResolvedValue([]);
     await get(`/active-on-date?date=${encodeURIComponent("x'; DROP TABLE t;--")}`);
     expect(m.js.getJourneysActiveOnDate).not.toHaveBeenCalledWith("x'; DROP TABLE t;--");
@@ -201,9 +201,9 @@ describe('GET /:id', () => {
     m.js.getById.mockRejectedValue(new Error('db down'));
     expect((await get('/1')).status).toBe(500);
   });
-  // BUG (src/routes/journeys.ts:398): a non-numeric id is parseInt'd to NaN and handed to the
+  // FIXED (was BUG) (src/routes/journeys.ts:398): a non-numeric id is parseInt'd to NaN and handed to the
   // service (cache key "journey:detail:NaN") instead of being rejected with 400.
-  it.fails('rejects a non-numeric id with 400', async () => {
+  it('rejects a non-numeric id with 400', async () => {
     m.js.getById.mockResolvedValue(null);
     const r = await get('/abc');
     expect(r.status).toBe(400);

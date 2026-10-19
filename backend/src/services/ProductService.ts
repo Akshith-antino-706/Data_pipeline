@@ -6,6 +6,10 @@ const BASE_URL = 'https://data-projects-flax.vercel.app/api/all-products';
 let cache: { data: CatalogProduct[] | null; ts: number } = { data: null, ts: 0 };
 const CACHE_TTL = 30 * 60 * 1000;
 
+function escapeHtml(v: unknown): string {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
+}
+
 const CITIES = [
   { cityId: 13668, cityName: 'Dubai', countryName: 'United Arab Emirates' },
   { cityId: 13236, cityName: 'Abu Dhabi', countryName: 'United Arab Emirates' },
@@ -20,6 +24,7 @@ export default class ProductService {
     }
 
     const allProducts: CatalogProduct[] = [];
+    let anyOk = false;
     for (const city of CITIES) {
       try {
         const url = `${BASE_URL}?productType=tour&cityId=${city.cityId}&cityName=${encodeURIComponent(city.cityName)}&countryName=${encodeURIComponent(city.countryName)}`;
@@ -29,6 +34,7 @@ export default class ProductService {
         });
         const json = await res.json() as CatalogProductsResponse;
         if (json.success && json.products) {
+          anyOk = true;
           allProducts.push(...json.products);
         }
       } catch (err) {
@@ -36,7 +42,8 @@ export default class ProductService {
       }
     }
 
-    cache = { data: allProducts, ts: Date.now() };
+    // Don't pin an empty catalog for 30 min after a total upstream failure; retry next call.
+    if (anyOk) cache = { data: allProducts, ts: Date.now() };
     return this._filter(allProducts, filters);
   }
 
@@ -114,17 +121,17 @@ export default class ProductService {
           <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
             <tr>
               <td width="140" style="vertical-align:top;">
-                <img src="${p.image}" alt="${p.name}" width="140" height="100" style="display:block;object-fit:cover;border-radius:12px 0 0 12px;" />
+                <img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" width="140" height="100" style="display:block;object-fit:cover;border-radius:12px 0 0 12px;" />
               </td>
               <td style="padding:12px 16px;vertical-align:top;">
-                <div style="font-size:15px;font-weight:700;color:#1e293b;">${p.name}</div>
-                <div style="font-size:12px;color:#64748b;margin:4px 0;">${p.city || 'Abu Dhabi'} · ${(p.item_group_id || '').replace(/-/g, ' ')}</div>
+                <div style="font-size:15px;font-weight:700;color:#1e293b;">${escapeHtml(p.name)}</div>
+                <div style="font-size:12px;color:#64748b;margin:4px 0;">${escapeHtml(p.city || 'Abu Dhabi')} · ${escapeHtml((p.item_group_id || '').replace(/-/g, ' '))}</div>
                 <div style="margin-top:6px;">
                   ${hasDiscount ? `<span style="text-decoration:line-through;color:#94a3b8;font-size:13px;">AED ${p.normalPrice}</span> ` : ''}
                   <span style="font-size:16px;font-weight:700;color:#f97316;">AED ${p.salePrice}</span>
                   ${hasDiscount ? ` <span style="background:#fef3c7;color:#d97706;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;">${discount}% OFF</span>` : ''}
                 </div>
-                <a href="${p.url}" style="display:inline-block;margin-top:8px;padding:6px 16px;background:#f97316;color:#fff;text-decoration:none;border-radius:6px;font-size:12px;font-weight:600;">Book Now</a>
+                <a href="${escapeHtml(p.url)}" style="display:inline-block;margin-top:8px;padding:6px 16px;background:#f97316;color:#fff;text-decoration:none;border-radius:6px;font-size:12px;font-weight:600;">Book Now</a>
               </td>
             </tr>
           </table>

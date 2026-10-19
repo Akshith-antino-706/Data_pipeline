@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import ProductAffinityService from '../services/ProductAffinityService.js';
+import { clampInt, parseId } from '../utils/validate.js';
 
 const router = Router();
 
@@ -32,7 +33,9 @@ router.post('/refresh', async (_req, res, next) => {
 // GET /api/v3/affinity/user/:id — get user's product affinity
 router.get('/user/:id', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const data = await ProductAffinityService.getUserAffinity(parseInt(req.params.id), parseInt(req.query.limit) || 10);
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ success: false, error: 'id must be a positive integer' });
+    const data = await ProductAffinityService.getUserAffinity(id, clampInt(req.query.limit, 10, 50));
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -40,7 +43,9 @@ router.get('/user/:id', async (req: QueryRequest, res: Response, next: NextFunct
 // GET /api/v3/affinity/user/:id/recommendations — get personalized product recommendations
 router.get('/user/:id/recommendations', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const data = await ProductAffinityService.getRecommendations(parseInt(req.params.id), parseInt(req.query.limit) || 6);
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ success: false, error: 'id must be a positive integer' });
+    const data = await ProductAffinityService.getRecommendations(id, clampInt(req.query.limit, 6, 50));
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });

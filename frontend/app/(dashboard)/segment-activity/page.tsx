@@ -108,7 +108,7 @@ function SkeletonTable() {
 }
 
 const fmt = (n: number | undefined) => (n || 0).toLocaleString();
-const fmtAED = (n: number | string | undefined) => `AED ${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const fmtAED = (n: number | string | undefined) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   ON_TRIP:         { label: 'On Trip',        color: '#22c55e' },

@@ -195,7 +195,7 @@ describe('Affinity page', () => {
   // BUG app/(dashboard)/affinity/page.tsx:324 + :511 - getAffinityCustomers' result is stored as-is
   // (`setList(d)`), then `list.customers.length` is read. A response without `customers` (e.g. `{}`
   // or `{ total: 0 }`) crashes the whole page with a TypeError instead of showing the empty state.
-  it.fails('survives a customers response with no customers array', async () => {
+  it('survives a customers response with no customers array', async () => {
     mockOk('getAffinityCustomers', {});
     renderPage();
     await screen.findByText(/No customers booked/);
@@ -203,7 +203,7 @@ describe('Affinity page', () => {
 
   // BUG app/(dashboard)/affinity/page.tsx:72 - formatScore only guards null; a non-numeric score
   // (e.g. a string from the API) renders "NaN" in the Score column.
-  it.fails('never renders NaN for a non-numeric affinity score', async () => {
+  it('never renders NaN for a non-numeric affinity score', async () => {
     mockOk('getAffinityCustomers', { total: 1, customers: [{ ...customer, affinity_score: 'n/a' }] });
     renderPage();
     await screen.findByText('Ann');

@@ -136,9 +136,9 @@ describe('segment templates', () => {
     expect(r.status).toBe(200);
     expect(m.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'X — Email Template', ctaUrl: 'https://c.test', ctaText: 'Book Now' }));
   });
-  // BUG (src/routes/baseTemplates.ts:142-144): previewForSegment runs BEFORE the getSegmentConfig
+  // FIXED (was BUG) (src/routes/baseTemplates.ts:142-144): previewForSegment runs BEFORE the getSegmentConfig
   // existence check, so an unknown segment that makes the preview throw returns 500 instead of 404.
-  it.fails('POST /segments/:name/use returns 404 (not 500) for an unknown segment whose preview throws', async () => {
+  it('POST /segments/:name/use returns 404 (not 500) for an unknown segment whose preview throws', async () => {
     m.bt.previewForSegment.mockImplementation(() => { throw new Error('no config'); });
     m.bt.getSegmentConfig.mockReturnValue(null);
     expect((await call('POST', '/segments/Nope/use', {})).status).toBe(404);

@@ -207,7 +207,7 @@ describe('Content templates page', () => {
     const buttons = screen.getAllByRole('button', { name: 'Delete' });
     fireEvent.click(buttons[buttons.length - 1]);
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith('In use by a journey'));
-    expect(screen.getByText('Day 1 Welcome')).toBeTruthy();
+    expect(screen.getAllByText('Day 1 Welcome').length).toBeGreaterThan(0);
   });
 
   it('preview calls previewTemplate with the template id', async () => {

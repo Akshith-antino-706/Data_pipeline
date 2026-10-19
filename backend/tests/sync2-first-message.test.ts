@@ -84,14 +84,12 @@ describe('FirstMessageService.syncAll', () => {
     const p = FirstMessageService.syncAll();
     await vi.runAllTimersAsync();
     expect(await p).toEqual({ totalProcessed: 1, totalUpdated: 1 });
-    expect(m.query.mock.calls[0]![1]).toEqual([500]);
+    expect(m.query.mock.calls[0]![1]).toEqual([500, 0]);
   });
 
-  // BUG: chats whose first message cannot be fetched keep first_msg_text NULL, so the
-  // next SELECT returns the very same rows again and syncAll loops forever
-  // (src/services/FirstMessageService.ts:78-105). Here the mock stops after 5 batches;
-  // a correct implementation would ask the API about chat #1 only once.
-  it.fails('does not re-fetch the same unfetchable chat forever', async () => {
+  // Fixed: syncAll uses an id cursor, so an unfetchable chat (first_msg_text stays NULL)
+  // is asked about only once per run. The mock keeps returning it for 5 batches.
+  it('does not re-fetch the same unfetchable chat forever', async () => {
     vi.useFakeTimers();
     let selects = 0;
     m.query.mockImplementation(async (sql: string) => {
@@ -103,5 +101,24 @@ describe('FirstMessageService.syncAll', () => {
     await vi.runAllTimersAsync();
     await p;
     expect(m.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('FirstMessageService.syncAll paging', () => {
+  it('advances the id cursor across full pages', async () => {
+    vi.useFakeTimers();
+    let selects = 0;
+    m.query.mockImplementation(async (sql: string) => {
+      if (!sql.includes('SELECT')) return { rows: [] };
+      selects++;
+      if (selects === 1) return { rows: Array.from({ length: 500 }, (_, i) => ({ id: i + 1, wa_id: 'a', receiver: 'b' })) };
+      return { rows: [{ id: 501, wa_id: 'a', receiver: 'b' }] };
+    });
+    m.fetch.mockResolvedValue(json({ status: 'error' }, 404));
+    const p = FirstMessageService.syncAll();
+    await vi.runAllTimersAsync();
+    expect(await p).toEqual({ totalProcessed: 501, totalUpdated: 0 });
+    const selectsCalls = m.query.mock.calls.filter(([s]) => s.includes('SELECT'));
+    expect(selectsCalls.map(c => c[1])).toEqual([[500, 0], [500, 500]]);
   });
 });

@@ -139,13 +139,13 @@ router.post('/segments/:name/render', (req: Request<{ name: string }, unknown, {
 router.post('/segments/:name/use', async (req: Request<{ name: string }, unknown, { name?: string }>, res) => {
   try {
     const segmentName = decodeURIComponent(req.params.name);
-    const result = BaseTemplateService.previewForSegment(segmentName);
     const config = BaseTemplateService.getSegmentConfig(segmentName);
     if (!config) return res.status(404).json({ success: false, error: 'No template for this segment' });
+    const result = BaseTemplateService.previewForSegment(segmentName);
 
     const { ContentService } = await import('../services/ContentService.js');
     const template = await ContentService.create({
-      name: req.body.name || `${segmentName} — Email Template`,
+      name: req.body?.name || `${segmentName} — Email Template`,
       channel: 'email',
       subject: result.subject,
       body: result.html,

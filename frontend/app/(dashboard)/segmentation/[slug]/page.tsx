@@ -61,7 +61,7 @@ type UserDetail = {
 } & Partial<Record<BookingCountKey, number>> & Partial<Record<BookingKey, BookingRow[]>>;
 
 const fmt = (n: number | null | undefined) => (n || 0).toLocaleString();
-const fmtAED = (n: unknown) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtAED = (n: unknown) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const STATUS_CONFIG: Record<string, StatusCfg | undefined> = {
   ON_TRIP:         { label: 'On Trip',         color: '#22c55e', bg: 'rgba(34,197,94,0.12)' },

@@ -10,6 +10,7 @@ import type { QueryRequest } from '../types/routesCommon.js';
 import type { ChatheadTemplateBody, ChatheadTemplateButton, ChatheadTemplatePayload, ChatheadJson } from '../types/routesChathead.js';
 import type { SendBroadcastResult } from '../types/servicesChatHead.js';
 import type { U2ChBroadcastBody, U2ChRegisterBody, U2ChDataFileBody, U2ChTestSendBody, U2DataFileRow } from '../types/u2Routes.js';
+import { clampInt } from '../utils/validate.js';
 
 const router = express.Router();
 
@@ -93,6 +94,7 @@ router.post('/broadcasts', async (req, res) => {
   }
 
   const when = sendTime ? new Date(sendTime) : new Date(Date.now() + 2 * 60 * 1000);
+  if (Number.isNaN(when.getTime())) return res.status(400).json({ success: false, error: 'sendTime must be a valid date/time' });
 
   try {
     let result: (SendBroadcastResult & { reused?: boolean }) | undefined;
@@ -204,7 +206,7 @@ router.post('/data-files', async (req, res) => {
 
 // GET /api/v3/chathead/broadcasts — list our historic broadcasts (joined with data_files)
 router.get('/broadcasts', async (req, res) => {
-  const limit = Math.min(200, Number(req.query.limit) || 50);
+  const limit = clampInt(req.query.limit, 50, 200);
   try {
     const { rows } = await db.query<Record<string, unknown>>(
       `SELECT b.id, b.name, b.channel_id, b.channel_name, b.template_id, b.template_name,
@@ -227,7 +229,7 @@ router.get('/broadcasts', async (req, res) => {
 
 // GET /api/v3/chathead/data-files — list our uploaded .data files
 router.get('/data-files', async (req, res) => {
-  const limit = Math.min(200, Number(req.query.limit) || 50);
+  const limit = clampInt(req.query.limit, 50, 200);
   try {
     const { rows } = await db.query<Record<string, unknown>>(
       `SELECT id, filename, contact_count, file_bytes, upload_status, uploaded_at, created_at

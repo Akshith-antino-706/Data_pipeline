@@ -431,7 +431,7 @@ describe('Leads page — Registrations tab', () => {
   // BUG: app/(dashboard)/leads/page.tsx:380 / :307 — RegistrationPanel stores whatever the API
   // returns and then reads `records.records.length` and `periodData.periods.map` without guards.
   // A payload missing those keys (e.g. `{}` from an error envelope) crashes the whole page.
-  it.fails('survives registration payloads without records/periods keys', async () => {
+  it('survives registration payloads without records/periods keys', async () => {
     const onError = vi.fn<(e: Error) => void>();
     render(<Boundary onError={onError}><Leads /></Boundary>);
     fireEvent.click(screen.getByRole('tab', { name: /Registrations/ }));

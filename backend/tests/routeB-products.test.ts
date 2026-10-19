@@ -65,14 +65,14 @@ describe('products.ts', () => {
     expect(m.prod.getById).toHaveBeenCalledWith("1' OR '1'='1");
     expect((await get('/p/5')).status).toBe(200);
   });
-  it('GET /segment/:label default limit 3, numeric limit, unclamped huge', async () => {
+  it('GET /segment/:label default limit 3, numeric limit, huge clamped to 50', async () => {
     m.prod.getForSegment.mockResolvedValue([]);
     expect(await (await get('/p/segment/Loyal')).json()).toEqual({ products: [], count: 0, segment: 'Loyal' });
     expect(m.prod.getForSegment).toHaveBeenLastCalledWith('Loyal', 3);
     await get('/p/segment/Loyal?limit=abc');
     expect(m.prod.getForSegment).toHaveBeenLastCalledWith('Loyal', 3);
     await get('/p/segment/Loyal?limit=999999');
-    expect(m.prod.getForSegment).toHaveBeenLastCalledWith('Loyal', 999999);
+    expect(m.prod.getForSegment).toHaveBeenLastCalledWith('Loyal', 50);
   });
   it('POST /generate-email applies defaults', async () => {
     m.prod.getForSegment.mockResolvedValue([{ id: 1 }]);
@@ -93,9 +93,9 @@ describe('products.ts', () => {
     expect(await (await post('/p/generate-wa', { segmentLabel: 'S', productCount: 5 })).json()).toEqual({ message: 'm', products: [], productCount: 0 });
     expect(m.prod.getForSegment).toHaveBeenCalledWith('S', 5);
   });
-  // BUG products.ts:84 (and :56) — with no JSON body, destructuring undefined req.body throws → 500
+  // FIXED (was BUG) products.ts:84 (and :56) — with no JSON body, destructuring undefined req.body throws → 500
   // instead of a 400 validation error.
-  it.fails('POST /generate-wa with no body is a 4xx, not 500', async () => {
+  it('POST /generate-wa with no body is a 4xx, not 500', async () => {
     expect((await post('/p/generate-wa')).status).toBeLessThan(500);
     expect(m.prod.getForSegment).not.toHaveBeenCalled();
   });
@@ -121,17 +121,17 @@ describe('productAffinity.ts', () => {
     await get('/a/user/42?limit=3');
     expect(m.aff.getUserAffinity).toHaveBeenLastCalledWith(42, 3);
   });
-  it('GET /user/:id with a non-numeric id passes NaN (no 400 at route layer)', async () => {
+  it('GET /user/:id with a non-numeric id is a 400 and never reaches the service', async () => {
     m.aff.getUserAffinity.mockResolvedValue([]);
-    expect((await get('/a/user/abc')).status).toBe(200);
-    expect(Number.isNaN(m.aff.getUserAffinity.mock.calls[0][0])).toBe(true);
+    expect((await get('/a/user/abc')).status).toBe(400);
+    expect(m.aff.getUserAffinity).not.toHaveBeenCalled();
   });
-  it('recommendations default 6, huge limit unclamped', async () => {
+  it('recommendations default 6, huge limit clamped to 50', async () => {
     m.aff.getRecommendations.mockResolvedValue({ products: [] });
     expect(await (await get('/a/user/1/recommendations')).json()).toEqual({ success: true, products: [] });
     expect(m.aff.getRecommendations).toHaveBeenCalledWith(1, 6);
     await get('/a/user/1/recommendations?limit=100000');
-    expect(m.aff.getRecommendations).toHaveBeenLastCalledWith(1, 100000);
+    expect(m.aff.getRecommendations).toHaveBeenLastCalledWith(1, 50);
   });
   it('template-products 500 on error', async () => {
     m.aff.getTemplateProducts.mockRejectedValue(new Error('x'));

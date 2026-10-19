@@ -1164,6 +1164,11 @@ class JourneyService {
     // Continuous-journey trigger source ('gtm' GTM events | 'giveaway' giveaway events).
     const trigSource = triggerSource === 'giveaway' ? 'giveaway' : 'gtm';
 
+    // Reject graphs whose edges point at nodes that don't exist.
+    const nodeIds = new Set((nodes || []).map(n => String(n.id)));
+    const badEdge = (edges || []).find(e => !nodeIds.has(String(e.source)) || !nodeIds.has(String(e.target)));
+    if (badEdge) throw new Error(`Invalid journey graph: edge ${badEdge.source} -> ${badEdge.target} references an unknown node`);
+
     const { rows: [journey] } = await db.query<JourneyFlowRow>(`
       INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
@@ -1700,7 +1705,7 @@ class JourneyService {
         FROM unified_contacts uc
         WHERE je.journey_id = $1 AND je.status = 'active'
           AND uc.id = je.customer_id
-          AND uc.email_unsubscribe = 'Yes'
+          AND TRIM(LOWER(uc.email_unsubscribe)) = 'yes'
         RETURNING je.entry_id, je.current_node_id
       `, [journeyId]);
 
@@ -1834,7 +1839,7 @@ class JourneyService {
             const _dayMs = 24 * 60 * 60 * 1000;
             const _dubaiOffset = 4 * 60; // UTC+4 in minutes
             const _dubaiDate = new Date(Date.now() + _dubaiOffset * 60000);
-            _dubaiDate.setHours(targetH, targetM, 0, 0);
+            _dubaiDate.setUTCHours(targetH, targetM, 0, 0);
             let _nextWindow = new Date(_dubaiDate.getTime() - _dubaiOffset * 60000);
             if (_nextWindow <= new Date()) _nextWindow = new Date(_nextWindow.getTime() + _dayMs);
             const _key = _nextWindow.toISOString();
@@ -2157,10 +2162,10 @@ class JourneyService {
     // Update journey stats
     await db.query(`
       UPDATE journey_flows SET
-        total_conversions = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status IN ('converted','exited')),
+        total_conversions = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND (status = 'converted' OR (status = 'exited' AND exit_reason IN ('booked','purchased')))),
         total_exits = (SELECT COUNT(*) FROM journey_entries WHERE journey_id = $1 AND status = 'exited'),
         conversion_rate = CASE WHEN total_entries > 0
-          THEN ((SELECT COUNT(*)::numeric FROM journey_entries WHERE journey_id = $1 AND status IN ('converted','exited')) / total_entries * 100)
+          THEN ((SELECT COUNT(*)::numeric FROM journey_entries WHERE journey_id = $1 AND (status = 'converted' OR (status = 'exited' AND exit_reason IN ('booked','purchased')))) / total_entries * 100)
           ELSE 0 END
       WHERE journey_id = $1
     `, [journeyId]);
@@ -2885,16 +2890,19 @@ class JourneyService {
         conversion_at = g.purchase_ts,
         updated_at = NOW()
       FROM (
-        SELECT gp.linked_customer_id, MAX(ge.event_ts) AS purchase_ts
-        FROM ga4_events ge
-        JOIN ga4_user_profiles gp ON gp.user_pseudo_id = ge.user_pseudo_id
-        WHERE ge.event_name = 'purchase'
-          AND gp.linked_customer_id IS NOT NULL
-          AND ge.event_ts > (SELECT MIN(enrolled_at) FROM journey_enrollments WHERE journey_id = $1)
-        GROUP BY gp.linked_customer_id
+        -- Per-enrollment window: only purchases after THIS contact's own enrolled_at count.
+        SELECT je2.id AS enrollment_id, MAX(ge.event_ts) AS purchase_ts
+        FROM journey_enrollments je2
+        JOIN ga4_user_profiles gp ON gp.linked_customer_id = je2.customer_id
+        JOIN ga4_events ge ON ge.user_pseudo_id = gp.user_pseudo_id
+        WHERE je2.journey_id = $1
+          AND je2.status = 'active'
+          AND ge.event_name = 'purchase'
+          AND ge.event_ts > je2.enrolled_at
+        GROUP BY je2.id
       ) g
       WHERE je.journey_id = $1
-        AND je.customer_id = g.linked_customer_id
+        AND je.id = g.enrollment_id
         AND je.status = 'active'
       RETURNING je.id
     `, [journeyId]);
@@ -2908,14 +2916,18 @@ class JourneyService {
         conversion_at = td.booking_ts,
         updated_at = NOW()
       FROM (
-        SELECT c.customer_id, MAX(td.booking_date) AS booking_ts
-        FROM customers c
+        -- Per-enrollment window: only bookings after THIS contact's own enrolled_at count.
+        SELECT je2.id AS enrollment_id, MAX(td.booking_date) AS booking_ts
+        FROM journey_enrollments je2
+        JOIN customers c ON c.customer_id = je2.customer_id
         JOIN mysql_travel_data td ON LOWER(td.email) = LOWER(c.email)
-        WHERE td.booking_date > (SELECT MIN(enrolled_at) FROM journey_enrollments WHERE journey_id = $1)
-        GROUP BY c.customer_id
+        WHERE je2.journey_id = $1
+          AND je2.status = 'active'
+          AND td.booking_date > je2.enrolled_at
+        GROUP BY je2.id
       ) td
       WHERE je.journey_id = $1
-        AND je.customer_id = td.customer_id
+        AND je.id = td.enrollment_id
         AND je.status = 'active'
       RETURNING je.id
     `, [journeyId]);
@@ -2997,6 +3009,9 @@ class JourneyService {
 
     const targetH = typeof sendHour === 'number' ? sendHour : parseInt(String(sendHour).split(':')[0]);
     const targetM = typeof sendHour === 'number' ? 0 : parseInt(String(sendHour).split(':')[1] || '0');
+    // Blank/garbage sendHour (e.g. '' from a cleared UI field) is treated as unset —
+    // never let NaN through, it would produce an Invalid Date for next_fire_at.
+    if (!Number.isFinite(targetH) || !Number.isFinite(targetM)) return target;
 
     // Convert target to Dubai time (UTC+4) and set the desired hour:minute.
     // Must use UTC-based arithmetic — getTimezoneOffset() varies by server locale.

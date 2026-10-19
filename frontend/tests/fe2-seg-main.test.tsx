@@ -220,7 +220,7 @@ describe('Segmentation overview page', () => {
 
   // BUG: segmentation/page.tsx:51 pct() does (n / total) with n undefined when the API
   // omits totals.segmented, rendering "NaN%" in the Segmented KPI.
-  it.fails('missing totals.segmented does not render NaN', async () => {
+  it('missing totals.segmented does not render NaN', async () => {
     vi.mocked(api.getSegmentationTree).mockResolvedValue({ totals: { total: 10 } } as unknown as TreeRes);
     renderPage();
     await screen.findByText('Total Customers');

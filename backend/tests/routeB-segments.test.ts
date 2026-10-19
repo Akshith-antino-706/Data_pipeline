@@ -65,10 +65,10 @@ describe('segments.ts (v2)', () => {
     await get('/v2/x/customers?page=abc&limit=%27%3B--');
     expect(m.seg.getSegmentCustomers).toHaveBeenCalledWith('x', expect.objectContaining({ page: 1, limit: 50 }));
   });
-  it('passes huge limit/page through unclamped (no route-level cap)', async () => {
+  it('clamps huge limit/page (limit 500, page 100000)', async () => {
     m.seg.getSegmentCustomers.mockResolvedValue({});
     await get('/v2/x/customers?page=99999999&limit=1000000');
-    expect(m.seg.getSegmentCustomers).toHaveBeenCalledWith('x', expect.objectContaining({ page: 99999999, limit: 1000000 }));
+    expect(m.seg.getSegmentCustomers).toHaveBeenCalledWith('x', expect.objectContaining({ page: 100000, limit: 500 }));
   });
   it('decodes injection labels and passes them verbatim', async () => {
     m.seg.getSegmentNationalities.mockResolvedValue([]);
@@ -105,12 +105,12 @@ describe('segmentsV3.ts', () => {
     expect(await json(await get('/v3/3'))).toEqual({ data: { id: 3 } });
     expect(m.eng.getSegmentDetail).toHaveBeenCalledWith(3);
   });
-  it('GET /:id/customers defaults and passes huge values unclamped', async () => {
+  it('GET /:id/customers defaults and clamps negative page / huge limit', async () => {
     m.eng.getSegmentCustomers.mockResolvedValue({ rows: [] });
     expect(await json(await get('/v3/5/customers'))).toEqual({ rows: [] });
     expect(m.eng.getSegmentCustomers).toHaveBeenCalledWith(5, expect.objectContaining({ page: 1, limit: 25 }));
     await get('/v3/5/customers?page=-3&limit=9999999');
-    expect(m.eng.getSegmentCustomers).toHaveBeenLastCalledWith(5, expect.objectContaining({ page: -3, limit: 9999999 }));
+    expect(m.eng.getSegmentCustomers).toHaveBeenLastCalledWith(5, expect.objectContaining({ page: 1, limit: 500 }));
   });
   it('GET /:id/conversions 500s on error', async () => {
     m.eng.getConversionMetrics.mockRejectedValue(new Error('x'));

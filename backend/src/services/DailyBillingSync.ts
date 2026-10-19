@@ -151,8 +151,14 @@ class DailyBillingSync {
   }
 
   // ─── Upsert a batch using ON CONFLICT ────────────────────
-  static async upsertBatch(client: PoolClient, tableName: string, rows: BillingRow[]) {
-    if (rows.length === 0) return;
+  static async upsertBatch(client: PoolClient, tableName: string, batchRows: BillingRow[]) {
+    if (batchRows.length === 0) return;
+
+    // Dedupe on the conflict key (last occurrence wins): Postgres rejects an
+    // ON CONFLICT DO UPDATE that touches the same row twice in one statement.
+    const byKey = new Map<string, BillingRow>();
+    for (const r of batchRows) byKey.set(`${String(r.service_id)}|${String(r.bill_serial)}`, r);
+    const rows = [...byKey.values()];
 
     const updateCols = COLUMNS.filter(c => c !== 'service_id' && c !== 'bill_serial');
     const updateSet = updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ');

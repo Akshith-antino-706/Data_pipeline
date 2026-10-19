@@ -202,9 +202,9 @@ describe('runPhpAdminSync', () => {
     expect(m.connEnd).toHaveBeenCalled();
   });
 
-  // BUG: documented as "Never throws", but the catch block awaits readWatermark()
+  // Regression (fixed): documented as "Never throws", but the catch block awaits readWatermark()
   // outside the .catch(); with Postgres down the call rejects (PhpAdminWeeklySync.ts:289).
-  it.fails('never throws even when Postgres is down', async () => {
+  it('never throws even when Postgres is down', async () => {
     m.query.mockRejectedValue(new Error('pg down'));
     await expect(runPhpAdminSync()).resolves.toMatchObject({ status: 'error' });
   });

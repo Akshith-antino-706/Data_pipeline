@@ -51,7 +51,7 @@ describe('ConversionDetector', () => {
   // a purchase made BEFORE the contact entered the journey (within 30 days) still marks the
   // entry 'converted'. Rayna bookings correctly require latest_booking > je.entered_at.
   // src/services/ConversionDetector.ts:74-89 and :98-113.
-  it.fails('GTM conversion only counts events after the entry was created', async () => {
+  it('GTM conversion only counts events after the entry was created', async () => {
     await ConversionDetector.checkGTMEvents();
     expect(sqls()[0]).toContain('je.entered_at');
   });
@@ -86,7 +86,7 @@ describe('ConversionDetector', () => {
   });
   // BUG: checkUTMClicks returns pg's rowCount verbatim, which is `null` for some commands /
   // drivers; runAll then reports `UTM: null` instead of a number. ConversionDetector.ts:61-62.
-  it.fails('checkUTMClicks always returns a number', async () => {
+  it('checkUTMClicks always returns a number', async () => {
     m.query.mockResolvedValueOnce({ rows: [], rowCount: null });
     expect(typeof (await ConversionDetector.checkUTMClicks())).toBe('number');
   });
@@ -191,7 +191,7 @@ describe('SendTrackService', () => {
   });
   // BUG: page <= 0 (e.g. ?page=0 from the UI) yields a negative OFFSET, which Postgres rejects.
   // SendTrackService.ts:196 (also :261, :387) — no clamping of page.
-  it.fails('getLog never sends a negative OFFSET', async () => {
+  it('getLog never sends a negative OFFSET', async () => {
     m.query.mockResolvedValue({ rows: [{ total: '0' }] });
     await SendTrackService.getLog({ page: 0 });
     const p = m.query.mock.calls[0][1] ?? [];

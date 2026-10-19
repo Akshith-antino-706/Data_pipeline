@@ -167,7 +167,7 @@ describe('All segments page', () => {
 
   // BUG: all-segments/page.tsx:50 calls s.name.toLowerCase() unguarded, so a segment
   // whose name is null (legacy/bad row) crashes the whole page.
-  it.fails('a segment with a null name does not crash the page', async () => {
+  it('a segment with a null name does not crash the page', async () => {
     vi.mocked(api.getCustomSegments).mockResolvedValue({ data: [{ ...segs[0], name: null }, segs[1]] } as unknown as SegRes);
     render(<Boundary><AllSegmentsPage /></Boundary>);
     await waitFor(() => expect(api.getCustomSegments).toHaveBeenCalled());

@@ -33,7 +33,6 @@ test.describe('API 500 handling', () => {
   // then reads list.customers.length, so a body without `customers` (e.g. {} or { total: 0 })
   // throws a TypeError and the page falls into the error boundary instead of the empty state.
   test('affinity survives a customers response without a customers array', async ({ authed: page, api }) => {
-    test.fail(true, 'Known bug: affinity page crashes on a customers response without `customers`');
     api.use({ method: 'GET', path: /^\/api\/v3\/booking-affinity\/customers\?/, body: { total: 0 } });
     await page.goto('/affinity');
     await expect(page.getByText(/No customers booked/)).toBeVisible({ timeout: 8_000 });
@@ -45,8 +44,7 @@ test.describe('API 500 handling', () => {
   // adds later (e.g. "cruises") throws "Cannot read properties of undefined (reading 'color')"
   // and takes down the whole page. ServiceBadge in the same file already has a fallback.
   test('affinity survives an unknown service key in the summary', async ({ authed: page, api }) => {
-    test.fail(true, 'Known bug: unknown topService key crashes the affinity page');
-    api.use({ method: 'GET', path: /^\/api\/v3\/booking-affinity\/summary\?/, body: { status: 'ready', totalCustomers: 1, topService: [{ service: 'cruises', customers: 1 }] } });
+    api.use({ method: 'GET', path: /^\/api\/v3\/booking-affinity\/summary\?/, body: { status: 'ready', builtAt: '2026-10-19T00:30:00.000Z', totalCustomers: 1, topService: [{ service: 'cruises', customers: 1 }] } });
     await page.goto('/affinity');
     await expect(page.getByText('Aisha Khan')).toBeVisible({ timeout: 8_000 });
     await expect(page.getByText('Something went wrong')).toHaveCount(0);

@@ -2,8 +2,92 @@ import { Router } from 'express';
 import db from '../config/database.js';
 import type { SesEventMessage } from '../types/routesMisc.js';
 import type { U2SnsPayload } from '../types/u2Routes.js';
+import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 
 const router = Router();
+
+// ── SNS message signature verification ───────────────────────────────────────
+// https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html
+
+/** The SNS envelope fields that take part in the signature. */
+interface SnsSignedEnvelope extends Omit<U2SnsPayload, 'SubscribeURL'> {
+  SubscribeURL?: string;
+  MessageId?: string;
+  Subject?: string;
+  Timestamp?: string;
+  Token?: string;
+  TopicArn?: string;
+  Signature?: string;
+  SignatureVersion?: string;
+  SigningCertURL?: string;
+}
+
+const SNS_HOST_RE = /^sns\.[a-z0-9-]+\.amazonaws\.com$/;
+const SIGNING_ALGS: Record<string, string> = { '1': 'RSA-SHA1', '2': 'RSA-SHA256' };
+const CERT_CACHE_MAX = 20;
+const certCache = new Map<string, Promise<KeyObject>>();
+
+/** Only https://sns.<region>.amazonaws.com/<...>.pem is an acceptable signing cert URL. */
+function isValidCertUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false;
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' && SNS_HOST_RE.test(u.hostname) && !u.port && !u.username && !u.password
+      && u.pathname.endsWith('.pem');
+  } catch { return false; }
+}
+
+function getSigningKey(url: string): Promise<KeyObject> {
+  const hit = certCache.get(url);
+  if (hit) return hit;
+  const p = (async () => {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10_000), redirect: 'error' });
+    if (!r.ok) throw new Error(`cert fetch failed: HTTP ${r.status}`);
+    return createPublicKey(await r.text());
+  })();
+  p.catch(() => certCache.delete(url));
+  if (certCache.size >= CERT_CACHE_MAX) {
+    const oldest = certCache.keys().next().value;
+    if (oldest !== undefined) certCache.delete(oldest);
+  }
+  certCache.set(url, p);
+  return p;
+}
+
+/** Build the SNS canonical string-to-sign for the given message type, or null if a field is missing. */
+function snsStringToSign(msg: SnsSignedEnvelope, type: string): string | null {
+  const keys = type === 'Notification'
+    ? ['Message', 'MessageId', 'Subject', 'Timestamp', 'TopicArn', 'Type'] as const
+    : ['Message', 'MessageId', 'SubscribeURL', 'Timestamp', 'Token', 'TopicArn', 'Type'] as const;
+  const fields: Record<string, unknown> = { ...msg, Type: type };
+  let out = '';
+  for (const k of keys) {
+    const v = fields[k];
+    if (v === undefined || v === null) {
+      if (k === 'Subject') continue; // Subject is optional on notifications
+      return null;
+    }
+    if (typeof v !== 'string') return null;
+    out += `${k}\n${v}\n`;
+  }
+  return out;
+}
+
+/** True only if the message carries a valid AWS SNS signature. Never throws. */
+async function verifySnsMessage(msg: SnsSignedEnvelope, type: string): Promise<boolean> {
+  try {
+    const alg = SIGNING_ALGS[String(msg.SignatureVersion ?? '')];
+    if (!alg || typeof msg.Signature !== 'string' || !isValidCertUrl(msg.SigningCertURL)) return false;
+    const data = snsStringToSign(msg, type);
+    if (data === null) return false;
+    const key = await getSigningKey(msg.SigningCertURL);
+    return cryptoVerify(alg, Buffer.from(data, 'utf8'), key, Buffer.from(msg.Signature, 'base64'));
+  } catch (err) {
+    console.warn('[SES Webhook] SNS signature verification error:', (err as Error).message);
+    return false;
+  }
+}
 
 // Skip Open/Click rows from ses_events — they're the highest-volume event types
 // (scanner pre-fetch flood) and we already capture them via email_send_log.opened_at
@@ -34,6 +118,15 @@ router.post('/ses', async (req, res) => {
     }
 
     const messageType = req.headers['x-amz-sns-message-type'] || payload?.Type;
+
+    // Every message we act on must carry a valid AWS SNS signature (forged
+    // Complaint/Bounce notifications would otherwise unsubscribe arbitrary addresses).
+    if (messageType === 'SubscriptionConfirmation' || messageType === 'Notification') {
+      if (!(await verifySnsMessage(payload as SnsSignedEnvelope, messageType))) {
+        console.warn(`[SES Webhook] Rejected ${messageType} with an invalid SNS signature`);
+        return res.status(403).send('Invalid signature');
+      }
+    }
 
     // ── 1. SNS Subscription Confirmation ──
     if (messageType === 'SubscriptionConfirmation') {

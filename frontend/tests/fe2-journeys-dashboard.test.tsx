@@ -84,7 +84,7 @@ describe('Journey Operations dashboard', () => {
   // BUG: app/(dashboard)/journeys/dashboard/page.tsx:173 renders the Open Rate KPI as
   // `${kpis.openRate7d}%` — when the API omits openRate7d (or kpis entirely) the tile shows
   // "undefined%" instead of falling back to 0 like the other tiles (`k.value ?? 0`).
-  it.fails('Open Rate KPI never renders "undefined%" when kpis are missing', async () => {
+  it('Open Rate KPI never renders "undefined%" when kpis are missing', async () => {
     mockDash({ journeys: [] });
     render(<JourneyDashboardPage />);
     await screen.findByText('No journeys');

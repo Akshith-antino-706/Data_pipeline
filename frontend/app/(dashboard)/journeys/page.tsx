@@ -575,7 +575,7 @@ const staggerContainer: Variants = { hidden: {}, visible: { transition: { stagge
 
 // ── Utility ────────────────────────────────────────────────────
 const fmt = (n: unknown) => Number(n || 0).toLocaleString();
-const pct = (n: unknown) => `${Number(n || 0).toFixed(1)}%`;
+const pct = (n: unknown) => { const v = Number(n); return `${(Number.isFinite(v) ? v : 0).toFixed(1)}%`; };
 const timeAgo = (date: string | number | Date | null | undefined) => {
   if (!date) return '—';
   const d = new Date(date) as Date & number;
@@ -974,7 +974,11 @@ export default function Journeys() {
       loadTemplates();
       if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
     } catch (err) {
-      if (isCurrent()) showToast('Failed to load journey', 'error');
+      if (isCurrent()) {
+        setSelected(null);
+        router.replace(pathname, { scroll: false });
+        showToast('Failed to load journey', 'error');
+      }
     }
     if (isCurrent()) setDetailLoading(false);
   };

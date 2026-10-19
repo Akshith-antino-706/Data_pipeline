@@ -170,7 +170,7 @@ describe('Test Sends page', () => {
 
   // BUG: app/(dashboard)/test-sends/page.tsx:679 renders `${r.ms}ms` for a successful
   // recipient even when the API omits `ms`, producing the text "undefinedms".
-  it.fails('does not render "undefinedms" when a successful result has no ms', async () => {
+  it('does not render "undefinedms" when a successful result has no ms', async () => {
     typical();
     route(/test-sends\/day1$/, { body: { data: { results: [{ success: true, email: 'a@x.com' }] } } });
     render(<TestSendsPage />);
@@ -323,7 +323,7 @@ describe('Scheduler page', () => {
 
   // BUG: app/(dashboard)/test-sends/scheduler/page.tsx:721 puts `…` directly in JSX
   // text, where escapes are not processed, so the UI shows the literal "Loading logs…".
-  it.fails('log modal loading text renders an ellipsis, not a literal \\u2026', async () => {
+  it('log modal loading text renders an ellipsis, not a literal \\u2026', async () => {
     typical();
     route(/schedule\/11\/logs/, 'pending');
     render(<SchedulerPage />);
@@ -335,7 +335,7 @@ describe('Scheduler page', () => {
 
   // BUG: app/(dashboard)/test-sends/scheduler/page.tsx:618 interpolates prewarm.readyCount
   // without a fallback, showing "undefined/7 days cached" when the API omits it.
-  it.fails('prewarm ready without readyCount does not render "undefined"', async () => {
+  it('prewarm ready without readyCount does not render "undefined"', async () => {
     route(/schedule\/list/, { body: { data: [{ id: 5, is_running: true, prewarm: { status: 'ready' } }] } });
     render(<SchedulerPage />);
     await screen.findByText('Schedule #5');
@@ -344,7 +344,7 @@ describe('Scheduler page', () => {
 
   // BUG: app/(dashboard)/test-sends/scheduler/page.tsx:594 calls new Date(last_sent_at!)
   // even when last_sent_at is null, which renders "Invalid Date" / epoch time.
-  it.fails('last_sent_day without last_sent_at does not render a bogus time', async () => {
+  it('last_sent_day without last_sent_at does not render a bogus time', async () => {
     route(/schedule\/list/, { body: { data: [{ id: 6, is_running: true, last_sent_day: 1, last_sent_at: null }] } });
     render(<SchedulerPage />);
     await screen.findByText('Schedule #6');
@@ -354,7 +354,7 @@ describe('Scheduler page', () => {
 
   // BUG: app/(dashboard)/test-sends/scheduler/page.tsx:432-436 — the "load more" row is
   // rendered with no content, so users see an empty clickable strip with no label.
-  it.fails('load-more row has a visible label', async () => {
+  it('load-more row has a visible label', async () => {
     route(/\/contacts\?/, { body: { data: { contacts: CONTACTS, total: 80 } } });
     render(<SchedulerPage />);
     await screen.findByText('Alice');

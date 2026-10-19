@@ -193,11 +193,11 @@ describe('giveawayRabbitConsumer — connection & topology', () => {
     expect(m.connect).toHaveBeenCalledTimes(1);
   });
 
-  // BUG: stopGiveawayRabbitConsumer() does not clear a pending _reconnectTimer
+  // Regression (fixed): stopGiveawayRabbitConsumer() does not clear a pending _reconnectTimer
   // (src/services/giveaway/giveawayRabbitConsumer.ts:272-277). stop → start inside the backoff
   // window connects immediately, then the stale timer fires connect() again and opens a SECOND
   // connection, overwriting _conn/_ch and leaking the first (CloudAMQP caps connections).
-  it.fails('stop then start during a pending reconnect opens only one connection', async () => {
+  it('stop then start during a pending reconnect opens only one connection', async () => {
     m.connect.mockRejectedValueOnce(new Error('down')).mockImplementation(async () => new FakeConn());
     const c = await load();
     await c.startGiveawayRabbitConsumer();      // fails → timer pending (1s)

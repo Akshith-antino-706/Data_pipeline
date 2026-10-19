@@ -433,6 +433,7 @@ export default function SchedulerPage() {
               onClick={() => loadContacts(contactQuery, contactsOffset + 50, filters)}
               style={{ padding: '10px 14px', textAlign: 'center', fontSize: 12, color: '#e2b340', cursor: 'pointer', borderTop: '1px solid var(--border)' }}
             >
+              Load more ({contactsTotal - contacts.length} remaining)
             </div>
           )}
         </div>
@@ -589,9 +590,9 @@ export default function SchedulerPage() {
                         </span>
                       );
                     })}
-                    {sched.last_sent_day && (
+                    {sched.last_sent_day != null && sched.last_sent_day !== 0 && (
                       <span style={{ fontSize: 11, color: 'var(--muted-foreground)', marginLeft: 6 }}>
-                        Last: Day {sched.last_sent_day} &middot; {new Date(sched.last_sent_at!).toLocaleTimeString()}
+                        Last: Day {sched.last_sent_day} &middot; {sched.last_sent_at ? new Date(sched.last_sent_at).toLocaleTimeString() : ''}
                       </span>
                     )}
                   </div>
@@ -615,7 +616,7 @@ export default function SchedulerPage() {
                           : <XCircle size={13} style={{ color: '#ef4444' }} />}
                       <span style={{ fontSize: 12 }}>
                         {prewarm.status === 'prewarming' && 'Pre-generating AI rankings for all 7 days\u2026'}
-                        {prewarm.status === 'ready' && `AI content ready \u2014 ${prewarm.readyCount}/7 days cached`}
+                        {prewarm.status === 'ready' && `AI content ready \u2014 ${prewarm.readyCount ?? 0}/7 days cached`}
                         {prewarm.status === 'failed' && `Pre-warm failed: ${prewarm.error}`}
                       </span>
                       {prewarm.status === 'ready' && prewarm.summary?.length as number > 0 && (
@@ -718,7 +719,7 @@ export default function SchedulerPage() {
             <div style={{ overflowY: 'auto', flex: 1 }}>
               {logModal.loading ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40, gap: 10, color: 'var(--muted-foreground)' }}>
-                  <Loader2 size={18} className="spin" /> Loading logs\u2026
+                  <Loader2 size={18} className="spin" /> Loading logs…
                 </div>
               ) : logModal.rows.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '36px 20px', fontSize: 13, color: 'var(--muted-foreground)' }}>

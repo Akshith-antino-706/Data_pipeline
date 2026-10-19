@@ -49,7 +49,9 @@ class GtmJourneyService {
   // Wait-node duration → ms. Honors JOURNEY_WAIT_SECS_PER_DAY for testing
   // (e.g. 10 → 1 day = 10s); 0/unset → real days, same as the normal engine.
   static _waitMs(waitDays: string | number | undefined) {
-    const d = parseFloat(waitDays as string) || 1;
+    // Only a missing/blank/non-numeric value falls back to 1 day — an explicit 0 stays 0.
+    const parsed = (waitDays === null || waitDays === undefined || waitDays === '') ? NaN : parseFloat(String(waitDays));
+    const d = Number.isNaN(parsed) ? 1 : parsed;
     const secsPerDay = parseFloat(process.env.JOURNEY_WAIT_SECS_PER_DAY || '0');
     return secsPerDay > 0 ? d * secsPerDay * 1000 : d * 86_400_000;
   }
@@ -198,8 +200,10 @@ class GtmJourneyService {
       const { rows: [bought] } = await db.query<{ '?column?': number }>(
         `SELECT 1 FROM gtm_events
          WHERE unified_id = $1 AND event_name = 'purchase'
-           AND COALESCE(raw_payload->>'itemId', '') = $2 LIMIT 1`,
-        [unifiedId, String(itemId)]
+           AND COALESCE(raw_payload->>'itemId', '') = $2
+           AND created_at >= COALESCE((SELECT entered_at FROM gtm_journey_entries WHERE id = $3), '-infinity'::timestamptz)
+         LIMIT 1`,
+        [unifiedId, String(itemId), entryId ?? null]
       );
       if (bought) { await _exit('purchased'); return; }
     }

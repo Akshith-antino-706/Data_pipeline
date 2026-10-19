@@ -168,7 +168,7 @@ describe('Tag manager (GTM) page', () => {
 
   // BUG app/(dashboard)/tag-manager/page.tsx:243-244 - top event counts go through parseInt with no
   // fallback, so a null/missing count or unique_users from the API renders "NaN" on the KPI card.
-  it.fails('never renders NaN for a top event with missing counts', async () => {
+  it('never renders NaN for a top event with missing counts', async () => {
     mockOk('getGTMAnalytics', { daily: [], top_events: [{ event_name: 'odd', count: null, unique_users: null, total_value: null }] });
     render(<TagManager />);
     await screen.findByText('odd');

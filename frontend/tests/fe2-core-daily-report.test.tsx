@@ -81,7 +81,7 @@ describe('Daily report page', () => {
   // BUG: app/(dashboard)/daily-report/page.tsx:242 reads `data.tables[t.key]` without guarding
   // `data.tables`, so a response without `tables` (e.g. `{}` from an empty/odd backend reply)
   // throws a TypeError and unmounts the page instead of rendering zeros.
-  it.fails('does not crash when the counts response has no tables', async () => {
+  it('does not crash when the counts response has no tables', async () => {
     vi.mocked(api.getReportCounts).mockResolvedValue({} as unknown as Counts);
     render(<Boundary><DailyReport /></Boundary>);
     loadSummary();
@@ -90,7 +90,7 @@ describe('Daily report page', () => {
 
   // BUG: app/(dashboard)/daily-report/page.tsx:218 renders `${data.from}  to  ${data.to}`,
   // which shows "undefined  to  undefined" when the API omits from/to.
-  it.fails('never shows "undefined" when the counts response omits from/to', async () => {
+  it('never shows "undefined" when the counts response omits from/to', async () => {
     vi.mocked(api.getReportCounts).mockResolvedValue({ totalRows: 0, tables: {} } as unknown as Counts);
     render(<DailyReport />);
     loadSummary();

@@ -83,8 +83,8 @@ describe('agent pass-throughs', () => {
     expect(m.suggestFlowImprovements).toHaveBeenCalledWith(12);
     expect(m.autoOptimize).toHaveBeenCalledWith(13);
   });
-  // BUG (src/routes/agents.ts:29): non-numeric journeyId becomes NaN and is sent to the AI agent instead of 400.
-  it.fails('flow-assist rejects a non-numeric journeyId with 400', async () => {
+  // FIXED (was BUG) (src/routes/agents.ts:29): non-numeric journeyId becomes NaN and is sent to the AI agent instead of 400.
+  it('flow-assist rejects a non-numeric journeyId with 400', async () => {
     m.suggestFlowImprovements.mockResolvedValue([]);
     expect((await call('GET', '/flow-assist/suggest/abc')).status).toBe(400);
   });

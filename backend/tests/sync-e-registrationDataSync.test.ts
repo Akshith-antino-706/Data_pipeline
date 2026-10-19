@@ -130,6 +130,17 @@ describe('runRegistrationDataSync — inserts', () => {
     const ins = calls(/^INSERT INTO agent_data/);
     expect(ins.map(([, p]) => (p ?? []).length)).toEqual([400, 400, 100]);
   });
+
+  it('insert columns are the union of keys across the batch (missing → NULL)', async () => {
+    api.affiliate = [
+      { AffiliateID: 1, name: 'A' },
+      { AffiliateID: 2, city: 'Dubai' },
+    ];
+    await runRegistrationDataSync();
+    const [sql, params] = calls(/^INSERT INTO affiliate_data/)[0];
+    expect(sql).toContain('"affiliateId", "Name", "City", synced_at');
+    expect(params).toEqual(['1', 'A', 'NULL', '2', 'NULL', 'Dubai']);
+  });
 });
 
 describe('runRegistrationDataSync — updates', () => {

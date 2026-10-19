@@ -125,10 +125,10 @@ describe('runPhpAdminSync', () => {
     expect(m.mysqlEnd).toHaveBeenCalledOnce();
   });
 
-  // BUG: PhpAdminWeeklySync.ts:289 — the catch block evaluates `await readWatermark()` as an
+  // Regression (fixed): PhpAdminWeeklySync.ts:289 — the catch block evaluates `await readWatermark()` as an
   // argument BEFORE `.catch(() => {})` is attached, so when Postgres itself is down the
   // function rejects, despite its "Never throws" contract (PhpAdminWeeklySync.ts:131).
-  it.fails('never throws even when Postgres is unreachable', async () => {
+  it('never throws even when Postgres is unreachable', async () => {
     m.dbQuery.mockRejectedValue(new Error('pg down'));
     await expect(runPhpAdminSync()).resolves.toMatchObject({ status: 'error' });
   });

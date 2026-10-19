@@ -140,7 +140,7 @@ describe('Custom segment detail page', () => {
   // BUG: custom/[id]/page.tsx:74 does setSegment(res.data || res); a 200 response of
   // { data: null } (segment deleted) is still truthy, so "Segment not found" is never
   // shown and the header renders with an empty name.
-  it.fails('{ data: null } response shows "Segment not found"', async () => {
+  it('{ data: null } response shows "Segment not found"', async () => {
     vi.mocked(api.getCustomSegmentById).mockResolvedValue({ data: null } as unknown as SegRes);
     renderPage();
     await screen.findByText('Segment not found', {}, { timeout: 300 });

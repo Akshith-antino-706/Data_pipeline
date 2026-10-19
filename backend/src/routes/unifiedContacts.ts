@@ -7,6 +7,7 @@ import UnifiedContactService from '../services/UnifiedContactService.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
 import { invalidate, cached } from '../config/cache.js';
 import { parseBusinessType } from '../utils/contactTypes.js';
+import { csvField, clampInt, MAX_PAGE } from '../utils/validate.js';
 
 const router = Router();
 
@@ -106,7 +107,7 @@ router.get('/sources-breakdown', async (req: QueryRequest, res: Response, next: 
 
 router.get('/', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const page = Math.min(MAX_PAGE, Math.max(1, parseInt(req.query.page, 10) || 1));
     const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 50), 200);
     const search = req.query.search ? String(req.query.search).slice(0, 200).trim() : undefined;
     const { sortBy, sortDir } = req.query;
@@ -189,7 +190,7 @@ router.get('/segment-customers/download', async (req: QueryRequest, res: Respons
 
     const header = 'Name,Email,Mobile,Country,Contact Type,Status,Tier,Geography,Sources';
     const csv = [header, ...(result.data as SegmentCustomerCsvRow[]).map(c =>
-      `"${(c.name||'').replace(/"/g,'""')}","${c.email||''}","${c.mobile||''}","${c.country||''}",${c.contact_type||''},${c.booking_status},${c.product_tier||''},${c.geography||''},"${c.sources||''}"`
+      [c.name, c.email, c.mobile, c.country, c.contact_type, c.booking_status, c.product_tier, c.geography, c.sources].map(csvField).join(',')
     )].join('\n');
 
     res.setHeader('Content-Type', 'text/csv');
@@ -223,7 +224,7 @@ router.get('/segment-customers', async (req: QueryRequest, res: Response, next: 
     const businessType = parseBusinessType(req.query.businessType);
     const result = await UnifiedContactService.getSegmentCustomers({
       bookingStatus, productTier, geography, businessType,
-      page: parseInt(page) || 1, limit: parseInt(limit) || 25, search,
+      page: clampInt(page, 1, MAX_PAGE), limit: clampInt(limit, 25, 500), search,
     });
     res.json({ success: true, ...result });
   } catch (err) { next(err); }

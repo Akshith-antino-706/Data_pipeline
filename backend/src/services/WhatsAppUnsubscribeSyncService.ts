@@ -126,13 +126,15 @@ export default class WhatsAppUnsubscribeSyncService {
       summary.status = 'error';
       summary.error = (err as Error).message;
       console.error('[WAUnsubSync] Failed:', err);
-      await writeMetadata({
-        rowsSynced: summary.flipped,
-        durationMs: summary.durationMs,
-        status: 'error',
-        error: (err as Error).message.slice(0, 500),
-        watermarkAdvance: (await readWatermark()),
-      }).catch(() => {});
+      try {
+        await writeMetadata({
+          rowsSynced: summary.flipped,
+          durationMs: summary.durationMs,
+          status: 'error',
+          error: (err as Error).message.slice(0, 500),
+          watermarkAdvance: await readWatermark(),
+        });
+      } catch { /* metadata write is best-effort; never throw from the error path */ }
       return summary;
     }
   }

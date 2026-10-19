@@ -104,7 +104,7 @@ describe('JourneyService.create / update / node CRUD', () => {
   });
   // SUSPECTED BUG / missing validation: create() persists any graph — edges pointing at
   // nodes that don't exist, duplicate node ids — with no validation (JourneyService.ts:1133-1171).
-  it.fails('create rejects edges that reference unknown nodes', async () => {
+  it('create rejects edges that reference unknown nodes', async () => {
     route([['INSERT INTO journey_flows', () => rows([{ journey_id: 1 }])]]);
     await expect(JourneyService.create({ name: 'bad', nodes: [{ id: 'a', type: 'trigger' }], edges: [{ source: 'a', target: 'ghost' }] })).rejects.toThrow();
   });
@@ -173,7 +173,7 @@ describe('JourneyService timing helpers', () => {
   // BUG: a blank/garbage sendHour (e.g. '' from a cleared UI field) is not treated as "unset":
   // parseInt('') = NaN → returns an Invalid Date, which is then written to next_fire_at.
   // JourneyService.ts:2996-3008.
-  it.fails('calculateNextFireAt never returns an Invalid Date for blank sendHour', () => {
+  it('calculateNextFireAt never returns an Invalid Date for blank sendHour', () => {
     const r = JourneyService.calculateNextFireAt({ id: 'a', type: 'action', data: { sendHour: '' } }, new Date('2026-01-01T00:00:00Z'));
     expect(Number.isNaN(r?.getTime())).toBe(false);
   });
@@ -225,7 +225,7 @@ describe('JourneyService exit / conversion', () => {
   // EARLIEST enrollment in the whole journey (MIN(enrolled_at)), not after THIS contact's own
   // enrollment — so a late enrollee's pre-enrollment purchase counts as a journey conversion.
   // JourneyService.ts:2893 and :2914.
-  it.fails('conversion window is per-enrollment (je.enrolled_at), not journey-wide MIN', async () => {
+  it('conversion window is per-enrollment (je.enrolled_at), not journey-wide MIN', async () => {
     route([['SELECT * FROM journey_flows', () => rows([{ journey_id: 1 }])]]);
     await JourneyService.checkConversions(1);
     expect(calls("conversion_event = 'ga4_purchase'")[0][0]).not.toContain('MIN(enrolled_at)');
@@ -339,7 +339,7 @@ describe('JourneyService.processJourney', () => {
   // BUG: the bulk unsubscribe exit compares `uc.email_unsubscribe = 'Yes'` case-sensitively,
   // but checkConversion() documents that syncs store 'Yes' / 'yes' / 'YES'. Lower/upper-case
   // opt-outs are NOT exited by processJourney and stay on the send path. JourneyService.ts:1703.
-  it.fails('bulk unsubscribe exit is case-insensitive', async () => {
+  it('bulk unsubscribe exit is case-insensitive', async () => {
     setup({}, []);
     await JourneyService.processJourney(1);
     expect(calls("exit_reason = 'unsubscribed'")[0][0]).toMatch(/LOWER\(uc\.email_unsubscribe\)|ILIKE/);

@@ -55,15 +55,14 @@ describe('ProductService.getAll + cache', () => {
     expect(await S2.getAll()).toEqual([]);
   });
 
-  // BUG: when every upstream call fails, the empty result is cached for the full 30 min TTL,
-  // so the catalog stays empty for half an hour after a short outage
-  // (src/services/ProductService.ts:39 caches unconditionally).
-  it.fails('does not cache an empty catalog after a total fetch failure', async () => {
+  // Fixed: when every upstream call fails the empty result is not cached
+  // (src/services/ProductService.ts getAll), so the next call retries.
+  it('does not cache an empty catalog after a total fetch failure', async () => {
     const S = await load();
     m.fetch.mockRejectedValue(new Error('down'));
     await S.getAll();
     m.fetch.mockReset();
-    m.fetch.mockResolvedValue(json({ success: true, products: [p(1, 'a', 1)] }));
+    m.fetch.mockImplementation(async () => json({ success: true, products: [p(1, 'a', 1)] }));
     expect(await S.getAll()).toHaveLength(2);
   });
 });
@@ -116,6 +115,17 @@ describe('ProductService renderers', () => {
     const plain = S.generateProductEmailHTML({ products: [p(2, 'x', 10)], heading: 'H' });
     expect(plain).not.toContain('OFF');
     expect(plain).not.toContain('Exclusive Offer');
+  });
+
+  it('email HTML escapes product fields', async () => {
+    const S = await load();
+    const evil = { ...p(1, 'a<b', 10, 10, '<script>x</script>'), url: 'https://x/?a=1&b="2"', image: '" onerror="y' };
+    const html = S.generateProductEmailHTML({ products: [evil], heading: 'H' });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;x&lt;/script&gt;');
+    expect(html).toContain('href="https://x/?a=1&amp;b=&quot;2&quot;"');
+    expect(html).toContain('src="&quot; onerror=&quot;y"');
+    expect(html).toContain('a&lt;b');
   });
 
   it('WhatsApp message numbers products and adds coupon line', async () => {

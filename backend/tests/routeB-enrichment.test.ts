@@ -63,8 +63,8 @@ describe('enrichment routes', () => {
     m.cleanPhone.mockImplementation(() => { throw new TypeError('bad'); });
     expect((await postJson('/preview', { phone: { $ne: 1 } })).status).toBe(500);
   });
-  // BUG enrichment.ts:25 — no body → destructuring undefined req.body → 500 instead of a handled response.
-  it.fails('POST /preview with no body does not 500', async () => {
+  // FIXED (was BUG) enrichment.ts:25 — no body → destructuring undefined req.body → 500 instead of a handled response.
+  it('POST /preview with no body does not 500', async () => {
     m.cleanPhone.mockReturnValue(null);
     expect((await postJson('/preview')).status).toBeLessThan(500);
   });

@@ -85,7 +85,7 @@ router.post('/:id/click', async (req, res) => {
 // POST /api/v3/utm/:id/conversion — Record a UTM conversion
 router.post('/:id/conversion', async (req, res) => {
   try {
-    await UTMService.recordConversion(req.params.id, (req.body as { revenue?: unknown }).revenue);
+    await UTMService.recordConversion(req.params.id, (req.body as { revenue?: unknown } | undefined)?.revenue);
     res.json({ recorded: true });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

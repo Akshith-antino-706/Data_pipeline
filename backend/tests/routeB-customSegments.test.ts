@@ -50,8 +50,8 @@ describe('POST /preview-count', () => {
     m.getCountPreview.mockRejectedValue(new Error('bad sql'));
     expect((await send('POST', '/preview-count', { conditions: [] })).status).toBe(500);
   });
-  // BUG customSegments.ts:13 — no body → req.body undefined → destructure TypeError → 500, not 400.
-  it.fails('400s (not 500) when there is no body at all', async () => {
+  // FIXED (was BUG) customSegments.ts:13 — no body → req.body undefined → destructure TypeError → 500, not 400.
+  it('400s (not 500) when there is no body at all', async () => {
     expect((await send('POST', '/preview-count')).status).toBe(400);
   });
 });
@@ -104,12 +104,12 @@ describe('/:id', () => {
     expect((await send('DELETE', '/9')).status).toBe(500);
     expect(m.delete).toHaveBeenCalledWith(9);
   });
-  it('GET /:id/customers: defaults, 404, unclamped huge limit', async () => {
+  it('GET /:id/customers: defaults, 404, huge limit clamped to 500', async () => {
     m.getCustomers.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce(null).mockResolvedValueOnce({});
     expect(await (await send('GET', '/3/customers')).json()).toEqual({ success: true, data: [] });
     expect(m.getCustomers).toHaveBeenCalledWith(3, { page: 1, limit: 25, search: undefined });
     expect((await send('GET', '/3/customers')).status).toBe(404);
     await send('GET', '/3/customers?limit=10000000&page=x');
-    expect(m.getCustomers).toHaveBeenLastCalledWith(3, { page: 1, limit: 10000000, search: undefined });
+    expect(m.getCustomers).toHaveBeenLastCalledWith(3, { page: 1, limit: 500, search: undefined });
   });
 });

@@ -153,7 +153,7 @@ describe('Segment activity page', () => {
   // BUG: segment-activity/page.tsx:111 fmtAED calls (n || 0).toLocaleString(...) directly;
   // when the API returns revenue as a numeric string (Postgres numeric), String#toLocaleString
   // ignores the options, so "AED 12345.6" is shown instead of "AED 12,346".
-  it.fails('string revenue is formatted with grouping and no decimals', async () => {
+  it('string revenue is formatted with grouping and no decimals', async () => {
     vi.mocked(api.getSegmentActivity).mockResolvedValue({
       liveToday: [], logs: [{ log_date: '2026-10-18', segment_label: 'ON_TRIP', entered: 0, exited: 0, converted: 0, revenue: '12345.6' }],
     } as unknown as ActRes);

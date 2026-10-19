@@ -3,6 +3,7 @@ import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import { Copywriter, SegmentAssist, FlowAssist, AnalyticsInsights } from '../services/AIAgents.js';
 import db from '../config/database.js';
+import { parseId } from '../utils/validate.js';
 const router = Router();
 
 // ── Copywriter Agent ──────────────────────────────────────
@@ -26,14 +27,18 @@ router.get('/segment-assist/analyze', async (req, res, next) => {
 // ── FlowAssist Agent ──────────────────────────────────────
 router.get('/flow-assist/suggest/:journeyId', async (req, res, next) => {
   try {
-    const data = await FlowAssist.suggestFlowImprovements(parseInt(req.params.journeyId));
+    const journeyId = parseId(req.params.journeyId);
+    if (journeyId === null) return res.status(400).json({ error: 'journeyId must be a positive integer' });
+    const data = await FlowAssist.suggestFlowImprovements(journeyId);
     res.json({ data });
   } catch (err) { next(err); }
 });
 
 router.post('/flow-assist/auto-optimize/:journeyId', async (req, res, next) => {
   try {
-    const data = await FlowAssist.autoOptimize(parseInt(req.params.journeyId));
+    const journeyId = parseId(req.params.journeyId);
+    if (journeyId === null) return res.status(400).json({ error: 'journeyId must be a positive integer' });
+    const data = await FlowAssist.autoOptimize(journeyId);
     res.json({ data });
   } catch (err) { next(err); }
 });

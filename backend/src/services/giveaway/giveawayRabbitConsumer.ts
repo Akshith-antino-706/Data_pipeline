@@ -45,6 +45,8 @@ const VALID_TYPES = new Set<string | undefined>(['participation', 'eligible', 'w
 const EMAIL_RE    = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 let _conn: ChannelModel | null = null, _ch: Channel | null = null, _transporter: Transporter<SMTPTransport.SentMessageInfo> | null = null, _stopped = false, _reconnectMs = 1000;
+let _reconnectTimer: NodeJS.Timeout | null = null;
+let _connecting = false;
 
 // ── SMTP transport (lazy) ──
 function smtp() {
@@ -226,8 +228,12 @@ async function connect() {
   const url = process.env.GIVEAWAY_RABBITMQ_URL;
   if (!url) { console.warn('[GiveawayMQ] GIVEAWAY_RABBITMQ_URL not set — consumer idle (set it to connect).'); return; }
 
+  if (_connecting) return;   // never open two connections in parallel (§1)
+  _connecting = true;
   try {
-    _conn = await amqp.connect(url, { heartbeat: 30, clientProperties: { connection_name: CONN_NAME } } as SocketOptions & { heartbeat: number });
+    const conn = await amqp.connect(url, { heartbeat: 30, clientProperties: { connection_name: CONN_NAME } } as SocketOptions & { heartbeat: number });
+    if (_stopped) { await conn.close().catch(() => {}); return; }   // stopped while connecting
+    _conn = conn;
     _conn.on('error', (e: Error) => console.error(`[GiveawayMQ] connection error: ${e.message}`));
     _conn.on('close', () => { if (!_stopped) scheduleReconnect('connection closed'); });
 
@@ -249,10 +255,11 @@ async function connect() {
     const stale = _conn;
     scheduleReconnect(`connect failed: ${(err as Error).message}`);
     try { await stale?.close(); } catch { /* already closed */ }
+  } finally {
+    _connecting = false;
   }
 }
 
-let _reconnectTimer: NodeJS.Timeout | null = null;
 function scheduleReconnect(why: string): void {
   _ch = null; _conn = null;
   // One pending reconnect at a time: a connection close and a failed connect can both
@@ -266,11 +273,14 @@ function scheduleReconnect(why: string): void {
 
 export async function startGiveawayRabbitConsumer() {
   _stopped = false;
+  // Already connected, connecting, or a reconnect is pending → don't open a duplicate.
+  if (_conn || _connecting || _reconnectTimer) return;
   await connect();
 }
 
 export async function stopGiveawayRabbitConsumer() {
   _stopped = true;
+  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   try { await _ch?.close(); } catch {}
   try { await _conn?.close(); } catch {}
   _ch = null; _conn = null;

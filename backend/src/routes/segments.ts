@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import { SegmentService } from '../services/SegmentService.js';
+import { clampInt, MAX_PAGE } from '../utils/validate.js';
 
 const router = Router();
 
@@ -26,8 +27,8 @@ router.get('/:label/customers', async (req: QueryRequest, res: Response, next: N
   try {
     const { page, limit, search, channel, sortBy, sortDir } = req.query;
     const data = await SegmentService.getSegmentCustomers(req.params.label, {
-      page: parseInt(page) || 1,
-      limit: parseInt(limit) || 50,
+      page: clampInt(page, 1, MAX_PAGE),
+      limit: clampInt(limit, 50, 500),
       search, channel, sortBy, sortDir,
     });
     res.json({ success: true, ...data });

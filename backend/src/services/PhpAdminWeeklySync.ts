@@ -281,13 +281,15 @@ export async function runPhpAdminSync({ triggeredBy = 'cron' } = {}) {
     summary.status = 'error';
     summary.error = (err as Error).message;
     console.error('[PhpAdminSync] Failed:', err);
-    await writeMetadata({
-      rowsSynced: summary.newlyInserted,
-      durationMs: summary.durationMs,
-      status: 'error',
-      error: (err as Error).message,
-      watermarkAdvance: (await readWatermark()),   // do NOT advance on failure
-    }).catch(() => {});
+    try {
+      await writeMetadata({
+        rowsSynced: summary.newlyInserted,
+        durationMs: summary.durationMs,
+        status: 'error',
+        error: (err as Error).message,
+        watermarkAdvance: await readWatermark(),   // do NOT advance on failure
+      });
+    } catch { /* metadata write is best-effort; never throw from the error path */ }
   } finally {
     if (conn) await conn.end().catch(() => {});
   }

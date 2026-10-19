@@ -201,12 +201,31 @@ describe('webhooks', () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  // BUG (src/routes/gupshup.ts:109): "TODO: verify Gupshup signature" — the WA webhook accepts
-  // unsigned callbacks, so anyone can flip template statuses. Expected: 401 without a signature.
-  it.fails('WA webhook rejects an unsigned callback', async () => {
-    svc.handleWebhook.mockResolvedValue({});
-    const r = await call('/webhook/wa', 'POST', { type: 'template-event' });
-    expect(r.status).toBe(401);
+  // FIXED (was BUG gupshup.ts "TODO: verify Gupshup signature"): when GUPSHUP_WEBHOOK_SECRET is
+  // set, the WA webhook requires the shared secret (x-gupshup-secret header or ?token=).
+  it('WA webhook rejects an unsigned callback when GUPSHUP_WEBHOOK_SECRET is set', async () => {
+    vi.stubEnv('GUPSHUP_WEBHOOK_SECRET', 's3cret');
+    try {
+      svc.handleWebhook.mockResolvedValue({});
+      expect((await call('/webhook/wa', 'POST', { type: 'template-event' })).status).toBe(401);
+      expect((await call('/webhook/wa?token=wrong', 'POST', { type: 'template-event' })).status).toBe(401);
+      expect(svc.handleWebhook).not.toHaveBeenCalled();
+      expect((await call('/webhook/wa?token=s3cret', 'POST', { type: 'template-event' })).status).toBe(200);
+      const r = await fetch(`${base}/webhook/wa`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-gupshup-secret': 's3cret' }, body: '{}' });
+      expect(r.status).toBe(200);
+      await r.text();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it('WA webhook stays open when GUPSHUP_WEBHOOK_SECRET is unset', async () => {
+    vi.stubEnv('GUPSHUP_WEBHOOK_SECRET', '');
+    try {
+      svc.handleWebhook.mockResolvedValue({});
+      expect((await call('/webhook/wa', 'POST', { type: 'template-event' })).status).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -270,9 +289,9 @@ describe('SMS', () => {
     expect(r.body.success).toBe(true);
   });
 
-  // BUG (src/routes/gupshup.ts:149-150): templateId is only checked for truthiness, so "abc"
+  // FIXED (was BUG src/routes/gupshup.ts:149-150): templateId is only checked for truthiness, so "abc"
   // becomes NaN and is passed to sendSMS + the DB. Expected a 400.
-  it.fails('sms/test-send rejects a non-numeric templateId', async () => {
+  it('sms/test-send rejects a non-numeric templateId', async () => {
     svc.sendSMS.mockResolvedValue({ success: true });
     const r = await call('/sms/test-send', 'POST', { phone: '971501234567', templateId: "1 OR 1=1" });
     expect(r.status).toBe(400);

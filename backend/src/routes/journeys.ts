@@ -8,6 +8,7 @@ import { cached, del as cacheDel } from '../config/cache.js';
 import type { QueryParams, JourneyNode, DiagnoseReport, GtmEventStat } from '../types/routesJourneys.js';
 import type { CreateJourneyInput, JourneyFlowNode } from '../types/journeyService.js';
 import type { JourneyStatsMetaRow, JourneyNodesRow, JourneyNodesEdgesRow, JourneyNodeStatsRow, TestSendEntryRow, HtmlTemplateIdRow, ActiveEntryTimingRow, SnapshotStatusRow, CustomerIdRow, GtmNodeEventRow, NodeSentRow, EventTypeTotalRow, NodeConversionRow, JourneyIdRow, EntryIdRow, AddNodeBody, ResetEntriesBody } from '../types/u5Journeys.js';
+import { parseId, isIsoDate } from '../utils/validate.js';
 const router = Router();
 
 // ── Journey-detail cache (Phase 0) ──
@@ -250,10 +251,10 @@ router.get('/active-on-date', async (req, res, next) => {
     // an ops view while collapsing repeat polls. Bypass with ?fresh=1.
     // Resolve the Dubai date for the cache key so 'today' doesn't go stale across midnight.
     const dubaiToday = new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
-    const date = /^\d{4}-\d{2}-\d{2}$/.test((req.query.date as string | undefined) || '') ? (req.query.date as string) : dubaiToday;
+    const date = isIsoDate(req.query.date) ? req.query.date : dubaiToday;
     const data = req.query.fresh
-      ? await JourneyService.getJourneysActiveOnDate((req.query.date as string))
-      : await cached(`journey:active-on-date:${date}`, () => JourneyService.getJourneysActiveOnDate((req.query.date as string)), 60);
+      ? await JourneyService.getJourneysActiveOnDate(date)
+      : await cached(`journey:active-on-date:${date}`, () => JourneyService.getJourneysActiveOnDate(date), 60);
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -395,7 +396,8 @@ router.post('/:id/reset-fire-times', async (req, res, next) => {
 // Get journey detail (cached ~30s; invalidated on mutation)
 router.get('/:id', async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ success: false, error: 'id must be a positive integer' });
     // ?fresh=1 bypasses both the Redis cache AND the precomputed rollup, forcing a
     // live journey_entries scan (slow — for verification/debugging only).
     const fresh = req.query.fresh === '1' || req.query.fresh === 'true';

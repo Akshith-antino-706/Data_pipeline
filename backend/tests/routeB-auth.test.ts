@@ -54,9 +54,9 @@ describe('POST /login', () => {
     }
     expect(m.login).toHaveBeenCalledWith(undefined, undefined);
   });
-  // BUG auth.ts:14 — with no request body (Express 5 leaves req.body undefined) the
+  // FIXED (was BUG) auth.ts:14 — with no request body (Express 5 leaves req.body undefined) the
   // destructure `const { email, password } = req.body` throws a TypeError → 500 instead of 400.
-  it.fails('handles no body at all with a 400, not a 500', async () => {
+  it('handles no body at all with a 400, not a 500', async () => {
     m.login.mockRejectedValue(httpErr('Email and password are required', 400));
     const r = await post('/login');
     expect(r.status).toBe(400);

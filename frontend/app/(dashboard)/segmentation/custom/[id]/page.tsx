@@ -33,7 +33,7 @@ type UserDetail = Omit<SegmentCustomer, 'id'> & {
 interface BookingTypeDef { key: BookingKey; label: string; countKey: CountKey; icon: typeof Plane; color: string }
 
 const fmt = (n: number | null | undefined) => (n || 0).toLocaleString();
-const fmtAED = (n: number | string | null | undefined) => `AED ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtAED = (n: number | string | null | undefined) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string } | undefined> = {
   ON_TRIP:         { label: 'On Trip',         color: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
@@ -70,8 +70,8 @@ export default function CustomSegmentDetailPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await getCustomSegmentById(id) as { data?: CustomSegment } & CustomSegment;
-        setSegment(res.data || res);
+        const res = await getCustomSegmentById(id) as { data?: CustomSegment | null } & CustomSegment;
+        setSegment(res && 'data' in res ? (res.data ?? null) : res);
       } catch (err) { console.error(err); }
       setSegLoading(false);
     })();

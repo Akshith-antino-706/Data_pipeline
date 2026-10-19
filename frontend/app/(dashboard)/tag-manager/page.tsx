@@ -240,8 +240,8 @@ export default function GTMIntegration() {
               <div key={e.event_name} className="card" onClick={() => loadEventDetail(e.event_name)}
                 style={{ cursor: 'pointer', border: selectedEvent === e.event_name ? '2px solid var(--brand-primary)' : undefined, transition: 'border 0.2s' }}>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{e.event_name}</div>
-                <div style={{ fontSize: 28, fontWeight: 700 }}>{parseInt(e.count).toLocaleString()}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{parseInt(e.unique_users).toLocaleString()} unique users</div>
+                <div style={{ fontSize: 28, fontWeight: 700 }}>{(parseInt(e.count) || 0).toLocaleString()}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{(parseInt(e.unique_users) || 0).toLocaleString()} unique users</div>
                 {parseFloat(e.total_value) > 0 && <div style={{ fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>AED {parseFloat(e.total_value).toFixed(0)}</div>}
                 <div style={{ fontSize: 10, color: 'var(--brand-primary)', marginTop: 4 }}>Click to view details →</div>
               </div>

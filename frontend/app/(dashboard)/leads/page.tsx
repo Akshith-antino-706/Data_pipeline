@@ -196,7 +196,7 @@ function RegistrationPanel({ query }: { query: RegQuery }) {
     setPeriodLoading(true);
     setPeriodError(null);
     getRegistrationPeriods(source, periodUnit, periodCount)
-      .then(data => { if (active) setPeriodData(data as RegistrationPeriods); })
+      .then(data => { if (active) { const p = data as Partial<RegistrationPeriods> | null; setPeriodData({ ...p, periods: p?.periods ?? [], rows: p?.rows ?? [], totals: p?.totals ?? [] } as RegistrationPeriods); } })
       .catch((err: Error) => { if (active) setPeriodError(err.message || 'Failed to load period breakdown'); })
       .finally(() => { if (active) setPeriodLoading(false); });
     return () => { active = false; };
@@ -210,7 +210,7 @@ function RegistrationPanel({ query }: { query: RegQuery }) {
     setRecordsLoading(true);
     setRecordsError(null);
     getRegistrationLeads({ source, from: query.from, to: query.to, search, limit, page })
-      .then(data => { if (active) setRecords(data as RegistrationRecords); })
+      .then(data => { if (active) { const r = data as Partial<RegistrationRecords> | null; setRecords({ ...r, records: r?.records ?? [], total: r?.total ?? 0, columns: r?.columns ?? [] }); } })
       .catch((err: Error) => { if (active) setRecordsError(err.message || 'Failed to load registrations'); })
       .finally(() => { if (active) setRecordsLoading(false); });
     return () => { active = false; };

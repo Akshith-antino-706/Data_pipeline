@@ -121,13 +121,13 @@ describe('GET /stats, /log, /mq-log', () => {
     expect((await call('/mq-log')).status).toBe(500);
   });
 
-  // BUG (src/routes/giveaways.ts:74 and :86): parseInt('abc') is NaN and Math.min/Math.max
+  // FIXED (was BUG) (src/routes/giveaways.ts:74 and :86): parseInt('abc') is NaN and Math.min/Math.max
   // propagate NaN, so a non-numeric ?limit reaches BullMQ/Redis as NaN instead of a default.
-  it.fails('log falls back to a finite limit for ?limit=abc', async () => {
+  it('log falls back to a finite limit for ?limit=abc', async () => {
     await call('/log?limit=abc');
     expect(Number.isFinite(recent.mock.calls[0][0])).toBe(true);
   });
-  it.fails('mq-log falls back to a finite range for ?limit=abc', async () => {
+  it('mq-log falls back to a finite range for ?limit=abc', async () => {
     await call('/mq-log?limit=abc');
     expect(Number.isFinite(lrange.mock.calls[0][2])).toBe(true);
   });
