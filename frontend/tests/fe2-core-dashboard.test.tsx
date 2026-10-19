@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as api from '@/lib/api';
 import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
+import { AuthProvider } from '@/context/AuthContext';
 import Dashboard from '@/app/(dashboard)/dashboard/page';
 
 vi.mock('@/lib/api');
@@ -17,10 +18,12 @@ vi.mock('next/navigation', () => ({
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>,
 }));
-// The Recharts chart is loaded through next/dynamic; replace it with a plain list of bar names.
+// The Recharts charts are loaded through next/dynamic; replace them with a plain list of bar names.
+// The Home 14-day chart (rows carry `email`) gets its own test id so `chart` stays the segment chart.
 vi.mock('next/dynamic', () => ({
-  default: () => function ChartStub({ data }: { data: { name: string }[] }) {
-    return <div data-testid="chart">{data.map(d => d.name).join(',')}</div>;
+  default: () => function ChartStub({ data }: { data: { name: string; email?: number }[] }) {
+    const id = data.length > 0 && 'email' in data[0] ? 'trend-chart' : 'chart';
+    return <div data-testid={id}>{data.map(d => d.name + (d.email !== undefined ? `:${d.email}` : '')).join(',')}</div>;
   },
 }));
 
@@ -163,5 +166,79 @@ describe('Dashboard page', () => {
     await screen.findByText(/contacts added on\/after 2026-10-01/);
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(from.value).toBe('');
+  });
+
+  describe('Home sections (getOverviewHome)', () => {
+    type Home = api.OverviewHome;
+    const fullHome: Home = {
+      sentToday: { available: true, email: 1200, whatsapp: 300, sms: 45, total: 1545 },
+      delivery7d: { available: true, sent: 8000, delivered: 7800, deliveredPct: 97.5 },
+      conversions30d: { available: true, count: 321 },
+      runningJourneys: { available: true, journeys: [{ id: 42, name: 'Abandoned cart', status: 'active', joined: 880 }] },
+      sendingToday: { available: true, total: 610, journeys: [{ id: 43, name: 'Pre-trip tips', due: 610 }] },
+      series14d: { available: true, days: [{ date: '2026-10-18', email: 11, whatsapp: 2, sms: 1, total: 14 }] },
+    };
+    const off = { available: false, reason: 'unavailable' } as const;
+
+    it('renders real values from the API', async () => {
+      vi.mocked(api.getOverviewHome).mockResolvedValue(fullHome);
+      renderPage();
+      await screen.findByText('1,545');
+      expect(screen.getByText('97.5%')).toBeTruthy();
+      expect(screen.getByText('7,800 of 8,000 sent')).toBeTruthy();
+      expect(screen.getByText('321')).toBeTruthy();
+      expect(screen.getByText('Abandoned cart').getAttribute('href')).toBe('/journeys?id=42');
+      expect(screen.getByText('Pre-trip tips').getAttribute('href')).toBe('/journeys?id=43');
+      expect(screen.getAllByText('610 due')).toHaveLength(2); // card total + the journey row
+      expect(screen.getByTestId('trend-chart').textContent).toContain(':11');
+      expect(screen.getByText('Create journey').closest('a')?.getAttribute('href')).toBe('/journeys');
+      expect(screen.getByText('Send a message').closest('a')?.getAttribute('href')).toBe('/test-sends');
+      expect(screen.queryByText('Not available right now')).toBeNull();
+      expect(screen.getByText('Audience overview')).toBeTruthy();
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+    });
+
+    it('shows the note for an unavailable section and no fake numbers', async () => {
+      vi.mocked(api.getOverviewHome).mockResolvedValue({ ...fullHome, sentToday: off, series14d: off });
+      renderPage();
+      await screen.findByText('97.5%');
+      expect(screen.getAllByText('Not available right now')).toHaveLength(2);
+      expect(screen.queryByText('1,545')).toBeNull();
+      expect(screen.queryByTestId('trend-chart')).toBeNull();
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+    });
+
+    it('shows an error state when the overview API fails, but keeps the audience section', async () => {
+      mockTypical();
+      vi.mocked(api.getOverviewHome).mockRejectedValue(new Error('HTTP 500'));
+      renderPage();
+      await screen.findByText("Couldn't load today's overview");
+      await screen.findByText('1,234');
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+    });
+
+    it('shows failed sends in the last 24h from the status API', async () => {
+      vi.mocked(api.getOverviewHome).mockResolvedValue(fullHome);
+      const recent = new Date(Date.now() - 3600 * 1000).toISOString();
+      const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+      vi.mocked(api.getOverviewStatus).mockResolvedValue({
+        dataSources: off, queues: off,
+        failedSends: { available: true, rows: [
+          { channel: 'email', id: 1, recipient: null, reason: 'bounce', time: recent, journeyId: null },
+          { channel: 'sms', id: 2, recipient: null, reason: null, time: old, journeyId: null },
+        ] },
+      });
+      renderPage();
+      await screen.findByText(/failed send in the last 24 hours/);
+      expect(screen.getByText('View log').closest('a')?.getAttribute('href')).toBe('/log');
+    });
+
+    it('greets the signed-in user by first name', async () => {
+      localStorage.setItem('rayna-auth', JSON.stringify({ token: 't', user: { id: 1, email: 'a@b.c', name: 'Avinash Kumar', role: 'admin' } }));
+      vi.mocked(api.getOverviewHome).mockResolvedValue(fullHome);
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(<QueryClientProvider client={qc}><AuthProvider><BusinessTypeProvider><Dashboard /></BusinessTypeProvider></AuthProvider></QueryClientProvider>);
+      expect(await screen.findByText(/^Good (morning|afternoon|evening), Avinash$/)).toBeTruthy();
+    });
   });
 });

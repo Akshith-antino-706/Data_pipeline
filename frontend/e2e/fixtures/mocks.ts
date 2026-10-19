@@ -25,6 +25,38 @@ export const defaultMocks: Mock[] = [
   // ── Auth ──
   { method: 'POST', path: p('/api/auth/logout'), body: ok(null) },
 
+  // ── Overview (read-only /api/v3/overview/*) ──
+  get('/api/v3/overview/home', {
+    sentToday: { available: true, email: 120, whatsapp: 40, sms: 5, total: 165 },
+    delivery7d: { available: true, sent: 900, delivered: 870, deliveredPct: 96.7 },
+    conversions30d: { available: true, count: 12 },
+    runningJourneys: { available: true, journeys: [{ id: 11, name: 'Welcome series', status: 'active', joined: 340 }] },
+    sendingToday: { available: true, journeys: [{ id: 11, name: 'Welcome series', due: 25 }], total: 25 },
+    series14d: { available: true, days: [{ date: '2026-10-18', email: 100, whatsapp: 30, sms: 2, total: 132 }, { date: '2026-10-19', email: 120, whatsapp: 40, sms: 5, total: 165 }] },
+  }),
+  get('/api/v3/overview/status', {
+    dataSources: { available: true, sources: [{ name: 'rayna_tours', status: 'success', lastSyncedAt: '2026-10-19T04:30:00Z', lastRunAt: '2026-10-19T04:30:00Z', rows: 1200, durationMs: 5400, error: null }] },
+    queues: { available: true, queues: [{ channel: 'email', available: true, waiting: 3, active: 1, delayed: 0, completed: 500, failed: 0, paused: 0 }] },
+    failedSends: { available: true, rows: [] },
+  }),
+  get('/api/v3/overview/insights', {
+    range: { from: '2026-09-20', to: '2026-10-19', days: 30 },
+    totals: { available: true, sent: 1000, delivered: 950, opened: 400, clicked: 80, unsubscribed: 3 },
+    previous: { available: true, from: '2026-08-21', to: '2026-09-19', sent: 900, delivered: 860, opened: 350, clicked: 70, unsubscribed: 4 },
+    weeklyTrend: { available: true, weeks: [{ week: '2026-10-13', sent: 250, opened: 100, clicked: 20, openRate: 40, clickRate: 8 }] },
+    funnel: { available: true, channel: 'email', sent: 1000, opened: 400, clicked: 80, converted: 10 },
+    journeys: { available: true, rows: [{ id: 11, name: 'Welcome series', status: 'active', sent: 1000, opened: 400, clicked: 80, unsubscribed: 3, openRate: 40, clickRate: 8 }] },
+  }),
+  get('/api/v3/overview/messages', { page: 1, limit: 20, days: 30, channel: 'all', messages: { available: true, rows: [] }, total: 0 }),
+  get('/api/v3/overview/website', {
+    range: { from: '2026-10-06', to: '2026-10-19', days: 14 },
+    eventsPerDay: { available: true, days: [{ date: '2026-10-19', events: 42 }] },
+    topEvents: { available: true, events: [{ name: 'page_view', count: 42, uniqueUsers: 20 }] },
+    topPages: { available: true, pages: [{ url: 'https://www.raynatours.com/', count: 30 }] },
+    lastHour: { available: true, count: 4 },
+    utmLinks: { available: true, totals: { links: 5, clickedLinks: 2, clicks: 9, campaigns: 1, uniqueUsers: 6 }, campaigns: [] },
+  }),
+
   // ── Dashboard ──
   get('/api/v3/unified-contacts/sources-breakdown', ok({ from: null, to: null, total: 1250, sources: [{ source: 'chat', count: 700 }, { source: 'booking', count: 550 }] })),
   get('/api/v3/unified-contacts/stats', ok(unifiedStats)),

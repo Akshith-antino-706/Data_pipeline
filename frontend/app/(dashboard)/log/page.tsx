@@ -1,97 +1,175 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Mail, MessageCircle, Smartphone, Bell, RefreshCw, ChevronLeft, ChevronRight, CheckCircle2, MousePointerClick, XCircle, Clock, Send, AlertCircle, Eye, Filter, X } from 'lucide-react';
-import { getSendLog, getJourneys } from '@/lib/api';
+import { useState, useEffect, useCallback, type FormEvent, type KeyboardEvent } from 'react';
+import { Mail, MessageCircle, Smartphone, RefreshCw, ChevronLeft, ChevronRight, Eye, MousePointerClick, Search, X } from 'lucide-react';
+import { getSendLog, getJourneys, getOverviewMessages } from '@/lib/api';
+import type { OverviewMessage, OverviewMessagesParams } from '@/lib/api';
 import type { SendLogRow } from '@/types/api';
+import { Button, Chip, EmptyState, ErrorState, PageHeader, Skeleton, Table, Tabs } from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
+import styles from './log.module.css';
 
 interface LogNode { id: string; type?: string; data?: { label?: string } }
 interface LogJourney { id?: number | string; journey_id?: number | string; name?: string; nodes?: LogNode[] }
-interface StatusMeta { label: string; color: string; bg: string; icon: typeof Send }
 
-const CHANNELS = [
-  { key: 'all',       label: 'All' },
-  { key: 'email',     label: 'Email',     icon: Mail },
-  { key: 'sms',       label: 'SMS',       icon: Smartphone },
-  { key: 'whatsapp',  label: 'WhatsApp',  icon: MessageCircle },
-  { key: 'push',      label: 'Push',      icon: Bell },
+type ChannelKey = 'all' | 'email' | 'whatsapp' | 'sms';
+
+const CHANNEL_TABS: { key: ChannelKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'email', label: 'Email' },
+  { key: 'whatsapp', label: 'WhatsApp' },
+  { key: 'sms', label: 'SMS' },
 ];
 
 const SUB_FILTERS = [
-  { key: 'all',           label: 'All' },
-  { key: 'active',        label: 'Active' },
-  { key: 'unsubscribed',  label: 'Unsubscribed' },
+  { key: 'all', label: 'All' },
+  { key: 'active', label: 'Active' },
+  { key: 'unsubscribed', label: 'Unsubscribed' },
 ];
 
 const STATUS_FILTERS = [
-  { key: '',         label: 'All Status' },
-  { key: 'sent',     label: 'Sent' },
-  { key: 'opened',   label: 'Opened' },
-  { key: 'clicked',  label: 'Clicked' },
-  { key: 'failed',   label: 'Failed' },
-  { key: 'queued',   label: 'Queued' },
+  { key: '', label: 'All Status' },
+  { key: 'sent', label: 'Sent' },
+  { key: 'opened', label: 'Opened' },
+  { key: 'clicked', label: 'Clicked' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'queued', label: 'Queued' },
 ];
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
-const STATUS_META: Record<string, StatusMeta> = {
-  sent:     { label: 'Sent',      color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',  icon: Send },
-  queued:   { label: 'Queued',    color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', icon: Clock },
-  opened:   { label: 'Opened',    color: '#22c55e', bg: 'rgba(34,197,94,0.1)',  icon: Eye },
-  clicked:  { label: 'Clicked',   color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)', icon: MousePointerClick },
-  failed:   { label: 'Failed',    color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  icon: XCircle },
-  delivered:{ label: 'Delivered', color: '#06b6d4', bg: 'rgba(6,182,212,0.1)',  icon: CheckCircle2 },
-  read:     { label: 'Read',      color: '#22c55e', bg: 'rgba(34,197,94,0.1)',  icon: Eye },
+const STATUS_META: Record<string, { label: string; tone: ChipTone }> = {
+  sent: { label: 'Sent', tone: 'info' },
+  queued: { label: 'Queued', tone: 'warn' },
+  opened: { label: 'Opened', tone: 'ok' },
+  clicked: { label: 'Clicked', tone: 'gold' },
+  failed: { label: 'Failed', tone: 'bad' },
+  delivered: { label: 'Delivered', tone: 'ok' },
+  read: { label: 'Read', tone: 'ok' },
 };
 
-const fmt = (n: number | string | null | undefined) => n == null ? '—' : Number(n).toLocaleString();
+const fmt = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '—' : n.toLocaleString());
 
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
-function StatusPill({ status }: { status: string }) {
-  const m = STATUS_META[status] || { label: status, color: '#6b7280', bg: 'rgba(107,114,128,0.1)', icon: AlertCircle };
-  const Icon = m.icon;
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: m.bg, color: m.color, whiteSpace: 'nowrap' }}>
-      <Icon size={10} /> {m.label}
-    </span>
-  );
+function StatusPill({ status }: { status: string | null }) {
+  if (!status) return <span className={styles.muted}>—</span>;
+  const m = STATUS_META[status] ?? { label: status, tone: 'mute' as const };
+  return <Chip tone={m.tone} dot>{m.label}</Chip>;
 }
 
-const COLS = '2fr 2.5fr 2fr 100px 140px 130px 130px';
+function ChannelIcon({ channel }: { channel: string }) {
+  if (channel === 'email') return <Mail size={13} aria-hidden="true" />;
+  if (channel === 'whatsapp') return <MessageCircle size={13} aria-hidden="true" />;
+  if (channel === 'sms') return <Smartphone size={13} aria-hidden="true" />;
+  return null;
+}
 
-function SkeletonRow({ i }: { i: number }) {
+const CHANNEL_LABEL: Record<string, string> = { email: 'Email', whatsapp: 'WhatsApp', sms: 'SMS' };
+
+type Selected = { kind: 'email'; row: SendLogRow } | { kind: 'unified'; row: OverviewMessage };
+
+type UnifiedState =
+  | { state: 'ok'; rows: OverviewMessage[]; total: number | null; days: number | null }
+  | { state: 'unavailable' }
+  | { state: 'error'; message: string };
+
+function rowKeyHandler(open: () => void) {
+  return (e: KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  };
+}
+
+function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const fields: [string, string][] = selected.kind === 'email'
+    ? [
+      ['Channel', 'Email'],
+      ['ID', String(selected.row.id)],
+      ['Contact', selected.row.uc_name || selected.row.contact_name || '—'],
+      ['Email', selected.row.email || '—'],
+      ['Unsubscribed', selected.row.email_unsubscribed || '—'],
+      ['Subject', selected.row.subject || '—'],
+      ['Template', selected.row.template_label || '—'],
+      ['Status', selected.row.status || '—'],
+      ['Error', selected.row.error_message || '—'],
+      ['Journey', selected.row.journey_id != null ? `#${selected.row.journey_id}` : '—'],
+      ['Node', selected.row.node_id || '—'],
+      ['Day number', selected.row.day_number != null ? String(selected.row.day_number) : '—'],
+      ['Source', selected.row.source || '—'],
+      ['Provider', selected.row.provider || '—'],
+      ['External ID', selected.row.external_id || '—'],
+      ['Unified contact ID', selected.row.unified_id != null ? String(selected.row.unified_id) : '—'],
+      ['Created', fmtDate(selected.row.created_at)],
+      ['Sent', fmtDate(selected.row.sent_at)],
+      ['Opened', fmtDate(selected.row.opened_at)],
+      ['Clicked', fmtDate(selected.row.clicked_at)],
+      ['Duration', selected.row.duration_ms != null ? `${fmt(selected.row.duration_ms)} ms` : '—'],
+    ]
+    : [
+      ['Channel', CHANNEL_LABEL[selected.row.channel] ?? selected.row.channel],
+      ['ID', String(selected.row.id)],
+      ['Contact', selected.row.contactName || '—'],
+      ['Recipient', selected.row.recipient || '—'],
+      ['Message', selected.row.label || '—'],
+      ['Status', selected.row.status || '—'],
+      ['Error', selected.row.error || '—'],
+      ['Journey', selected.row.journeyId != null ? `#${selected.row.journeyId}` : '—'],
+      ['Node', selected.row.nodeId || '—'],
+      ['Time', fmtDate(selected.row.time)],
+      ['Opened', fmtDate(selected.row.openedAt)],
+      ['Clicked', fmtDate(selected.row.clickedAt)],
+    ];
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 0, padding: '14px 16px', borderBottom: '1px solid var(--border-color)', alignItems: 'center' }}>
-      {[80, 150, 120, 60, 70, 90, 100].map((w, j) => (
-        <div key={j}>
-          <div style={{ height: 12, width: w, borderRadius: 6, background: 'var(--bg-secondary)', animation: `shimmer 1.4s ease-in-out ${i * 0.06 + j * 0.03}s infinite` }} />
-          {j === 0 && <div style={{ height: 10, width: 50, borderRadius: 4, background: 'var(--bg-secondary)', marginTop: 6, animation: `shimmer 1.4s ease-in-out ${i * 0.06 + 0.15}s infinite` }} />}
+    <div className={styles.overlay} onClick={onClose}>
+      <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="Message details" onClick={e => e.stopPropagation()}>
+        <div className={styles.drawerHead}>
+          <h2>Message details</h2>
+          <Button variant="ghost" size="sm" aria-label="Close details" onClick={onClose}><X size={16} /></Button>
         </div>
-      ))}
+        <dl className={styles.fields}>
+          {fields.map(([k, v]) => (
+            <div key={k} className={styles.fieldRow}>
+              <dt>{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </aside>
     </div>
   );
 }
 
 export default function LogPage() {
-  const [channel, setChannel]           = useState('email');
-  const [subFilter, setSubFilter]       = useState('all');
+  const [channel, setChannel] = useState<ChannelKey>('email');
+  const [subFilter, setSubFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('');
-  const [search, setSearch]             = useState('');
-  const [searchInput, setSearchInput]   = useState('');
-  const [journeyId, setJourneyId]       = useState('');
-  const [nodeId, setNodeId]             = useState('');
-  const [page, setPage]                 = useState(1);
-  const [limit, setLimit]               = useState(20);
-  const [data, setData]                 = useState<{ rows: SendLogRow[]; total: number }>({ rows: [], total: 0 });
-  const [loading, setLoading]           = useState(true);
+  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [journeyId, setJourneyId] = useState('');
+  const [nodeId, setNodeId] = useState('');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [data, setData] = useState<{ rows: SendLogRow[]; total: number; estimated: boolean }>({ rows: [], total: 0, estimated: false });
+  const [unified, setUnified] = useState<UnifiedState>({ state: 'ok', rows: [], total: 0, days: null });
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Selected | null>(null);
 
-  // Journey + Node dropdowns
-  const [journeys, setJourneys]         = useState<LogJourney[]>([]);  // [{ id, name, nodes }]
-  const [journeyNodes, setJourneyNodes] = useState<LogNode[]>([]);  // nodes of selected journey
+  const [journeys, setJourneys] = useState<LogJourney[]>([]);
+  const [journeyNodes, setJourneyNodes] = useState<LogNode[]>([]);
+
+  const isEmail = channel === 'email';
 
   useEffect(() => {
     (getJourneys({ limit: 200 }) as Promise<{ data?: { data?: LogJourney[] } & LogJourney[] }>)
@@ -99,7 +177,6 @@ export default function LogPage() {
       .catch(() => {});
   }, []);
 
-  // When journey changes, populate node list from that journey's nodes array
   useEffect(() => {
     if (!journeyId) { setJourneyNodes([]); setNodeId(''); return; }
     const jny = journeys.find(j => String(j.journey_id || j.id) === String(journeyId));
@@ -108,33 +185,56 @@ export default function LogPage() {
     setNodeId('');
   }, [journeyId, journeys]);
 
-  const activeFilterCount = [statusFilter, search, journeyId, nodeId, subFilter !== 'all' ? subFilter : ''].filter(Boolean).length;
+  const activeFilterCount = (isEmail
+    ? [statusFilter, search, journeyId, nodeId, subFilter !== 'all' ? subFilter : '']
+    : [statusFilter, search, journeyId]).filter(Boolean).length;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // SMS + Push have no send-log source yet — keep them empty. Email, All and
-      // WhatsApp all hit the same endpoint; WhatsApp passes channel so the API
-      // reads whatsapp_send_log instead of email_send_log.
-      if (channel === 'sms' || channel === 'push') {
-        setData({ rows: [], total: 0 });
-        setLoading(false);
+      if (channel === 'email') {
+        // Email keeps the original send-log API with all its filters.
+        const params = {
+          page,
+          limit,
+          ...(search ? { email: search } : {}),
+          ...(statusFilter ? { status: statusFilter } : {}),
+          ...(journeyId ? { journeyId } : {}),
+          ...(nodeId ? { nodeId } : {}),
+          ...(subFilter !== 'all' ? { subscriptionStatus: subFilter } : {}),
+        };
+        try {
+          const res = await getSendLog(params);
+          const d = res?.data;
+          setData({ rows: d?.rows ?? [], total: typeof d?.total === 'number' ? d.total : 0, estimated: d?.estimated === true });
+        } catch {
+          setData({ rows: [], total: 0, estimated: false });
+        }
         return;
       }
-      const params = {
+      // All / WhatsApp / SMS use the unified overview messages endpoint.
+      const jid = Number(journeyId);
+      const params: OverviewMessagesParams = {
         page,
         limit,
-        ...(channel === 'whatsapp' ? { channel: 'whatsapp' }      : {}),
-        ...(search        ? { email: search }                     : {}),
-        ...(statusFilter  ? { status: statusFilter }              : {}),
-        ...(journeyId     ? { journeyId }                         : {}),
-        ...(nodeId        ? { nodeId }                            : {}),
-        ...(subFilter !== 'all' ? { subscriptionStatus: subFilter } : {}),
+        ...(channel !== 'all' ? { channel } : {}),
+        ...(statusFilter ? { status: statusFilter } : {}),
+        ...(search ? { q: search } : {}),
+        ...(journeyId && Number.isFinite(jid) ? { journeyId: jid } : {}),
       };
-      const res = await getSendLog(params);
-      setData(res?.data ?? { rows: [], total: 0 });
-    } catch {
-      setData({ rows: [], total: 0 });
+      try {
+        const res = await getOverviewMessages(params);
+        const m = res?.messages;
+        if (!m || !m.available) { setUnified({ state: 'unavailable' }); return; }
+        setUnified({
+          state: 'ok',
+          rows: Array.isArray(m.rows) ? m.rows : [],
+          total: typeof res.total === 'number' && Number.isFinite(res.total) ? res.total : null,
+          days: typeof res.days === 'number' && Number.isFinite(res.days) ? res.days : null,
+        });
+      } catch (e) {
+        setUnified({ state: 'error', message: e instanceof Error ? e.message : String(e) });
+      }
     } finally {
       setLoading(false);
     }
@@ -143,9 +243,13 @@ export default function LogPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [channel, subFilter, statusFilter, search, journeyId, nodeId, limit]);
 
-  const totalPages = Math.max(1, Math.ceil(data.total / limit));
+  // Totals: email always numeric; unified may be null (unknown).
+  const total: number | null = isEmail ? data.total : unified.state === 'ok' ? unified.total : null;
+  const rowCount = isEmail ? data.rows.length : unified.state === 'ok' ? unified.rows.length : 0;
+  const totalPages = total != null ? Math.max(1, Math.ceil(total / limit)) : null;
+  const lastPage = totalPages != null ? page >= totalPages : rowCount < limit;
 
-  function handleSearch(e: React.FormEvent<HTMLFormElement>) {
+  function handleSearch(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSearch(searchInput.trim());
   }
@@ -158,326 +262,227 @@ export default function LogPage() {
     setSubFilter('all');
   }
 
+  const closeDrawer = useCallback(() => setSelected(null), []);
+
+  let headerMeta: string;
+  if (loading) headerMeta = 'Loading…';
+  else if (isEmail) headerMeta = `${fmt(data.total)} records${data.estimated ? ' (estimated)' : ''}`;
+  else if (unified.state === 'ok' && unified.total != null) headerMeta = `${fmt(unified.total)} records`;
+  else headerMeta = 'Total unavailable';
+
+  const rangeText = total != null && total > 0
+    ? `${fmt(Math.min((page - 1) * limit + 1, total))}–${fmt(Math.min(page * limit, total))} of ${fmt(total)}`
+    : total == null && !isEmail ? 'Total unavailable' : '';
+
   return (
-    <div style={{ padding: 24, maxWidth: 1440, margin: '0 auto' }}>
-      <style>{`
-        @keyframes shimmer {
-          0%, 100% { opacity: 0.4; }
-          50%       { opacity: 0.9; }
+    <div className={styles.page}>
+      <PageHeader
+        title="Message log"
+        breadcrumbs={[{ label: 'Logs' }, { label: 'Message log' }]}
+        description={
+          <>
+            <span>{headerMeta}</span>
+            {!isEmail && unified.state === 'ok' && unified.days != null && <span className={styles.muted}> · last {unified.days} days</span>}
+          </>
         }
-      `}</style>
+        actions={
+          <Button size="sm" onClick={load} disabled={loading}>
+            <RefreshCw size={14} className={loading ? styles.spin : undefined} /> Refresh
+          </Button>
+        }
+      />
 
-      {/* ── Header ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>Send Log</h1>
-          <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: 14 }}>
-            {loading ? 'Loading…' : `${fmt(data.total)} records`}
-          </p>
-        </div>
+      <Tabs<ChannelKey>
+        label="Channel"
+        value={channel}
+        onChange={k => { setChannel(k); setSelected(null); }}
+        items={CHANNEL_TABS.map(t => ({ key: t.key, label: <span className={styles.tabLabel}><ChannelIcon channel={t.key} />{t.label}</span> }))}
+      />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {/* Channel tabs */}
-          <div style={{ display: 'flex', gap: 6 }}>
-            {CHANNELS.map(ch => {
-              const Icon = ch.icon;
-              const active = channel === ch.key;
-              return (
-                <button key={ch.key} onClick={() => setChannel(ch.key)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: active ? 'var(--text-primary)' : 'var(--bg-secondary)', color: active ? 'var(--bg-primary)' : 'var(--text-secondary)', transition: 'all 0.15s' }}>
-                  {Icon && <Icon size={13} />}{ch.label}
+      <div className={styles.filters}>
+        <div className={styles.filterRow}>
+          {isEmail && (
+            <div className={styles.seg} role="group" aria-label="Subscription">
+              {SUB_FILTERS.map(f => (
+                <button key={f.key} type="button" className={subFilter === f.key ? styles.segOn : styles.segBtn} aria-pressed={subFilter === f.key} onClick={() => setSubFilter(f.key)}>
+                  {f.label}
                 </button>
-              );
-            })}
-          </div>
-          <button onClick={load} disabled={loading}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)' }}>
-            <RefreshCw size={13} style={loading ? { animation: 'spin 1s linear infinite' } : {}} /> Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* ── Filter bar ── */}
-      <div style={{ background: 'var(--card)', border: '1px solid var(--border-color)', borderRadius: 14, padding: '14px 16px', marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {/* Row 1: subscription + status + clear */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          {/* Subscription */}
-          <div style={{ display: 'flex', background: 'var(--bg-secondary)', borderRadius: 10, padding: 3, gap: 2, border: '1px solid var(--border-color)' }}>
-            {SUB_FILTERS.map(f => (
-              <button key={f.key} onClick={() => setSubFilter(f.key)}
-                style={{ padding: '4px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', background: subFilter === f.key ? 'var(--bg-primary)' : 'transparent', color: subFilter === f.key ? 'var(--text-primary)' : 'var(--text-secondary)', boxShadow: subFilter === f.key ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', transition: 'all 0.15s' }}>
+              ))}
+            </div>
+          )}
+          <div className={styles.pills} role="group" aria-label="Status">
+            {STATUS_FILTERS.map(f => (
+              <button key={f.key} type="button" className={statusFilter === f.key ? styles.pillOn : styles.pill} aria-pressed={statusFilter === f.key} onClick={() => setStatusFilter(f.key)}>
                 {f.label}
               </button>
             ))}
           </div>
-
-          {/* Status pills */}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {STATUS_FILTERS.map(f => {
-              const active = statusFilter === f.key;
-              const meta = f.key ? STATUS_META[f.key] : null;
-              return (
-                <button key={f.key} onClick={() => setStatusFilter(f.key)}
-                  style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${active && meta ? meta.color : 'var(--border-color)'}`, background: active && meta ? meta.bg : active ? 'var(--bg-primary)' : 'transparent', color: active && meta ? meta.color : active ? 'var(--text-primary)' : 'var(--text-secondary)', transition: 'all 0.15s' }}>
-                  {f.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Clear all */}
           {activeFilterCount > 0 && (
-            <button onClick={clearAllFilters}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--red, #ef4444)', marginLeft: 'auto' }}>
-              <X size={11} /> Clear ({activeFilterCount})
+            <button type="button" className={styles.clear} onClick={clearAllFilters}>
+              <X size={12} /> Clear ({activeFilterCount})
             </button>
           )}
         </div>
 
-        {/* Row 2: email search + journey/node dropdowns */}
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* Email search */}
-          <form onSubmit={handleSearch} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div className={styles.filterRow}>
+          <form onSubmit={handleSearch} className={styles.searchForm}>
             <input
+              className={styles.input}
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              placeholder="Search by email…"
-              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, width: 200, outline: 'none', height: 32 }}
+              placeholder={isEmail ? 'Search by email…' : 'Search recipient or contact…'}
+              aria-label="Search"
             />
-            <button type="submit"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--brand-primary)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', height: 32, whiteSpace: 'nowrap' }}>
-              <Filter size={12} /> Search
-            </button>
+            <Button type="submit" size="sm" variant="primary"><Search size={13} /> Search</Button>
             {search && (
-              <button type="button" onClick={() => { setSearch(''); setSearchInput(''); }}
-                style={{ padding: '0 8px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--red, #ef4444)', fontSize: 13, fontWeight: 700, cursor: 'pointer', height: 32 }}>
-                ✕
-              </button>
+              <Button type="button" size="sm" variant="ghost" aria-label="Clear search" onClick={() => { setSearch(''); setSearchInput(''); }}>
+                <X size={13} />
+              </Button>
             )}
           </form>
 
-          {/* Divider */}
-          <div style={{ width: 1, height: 24, background: 'var(--border-color)', flexShrink: 0 }} />
+          <label className={styles.selectWrap}>
+            <span className={styles.selectLabel}>Journey</span>
+            <select className={styles.select} value={journeyId} onChange={e => setJourneyId(e.target.value)}>
+              <option value="">All Journeys</option>
+              {journeys.map(j => (
+                <option key={j.journey_id || j.id} value={j.journey_id || j.id}>
+                  #{j.journey_id || j.id} · {j.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
-          {/* Journey labeled select */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Journey</span>
-            <div style={{ position: 'relative' }}>
-              <select
-                value={journeyId}
-                onChange={e => setJourneyId(e.target.value)}
-                style={{
-                  padding: '0 32px 0 10px', height: 32, borderRadius: 8,
-                  border: `1.5px solid ${journeyId ? 'var(--brand-primary)' : 'var(--border-color)'}`,
-                  background: journeyId ? 'color-mix(in srgb, var(--brand-primary) 8%, var(--bg-secondary))' : 'var(--bg-secondary)',
-                  color: journeyId ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  fontSize: 13, fontWeight: journeyId ? 600 : 400,
-                  outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none',
-                  maxWidth: 200,
-                }}
-              >
-                <option value="">All Journeys</option>
-                {journeys.map(j => (
-                  <option key={j.journey_id || j.id} value={j.journey_id || j.id}>
-                    #{j.journey_id || j.id} · {j.name}
-                  </option>
+          {isEmail && journeyId && (
+            <label className={styles.selectWrap}>
+              <span className={styles.selectLabel}>Node</span>
+              <select className={styles.select} value={nodeId} onChange={e => setNodeId(e.target.value)}>
+                <option value="">All Nodes</option>
+                {journeyNodes.length === 0 && <option disabled>No action nodes</option>}
+                {journeyNodes.map(n => (
+                  <option key={n.id} value={n.id}>{n.data?.label || n.id}</option>
                 ))}
               </select>
-              <svg style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-tertiary)' }} width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              {journeyId && (
-                <button onClick={() => setJourneyId('')}
-                  style={{ position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 13, lineHeight: 1, padding: 0 }}>
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Node labeled select — only when journey selected */}
-          {journeyId && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Node</span>
-              <div style={{ position: 'relative' }}>
-                <select
-                  value={nodeId}
-                  onChange={e => setNodeId(e.target.value)}
-                  style={{
-                    padding: '0 32px 0 10px', height: 32, borderRadius: 8,
-                    border: `1.5px solid ${nodeId ? 'var(--brand-primary)' : 'var(--border-color)'}`,
-                    background: nodeId ? 'color-mix(in srgb, var(--brand-primary) 8%, var(--bg-secondary))' : 'var(--bg-secondary)',
-                    color: nodeId ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    fontSize: 13, fontWeight: nodeId ? 600 : 400,
-                    outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none',
-                    maxWidth: 200,
-                  }}
-                >
-                  <option value="">All Nodes</option>
-                  {journeyNodes.length === 0 && <option disabled>No action nodes</option>}
-                  {journeyNodes.map(n => (
-                    <option key={n.id} value={n.id}>
-                      {n.data?.label || n.id}
-                    </option>
-                  ))}
-                </select>
-                <svg style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-tertiary)' }} width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                {nodeId && (
-                  <button onClick={() => setNodeId('')}
-                    style={{ position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 13, lineHeight: 1, padding: 0 }}>
-                    ×
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Active email chip */}
-          {search && (
-            <span style={chipStyle}>
-              {search} <button onClick={() => { setSearch(''); setSearchInput(''); }} style={chipX}>×</button>
-            </span>
+            </label>
           )}
         </div>
-      </div>
-
-      {/* ── Table ── */}
-      <div style={{ background: 'var(--card)', border: '1px solid var(--border-color)', borderRadius: 14, overflow: 'hidden' }}>
-        {/* Header */}
-        <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 0, background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', padding: '10px 16px' }}>
-          {['Contact', 'Email', 'Subject / Template', 'Status', 'Journey / Node', 'Sent At', 'Opened / Clicked'].map(h => (
-            <div key={h} style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{h}</div>
-          ))}
-        </div>
-
-        {/* Skeleton */}
-        {loading ? (
-          Array.from({ length: limit > 10 ? 10 : limit }).map((_, i) => <SkeletonRow key={i} i={i} />)
-        ) : data.rows.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 14 }}>
-            No send logs found
-          </div>
-        ) : (
-          data.rows.map((row, i) => {
-            const isUnsubscribed = row.email_unsubscribed === 'Yes';
-            return (
-              <div key={row.id}
-                style={{ display: 'grid', gridTemplateColumns: COLS, gap: 0, padding: '11px 16px', borderBottom: i < data.rows.length - 1 ? '1px solid var(--border-color)' : 'none', alignItems: 'center', transition: 'background 0.1s' }}
-                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                {/* Contact */}
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {row.uc_name || row.contact_name || '—'}
-                  </div>
-                  {isUnsubscribed && (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#ef4444', background: 'rgba(239,68,68,0.08)', padding: '1px 6px', borderRadius: 4, marginTop: 2, display: 'inline-block' }}>
-                      Unsubscribed
-                    </span>
-                  )}
-                </div>
-
-                {/* Email */}
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {row.email || '—'}
-                </div>
-
-                {/* Subject / Template */}
-                <div>
-                  {row.subject && (
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {row.subject}
-                    </div>
-                  )}
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {row.template_label || '—'}
-                  </div>
-                </div>
-
-                {/* Status */}
-                <div><StatusPill status={row.status} /></div>
-
-                {/* Journey / Node */}
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {row.journey_id ? (
-                    <a href={`/journeys?id=${row.journey_id}`}
-                      style={{ color: 'var(--brand-primary)', textDecoration: 'none', fontWeight: 600, fontSize: 12 }}
-                      onClick={e => e.stopPropagation()}>
-                      #{row.journey_id}
-                    </a>
-                  ) : row.source ? (
-                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{row.source}</span>
-                  ) : '—'}
-                  {row.node_id && (
-                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)', background: 'var(--bg-secondary)', padding: '1px 6px', borderRadius: 4, display: 'inline-block', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {row.node_id}
-                    </span>
-                  )}
-                </div>
-
-                {/* Sent At */}
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{fmtDate(row.sent_at || row.created_at)}</div>
-
-                {/* Opened / Clicked */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {row.opened_at ? (
-                    <span style={{ fontSize: 11, color: '#22c55e', display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <Eye size={10} /> {fmtDate(row.opened_at)}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Not opened</span>
-                  )}
-                  {row.clicked_at && (
-                    <span style={{ fontSize: 11, color: '#8b5cf6', display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <MousePointerClick size={10} /> {fmtDate(row.clicked_at)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })
+        {!isEmail && (
+          <p className={styles.note}>Node and subscription filters are available on the Email tab only.</p>
         )}
       </div>
 
-      {/* ── Pagination ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, flexWrap: 'wrap', gap: 10 }}>
-        {/* Per-page selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Rows per page:</span>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {PAGE_SIZE_OPTIONS.map(n => (
-              <button key={n} onClick={() => setLimit(n)}
-                style={{ padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${limit === n ? 'var(--brand-primary)' : 'var(--border-color)'}`, background: limit === n ? 'color-mix(in srgb, var(--brand-primary) 12%, transparent)' : 'transparent', color: limit === n ? 'var(--brand-primary)' : 'var(--text-secondary)', transition: 'all 0.15s' }}>
-                {n}
-              </button>
-            ))}
-          </div>
-          <span style={{ fontSize: 13, color: 'var(--text-tertiary)', marginLeft: 4 }}>
-            {data.total > 0 && `${fmt(Math.min((page - 1) * limit + 1, data.total))}–${fmt(Math.min(page * limit, data.total))} of ${fmt(data.total)}`}
-          </span>
+      {loading ? (
+        <div className={styles.skeletons} aria-hidden="true">
+          {Array.from({ length: Math.min(limit, 10) }).map((_, i) => <Skeleton key={i} height={36} />)}
         </div>
+      ) : isEmail ? (
+        data.rows.length === 0 ? (
+          <EmptyState title="No send logs found" />
+        ) : (
+          <Table label="Email send log">
+            <thead>
+              <tr>
+                <th>Contact</th><th>Email</th><th>Subject / Template</th><th>Status</th><th>Journey / Node</th><th>Sent At</th><th>Opened / Clicked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map(row => {
+                const open = () => setSelected({ kind: 'email', row });
+                return (
+                  <tr key={row.id} className={styles.clickRow} tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
+                    <td>
+                      <div className={styles.strong}>{row.uc_name || row.contact_name || '—'}</div>
+                      {row.email_unsubscribed === 'Yes' && <Chip tone="bad">Unsubscribed</Chip>}
+                    </td>
+                    <td className={styles.ellipsis}>{row.email || '—'}</td>
+                    <td>
+                      {row.subject && <div className={styles.strong}>{row.subject}</div>}
+                      <div className={styles.muted}>{row.template_label || '—'}</div>
+                    </td>
+                    <td><StatusPill status={row.status} /></td>
+                    <td>
+                      {row.journey_id ? (
+                        <a href={`/journeys?id=${row.journey_id}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journey_id}</a>
+                      ) : row.source ? <span className={styles.muted}>{row.source}</span> : '—'}
+                      {row.node_id && <div className={styles.mono}>{row.node_id}</div>}
+                    </td>
+                    <td className={styles.nowrap}>{fmtDate(row.sent_at || row.created_at)}</td>
+                    <td>
+                      {row.opened_at
+                        ? <div className={styles.okText}><Eye size={11} /> {fmtDate(row.opened_at)}</div>
+                        : <div className={styles.muted}>Not opened</div>}
+                      {row.clicked_at && <div className={styles.goldText}><MousePointerClick size={11} /> {fmtDate(row.clicked_at)}</div>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        )
+      ) : unified.state === 'error' ? (
+        <ErrorState title="Couldn't load messages" description="The message log request failed." details={unified.message} action={<Button size="sm" onClick={load}>Retry</Button>} />
+      ) : unified.state === 'unavailable' ? (
+        <EmptyState title="Message log unavailable" description="The message log source is not available right now." />
+      ) : unified.rows.length === 0 ? (
+        <EmptyState title="No messages found" />
+      ) : (
+        <Table label="Message log">
+          <thead>
+            <tr>
+              <th>Channel</th><th>Contact</th><th>Recipient</th><th>Message</th><th>Status</th><th>Journey / Node</th><th>Time</th><th>Opened / Clicked</th>
+            </tr>
+          </thead>
+          <tbody>
+            {unified.rows.map(row => {
+              const open = () => setSelected({ kind: 'unified', row });
+              return (
+                <tr key={`${row.channel}-${row.id}`} className={styles.clickRow} tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
+                  <td><span className={styles.tabLabel}><ChannelIcon channel={row.channel} />{CHANNEL_LABEL[row.channel] ?? row.channel}</span></td>
+                  <td className={styles.strong}>{row.contactName || '—'}</td>
+                  <td className={styles.ellipsis}>{row.recipient || '—'}</td>
+                  <td className={styles.ellipsis}>
+                    {row.label || '—'}
+                    {row.error && <div className={styles.badText}>{row.error}</div>}
+                  </td>
+                  <td><StatusPill status={row.status} /></td>
+                  <td>
+                    {row.journeyId != null
+                      ? <a href={`/journeys?id=${row.journeyId}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journeyId}</a>
+                      : '—'}
+                    {row.nodeId && <div className={styles.mono}>{row.nodeId}</div>}
+                  </td>
+                  <td className={styles.nowrap}>{fmtDate(row.time)}</td>
+                  <td>
+                    {row.openedAt ? <div className={styles.okText}><Eye size={11} /> {fmtDate(row.openedAt)}</div> : <div className={styles.muted}>—</div>}
+                    {row.clickedAt && <div className={styles.goldText}><MousePointerClick size={11} /> {fmtDate(row.clickedAt)}</div>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+      )}
 
-        {/* Page nav */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <button onClick={() => setPage(1)} disabled={page === 1}
-            style={pageBtn(page === 1)}>«</button>
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-            style={pageBtn(page === 1)}><ChevronLeft size={14} /> Prev</button>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)', padding: '4px 10px' }}>
-            {page} / {totalPages}
-          </span>
-          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-            style={pageBtn(page === totalPages)}>Next <ChevronRight size={14} /></button>
-          <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
-            style={pageBtn(page === totalPages)}>»</button>
+      <div className={styles.pager}>
+        <div className={styles.pagerSizes}>
+          <span className={styles.muted}>Rows per page:</span>
+          {PAGE_SIZE_OPTIONS.map(n => (
+            <button key={n} type="button" className={limit === n ? styles.pillOn : styles.pill} aria-pressed={limit === n} onClick={() => setLimit(n)}>{n}</button>
+          ))}
+          <span className={styles.muted}>{rangeText}</span>
+        </div>
+        <div className={styles.pagerNav}>
+          <Button size="sm" onClick={() => setPage(1)} disabled={page === 1}>«</Button>
+          <Button size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}><ChevronLeft size={14} /> Prev</Button>
+          <span className={styles.muted}>{totalPages != null ? `${page} / ${totalPages}` : `Page ${page}`}</span>
+          <Button size="sm" onClick={() => setPage(p => (totalPages != null ? Math.min(totalPages, p + 1) : p + 1))} disabled={lastPage}>Next <ChevronRight size={14} /></Button>
+          {totalPages != null && (
+            <Button size="sm" onClick={() => setPage(totalPages)} disabled={lastPage}>»</Button>
+          )}
         </div>
       </div>
+
+      {selected && <DetailDrawer selected={selected} onClose={closeDrawer} />}
     </div>
   );
-}
-
-const chipStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' };
-const chipX: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 13, padding: 0, lineHeight: 1, display: 'flex', alignItems: 'center' };
-
-function pageBtn(disabled: boolean): React.CSSProperties {
-  return { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1 };
 }

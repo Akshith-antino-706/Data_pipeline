@@ -26,6 +26,14 @@ type SendLog = Awaited<ReturnType<typeof api.getSendLog>>;
 const sendLog = (rows: Record<string, unknown>[], total: number) =>
   vi.mocked(api.getSendLog).mockResolvedValue({ data: { rows, total } } as unknown as SendLog);
 const lastParams = () => vi.mocked(api.getSendLog).mock.calls.at(-1)?.[0];
+const lastUnified = () => vi.mocked(api.getOverviewMessages).mock.calls.at(-1)?.[0];
+type Unified = Awaited<ReturnType<typeof api.getOverviewMessages>>;
+const unified = (rows: Record<string, unknown>[], total: number | null) =>
+  vi.mocked(api.getOverviewMessages).mockResolvedValue({ page: 1, limit: 20, days: 30, channel: 'all', total, messages: { available: true, rows } } as unknown as Unified);
+const MSGS = [
+  { channel: 'whatsapp', id: 11, recipient: '+971500000001', contactName: 'Bob', label: 'promo_template', status: 'delivered', error: null, journeyId: 9, nodeId: 'w1', time: '2026-10-03T08:00:00Z', openedAt: null, clickedAt: null },
+  { channel: 'sms', id: 12, recipient: '+971500000002', contactName: null, label: null, status: 'failed', error: 'Invalid number', journeyId: null, nodeId: null, time: null, openedAt: null, clickedAt: null },
+];
 
 const ROWS = [
   { id: 1, uc_name: 'Alice', email: 'alice@x.com', subject: 'Hello', template_label: 'Welcome', status: 'opened', journey_id: 7, node_id: 'n1', sent_at: '2026-10-01T08:00:00Z', opened_at: '2026-10-01T09:00:00Z', clicked_at: '2026-10-01T09:05:00Z', email_unsubscribed: 'Yes' },
@@ -73,16 +81,16 @@ describe('Send Log page', () => {
     expect(screen.getByRole('button', { name: /Refresh/ }).hasAttribute('disabled')).toBe(true);
   });
 
-  it('WhatsApp tab passes channel; SMS tab shows empty without calling the API', async () => {
+  it('WhatsApp tab uses the unified endpoint with channel; SMS tab now calls it too', async () => {
     sendLog(ROWS, 2);
     render(<LogPage />);
     await screen.findByText('Alice');
-    fireEvent.click(screen.getByRole('button', { name: 'WhatsApp' }));
-    await waitFor(() => expect(lastParams()).toEqual({ page: 1, limit: 20, channel: 'whatsapp' }));
-    const calls = vi.mocked(api.getSendLog).mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: 'SMS' }));
-    await screen.findByText('No send logs found');
-    expect(vi.mocked(api.getSendLog).mock.calls.length).toBe(calls);
+    const sendCalls = vi.mocked(api.getSendLog).mock.calls.length;
+    fireEvent.click(screen.getByRole('tab', { name: 'WhatsApp' }));
+    await waitFor(() => expect(lastUnified()).toEqual({ page: 1, limit: 20, channel: 'whatsapp' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'SMS' }));
+    await waitFor(() => expect(lastUnified()).toEqual({ page: 1, limit: 20, channel: 'sms' }));
+    expect(vi.mocked(api.getSendLog).mock.calls.length).toBe(sendCalls);
   });
 
   it('status, subscription and email search filters reach the API; Clear resets them', async () => {
@@ -127,5 +135,69 @@ describe('Send Log page', () => {
     expect(screen.queryByRole('option', { name: 'n2' })).toBeNull();
     fireEvent.change(screen.getByDisplayValue('All Nodes'), { target: { value: 'n1' } });
     await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '5', nodeId: 'n1' }));
+  });
+
+  it('All tab lists unified rows and passes status, search and journey filters', async () => {
+    unified(MSGS, 2);
+    render(<LogPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    await screen.findByText('Bob');
+    expect(lastUnified()).toEqual({ page: 1, limit: 20 });
+    expect(screen.getByText('Invalid number')).toBeTruthy();
+    expect(screen.getByText('1–2 of 2')).toBeTruthy();
+    expect(screen.getByText('2 records')).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Subscription' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Failed' }));
+    await waitFor(() => expect(lastUnified()).toEqual({ page: 1, limit: 20, status: 'failed' }));
+    fireEvent.change(screen.getByPlaceholderText('Search recipient or contact…'), { target: { value: ' bob ' } });
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    await waitFor(() => expect(lastUnified()).toMatchObject({ q: 'bob' }));
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('null total shows "Total unavailable" and pages by row count', async () => {
+    unified(MSGS, null);
+    render(<LogPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    await screen.findByText('Bob');
+    expect(screen.getAllByText('Total unavailable').length).toBeGreaterThan(0);
+    expect(screen.getByText('Page 1')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Next/ }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: '»' })).toBeNull();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('unavailable section and rejected request show states, not fake data', async () => {
+    vi.mocked(api.getOverviewMessages).mockResolvedValue({ page: 1, limit: 20, days: 30, channel: 'all', total: null, messages: { available: false, reason: 'unavailable' } } as Unified);
+    render(<LogPage />);
+    fireEvent.click(screen.getByRole('tab', { name: 'SMS' }));
+    await screen.findByText('Message log unavailable');
+    expect(screen.getAllByText('Total unavailable').length).toBeGreaterThan(0);
+    vi.mocked(api.getOverviewMessages).mockRejectedValue(new Error('HTTP 500'));
+    fireEvent.click(screen.getByRole('tab', { name: 'WhatsApp' }));
+    await screen.findByText("Couldn't load messages");
+    expect(screen.getByText('HTTP 500')).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('opens a detail drawer with all fields for email and unified rows', async () => {
+    sendLog(ROWS, 2);
+    unified(MSGS, 2);
+    render(<LogPage />);
+    fireEvent.click(await screen.findByText('Alice'));
+    const dlg = await screen.findByRole('dialog', { name: 'Message details' });
+    expect(dlg.textContent).toContain('Welcome');
+    expect(dlg.textContent).toContain('Unified contact ID');
+    expect(dlg.textContent).toContain('n1');
+    fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    fireEvent.click(await screen.findByText('+971500000002'));
+    const d2 = await screen.findByRole('dialog', { name: 'Message details' });
+    expect(d2.textContent).toContain('Invalid number');
+    expect(d2.textContent).toContain('SMS');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 });

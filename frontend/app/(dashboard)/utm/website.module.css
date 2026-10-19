@@ -1,0 +1,28 @@
+.wrap { display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; min-width: 0; }
+.toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.picker { width: auto; min-width: 160px; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.kpi { display: flex; flex-direction: column; gap: 4px; padding: 16px 20px; min-width: 0; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); }
+.kpiValue { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; color: var(--ink); overflow-wrap: anywhere; }
+.hint { font-size: 12px; color: var(--ink3); }
+.chart { height: 240px; width: 100%; min-width: 0; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; }
+.url { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strong { font-weight: 600; }
+.unavailable { margin: 0; padding: 16px 0; font-size: 13px; color: var(--ink3); }
+.header { margin-bottom: 8px; }
+.sectionTitle { font-size: 16px; font-weight: 700; margin: 8px 0 12px; color: var(--ink); }
+@media (max-width: 960px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .kpis { gap: 8px; }
+  .kpi { padding: 12px; }
+  .kpiValue { font-size: 22px; }
+  .chart { height: 200px; }
+  .url { max-width: 180px; }
+}

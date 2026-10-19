@@ -9,6 +9,9 @@ import { getEmailUtmLog, getEmailUtmSummary } from '@/lib/api';
 import type { LucideIcon } from 'lucide-react';
 import type { Variants } from 'framer-motion';
 import type { QueryParams } from '@/types/api';
+import { Button, PageHeader } from '@/components/ui';
+import WebsiteOverview from './WebsiteOverview';
+import styles from './website.module.css';
 
 type NumStr = string;
 interface UtmLink { utm_id: string | number; channel: string; campaign_name?: string; template_name?: string; campaign_status?: string; segment_label?: string; target_count?: number | string; full_url: string; clicks?: number; conversions?: number; revenue?: NumStr }
@@ -224,21 +227,21 @@ export default function UTMTracking() {
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
-      {/* Header */}
-      <motion.div variants={fadeInUp} className="page-header">
-        <div>
-          <h2>UTM Campaign Tracker</h2>
-          <div className="page-header-sub">Track every campaign link across all 28 segments</div>
-        </div>
-        <div className="page-actions">
-          <button className="btn btn-secondary" onClick={loadAll}><RefreshCw size={14} /></button>
-          <button className="btn btn-primary" onClick={handleGenerateAll} disabled={generating}>
+      <PageHeader
+        title="Website & links"
+        breadcrumbs={[{ label: 'Insights' }, { label: 'Website & links' }]}
+        description="What people do on raynatours.com after our messages, and every tracked link we create."
+        actions={<>
+          <Button icon aria-label="Refresh link data" onClick={loadAll}><RefreshCw size={14} /></Button>
+          <Button variant="primary" onClick={handleGenerateAll} disabled={generating}>
             <Zap size={14} /> {generating ? 'Generating...' : 'Generate All Campaign UTMs'}
-          </button>
-        </div>
-      </motion.div>
+          </Button>
+        </>}
+      />
 
-      {/* KPI Strip — shows email UTM stats when on emailvisits tab, campaign stats otherwise */}
+      <WebsiteOverview />
+
+      <h2 className={styles.sectionTitle}>Link tools</h2>
       <motion.div variants={fadeInUp} className="grid-5 mb-24">
         {(activeTab === 'emailvisits' ? [
           { label: 'Email Visits',     value: emailVisitsTotal,                             color: 'var(--brand-primary)', icon: Mail },

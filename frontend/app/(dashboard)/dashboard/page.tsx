@@ -10,6 +10,8 @@ import { motion } from 'framer-motion';
 import type { Variants } from 'framer-motion';
 import type { QueryParams } from '@/types/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
+import HomeOverview from './HomeOverview';
+import homeStyles from './home.module.css';
 
 // Recharts is only needed for the Segment Distribution chart — load it on the client after
 // the page shell so it stays out of the initial bundle.
@@ -213,23 +215,26 @@ export default function Dashboard() {
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
-      {/* Header */}
       <motion.div variants={fadeInUp}>
-        <div className="page-header">
-          <div>
-            <h2>Dashboard</h2>
-            <div className="page-header-sub">Rayna Tours — {businessType === 'All' ? 'All' : businessType} Overview</div>
-          </div>
-          <div className="page-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <HomeOverview
+          extraActions={
             <button
-              className="btn btn-secondary"
+              className="ui-btn ui-btn--icon"
               onClick={loadData}
               disabled={treeLoading || activityLoading}
+              aria-label="Refresh dashboard"
+              title="Refresh"
             >
               <RefreshCw size={14} />
             </button>
-          </div>
-        </div>
+          }
+        />
+      </motion.div>
+
+      {/* Audience overview — the original dashboard, kept below the new Home sections. */}
+      <motion.div variants={fadeInUp}>
+        <h2 className={homeStyles.sectionTitle}>Audience overview</h2>
+        <p className={homeStyles.sectionSub}>Rayna Tours — {businessType === 'All' ? 'All' : businessType} Overview</p>
       </motion.div>
 
       {/* KPIs */}
@@ -333,15 +338,15 @@ export default function Dashboard() {
               style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '0 4px' }}
             >
               <div style={{ textAlign: 'center', padding: 16 }}>
-                <div style={{ fontSize: 28, fontWeight: 700, color: '#22c55e' }}>{fmt(totalEntered)}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ok)' }}>{fmt(totalEntered)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Entered Segments</div>
               </div>
               <div style={{ textAlign: 'center', padding: 16 }}>
-                <div style={{ fontSize: 28, fontWeight: 700, color: '#8b5cf6' }}>{fmt(totalConverted)}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--purple)' }}>{fmt(totalConverted)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Converted</div>
               </div>
               <div style={{ textAlign: 'center', padding: 16 }}>
-                <div style={{ fontSize: 28, fontWeight: 700, color: '#3b82f6' }}>{fmt(totalReached)}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--info)' }}>{fmt(totalReached)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Messages Sent</div>
               </div>
             </motion.div>
@@ -365,14 +370,14 @@ export default function Dashboard() {
                 type="date" value={sourceFrom} max={sourceTo || dubaiToday}
                 onChange={e => setSourceFrom(e.target.value)}
                 title="Range start — contacts added on/after this day (Dubai time). Future dates disabled."
-                style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--card, #fff)', color: 'var(--text-primary)' }}
+                style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--surface)', color: 'var(--text-primary)' }}
               />
               <span style={{ fontSize: 12.5, color: 'var(--text-tertiary)' }}>to</span>
               <input
                 type="date" value={sourceTo} min={sourceFrom || undefined} max={dubaiToday}
                 onChange={e => setSourceTo(e.target.value)}
                 title="Range end — contacts added on/before this day (Dubai time). Future dates disabled."
-                style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--card, #fff)', color: 'var(--text-primary)' }}
+                style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--surface)', color: 'var(--text-primary)' }}
               />
               {(sourceFrom || sourceTo) && <button onClick={() => { setSourceFrom(''); setSourceTo(''); }} className="btn btn-sm btn-ghost" style={{ flexShrink: 0 }}>Clear</button>}
             </div>
@@ -387,7 +392,7 @@ export default function Dashboard() {
           ) : (
             <>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 16, padding: '0 4px' }}>
-                <span style={{ fontSize: 28, fontWeight: 700, color: '#3b82f6' }}>{fmt(sourcesData.total)}</span>
+                <span style={{ fontSize: 28, fontWeight: 700, color: 'var(--info)' }}>{fmt(sourcesData.total)}</span>
                 <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
                   {sourceFrom && sourceTo ? `contacts added ${sourceFrom} → ${sourceTo}` : sourceFrom ? `contacts added on/after ${sourceFrom}` : sourceTo ? `contacts added on/before ${sourceTo}` : 'total contacts'} · {sourcesData.sources.length} source{sourcesData.sources.length !== 1 ? 's' : ''}
                 </span>
@@ -405,7 +410,7 @@ export default function Dashboard() {
                       <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ width: 170, fontSize: 12.5, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={s.source}>{s.source}</div>
                         <div style={{ flex: 1, background: 'var(--bg-secondary, #f1f5f9)', borderRadius: 6, height: 22, overflow: 'hidden' }}>
-                          <div style={{ width: `${w}%`, height: '100%', background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)', borderRadius: 6 }} />
+                          <div style={{ width: `${w}%`, height: '100%', background: 'var(--gold)', borderRadius: 6 }} />
                         </div>
                         <div style={{ width: 90, textAlign: 'right', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(s.count)}</div>
                       </div>
@@ -425,7 +430,7 @@ export default function Dashboard() {
             <h3>Revenue by Segment</h3>
             <button
               onClick={() => setShowFilter(v => !v)}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: (filterActive || showFilter) ? '#0f172a' : 'transparent', color: (filterActive || showFilter) ? '#fff' : 'inherit' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: (filterActive || showFilter) ? 'var(--ink)' : 'transparent', color: (filterActive || showFilter) ? 'var(--surface)' : 'inherit' }}
             >
               <Filter size={15} /> Filter{activeCount > 0 ? ` (${activeCount})` : ''}
             </button>
@@ -433,11 +438,11 @@ export default function Dashboard() {
 
           {/* Inline expanding filter panel — affects ONLY this section */}
           {showFilter && (() => {
-            const inp = { padding: '6px 8px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 6, fontSize: 13, width: '100%', background: '#fff' };
+            const inp = { padding: '6px 8px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 6, fontSize: 13, width: '100%', background: 'var(--surface)' };
             const rowStyle = { display: 'grid', gridTemplateColumns: '110px 1fr', alignItems: 'center', gap: 12, marginBottom: 12 };
             const lbl = { fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #475569)' };
-            const presetBtn = { padding: '5px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: '#fff' };
-            const presetOn = { background: '#0f172a', color: '#fff', borderColor: '#0f172a' };
+            const presetBtn = { padding: '5px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 6, fontSize: 12, cursor: 'pointer', background: 'var(--surface)' };
+            const presetOn = { background: 'var(--ink)', color: 'var(--surface)', borderColor: 'var(--ink)' };
             const isMonth = (off: number) => { const n = new Date(); const s = new Date(n.getFullYear(), n.getMonth() + off, 1); return pickedMonth === `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}`; };
             const isYear = travelFrom === `${new Date().getFullYear()}-01-01` && travelTo === `${new Date().getFullYear()}-12-31`;
             return (
@@ -486,8 +491,8 @@ export default function Dashboard() {
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-                    <button onClick={clearFilters} style={{ padding: '6px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: '#fff', color: '#ef4444' }}>Clear all</button>
-                    <button onClick={() => setShowFilter(false)} style={{ padding: '6px 16px', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: '#0f172a', color: '#fff' }}>Done</button>
+                    <button onClick={clearFilters} style={{ padding: '6px 12px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: 'var(--surface)', color: 'var(--bad)' }}>Clear all</button>
+                    <button onClick={() => setShowFilter(false)} style={{ padding: '6px 16px', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer', background: 'var(--ink)', color: 'var(--surface)' }}>Done</button>
                   </div>
                 </div>
               </div>
@@ -496,10 +501,10 @@ export default function Dashboard() {
 
           {filterActive && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 16px', fontSize: 12, color: 'var(--text-secondary, #475569)', background: 'var(--surface-2, #f8fafc)', borderBottom: '1px solid var(--border, #eef2f7)' }}>
-              {product !== 'all' && <span style={{ background: '#eef2f7', borderRadius: 12, padding: '2px 10px' }}>{PRODUCT_OPTIONS.find(o => o.value === product)?.label}</span>}
-              {(travelFrom || travelTo) && <span style={{ background: '#eef2f7', borderRadius: 12, padding: '2px 10px' }}>Travel{travelFrom ? ` ${travelFrom}` : ''} → {travelTo || '…'}</span>}
-              {(bookingFrom || bookingTo) && <span style={{ background: '#eef2f7', borderRadius: 12, padding: '2px 10px' }}>Booked{bookingFrom ? ` ${bookingFrom}` : ''} → {bookingTo || '…'}</span>}
-              <button onClick={clearFilters} style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}>Clear</button>
+              {product !== 'all' && <span style={{ background: 'var(--sunken)', borderRadius: 12, padding: '2px 10px' }}>{PRODUCT_OPTIONS.find(o => o.value === product)?.label}</span>}
+              {(travelFrom || travelTo) && <span style={{ background: 'var(--sunken)', borderRadius: 12, padding: '2px 10px' }}>Travel{travelFrom ? ` ${travelFrom}` : ''} → {travelTo || '…'}</span>}
+              {(bookingFrom || bookingTo) && <span style={{ background: 'var(--sunken)', borderRadius: 12, padding: '2px 10px' }}>Booked{bookingFrom ? ` ${bookingFrom}` : ''} → {bookingTo || '…'}</span>}
+              <button onClick={clearFilters} style={{ border: 'none', background: 'transparent', color: 'var(--bad)', cursor: 'pointer', fontSize: 12 }}>Clear</button>
             </div>
           )}
           {revTableLoading ? (
@@ -540,7 +545,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(s.count)}</td>
-                        <td style={{ textAlign: 'right', color: '#f59e0b' }}>{fmtAED(s.revenue)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--gold-ink)' }}>{fmtAED(s.revenue)}</td>
                       </tr>
                     ))}
                   </tbody>

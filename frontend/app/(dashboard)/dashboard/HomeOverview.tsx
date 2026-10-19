@@ -1,0 +1,194 @@
+'use client';
+
+import type { ReactNode } from 'react';
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
+import { GitBranch, Send } from 'lucide-react';
+import { getOverviewHome, getOverviewStatus } from '@/lib/api';
+import type { OverviewHome, OverviewSection } from '@/lib/api';
+import { Card, ErrorState, Skeleton, Button, buttonClass } from '@/components/ui';
+import { useAuth } from '@/context/AuthContext';
+import type { HomeTrendDatum } from './HomeTrendChart';
+import s from './home.module.css';
+
+const HomeTrendChart = dynamic(() => import('./HomeTrendChart'), { ssr: false, loading: () => <Skeleton height={240} /> });
+
+const STALE_MS = 2 * 60 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+
+/** Narrows a section to its data, or null when the API marked it unavailable (or omitted it). */
+function avail<T>(sec: OverviewSection<T> | undefined): T | null {
+  return sec && sec.available === true ? sec : null;
+}
+const num = (n: number | null | undefined): number => (typeof n === 'number' && Number.isFinite(n) ? n : 0);
+const fmt = (n: number | null | undefined): string => num(n).toLocaleString();
+
+function Unavailable() {
+  return <p className={s.note}>Not available right now</p>;
+}
+
+function greetingFor(hour: number): string {
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+interface KpiProps { label: string; value: ReactNode; help: string; loading: boolean; available: boolean }
+function Kpi({ label, value, help, loading, available }: KpiProps) {
+  return (
+    <Card>
+      <p className={s.kpiLabel}>{label}</p>
+      {loading ? <Skeleton width={90} height={30} /> : available ? (
+        <>
+          <div className={s.kpiValue}>{value}</div>
+          <div className={s.kpiHelp}>{help}</div>
+        </>
+      ) : <Unavailable />}
+    </Card>
+  );
+}
+
+export interface HomeOverviewProps {
+  /** Rendered in the hero's action row (the existing refresh button). */
+  extraActions?: ReactNode;
+}
+
+export default function HomeOverview({ extraActions }: HomeOverviewProps) {
+  const { user } = useAuth();
+  const firstName = (user?.name ?? '').trim().split(/\s+/)[0] ?? '';
+  const hello = greetingFor(new Date().getHours());
+
+  const homeQ = useQuery({
+    queryKey: ['dashboard', 'home'],
+    queryFn: getOverviewHome,
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
+  });
+  const statusQ = useQuery({
+    queryKey: ['dashboard', 'status'],
+    queryFn: getOverviewStatus,
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
+  });
+
+  const home: Partial<OverviewHome> = homeQ.data ?? {};
+  const loading = homeQ.isPending;
+
+  const sentToday = avail(home.sentToday);
+  const delivery = avail(home.delivery7d);
+  const conversions = avail(home.conversions30d);
+  const running = avail(home.runningJourneys);
+  const sending = avail(home.sendingToday);
+  const series = avail(home.series14d);
+
+  // Failed sends in the last 24h — derived from real status rows only; hidden otherwise.
+  const failed = avail(statusQ.data?.failedSends);
+  const now = Date.now();
+  const failed24h = failed
+    ? (failed.rows ?? []).filter(r => r.time && now - new Date(r.time).getTime() <= DAY_MS).length
+    : 0;
+
+  const chartData: HomeTrendDatum[] = (series?.days ?? []).map(d => ({
+    name: shortDate(d.date), email: num(d.email), whatsapp: num(d.whatsapp), sms: num(d.sms),
+  }));
+  const chartTotal = chartData.reduce((t, d) => t + d.email + d.whatsapp + d.sms, 0);
+
+  const sentHelp = sentToday
+    ? `Email ${fmt(sentToday.email)} · WhatsApp ${fmt(sentToday.whatsapp)} · SMS ${fmt(sentToday.sms)}`
+    : '';
+  const deliveredPct = delivery ? `${num(delivery.deliveredPct).toFixed(1)}%` : '';
+
+  return (
+    <div>
+      <div className={s.hero}>
+        <div>
+          <h1 className={s.greeting}>{firstName ? `${hello}, ${firstName}` : hello}</h1>
+          <p className={s.sub}>Here is what is happening with your messages today.</p>
+        </div>
+        <div className={`${s.actions} page-actions`}>
+          {extraActions}
+          <Link href="/journeys" className={buttonClass('secondary')}><GitBranch size={16} aria-hidden="true" />Create journey</Link>
+          <Link href="/test-sends" className={buttonClass('primary')}><Send size={16} aria-hidden="true" />Send a message</Link>
+        </div>
+      </div>
+
+      {homeQ.isError ? (
+        <div style={{ marginBottom: 16 }}>
+          <ErrorState
+            title="Couldn't load today's overview"
+            description="The rest of the dashboard below still works."
+            details={homeQ.error instanceof Error ? homeQ.error.message : undefined}
+            action={<Button size="sm" onClick={() => { void homeQ.refetch(); }}>Try again</Button>}
+          />
+        </div>
+      ) : (
+        <>
+          {failed24h > 0 && (
+            <Card className={s.attention} aria-label="Needs your attention">
+              <span className={s.attentionText}>
+                <span className={s.badChip}>{fmt(failed24h)}</span>
+                failed send{failed24h === 1 ? '' : 's'} in the last 24 hours
+              </span>
+              <Link href="/log" className={buttonClass('secondary', 'sm')}>View log</Link>
+            </Card>
+          )}
+
+          <div className={s.kpis}>
+            <Kpi label="Sent today" loading={loading} available={!!sentToday} value={fmt(sentToday?.total)} help={sentHelp} />
+            <Kpi label="Delivered (7 days)" loading={loading} available={!!delivery} value={deliveredPct}
+              help={delivery ? `${fmt(delivery.delivered)} of ${fmt(delivery.sent)} sent` : ''} />
+            <Kpi label="Conversions (30 days)" loading={loading} available={!!conversions} value={fmt(conversions?.count)} help="Bookings attributed to messages" />
+          </div>
+
+          <div className={s.twoCol}>
+            <Card title="Running journeys" actions={<Link href="/journeys" className={s.headLink}>All journeys</Link>}>
+              {loading ? <Skeleton height={60} /> : !running ? <Unavailable /> : running.journeys.length === 0 ? (
+                <p className={s.note}>No journeys are running.</p>
+              ) : (
+                <ul className={s.list}>
+                  {running.journeys.map(j => (
+                    <li key={j.id} className={s.listItem}>
+                      <span style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                        <span className={s.dot} aria-hidden="true" />
+                        <Link href={`/journeys?id=${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
+                      </span>
+                      <span className={s.listMeta}>{fmt(j.joined)} joined</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+
+            <Card title="Sending today" actions={sending ? <span className={s.muted}>{fmt(sending.total)} due</span> : undefined}>
+              {loading ? <Skeleton height={60} /> : !sending ? <Unavailable /> : sending.journeys.length === 0 ? (
+                <p className={s.note}>Nothing is scheduled to send today.</p>
+              ) : (
+                <ul className={s.list}>
+                  {sending.journeys.map(j => (
+                    <li key={j.id} className={s.listItem}>
+                      <Link href={`/journeys?id=${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
+                      <span className={s.listMeta}>{fmt(j.due)} due</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          </div>
+
+          <Card title="Messages sent, last 14 days" className={s.chartCard}
+            actions={series ? <span className={s.muted}>{fmt(chartTotal)} total</span> : undefined}>
+            {loading ? <Skeleton height={240} /> : !series ? <Unavailable /> : chartData.length === 0 ? (
+              <p className={s.note}>No messages sent in the last 14 days.</p>
+            ) : <HomeTrendChart data={chartData} />}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, act, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
@@ -21,6 +21,32 @@ type Mapping = Awaited<ReturnType<typeof api.getMappingStats>>;
 type Sync = Awaited<ReturnType<typeof api.getRaynaSyncStatus>>;
 const mapping = (d: unknown): Mapping => d as unknown as Mapping;
 const sync = (d: unknown): Sync => d as unknown as Sync;
+type Status = Awaited<ReturnType<typeof api.getOverviewStatus>>;
+
+const STATUS_OK: Status = {
+  dataSources: { available: true, sources: [
+    { name: 'rayna_tours', status: 'success', lastSyncedAt: '2026-10-19T06:00:00Z', lastRunAt: '2026-10-19T06:00:00Z', rows: 4321, durationMs: 3400, error: null },
+    { name: 'gtm_events', status: 'error', lastSyncedAt: null, lastRunAt: '2026-10-19T05:00:00Z', rows: 0, durationMs: 0, error: 'bigquery quota exceeded' },
+  ] },
+  queues: { available: true, queues: [
+    { channel: 'email', available: true, waiting: 12, active: 2, delayed: 0, completed: 900, failed: 0, paused: 0 },
+    { channel: 'whatsapp', available: true, waiting: 0, active: 0, delayed: 0, completed: 50, failed: 3, paused: 0 },
+    { channel: 'sms', available: false },
+  ] },
+  failedSends: { available: true, rows: [
+    { channel: 'whatsapp', id: 77, recipient: '+971500000000', reason: 'template rejected', time: '2026-10-19T07:00:00Z', journeyId: 5 },
+  ] },
+};
+const STATUS_HEALTHY: Status = {
+  dataSources: { available: true, sources: [
+    { name: 'rayna_tours', status: 'success', lastSyncedAt: '2026-10-19T06:00:00Z', lastRunAt: null, rows: 10, durationMs: 100, error: null },
+  ] },
+  queues: { available: true, queues: [{ channel: 'email', available: true, waiting: 0, active: 0, delayed: 0, completed: 1, failed: 0, paused: 0 }] },
+  failedSends: { available: true, rows: [] },
+};
+const UNAVAILABLE = { available: false, reason: 'unavailable' } as const;
+const STATUS_DOWN: Status = { dataSources: UNAVAILABLE, queues: UNAVAILABLE, failedSends: UNAVAILABLE };
+
 
 const TYPICAL = {
   overall: { totalMapped: 500, customersWithBookings: 400, matchRate: 12.5 },
@@ -125,5 +151,86 @@ describe('Data Pipeline page', () => {
     renderPage();
     await waitFor(() => expect(api.getMappingStats).toHaveBeenCalledWith({}));
     await waitFor(() => expect(screen.getAllByText('Unified Contacts (All)')).toHaveLength(2));
+  });
+
+  describe('Status center', () => {
+    it('renders data sources, queue cards and failed sends from real status data', async () => {
+      vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_OK);
+      renderPage();
+      await screen.findByText('rayna_tours');
+      expect(screen.getByTestId('overall-health').textContent).toContain('3 issues need attention');
+      expect(screen.getByText('Healthy')).toBeTruthy();
+      expect(screen.getByText('Error')).toBeTruthy();
+      expect(screen.getByText('bigquery quota exceeded')).toBeTruthy();
+      expect(bodyText()).toContain('4,321');
+      expect(bodyText()).toContain('3.4s');
+      const email = screen.getByTestId('queue-email');
+      expect(within(email).getByText('Processing')).toBeTruthy();
+      expect(email.textContent).toContain('12waiting');
+      expect(within(screen.getByTestId('queue-whatsapp')).getByText('3 failed')).toBeTruthy();
+      expect(within(screen.getByTestId('queue-sms')).getByText('Not available right now')).toBeTruthy();
+      expect(screen.getByText('template rejected')).toBeTruthy();
+      expect(screen.getByText('+971500000000')).toBeTruthy();
+      const logLinks = Array.from(document.querySelectorAll('a[href="/log"]'));
+      expect(logLinks.length).toBeGreaterThanOrEqual(2);
+      expect(bodyText()).not.toContain('NaN');
+      expect(bodyText()).not.toContain('undefined');
+    });
+
+    it('shows a healthy chip when every section reports and nothing failed', async () => {
+      vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_HEALTHY);
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId('overall-health').textContent).toBe('All systems healthy'));
+      expect(screen.getByText('No failed sends in the last 24 hours')).toBeTruthy();
+      expect(within(screen.getByTestId('queue-email')).getByText('Idle')).toBeTruthy();
+    });
+
+    it('shows "Not available right now" for unavailable sections and never fakes values', async () => {
+      vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_DOWN);
+      renderPage();
+      await waitFor(() => expect(screen.getAllByText('Not available right now')).toHaveLength(3));
+      expect(screen.getByTestId('overall-health').textContent).toBe('Status unknown');
+      expect(screen.queryByTestId('queue-email')).toBeNull();
+      expect(bodyText()).toContain('Failed sends (24h) --');
+      expect(bodyText()).not.toContain('NaN');
+    });
+
+    it("shows the \"Can't reach the server\" banner when the status request fails", async () => {
+      vi.mocked(api.getOverviewStatus).mockRejectedValue(new TypeError('Failed to fetch'));
+      renderPage();
+      await screen.findByText(/Can't reach the server/);
+      expect(screen.getAllByText('Not available right now')).toHaveLength(3);
+      expect(bodyText()).not.toContain('NaN');
+    });
+
+    it('polls every 30s, clears the banner on recovery and stops on unmount', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        vi.mocked(api.getOverviewStatus).mockRejectedValueOnce(new Error('down')).mockResolvedValue(STATUS_OK);
+        const view = renderPage();
+        await screen.findByText(/Can't reach the server/);
+        const calls = vi.mocked(api.getOverviewStatus).mock.calls.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+        expect(vi.mocked(api.getOverviewStatus).mock.calls.length).toBe(calls + 1);
+        await waitFor(() => expect(screen.queryByText(/Can't reach the server/)).toBeNull());
+        expect(screen.getByText('rayna_tours')).toBeTruthy();
+        view.unmount();
+        const after = vi.mocked(api.getOverviewStatus).mock.calls.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(vi.mocked(api.getOverviewStatus).mock.calls.length).toBe(after);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('is view-only: renders no sync trigger buttons and never calls sync endpoints', async () => {
+      vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_OK);
+      renderPage();
+      await screen.findByText('rayna_tours');
+      expect(screen.queryAllByRole('button')).toHaveLength(0);
+      expect(api.triggerRaynaSync).not.toHaveBeenCalled();
+      expect(api.triggerRaynaSyncEndpoint).not.toHaveBeenCalled();
+      expect(api.refreshBookingMapping).not.toHaveBeenCalled();
+    });
   });
 });

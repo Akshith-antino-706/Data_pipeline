@@ -17,12 +17,15 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import type React from 'react';
 import {
-  BarChart3, RefreshCw, ChevronRight, ChevronDown, Download, Loader2, Info, Search, X, Calendar, Eye, Sparkles,
+  RefreshCw, ChevronRight, ChevronDown, Download, Loader2, Info, Search, X, Calendar, Eye, Sparkles,
 } from 'lucide-react';
 import {
   getJourneyAnalyticsTable, getJourneyAnalyticsNodes, refreshJourneyAnalytics, regenerateJourneyQaReports,
 } from '@/lib/api';
+import { PageHeader } from '@/components/ui';
 import EmailQaReportModal from '../EmailQaReportModal';
+import InsightsOverview from './InsightsOverview';
+import styles from './analytics.module.css';
 
 interface AnalyticsRow {
   [key: string]: string | number | null | undefined;
@@ -254,26 +257,34 @@ export default function JourneyAnalyticsPage() {
   ));
 
   return (
-    <div style={{ padding: 28 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-        <BarChart3 size={22} color="#8b5cf6" />
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>Journey Analytics</h1>
+    <div className={styles.page}>
+      <PageHeader
+        title="Performance"
+        breadcrumbs={[{ label: 'Insights' }, { label: 'Performance' }]}
+        description="How every journey performed in the chosen period. Metrics marked Email come from email sends only."
+      />
+
+      <InsightsOverview />
+
+      {/* Journey analytics table (cumulative rollup) */}
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>Journey analytics</h2>
+        <span className={styles.metaLine}>All time · node breakdown</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16, fontSize: 12, color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
+      <div className={styles.metaLine}>
         <span title="Cumulative rollup, recomputed every 30 min by a background job">
           <Info size={12} style={{ verticalAlign: -2, marginRight: 4 }} />
           Snapshot updated {timeAgo(meta?.last_run_at)}{meta?.journeys_run ? ` · ${meta.journeys_run} journeys` : ''}
         </span>
-        <span>👤 Human = engagement ≥ {rows[0]?.bot_window_sec ?? 15}s after send · 🤖 = likely scanner · <span style={{ color: '#22c55e' }}>Landed</span> = reached the website</span>
+        <span>👤 Human = engagement ≥ {rows[0]?.bot_window_sec ?? 15}s after send · 🤖 = likely scanner · <span style={{ color: 'var(--ok)' }}>Landed</span> = reached the website</span>
       </div>
 
-      {/* Filter toolbar — single line */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'nowrap', overflowX: 'auto' }}>
+      {/* Filter toolbar */}
+      <div className={styles.toolbar}>
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flex: '0 0 auto' }}>
           <Search size={14} style={{ position: 'absolute', left: 10, color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search journey or #id…"
-            style={{ ...ctrl, paddingLeft: 30, width: 220 }} />
+            style={{ ...ctrl, paddingLeft: 30, width: 220, maxWidth: '100%' }} />
           {search && <button onClick={() => setSearch('')} style={{ position: 'absolute', right: 6, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}><X size={14} /></button>}
         </div>
 
@@ -294,14 +305,14 @@ export default function JourneyAnalyticsPage() {
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flex: '0 0 auto' }}
           title="Pick a date to scope each journey's expanded nodes to what fired that day">
           <Calendar size={14} style={{ position: 'absolute', left: 10, color: 'var(--text-tertiary)', pointerEvents: 'none' }} />
-          <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
+          <input type="date" value={dateFilter} aria-label="Node breakdown date" onChange={e => setDateFilter(e.target.value)}
             style={{ ...ctrl, paddingLeft: 30, width: 170 }} />
           {dateFilter && <button onClick={() => setDateFilter('')} style={{ position: 'absolute', right: 6, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}><X size={14} /></button>}
         </div>
 
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)', flex: '0 0 auto' }}>{visible.length} of {rows.length}</span>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flex: '0 0 auto' }}>
+        <div className={styles.toolbarActions}>
           <button onClick={regenReports} disabled={regen.loading} title="Re-run the AI QA report for every journey template now (also runs daily at 3:30 AM)" style={btn}>
             {regen.loading ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />} {regen.loading ? 'Generating…' : 'Regenerate reports'}
           </button>
@@ -311,13 +322,13 @@ export default function JourneyAnalyticsPage() {
       </div>
 
       {dateFilter && (
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
           <Info size={12} style={{ verticalAlign: -2, marginRight: 4 }} />
           Date mode: expanding a journey shows only nodes that sent on {dateFilter}, with every metric scoped to that day's send cohort. (Booked is journey-level, not node-attributable, so it shows —.)
         </div>
       )}
 
-      {error && <div style={{ padding: 14, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', marginBottom: 16 }}>{error}</div>}
+      {error && <div style={{ padding: 14, borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}>{error}</div>}
 
       {loading ? (
         <div>{[...Array<undefined>(8)].map((_, i) => <div key={i} className="skeleton" style={{ height: 52, borderRadius: 8, marginBottom: 8 }} />)}</div>

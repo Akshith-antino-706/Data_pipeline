@@ -6,6 +6,7 @@ import type { Variants } from 'framer-motion';
 import { getRaynaSyncStatus, getMappingStats, triggerRaynaSync, triggerRaynaSyncEndpoint, refreshBookingMapping } from '@/lib/api';
 import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Info } from 'lucide-react';
 import { useBusinessType } from '@/context/BusinessTypeContext';
+import StatusCenter from './StatusCenter';
 
 type SourceKey = 'tours' | 'hotels' | 'visas' | 'flights' | 'packages' | 'others';
 interface SyncTable { table_name?: string; last_synced_at?: string }
@@ -305,9 +306,14 @@ export default function DataPipeline() {
         <div>
           <h2 style={{ margin: 0, fontSize: 24 }}>Data Pipeline</h2>
           <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: 14 }}>
-            Rayna API sync, MySQL sync, and booking-customer mapping
+            Status center, Rayna API sync, MySQL sync, and booking-customer mapping
           </p>
         </div>
+      </motion.div>
+
+      {/* Status center (view-only, polls every 30s) */}
+      <motion.div variants={fadeInUp}>
+        <StatusCenter />
       </motion.div>
 
       {/* KPI Row */}

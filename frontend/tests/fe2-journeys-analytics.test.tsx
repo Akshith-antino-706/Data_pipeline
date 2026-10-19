@@ -178,3 +178,113 @@ describe('Journey Analytics page', () => {
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 });
+
+const INSIGHTS: api.OverviewInsights = {
+  range: { from: '2026-09-20', to: '2026-10-19', days: 30 },
+  totals: { available: true, sent: 1200, delivered: 1100, opened: 440, clicked: 66, unsubscribed: 3 },
+  previous: { available: true, from: '2026-08-21', to: '2026-09-19', sent: 1000, delivered: 1000, opened: 0, clicked: 66, unsubscribed: 6 },
+  weeklyTrend: { available: true, weeks: [
+    { week: '2026-09-21', sent: 300, opened: 120, clicked: 15, openRate: 40, clickRate: 5 },
+    { week: '2026-09-28', sent: 400, opened: 140, clicked: 20, openRate: 35, clickRate: 5 },
+  ] },
+  funnel: { available: true, channel: 'email', sent: 1000, opened: 400, clicked: 60, converted: 6 },
+  journeys: { available: true, rows: [
+    { id: 41, name: 'Visa Reminder', status: 'active', sent: 500, opened: 200, clicked: 25, unsubscribed: 1, openRate: 40, clickRate: 5 },
+  ] },
+};
+const UNAVAILABLE = { available: false, reason: 'unavailable' } as const;
+
+describe('Performance overview', () => {
+  it('requests the last 30 days by default and renders KPIs with real vs-previous changes', async () => {
+    vi.mocked(api.getOverviewInsights).mockResolvedValue(INSIGHTS);
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('1,200');
+    const [from, to] = vi.mocked(api.getOverviewInsights).mock.calls[0];
+    expect(typeof from).toBe('string');
+    expect((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000).toBe(29);
+    expect(bodyText()).toContain('▲ 20% vs previous period'); // sent 1200 vs 1000
+    expect(bodyText()).toContain('▲ 10% vs previous period'); // delivered 1100 vs 1000
+    expect(bodyText()).toContain('None in previous period'); // opened prev 0
+    expect(bodyText()).toContain('No change vs previous period'); // clicked 66 vs 66
+    expect(bodyText()).toContain('▼ 50% vs previous period'); // unsub 3 vs 6
+    expect(bodyText()).toContain('Compared with');
+    expect(bodyText()).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it('labels email-only sections and renders funnel and per-journey rows', async () => {
+    vi.mocked(api.getOverviewInsights).mockResolvedValue(INSIGHTS);
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Visa Reminder');
+    expect(screen.getAllByText('Email').length).toBeGreaterThanOrEqual(4); // Clicked KPI, funnel, trend, by journey
+    expect(screen.getByText('From sent to booked')).toBeTruthy();
+    expect(bodyText()).toContain('40% of sent'); // opened 400/1000
+    expect(bodyText()).toContain('10% of clicked'); // booked 6/60
+    expect(screen.getByText('Open and click rate by week')).toBeTruthy();
+    expect(screen.getByRole('table', { name: 'Per-journey performance' })).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it('switching preset and custom range re-fetches with new dates', async () => {
+    vi.mocked(api.getOverviewInsights).mockResolvedValue(INSIGHTS);
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('1,200');
+    fireEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    await waitFor(() => {
+      const [f, t] = vi.mocked(api.getOverviewInsights).mock.lastCall ?? [];
+      expect((Date.parse(`${t}T00:00:00Z`) - Date.parse(`${f}T00:00:00Z`)) / 86_400_000).toBe(6);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    fireEvent.change(screen.getByLabelText('Period from'), { target: { value: '2026-01-01' } });
+    fireEvent.change(screen.getByLabelText('Period to'), { target: { value: '2026-01-31' } });
+    await waitFor(() => expect(api.getOverviewInsights).toHaveBeenLastCalledWith('2026-01-01', '2026-01-31'));
+    const calls = vi.mocked(api.getOverviewInsights).mock.calls.length;
+    fireEvent.change(screen.getByLabelText('Period from'), { target: { value: '2026-02-15' } });
+    expect(screen.getByText(/Pick a valid from and to date/)).toBeTruthy();
+    expect(vi.mocked(api.getOverviewInsights).mock.calls.length).toBe(calls);
+  });
+
+  it('shows "Not available right now" for unavailable sections without numbers', async () => {
+    vi.mocked(api.getOverviewInsights).mockResolvedValue({
+      range: INSIGHTS.range, totals: UNAVAILABLE, previous: UNAVAILABLE, weeklyTrend: UNAVAILABLE, funnel: UNAVAILABLE, journeys: UNAVAILABLE,
+    });
+    render(<JourneyAnalyticsPage />);
+    await waitFor(() => expect(screen.getAllByText('Not available right now').length).toBe(4));
+    expect(bodyText()).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it('shows "Previous period not available" when only previous is missing', async () => {
+    vi.mocked(api.getOverviewInsights).mockResolvedValue({ ...INSIGHTS, previous: UNAVAILABLE });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('1,200');
+    expect(screen.getAllByText('Previous period not available').length).toBe(5);
+    expect(bodyText()).not.toContain('vs previous period');
+  });
+
+  it('handles zero sends without NaN', async () => {
+    const zero = { sent: 0, delivered: 0, opened: 0, clicked: 0, unsubscribed: 0 };
+    vi.mocked(api.getOverviewInsights).mockResolvedValue({
+      range: INSIGHTS.range,
+      totals: { available: true, ...zero },
+      previous: { available: true, from: '2026-08-21', to: '2026-09-19', ...zero },
+      weeklyTrend: { available: true, weeks: [] },
+      funnel: { available: true, channel: 'email', sent: 0, opened: 0, clicked: 0, converted: 0 },
+      journeys: { available: true, rows: [] },
+    });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Nothing was sent in this period.');
+    expect(screen.getByText('No journey emails were sent in this period.')).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it('shows an error with retry when the insights API fails, and keeps the journey table', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getOverviewInsights).mockRejectedValueOnce(new Error('HTTP 502'));
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText("Couldn't load performance data");
+    expect(screen.getByText('Welcome Series')).toBeTruthy();
+    vi.mocked(api.getOverviewInsights).mockResolvedValue(INSIGHTS);
+    fireEvent.click(screen.getByText('Try again'));
+    await screen.findByText('1,200');
+    expect(screen.queryByText("Couldn't load performance data")).toBeNull();
+  });
+});

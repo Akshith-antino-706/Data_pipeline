@@ -49,6 +49,20 @@ describe('UTM page', () => {
     expect(screen.getByText('/dubai/tours')).toBeTruthy();
     expect(screen.getByText('not a url %%%')).toBeTruthy();
     expect(screen.getByText('d@x.com')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Website & links' })).toBeTruthy();
+  });
+
+  it('link builder rejects an invalid URL with an error toast and does not call the API', async () => {
+    vi.mocked(api.getUTMSegments).mockResolvedValue([{ segment_name: 'Upcoming trip', utm_count: '0', campaign_count: '0', customer_count: 5 }]);
+    render(<UtmPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /UTM Builder/i }));
+    const input = screen.getByDisplayValue('https://www.raynatours.com/activities');
+    fireEvent.change(input, { target: { value: 'not a url' } });
+    fireEvent.change(screen.getByDisplayValue('Select segment...'), { target: { value: 'Upcoming trip' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. Spring_Sale_Email'), { target: { value: 'spring' } });
+    fireEvent.click(screen.getByRole('button', { name: /Generate UTM/i }));
+    await screen.findByText(/Please enter a valid landing page URL/);
+    expect(api.buildUTM).not.toHaveBeenCalled();
   });
 
   it('survives API errors and null payloads', async () => {
@@ -56,8 +70,10 @@ describe('UTM page', () => {
     vi.mocked(api.getEmailUtmSummary).mockResolvedValue(null);
     vi.mocked(api.getUTMAnalytics).mockRejectedValue(new TypeError('Failed to fetch'));
     vi.mocked(api.getUTMSegments).mockResolvedValue(null);
+    vi.mocked(api.getOverviewWebsite).mockRejectedValue(new Error('HTTP 502'));
     render(<UtmPage />);
     await waitFor(() => expect(api.getEmailUtmLog).toHaveBeenCalled());
+    await screen.findByText("Couldn't load website activity");
     expect(bodyText()).not.toContain('NaN');
   });
 });
