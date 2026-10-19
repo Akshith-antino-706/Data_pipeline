@@ -182,12 +182,22 @@ const HOME_SECTION_FNS = {
   },
 
   sendingToday: async () => {
-    const { rows } = await hq(`SELECT je.journey_id, jf.name, COUNT(*) AS due
-      FROM journey_entries je JOIN journey_flows jf ON jf.journey_id = je.journey_id
-      WHERE je.status = 'active' AND je.next_fire_at >= ${DUBAI_TODAY} AND je.next_fire_at < ${DUBAI_TOMORROW}
-      GROUP BY je.journey_id, jf.name ORDER BY due DESC LIMIT 10`);
+    // Active entries whose next send is due before the end of today (Dubai), including overdue
+    // ones still waiting. Segment journeys use journey_entries; GTM/giveaway journeys use
+    // gtm_journey_entries, where next_fire_at NULL means "fire as soon as possible".
+    const { rows } = await hq(`WITH due AS (
+        SELECT je.journey_id FROM journey_entries je
+        WHERE je.status = 'active' AND je.next_fire_at < ${DUBAI_TOMORROW}
+        UNION ALL
+        SELECT g.journey_id FROM gtm_journey_entries g
+        WHERE g.status = 'active' AND (g.next_fire_at IS NULL OR g.next_fire_at < ${DUBAI_TOMORROW})
+      )
+      SELECT d.journey_id, jf.name, COUNT(*) AS due, SUM(COUNT(*)) OVER () AS all_due
+      FROM due d JOIN journey_flows jf ON jf.journey_id = d.journey_id
+      WHERE jf.status = 'active'
+      GROUP BY d.journey_id, jf.name ORDER BY due DESC LIMIT 10`);
     const journeys = rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), due: num(r.due) }));
-    return { journeys, total: journeys.reduce((a, j) => a + j.due, 0) };
+    return { journeys, total: rows.length ? num(rows[0].all_due) : 0 };
   },
 
   series14d: async () => {

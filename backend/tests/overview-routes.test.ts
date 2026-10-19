@@ -383,3 +383,19 @@ describe('read-only SQL', () => {
     for (const s of sqls) expect(s.trimStart()).toMatch(/^(SELECT|WITH)\b/i);
   });
 });
+
+describe('GET /home/sendingToday', () => {
+  it('counts GTM/giveaway entries and overdue ones, and returns the overall total', async () => {
+    mockQuery.mockImplementation((sql: string) => Promise.resolve({
+      rows: String(sql).includes('gtm_journey_entries')
+        ? [{ journey_id: '31', name: 'Winner Giveway', due: '40', all_due: '55' }, { journey_id: '7', name: 'Welcome', due: '15', all_due: '55' }]
+        : [],
+    }));
+    const { status, body } = await get('/home/sendingToday');
+    expect(status).toBe(200);
+    expect(body).toEqual({ available: true, total: 55, journeys: [{ id: 31, name: 'Winner Giveway', due: 40 }, { id: 7, name: 'Welcome', due: 15 }] });
+    const sql = sqlCalls().find(s => s.includes('gtm_journey_entries')) ?? '';
+    expect(sql).toMatch(/next_fire_at IS NULL/);
+    expect(sql).toMatch(/^\s*WITH/);
+  });
+});
