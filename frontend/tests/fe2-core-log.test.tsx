@@ -46,7 +46,7 @@ describe('Send Log page', () => {
     window.history.replaceState(null, '', '/log?channel=all&status=failed');
     try {
       render(<LogPage />);
-      await screen.findByText('Invalid number');
+      await screen.findByText('Phone number is not valid');
       expect(lastUnified()).toMatchObject({ status: 'failed', page: 1 });
       expect(lastUnified()?.channel).toBeUndefined();
       expect(screen.getByRole('button', { name: 'Failed' }).getAttribute('aria-pressed')).toBe('true');
@@ -155,7 +155,7 @@ describe('Send Log page', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
     await screen.findByText('Bob');
     expect(lastUnified()).toEqual({ page: 1, limit: 20 });
-    expect(screen.getByText('Invalid number')).toBeTruthy();
+    expect(screen.getByText('Phone number is not valid')).toBeTruthy();
     expect(screen.getByText('1–2 of 2')).toBeTruthy();
     expect(screen.getByText('2 records')).toBeTruthy();
     expect(screen.queryByRole('group', { name: 'Subscription' })).toBeNull();

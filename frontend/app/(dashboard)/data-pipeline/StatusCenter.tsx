@@ -8,6 +8,7 @@ import type { OverviewStatus, OverviewQueue, OverviewQueueChannel } from '@/lib/
 import { Card, StatusChip, Table } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import styles from './StatusCenter.module.css';
+import { friendlyError } from '@/lib/friendlyError';
 
 export const STATUS_POLL_MS = 30_000;
 
@@ -218,7 +219,7 @@ export default function StatusCenter() {
                   <td className={styles.muted}>{fmtDate(r.time)}</td>
                   <td>{CHANNEL_LABELS[r.channel as OverviewQueueChannel] ?? r.channel}</td>
                   <td className={styles.mono}>{r.recipient ?? '--'}</td>
-                  <td className={styles.errText}>{r.reason ?? '--'}</td>
+                  <td className={styles.errText} title={r.reason ?? undefined}>{friendlyError(r.reason)?.reason ?? '--'}</td>
                   <td>{r.journeyId != null ? <Link href="/log">#{r.journeyId}</Link> : '--'}</td>
                 </tr>
               ))}

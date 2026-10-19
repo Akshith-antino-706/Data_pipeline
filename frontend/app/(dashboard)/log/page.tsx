@@ -8,6 +8,12 @@ import type { SendLogRow } from '@/types/api';
 import { Button, Chip, EmptyState, ErrorState, PageHeader, Skeleton, Table, Tabs } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import styles from './log.module.css';
+import { friendlyError } from '@/lib/friendlyError';
+
+const friendlyText = (raw: string | null | undefined): string => {
+  const f = friendlyError(raw);
+  return f ? `${f.reason}. ${f.action}` : '—';
+};
 
 interface LogNode { id: string; type?: string; data?: { label?: string } }
 interface LogJourney { id?: number | string; journey_id?: number | string; name?: string; nodes?: LogNode[] }
@@ -102,7 +108,8 @@ function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () =
       ['Subject', selected.row.subject || '—'],
       ['Template', selected.row.template_label || '—'],
       ['Status', selected.row.status || '—'],
-      ['Error', selected.row.error_message || '—'],
+      ['Why it failed', friendlyText(selected.row.error_message)],
+      ['Technical details', selected.row.error_message || '—'],
       ['Journey', selected.row.journey_id != null ? `#${selected.row.journey_id}` : '—'],
       ['Node', selected.row.node_id || '—'],
       ['Day number', selected.row.day_number != null ? String(selected.row.day_number) : '—'],
@@ -123,7 +130,8 @@ function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () =
       ['Recipient', selected.row.recipient || '—'],
       ['Message', selected.row.label || '—'],
       ['Status', selected.row.status || '—'],
-      ['Error', selected.row.error || '—'],
+      ['Why it failed', friendlyText(selected.row.error)],
+      ['Technical details', selected.row.error || '—'],
       ['Journey', selected.row.journeyId != null ? `#${selected.row.journeyId}` : '—'],
       ['Node', selected.row.nodeId || '—'],
       ['Time', fmtDate(selected.row.time)],
@@ -452,7 +460,7 @@ export default function LogPage() {
                   <td className={styles.ellipsis}>{row.recipient || '—'}</td>
                   <td className={styles.ellipsis}>
                     {row.label || '—'}
-                    {row.error && <div className={styles.badText}>{row.error}</div>}
+                    {row.error && <div className={styles.badText} title={row.error}>{friendlyError(row.error)?.reason}</div>}
                   </td>
                   <td><StatusPill status={row.status} /></td>
                   <td>

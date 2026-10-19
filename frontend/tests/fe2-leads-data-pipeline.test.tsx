@@ -169,7 +169,7 @@ describe('Data Pipeline page', () => {
       expect(email.textContent).toContain('12waiting');
       expect(within(screen.getByTestId('queue-whatsapp')).getByText('3 failed')).toBeTruthy();
       expect(within(screen.getByTestId('queue-sms')).getByText('Not available right now')).toBeTruthy();
-      expect(screen.getByText('template rejected')).toBeTruthy();
+      expect(screen.getByText('Message template is not approved')).toBeTruthy();
       expect(screen.getByText('+971500000000')).toBeTruthy();
       const logLinks = Array.from(document.querySelectorAll('a[href="/log"]'));
       expect(logLinks.length).toBeGreaterThanOrEqual(2);
