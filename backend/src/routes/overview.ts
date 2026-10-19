@@ -9,6 +9,7 @@
  */
 import { Router } from 'express';
 import type { Request, Response } from 'express';
+import type { QueryConfig } from 'pg';
 import db from '../config/database.js';
 import { queueCounts } from '../services/queue/index.js';
 import UTMService from '../services/UTMService.js';
@@ -18,7 +19,8 @@ const router = Router();
 
 // ── Section helpers ───────────────────────────────────────────────────────────
 export type Unavailable = { available: false; reason: 'unavailable' };
-export type Section<T> = ({ available: true } & T) | Unavailable;
+export type TimedOut = { available: false; reason: 'timeout' };
+export type Section<T> = ({ available: true } & T) | Unavailable | TimedOut;
 
 async function section<T extends object>(name: string, fn: () => Promise<T>): Promise<Section<T>> {
   try {
@@ -85,98 +87,213 @@ type CountRow = Record<string, string | number | null>;
 // Email time column: sent_at (SendTrackService/JourneyStatsService). WhatsApp: created_at
 // (SendTrackService.getWhatsAppLog). SMS: sent_at (migration 103 index).
 
-async function sentBetween(startExpr: string, endExpr: string, params: unknown[]) {
+// ── Home sections ─────────────────────────────────────────────────────────────
+// Each Home card is an independent section with its own endpoint (GET /home/:section),
+// an ~8s time limit and an in-memory cache, so a slow query only delays its own card.
+
+/** Wall-clock limit per Home section; the same limit is passed to pg as query_timeout. */
+export const HOME_SECTION_TIMEOUT_MS = 8_000;
+/** Fresh window for a successful section result. */
+export const HOME_CACHE_TTL_MS = 120_000;
+/** A successful result older than the TTL is still served (and refreshed in the background) up to this age. */
+export const HOME_STALE_MAX_MS = 600_000;
+/** Unavailable/timeout results are only reused for this long. */
+export const HOME_FAIL_TTL_MS = 15_000;
+
+/**
+ * pg reads `query_timeout` from the per-query config (pg/lib/client.js) although
+ * @types/pg's QueryConfig does not declare it. On expiry pg rejects the query and the
+ * pool discards that client, so the connection does not stay busy behind a slow query.
+ */
+type TimedQueryConfig = QueryConfig & { query_timeout: number };
+function hq(text: string, values: unknown[] = []) {
+  const config: TimedQueryConfig = { text, values, query_timeout: HOME_SECTION_TIMEOUT_MS };
+  return db.query<CountRow>(config);
+}
+
+async function homeSentBetween(startExpr: string, endExpr: string) {
   const [e, w, s] = await Promise.all([
-    db.query<CountRow>(`SELECT COUNT(*) AS n FROM email_send_log
-      WHERE sent_at >= ${startExpr} AND sent_at < ${endExpr} AND status NOT IN ('failed','queued')`, params),
-    db.query<CountRow>(`SELECT COUNT(*) AS n FROM whatsapp_send_log
-      WHERE created_at >= ${startExpr} AND created_at < ${endExpr} AND status NOT IN ('failed','queued')`, params),
-    db.query<CountRow>(`SELECT COUNT(*) AS n FROM sms_send_log
-      WHERE sent_at >= ${startExpr} AND sent_at < ${endExpr} AND status NOT IN ('failed','queued','blocked')`, params),
+    hq(`SELECT COUNT(*) AS n FROM email_send_log
+      WHERE sent_at >= ${startExpr} AND sent_at < ${endExpr} AND status NOT IN ('failed','queued')`),
+    hq(`SELECT COUNT(*) AS n FROM whatsapp_send_log
+      WHERE created_at >= ${startExpr} AND created_at < ${endExpr} AND status NOT IN ('failed','queued')`),
+    hq(`SELECT COUNT(*) AS n FROM sms_send_log
+      WHERE sent_at >= ${startExpr} AND sent_at < ${endExpr} AND status NOT IN ('failed','queued','blocked')`),
   ]);
   const email = num(e.rows[0]?.n), whatsapp = num(w.rows[0]?.n), sms = num(s.rows[0]?.n);
   return { email, whatsapp, sms, total: email + whatsapp + sms };
 }
 
-// ── GET /home ─────────────────────────────────────────────────────────────────
+/** Cap for the per-journey "joined" counts on Home (keeps each count bounded). */
+const JOINED_COUNT_CAP = 100_000;
+
+const HOME_SECTION_FNS = {
+  sentToday: () => homeSentBetween(DUBAI_TODAY, DUBAI_TOMORROW),
+
+  delivery7d: async () => {
+    // One scan per channel, bounded by its time column. Email "delivered" comes from
+    // email_send_log.status, which sesWebhook advances queued/sent → delivered → opened → clicked
+    // on SES events, so delivered/opened/clicked all imply a Delivery — no ses_events join.
+    const [e, w, s] = await Promise.all([
+      hq(`SELECT
+          COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
+          COUNT(*) FILTER (WHERE status IN ('delivered','opened','clicked')) AS delivered
+        FROM email_send_log WHERE sent_at >= NOW() - INTERVAL '7 days' AND sent_at < NOW()`),
+      hq(`SELECT
+          COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
+          COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) AS delivered
+        FROM whatsapp_send_log WHERE created_at >= NOW() - INTERVAL '7 days' AND created_at < NOW()`),
+      hq(`SELECT
+          COUNT(*) FILTER (WHERE status NOT IN ('failed','queued','blocked')) AS sent,
+          COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) AS delivered
+        FROM sms_send_log WHERE sent_at >= NOW() - INTERVAL '7 days' AND sent_at < NOW()`),
+    ]);
+    const E0 = e.rows[0] ?? {}, W0 = w.rows[0] ?? {}, S0 = s.rows[0] ?? {};
+    const sent = num(E0.sent) + num(W0.sent) + num(S0.sent);
+    const delivered = num(E0.delivered) + num(W0.delivered) + num(S0.delivered);
+    return { sent, delivered, deliveredPct: pct(delivered, sent) };
+  },
+
+  conversions30d: async () => {
+    // JourneyService exits: status 'exited' + exit_reason booked/purchased (completed_at set), or status 'converted'.
+    const { rows } = await hq(`SELECT COUNT(*) AS n FROM journey_entries
+      WHERE completed_at >= NOW() - INTERVAL '30 days' AND completed_at < NOW()
+        AND (status = 'converted' OR exit_reason IN ('booked','purchased'))`);
+    return { count: num(rows[0]?.n) };
+  },
+
+  runningJourneys: async () => {
+    // Top 5 only. Joined = the larger of the stored total (segment journeys) and the
+    // GTM/giveaway entries table, which continuous journeys use instead of journey_entries.
+    // The per-row subqueries run only for the 5 kept rows and each stops at JOINED_COUNT_CAP.
+    const { rows } = await hq(`WITH top AS (
+        SELECT jf.journey_id, jf.name, jf.status, COALESCE(jf.total_entries, 0) AS stored, COUNT(*) OVER () AS running_total
+        FROM journey_flows jf WHERE jf.status = 'active'
+        ORDER BY jf.updated_at DESC NULLS LAST LIMIT 5)
+      SELECT t.journey_id, t.name, t.status, t.running_total,
+        GREATEST(t.stored,
+          (SELECT COUNT(*) FROM (SELECT 1 FROM journey_entries je WHERE je.journey_id = t.journey_id LIMIT ${JOINED_COUNT_CAP}) je_capped),
+          (SELECT COUNT(*) FROM (SELECT 1 FROM gtm_journey_entries g WHERE g.journey_id = t.journey_id LIMIT ${JOINED_COUNT_CAP}) g_capped)) AS joined
+      FROM top t`);
+    return {
+      total: num(rows[0]?.running_total),
+      journeys: rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), status: String(r.status ?? ''), joined: num(r.joined) })),
+    };
+  },
+
+  sendingToday: async () => {
+    const { rows } = await hq(`SELECT je.journey_id, jf.name, COUNT(*) AS due
+      FROM journey_entries je JOIN journey_flows jf ON jf.journey_id = je.journey_id
+      WHERE je.status = 'active' AND je.next_fire_at >= ${DUBAI_TODAY} AND je.next_fire_at < ${DUBAI_TOMORROW}
+      GROUP BY je.journey_id, jf.name ORDER BY due DESC LIMIT 10`);
+    const journeys = rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), due: num(r.due) }));
+    return { journeys, total: journeys.reduce((a, j) => a + j.due, 0) };
+  },
+
+  series14d: async () => {
+    // The Dubai-day bucketing is applied only in the SELECT/GROUP BY; every WHERE is a
+    // plain [start, end) range on the raw timestamp column.
+    const day = (col: string) => `to_char((${col} AT TIME ZONE 'Asia/Dubai')::date, 'YYYY-MM-DD')`;
+    const start = `(${DUBAI_TODAY} - INTERVAL '13 days')`;
+    const [e, w, s] = await Promise.all([
+      hq(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM email_send_log
+        WHERE sent_at >= ${start} AND sent_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued') GROUP BY 1`),
+      hq(`SELECT ${day('created_at')} AS d, COUNT(*) AS n FROM whatsapp_send_log
+        WHERE created_at >= ${start} AND created_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued') GROUP BY 1`),
+      hq(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM sms_send_log
+        WHERE sent_at >= ${start} AND sent_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued','blocked') GROUP BY 1`),
+    ]);
+    const today = dubaiTodayIso();
+    const days = Array.from({ length: 14 }, (_, i) => ({ date: addDays(today, i - 13), email: 0, whatsapp: 0, sms: 0, total: 0 }));
+    const byDate = new Map(days.map(d => [d.date, d]));
+    const add = (rows: CountRow[], k: 'email' | 'whatsapp' | 'sms') => {
+      for (const r of rows) { const d = byDate.get(String(r.d)); if (d) { d[k] += num(r.n); d.total += num(r.n); } }
+    };
+    add(e.rows, 'email'); add(w.rows, 'whatsapp'); add(s.rows, 'sms');
+    return { days };
+  },
+} as const;
+
+export type HomeSectionName = keyof typeof HOME_SECTION_FNS;
+export const HOME_SECTIONS = Object.keys(HOME_SECTION_FNS) as HomeSectionName[];
+type HomeSectionResult<K extends HomeSectionName> = Section<Awaited<ReturnType<(typeof HOME_SECTION_FNS)[K]>>>;
+type AnyHomeResult = HomeSectionResult<HomeSectionName>;
+
+function isHomeSection(s: string): s is HomeSectionName {
+  return Object.prototype.hasOwnProperty.call(HOME_SECTION_FNS, s);
+}
+
+/** Runs a section with the wall-clock limit; never throws. */
+async function runHomeSection(name: HomeSectionName): Promise<AnyHomeResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<TimedOut>(resolve => {
+    timer = setTimeout(() => resolve({ available: false, reason: 'timeout' }), HOME_SECTION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race<AnyHomeResult>([section<object>(name, HOME_SECTION_FNS[name]) as Promise<AnyHomeResult>, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+interface HomeCacheEntry { value: AnyHomeResult; at: number }
+const homeCache = new Map<HomeSectionName, HomeCacheEntry>();
+const homeInFlight = new Map<HomeSectionName, Promise<AnyHomeResult>>();
+
+/** Test hook: clears the Home section cache. */
+export function resetHomeCache(): void {
+  homeCache.clear();
+  homeInFlight.clear();
+}
+
+/** Computes a section once for all concurrent callers and stores the result. */
+function refreshHomeSection(name: HomeSectionName): Promise<AnyHomeResult> {
+  const pending = homeInFlight.get(name);
+  if (pending) return pending;
+  const p = runHomeSection(name).then(value => {
+    const prev = homeCache.get(name);
+    // Keep serving a still-usable good value rather than replacing it with a failure.
+    const keepPrev = !value.available && prev?.value.available && Date.now() - prev.at < HOME_STALE_MAX_MS;
+    if (!keepPrev) homeCache.set(name, { value, at: Date.now() });
+    homeInFlight.delete(name);
+    return keepPrev && prev ? prev.value : value;
+  });
+  homeInFlight.set(name, p);
+  return p;
+}
+
+/** Cached section: fresh for 120s, stale-while-revalidate up to 10 min, failures for 15s. */
+export async function getHomeSection<K extends HomeSectionName>(name: K): Promise<HomeSectionResult<K>> {
+  const hit = homeCache.get(name);
+  if (hit) {
+    const age = Date.now() - hit.at;
+    const fresh = hit.value.available ? age < HOME_CACHE_TTL_MS : age < HOME_FAIL_TTL_MS;
+    if (fresh) return hit.value as HomeSectionResult<K>;
+    if (hit.value.available && age < HOME_STALE_MAX_MS) {
+      void refreshHomeSection(name);
+      return hit.value as HomeSectionResult<K>;
+    }
+  }
+  return (await refreshHomeSection(name)) as HomeSectionResult<K>;
+}
+
+// ── GET /home (all sections; kept for compatibility) ─────────────────────────
 router.get('/home', async (_req: Request, res: Response) => {
   const [sentToday, delivery7d, conversions30d, runningJourneys, sendingToday, series14d] = await Promise.all([
-    section('sentToday', () => sentBetween(DUBAI_TODAY, DUBAI_TOMORROW, [])),
-
-    section('delivery7d', async () => {
-      // Email delivered = ses_events Delivery joined on external_id (JourneyStatsService pattern).
-      const sent = await sentBetween(`NOW() - INTERVAL '7 days'`, 'NOW()', []);
-      const [e, w, s] = await Promise.all([
-        db.query<CountRow>(`SELECT COUNT(*) AS n FROM email_send_log esl
-          JOIN ses_events se ON se.message_id = esl.external_id
-          WHERE esl.sent_at >= NOW() - INTERVAL '7 days' AND se.event_type = 'Delivery'`),
-        db.query<CountRow>(`SELECT COUNT(*) AS n FROM whatsapp_send_log
-          WHERE created_at >= NOW() - INTERVAL '7 days' AND delivered_at IS NOT NULL`),
-        db.query<CountRow>(`SELECT COUNT(*) AS n FROM sms_send_log
-          WHERE sent_at >= NOW() - INTERVAL '7 days' AND delivered_at IS NOT NULL`),
-      ]);
-      const delivered = num(e.rows[0]?.n) + num(w.rows[0]?.n) + num(s.rows[0]?.n);
-      return { sent: sent.total, delivered, deliveredPct: pct(delivered, sent.total) };
-    }),
-
-    section('conversions30d', async () => {
-      // JourneyService exits: status 'exited' + exit_reason booked/purchased (completed_at set), or status 'converted'.
-      const { rows } = await db.query<CountRow>(`SELECT COUNT(*) AS n FROM journey_entries
-        WHERE completed_at >= NOW() - INTERVAL '30 days'
-          AND (status = 'converted' OR exit_reason IN ('booked','purchased'))`);
-      return { count: num(rows[0]?.n) };
-    }),
-
-    section('runningJourneys', async () => {
-      // Top 5 only (keeps Home fast). Joined = the larger of the stored total (segment journeys)
-      // and the GTM/giveaway entries table, which continuous journeys use instead of journey_entries.
-      // The per-row subqueries run only for the 5 rows kept by the LIMIT.
-      const { rows } = await db.query<CountRow>(`WITH top AS (
-          SELECT jf.journey_id, jf.name, jf.status, COALESCE(jf.total_entries, 0) AS stored, COUNT(*) OVER () AS running_total
-          FROM journey_flows jf WHERE jf.status = 'active'
-          ORDER BY jf.updated_at DESC NULLS LAST LIMIT 5)
-        SELECT t.journey_id, t.name, t.status, t.running_total,
-          GREATEST(t.stored,
-            (SELECT COUNT(*) FROM journey_entries je WHERE je.journey_id = t.journey_id),
-            (SELECT COUNT(*) FROM gtm_journey_entries g WHERE g.journey_id = t.journey_id)) AS joined
-        FROM top t`);
-      return {
-        total: num(rows[0]?.running_total),
-        journeys: rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), status: String(r.status ?? ''), joined: num(r.joined) })),
-      };
-    }),
-
-    section('sendingToday', async () => {
-      const { rows } = await db.query<CountRow>(`SELECT je.journey_id, jf.name, COUNT(*) AS due
-        FROM journey_entries je JOIN journey_flows jf ON jf.journey_id = je.journey_id
-        WHERE je.status = 'active' AND je.next_fire_at >= ${DUBAI_TODAY} AND je.next_fire_at < ${DUBAI_TOMORROW}
-        GROUP BY je.journey_id, jf.name ORDER BY due DESC LIMIT 10`);
-      const journeys = rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), due: num(r.due) }));
-      return { journeys, total: journeys.reduce((a, j) => a + j.due, 0) };
-    }),
-
-    section('series14d', async () => {
-      const day = (col: string) => `to_char((${col} AT TIME ZONE 'Asia/Dubai')::date, 'YYYY-MM-DD')`;
-      const start = `(${DUBAI_TODAY} - INTERVAL '13 days')`;
-      const [e, w, s] = await Promise.all([
-        db.query<CountRow>(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM email_send_log
-          WHERE sent_at >= ${start} AND status NOT IN ('failed','queued') GROUP BY 1`),
-        db.query<CountRow>(`SELECT ${day('created_at')} AS d, COUNT(*) AS n FROM whatsapp_send_log
-          WHERE created_at >= ${start} AND status NOT IN ('failed','queued') GROUP BY 1`),
-        db.query<CountRow>(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM sms_send_log
-          WHERE sent_at >= ${start} AND status NOT IN ('failed','queued','blocked') GROUP BY 1`),
-      ]);
-      const today = dubaiTodayIso();
-      const days = Array.from({ length: 14 }, (_, i) => ({ date: addDays(today, i - 13), email: 0, whatsapp: 0, sms: 0, total: 0 }));
-      const byDate = new Map(days.map(d => [d.date, d]));
-      const add = (rows: CountRow[], k: 'email' | 'whatsapp' | 'sms') => {
-        for (const r of rows) { const d = byDate.get(String(r.d)); if (d) { d[k] += num(r.n); d.total += num(r.n); } }
-      };
-      add(e.rows, 'email'); add(w.rows, 'whatsapp'); add(s.rows, 'sms');
-      return { days };
-    }),
+    getHomeSection('sentToday'), getHomeSection('delivery7d'), getHomeSection('conversions30d'),
+    getHomeSection('runningJourneys'), getHomeSection('sendingToday'), getHomeSection('series14d'),
   ]);
   res.json({ sentToday, delivery7d, conversions30d, runningJourneys, sendingToday, series14d });
+});
+
+// ── GET /home/:section ────────────────────────────────────────────────────────
+router.get('/home/:section', async (req: Request, res: Response) => {
+  const name = String(req.params.section ?? '');
+  if (!isHomeSection(name)) {
+    res.status(400).json({ error: `Unknown section. Use one of: ${HOME_SECTIONS.join(', ')}` });
+    return;
+  }
+  res.json(await getHomeSection(name));
 });
 
 // ── GET /insights ─────────────────────────────────────────────────────────────

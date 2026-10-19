@@ -23,6 +23,8 @@
 .headLink { font-size: 13px; color: var(--ink2); }
 
 .note { font-size: 13px; color: var(--ink3); margin: 0; padding: 8px 0; }
+.retryLink { font: inherit; color: var(--ink2); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+.retryLink:disabled { cursor: default; opacity: 0.6; }
 .muted { font-size: 13px; color: var(--ink3); }
 .chartCard { margin-bottom: 24px; }
 

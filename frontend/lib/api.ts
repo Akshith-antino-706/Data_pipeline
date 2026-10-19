@@ -582,7 +582,7 @@ export async function downloadReportAll(from: string, to: string): Promise<void>
 }
 
 // ── Overview (redesign, read-only) ───────────────────────────────────────────
-export type OverviewUnavailable = { available: false; reason: 'unavailable' };
+export type OverviewUnavailable = { available: false; reason: 'unavailable' | 'timeout' };
 export type OverviewSection<T> = ({ available: true } & T) | OverviewUnavailable;
 export interface OverviewRange { from: string; to: string; days: number }
 export interface OverviewChannelCounts { email: number; whatsapp: number; sms: number; total: number }
@@ -648,6 +648,12 @@ function overviewQs(params: Record<string, string | number | undefined>): string
   return qs ? `?${qs}` : '';
 }
 export const getOverviewHome = () => request<OverviewHome>('/api/v3/overview/home');
+export type OverviewHomeSectionName = keyof OverviewHome;
+export const OVERVIEW_HOME_SECTIONS: readonly OverviewHomeSectionName[] =
+  ['sentToday', 'delivery7d', 'conversions30d', 'runningJourneys', 'sendingToday', 'series14d'];
+/** One Home card's data (GET /api/v3/overview/home/:section), so each card loads on its own. */
+export const getOverviewHomeSection = <K extends OverviewHomeSectionName>(section: K) =>
+  request<OverviewHome[K]>(`/api/v3/overview/home/${section}`);
 export const getOverviewInsights = (from?: string, to?: string) =>
   request<OverviewInsights>(`/api/v3/overview/insights${overviewQs({ from, to })}`);
 export const getOverviewStatus = () => request<OverviewStatus>('/api/v3/overview/status');

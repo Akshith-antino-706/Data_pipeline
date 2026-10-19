@@ -5,9 +5,9 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { GitBranch, Send } from 'lucide-react';
-import { getOverviewHome, getOverviewStatus } from '@/lib/api';
-import type { OverviewHome, OverviewSection } from '@/lib/api';
-import { Card, ErrorState, Skeleton, Button, buttonClass } from '@/components/ui';
+import { getOverviewHomeSection, getOverviewStatus } from '@/lib/api';
+import type { OverviewHomeSectionName, OverviewSection } from '@/lib/api';
+import { Card, Skeleton, buttonClass } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import type { HomeTrendDatum } from './HomeTrendChart';
 import s from './home.module.css';
@@ -24,8 +24,39 @@ function avail<T>(sec: OverviewSection<T> | undefined): T | null {
 const num = (n: number | null | undefined): number => (typeof n === 'number' && Number.isFinite(n) ? n : 0);
 const fmt = (n: number | null | undefined): string => num(n).toLocaleString();
 
-function Unavailable() {
-  return <p className={s.note}>Not available right now</p>;
+/** Shown when a card's data timed out, failed or was marked unavailable; retries only that card. */
+function Unavailable({ onRetry, retrying }: { onRetry?: () => void; retrying?: boolean }) {
+  return (
+    <p className={s.note}>
+      Not available right now
+      {onRetry && (
+        <>
+          {' · '}
+          <button type="button" className={s.retryLink} onClick={onRetry} disabled={retrying}>
+            {retrying ? 'Retrying…' : 'Try again'}
+          </button>
+        </>
+      )}
+    </p>
+  );
+}
+
+interface CardState<T> { data: T | null; loading: boolean; retry: () => void; retrying: boolean }
+/** One Home card's query (its own request, cache entry and loading state), narrowed to { data | null, loading, retry }. */
+function useHomeCard<T>(section: OverviewHomeSectionName, fetchSection: () => Promise<OverviewSection<T>>): CardState<T> {
+  const q = useQuery<OverviewSection<T>>({
+    queryKey: ['dashboard', 'home', section],
+    queryFn: fetchSection,
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: false,
+  });
+  const result: OverviewSection<T> | undefined = q.data;
+  return {
+    data: avail(result),
+    loading: q.isPending,
+    retry: () => { void q.refetch(); },
+    retrying: q.isFetching,
+  };
 }
 
 function greetingFor(hour: number): string {
@@ -39,8 +70,8 @@ function shortDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
-interface KpiProps { label: string; value: ReactNode; help: string; loading: boolean; available: boolean }
-function Kpi({ label, value, help, loading, available }: KpiProps) {
+interface KpiProps { label: string; value: ReactNode; help: string; loading: boolean; available: boolean; onRetry: () => void; retrying: boolean }
+function Kpi({ label, value, help, loading, available, onRetry, retrying }: KpiProps) {
   return (
     <Card>
       <p className={s.kpiLabel}>{label}</p>
@@ -49,7 +80,7 @@ function Kpi({ label, value, help, loading, available }: KpiProps) {
           <div className={s.kpiValue}>{value}</div>
           <div className={s.kpiHelp}>{help}</div>
         </>
-      ) : <Unavailable />}
+      ) : <Unavailable onRetry={onRetry} retrying={retrying} />}
     </Card>
   );
 }
@@ -64,12 +95,13 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
   const firstName = (user?.name ?? '').trim().split(/\s+/)[0] ?? '';
   const hello = greetingFor(new Date().getHours());
 
-  const homeQ = useQuery({
-    queryKey: ['dashboard', 'home'],
-    queryFn: getOverviewHome,
-    staleTime: STALE_MS,
-    refetchOnWindowFocus: false,
-  });
+  // One request per card, fired in parallel: each card renders as soon as its own data arrives.
+  const sentTodayC = useHomeCard('sentToday', () => getOverviewHomeSection('sentToday'));
+  const deliveryC = useHomeCard('delivery7d', () => getOverviewHomeSection('delivery7d'));
+  const conversionsC = useHomeCard('conversions30d', () => getOverviewHomeSection('conversions30d'));
+  const runningC = useHomeCard('runningJourneys', () => getOverviewHomeSection('runningJourneys'));
+  const sendingC = useHomeCard('sendingToday', () => getOverviewHomeSection('sendingToday'));
+  const seriesC = useHomeCard('series14d', () => getOverviewHomeSection('series14d'));
   const statusQ = useQuery({
     queryKey: ['dashboard', 'status'],
     queryFn: getOverviewStatus,
@@ -77,15 +109,12 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
     refetchOnWindowFocus: false,
   });
 
-  const home: Partial<OverviewHome> = homeQ.data ?? {};
-  const loading = homeQ.isPending;
-
-  const sentToday = avail(home.sentToday);
-  const delivery = avail(home.delivery7d);
-  const conversions = avail(home.conversions30d);
-  const running = avail(home.runningJourneys);
-  const sending = avail(home.sendingToday);
-  const series = avail(home.series14d);
+  const sentToday = sentTodayC.data;
+  const delivery = deliveryC.data;
+  const conversions = conversionsC.data;
+  const running = runningC.data;
+  const sending = sendingC.data;
+  const series = seriesC.data;
 
   // Failed sends in the last 24h — derived from real status rows only; hidden otherwise.
   const failed = avail(statusQ.data?.failedSends);
@@ -118,17 +147,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
         </div>
       </div>
 
-      {homeQ.isError ? (
-        <div style={{ marginBottom: 16 }}>
-          <ErrorState
-            title="Couldn't load today's overview"
-            description="The rest of the dashboard below still works."
-            details={homeQ.error instanceof Error ? homeQ.error.message : undefined}
-            action={<Button size="sm" onClick={() => { void homeQ.refetch(); }}>Try again</Button>}
-          />
-        </div>
-      ) : (
-        <>
+      <>
           {failed24h > 0 && (
             <Card className={s.attention} aria-label="Needs your attention">
               <span className={s.attentionText}>
@@ -140,15 +159,15 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
           )}
 
           <div className={s.kpis}>
-            <Kpi label="Sent today" loading={loading} available={!!sentToday} value={fmt(sentToday?.total)} help={sentHelp} />
-            <Kpi label="Delivered (7 days)" loading={loading} available={!!delivery} value={deliveredPct}
+            <Kpi label="Sent today" loading={sentTodayC.loading} available={!!sentToday} onRetry={sentTodayC.retry} retrying={sentTodayC.retrying} value={fmt(sentToday?.total)} help={sentHelp} />
+            <Kpi label="Delivered (7 days)" loading={deliveryC.loading} available={!!delivery} onRetry={deliveryC.retry} retrying={deliveryC.retrying} value={deliveredPct}
               help={delivery ? `${fmt(delivery.delivered)} of ${fmt(delivery.sent)} sent` : ''} />
-            <Kpi label="Conversions (30 days)" loading={loading} available={!!conversions} value={fmt(conversions?.count)} help="Bookings attributed to messages" />
+            <Kpi label="Conversions (30 days)" loading={conversionsC.loading} available={!!conversions} onRetry={conversionsC.retry} retrying={conversionsC.retrying} value={fmt(conversions?.count)} help="Bookings attributed to messages" />
           </div>
 
           <div className={s.twoCol}>
             <Card title="Running journeys" actions={<Link href="/journeys" className={s.headLink}>{running && (running.total ?? 0) > running.journeys.length ? `View all ${fmt(running.total ?? 0)}` : 'All journeys'}</Link>}>
-              {loading ? <Skeleton height={60} /> : !running ? <Unavailable /> : running.journeys.length === 0 ? (
+              {runningC.loading ? <Skeleton height={60} /> : !running ? <Unavailable onRetry={runningC.retry} retrying={runningC.retrying} /> : running.journeys.length === 0 ? (
                 <p className={s.note}>No journeys are running.</p>
               ) : (
                 <ul className={s.list}>
@@ -169,7 +188,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
             </Card>
 
             <Card title="Sending today" actions={sending ? <span className={s.muted}>{fmt(sending.total)} due</span> : undefined}>
-              {loading ? <Skeleton height={60} /> : !sending ? <Unavailable /> : sending.journeys.length === 0 ? (
+              {sendingC.loading ? <Skeleton height={60} /> : !sending ? <Unavailable onRetry={sendingC.retry} retrying={sendingC.retrying} /> : sending.journeys.length === 0 ? (
                 <p className={s.note}>Nothing is scheduled to send today.</p>
               ) : (
                 <ul className={s.list}>
@@ -186,12 +205,11 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
 
           <Card title="Messages sent, last 14 days" className={s.chartCard}
             actions={series ? <span className={s.muted}>{fmt(chartTotal)} total</span> : undefined}>
-            {loading ? <Skeleton height={240} /> : !series ? <Unavailable /> : chartData.length === 0 ? (
+            {seriesC.loading ? <Skeleton height={240} /> : !series ? <Unavailable onRetry={seriesC.retry} retrying={seriesC.retrying} /> : chartData.length === 0 ? (
               <p className={s.note}>No messages sent in the last 14 days.</p>
             ) : <HomeTrendChart data={chartData} />}
           </Card>
-        </>
-      )}
+      </>
     </div>
   );
 }

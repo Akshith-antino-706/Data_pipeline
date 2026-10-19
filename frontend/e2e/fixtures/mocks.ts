@@ -17,6 +17,16 @@ const get = (path: string, body: Json | Mock['body']): Mock => ({ method: 'GET',
 
 export const SEND_LOG_TOTAL = 45;
 
+/** Home overview sections, served both together (/home) and one per path (/home/:section). */
+const homeSections: { [section: string]: Json } = {
+  sentToday: { available: true, email: 120, whatsapp: 40, sms: 5, total: 165 },
+  delivery7d: { available: true, sent: 900, delivered: 870, deliveredPct: 96.7 },
+  conversions30d: { available: true, count: 12 },
+  runningJourneys: { available: true, journeys: [{ id: 11, name: 'Welcome series', status: 'active', joined: 340 }] },
+  sendingToday: { available: true, journeys: [{ id: 11, name: 'Welcome series', due: 25 }], total: 25 },
+  series14d: { available: true, days: [{ date: '2026-10-18', email: 100, whatsapp: 30, sms: 2, total: 132 }, { date: '2026-10-19', email: 120, whatsapp: 40, sms: 5, total: 165 }] },
+};
+
 /**
  * Default fixtures for every API path the app calls on page load. Anything not listed here
  * is reported as "unmocked" and fails the test (see fixtures/test.ts).
@@ -26,14 +36,9 @@ export const defaultMocks: Mock[] = [
   { method: 'POST', path: p('/api/auth/logout'), body: ok(null) },
 
   // ── Overview (read-only /api/v3/overview/*) ──
-  get('/api/v3/overview/home', {
-    sentToday: { available: true, email: 120, whatsapp: 40, sms: 5, total: 165 },
-    delivery7d: { available: true, sent: 900, delivered: 870, deliveredPct: 96.7 },
-    conversions30d: { available: true, count: 12 },
-    runningJourneys: { available: true, journeys: [{ id: 11, name: 'Welcome series', status: 'active', joined: 340 }] },
-    sendingToday: { available: true, journeys: [{ id: 11, name: 'Welcome series', due: 25 }], total: 25 },
-    series14d: { available: true, days: [{ date: '2026-10-18', email: 100, whatsapp: 30, sms: 2, total: 132 }, { date: '2026-10-19', email: 120, whatsapp: 40, sms: 5, total: 165 }] },
-  }),
+  get('/api/v3/overview/home', homeSections),
+  // Per-card endpoints the Home page calls (one request per section).
+  ...Object.entries(homeSections).map(([name, body]) => get(`/api/v3/overview/home/${name}`, body)),
   get('/api/v3/overview/status', {
     dataSources: { available: true, sources: [{ name: 'rayna_tours', status: 'success', lastSyncedAt: '2026-10-19T04:30:00Z', lastRunAt: '2026-10-19T04:30:00Z', rows: 1200, durationMs: 5400, error: null }] },
     queues: { available: true, queues: [{ channel: 'email', available: true, waiting: 3, active: 1, delayed: 0, completed: 500, failed: 0, paused: 0 }] },

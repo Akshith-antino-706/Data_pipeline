@@ -4,16 +4,24 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { once } from 'node:events';
 
-const { mockQuery, mockQueueCounts, mockLinkStats } = vi.hoisted(() => ({
-  mockQuery: vi.fn(),
-  mockQueueCounts: vi.fn(),
-  mockLinkStats: vi.fn(),
-}));
-vi.mock('../src/config/database.js', () => ({ default: { query: mockQuery }, query: mockQuery }));
+// Home queries pass a pg config object ({ text, values, query_timeout }); poolQuery
+// normalises it so mockQuery always sees (sql, params, config).
+type QueryArg = string | { text: string; values?: unknown[]; query_timeout?: number };
+const { mockQuery, mockQueueCounts, mockLinkStats, poolQuery } = vi.hoisted(() => {
+  const mq = vi.fn();
+  return {
+    mockQuery: mq,
+    mockQueueCounts: vi.fn(),
+    mockLinkStats: vi.fn(),
+    poolQuery: (arg: QueryArg, params?: unknown[]): unknown =>
+      typeof arg === 'string' ? mq(arg, params) : mq(arg.text, arg.values, arg),
+  };
+});
+vi.mock('../src/config/database.js', () => ({ default: { query: poolQuery }, query: poolQuery }));
 vi.mock('../src/services/queue/index.js', () => ({ queueCounts: mockQueueCounts }));
 vi.mock('../src/services/UTMService.js', () => ({ default: { getUserLinkStats: mockLinkStats } }));
 
-import overviewRouter, { parseRange } from '../src/routes/overview.js';
+import overviewRouter, { parseRange, resetHomeCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
 
 type Json = Record<string, unknown>;
 let server: Server;
@@ -28,6 +36,9 @@ beforeAll(async () => {
 afterAll(() => { server.close(); });
 
 beforeEach(() => {
+  resetHomeCache();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   mockQuery.mockReset();
   mockQueueCounts.mockReset();
   mockLinkStats.mockReset();
@@ -63,7 +74,7 @@ describe('GET /home', () => {
   it('sums channel counts from string rows', async () => {
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes('journey_flows jf WHERE jf.status')) return Promise.resolve({ rows: [{ journey_id: '7', name: 'J', status: 'active', joined: '12' }] });
-      return Promise.resolve({ rows: [{ n: '3' }] });
+      return Promise.resolve({ rows: [{ n: '3', sent: '3', delivered: '3' }] });
     });
     const { body } = await get('/home');
     expect(body.sentToday).toMatchObject({ email: 3, whatsapp: 3, sms: 3, total: 9 });
@@ -80,6 +91,168 @@ describe('GET /home', () => {
     expect(body.runningJourneys).toEqual({ available: false, reason: 'unavailable' });
     expect(body.sendingToday).toEqual({ available: false, reason: 'unavailable' });
     expect(body.sentToday).toMatchObject({ available: true, total: 3 });
+  });
+});
+
+describe('GET /home/:section', () => {
+  it('returns only the requested section', async () => {
+    mockQuery.mockResolvedValue({ rows: [{ n: '2' }] });
+    const { status, body } = await get('/home/sentToday');
+    expect(status).toBe(200);
+    expect(body).toEqual({ available: true, email: 2, whatsapp: 2, sms: 2, total: 6 });
+  });
+
+  it('serves every section name in the documented shape', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    for (const name of HOME_SECTIONS) {
+      const { status, body } = await get(`/home/${name}`);
+      expect(status).toBe(200);
+      expect(body.available).toBe(true);
+      expect(hasNaN(body)).toBe(false);
+    }
+    expect(HOME_SECTIONS).toEqual(['sentToday', 'delivery7d', 'conversions30d', 'runningJourneys', 'sendingToday', 'series14d']);
+  });
+
+  it('unknown section returns 400 without querying', async () => {
+    const { status, body } = await get('/home/everything');
+    expect(status).toBe(400);
+    expect(String(body.error)).toContain('sentToday');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('passes query_timeout on every Home query', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    await get('/home');
+    const configs = mockQuery.mock.calls.map(c => c[2] as { query_timeout?: number } | undefined);
+    expect(configs.length).toBeGreaterThan(0);
+    for (const c of configs) expect(c?.query_timeout).toBe(HOME_SECTION_TIMEOUT_MS);
+  });
+
+  it('delivery7d uses email_send_log status (no ses_events join), bounded by sent_at', async () => {
+    mockQuery.mockImplementation((sql: string) => Promise.resolve({ rows: [{ sent: sql.includes('email_send_log') ? '10' : '5', delivered: '4' }] }));
+    const { body } = await get('/home/delivery7d');
+    expect(body).toEqual({ available: true, sent: 20, delivered: 12, deliveredPct: 60 });
+    const sql = sqlCalls().join('\n');
+    expect(sql).not.toContain('ses_events');
+    expect(sql).toContain("status IN ('delivered','opened','clicked')");
+    expect(sql).toContain('sent_at >= NOW()');
+  });
+
+  it('runningJourneys caps the joined counts and keeps GREATEST with the stored total', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    await get('/home/runningJourneys');
+    const sql = sqlCalls()[0];
+    expect(sql).toContain('GREATEST(t.stored');
+    expect(sql.match(/LIMIT 100000/g)).toHaveLength(2);
+  });
+
+  it('series14d and sentToday filter with sargable ranges on the raw column', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    await get('/home/series14d');
+    await get('/home/sentToday');
+    for (const sql of sqlCalls()) {
+      const where = sql.slice(sql.indexOf('WHERE'));
+      expect(where).toMatch(/\b(sent_at|created_at) >= /);
+      expect(where).toMatch(/\b(sent_at|created_at) < /);
+      expect(where).not.toMatch(/\((sent_at|created_at) AT TIME ZONE/);
+    }
+  });
+
+  it('a section that never answers returns available:false, reason:timeout', async () => {
+    vi.useFakeTimers();
+    mockQuery.mockImplementation(() => new Promise(() => undefined));
+    const p = getHomeSection('conversions30d');
+    await vi.advanceTimersByTimeAsync(HOME_SECTION_TIMEOUT_MS + 10);
+    await expect(p).resolves.toEqual({ available: false, reason: 'timeout' });
+  });
+
+  it('a slow section does not hold back the others on GET /home', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    mockQuery.mockImplementation((sql: string) => sql.includes('journey_flows jf WHERE jf.status')
+      ? new Promise(() => undefined) : Promise.resolve({ rows: [] }));
+    const p = Promise.all(HOME_SECTIONS.map(n => getHomeSection(n)));
+    await vi.advanceTimersByTimeAsync(HOME_SECTION_TIMEOUT_MS + 10);
+    const results = await p;
+    expect(results[3]).toEqual({ available: false, reason: 'timeout' });
+    expect(results.filter(r => r.available)).toHaveLength(5);
+  });
+
+  it('cache hit: a second call within the TTL does not query', async () => {
+    mockQuery.mockResolvedValue({ rows: [{ n: '1' }] });
+    await get('/home/conversions30d');
+    const after1 = mockQuery.mock.calls.length;
+    const { body } = await get('/home/conversions30d');
+    expect(body).toEqual({ available: true, count: 1 });
+    expect(mockQuery.mock.calls.length).toBe(after1);
+  });
+
+  it('concurrent requests share one in-flight query', async () => {
+    let release: (v: unknown) => void = () => undefined;
+    mockQuery.mockImplementation(() => new Promise(r => { release = r; }));
+    const a = getHomeSection('conversions30d');
+    const b = getHomeSection('conversions30d');
+    release({ rows: [{ n: '4' }] });
+    expect(await a).toEqual({ available: true, count: 4 });
+    expect(await b).toEqual({ available: true, count: 4 });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('stale-while-revalidate: serves the old value at once and refreshes in the background', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const t0 = 1_800_000_000_000;
+    now.mockReturnValue(t0);
+    mockQuery.mockResolvedValue({ rows: [{ n: '1' }] });
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 1 });
+
+    now.mockReturnValue(t0 + HOME_CACHE_TTL_MS + 1);
+    mockQuery.mockResolvedValue({ rows: [{ n: '2' }] });
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 1 });
+    await vi.waitFor(() => expect(mockQuery).toHaveBeenCalledTimes(2));
+    await new Promise(r => setImmediate(r));
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 2 });
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+
+    // Past the stale window the caller waits for a fresh value.
+    now.mockReturnValue(t0 + HOME_CACHE_TTL_MS + HOME_STALE_MAX_MS + 10);
+    mockQuery.mockResolvedValue({ rows: [{ n: '3' }] });
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 3 });
+  });
+
+  it('a failed refresh keeps serving the last good value', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const t0 = 1_800_000_000_000;
+    now.mockReturnValue(t0);
+    mockQuery.mockResolvedValue({ rows: [{ n: '7' }] });
+    await getHomeSection('conversions30d');
+    now.mockReturnValue(t0 + HOME_CACHE_TTL_MS + 1);
+    mockQuery.mockRejectedValue(new Error('boom'));
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 7 });
+    await new Promise(r => setImmediate(r));
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 7 });
+  });
+
+  it('failures are cached only briefly', async () => {
+    const now = vi.spyOn(Date, 'now');
+    const t0 = 1_800_000_000_000;
+    now.mockReturnValue(t0);
+    mockQuery.mockRejectedValue(new Error('boom'));
+    expect(await getHomeSection('conversions30d')).toEqual({ available: false, reason: 'unavailable' });
+    expect(await getHomeSection('conversions30d')).toEqual({ available: false, reason: 'unavailable' });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(t0 + HOME_FAIL_TTL_MS + 1);
+    mockQuery.mockResolvedValue({ rows: [{ n: '5' }] });
+    expect(await getHomeSection('conversions30d')).toEqual({ available: true, count: 5 });
+    expect(HOME_FAIL_TTL_MS).toBeLessThanOrEqual(15_000);
+  });
+
+  it('GET /home reuses the section cache', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    await get('/home/sentToday');
+    const n = mockQuery.mock.calls.length;
+    const { body } = await get('/home');
+    expect(body.sentToday).toEqual({ available: true, email: 0, whatsapp: 0, sms: 0, total: 0 });
+    expect(sqlCalls().slice(n).some(s => s.includes('sent_at >= (date_trunc'))).toBe(false);
   });
 });
 
@@ -204,7 +377,7 @@ describe('GET /website', () => {
 describe('read-only SQL', () => {
   it('every SQL sent through the pool starts with SELECT or WITH', async () => {
     mockQuery.mockResolvedValue({ rows: [] });
-    for (const p of ['/home', '/insights', '/status', '/messages?channel=email&status=opened&q=a', '/messages', '/website']) await get(p);
+    for (const p of ['/home', ...HOME_SECTIONS.map(n => `/home/${n}`), '/insights', '/status', '/messages?channel=email&status=opened&q=a', '/messages', '/website']) await get(p);
     const sqls = sqlCalls();
     expect(sqls.length).toBeGreaterThan(20);
     for (const s of sqls) expect(s.trimStart()).toMatch(/^(SELECT|WITH)\b/i);

@@ -168,7 +168,7 @@ describe('Dashboard page', () => {
     expect(from.value).toBe('');
   });
 
-  describe('Home sections (getOverviewHome)', () => {
+  describe('Home sections (getOverviewHomeSection, one request per card)', () => {
     type Home = api.OverviewHome;
     const fullHome: Home = {
       sentToday: { available: true, email: 1200, whatsapp: 300, sms: 45, total: 1545 },
@@ -179,9 +179,15 @@ describe('Dashboard page', () => {
       series14d: { available: true, days: [{ date: '2026-10-18', email: 11, whatsapp: 2, sms: 1, total: 14 }] },
     };
     const off = { available: false, reason: 'unavailable' } as const;
+    type SectionName = api.OverviewHomeSectionName;
+    /** Serves each card from `home`, one call per section, like the real per-section endpoint. */
+    const mockHome = (home: Home, override?: (section: SectionName) => Promise<Home[SectionName]> | undefined) => {
+      vi.mocked(api.getOverviewHomeSection).mockImplementation(<K extends SectionName>(section: K): Promise<Home[K]> =>
+        (override?.(section) as Promise<Home[K]> | undefined) ?? Promise.resolve(home[section]));
+    };
 
     it('renders real values from the API', async () => {
-      vi.mocked(api.getOverviewHome).mockResolvedValue(fullHome);
+      mockHome(fullHome);
       renderPage();
       await screen.findByText('1,545');
       expect(screen.getByText('97.5%')).toBeTruthy();
@@ -193,32 +199,89 @@ describe('Dashboard page', () => {
       expect(screen.getByTestId('trend-chart').textContent).toContain(':11');
       expect(screen.getByText('Create journey').closest('a')?.getAttribute('href')).toBe('/journeys');
       expect(screen.getByText('Send a message').closest('a')?.getAttribute('href')).toBe('/sends/new');
-      expect(screen.queryByText('Not available right now')).toBeNull();
+      expect(screen.queryByText(/Not available right now/)).toBeNull();
       expect(screen.getByText('Audience overview')).toBeTruthy();
       expect(bodyText()).not.toMatch(/NaN|undefined/);
     });
 
     it('shows the note for an unavailable section and no fake numbers', async () => {
-      vi.mocked(api.getOverviewHome).mockResolvedValue({ ...fullHome, sentToday: off, series14d: off });
+      mockHome({ ...fullHome, sentToday: off, series14d: off });
       renderPage();
       await screen.findByText('97.5%');
-      expect(screen.getAllByText('Not available right now')).toHaveLength(2);
+      expect(screen.getAllByText(/Not available right now/)).toHaveLength(2);
       expect(screen.queryByText('1,545')).toBeNull();
       expect(screen.queryByTestId('trend-chart')).toBeNull();
       expect(bodyText()).not.toMatch(/NaN|undefined/);
     });
 
-    it('shows an error state when the overview API fails, but keeps the audience section', async () => {
-      mockTypical();
-      vi.mocked(api.getOverviewHome).mockRejectedValue(new Error('HTTP 500'));
+    it('requests every section separately, in parallel', async () => {
+      mockHome(fullHome);
       renderPage();
-      await screen.findByText("Couldn't load today's overview");
+      await screen.findByText('1,545');
+      const asked = vi.mocked(api.getOverviewHomeSection).mock.calls.map(c => c[0]).sort();
+      expect(asked).toEqual(['conversions30d', 'delivery7d', 'runningJourneys', 'sendingToday', 'sentToday', 'series14d']);
+      expect(api.getOverviewHome).not.toHaveBeenCalled();
+    });
+
+    it('renders each card as soon as its own data arrives while a slow card keeps its skeleton', async () => {
+      let releaseSeries: (v: Home['series14d']) => void = () => undefined;
+      mockHome(fullHome, section => section === 'series14d'
+        ? new Promise<Home['series14d']>(r => { releaseSeries = r; })
+        : undefined);
+      renderPage();
+      await screen.findByText('1,545');
+      expect(screen.getByText('97.5%')).toBeTruthy();
+      expect(screen.getByText('Abandoned cart')).toBeTruthy();
+      expect(screen.queryByTestId('trend-chart')).toBeNull();
+      expect(screen.queryByText(/Not available right now/)).toBeNull();
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+      releaseSeries(fullHome.series14d);
+      expect((await screen.findByTestId('trend-chart')).textContent).toContain(':11');
+    });
+
+    it('a failing card shows the note while the others show data, and keeps the audience section', async () => {
+      mockTypical();
+      mockHome(fullHome, section => section === 'delivery7d' ? Promise.reject(new Error('HTTP 500')) : undefined);
+      renderPage();
+      await screen.findByText('1,545');
+      await screen.findByText(/Not available right now/);
+      expect(screen.queryByText('97.5%')).toBeNull();
+      expect(screen.getByText('321')).toBeTruthy();
       await screen.findByText('1,234');
       expect(bodyText()).not.toMatch(/NaN|undefined/);
     });
 
+    it('a timed-out card retries only that section with "Try again"', async () => {
+      let conversionCalls = 0;
+      mockHome(fullHome, section => {
+        if (section !== 'conversions30d') return undefined;
+        conversionCalls += 1;
+        return Promise.resolve(conversionCalls === 1 ? { available: false, reason: 'timeout' } as const : fullHome.conversions30d);
+      });
+      renderPage();
+      await screen.findByText('1,545');
+      const retry = await screen.findByRole('button', { name: 'Try again' });
+      expect(screen.getAllByText(/Not available right now/)).toHaveLength(1);
+      const before = vi.mocked(api.getOverviewHomeSection).mock.calls.length;
+      fireEvent.click(retry);
+      await screen.findByText('321');
+      const after = vi.mocked(api.getOverviewHomeSection).mock.calls.slice(before).map(c => c[0]);
+      expect(after).toEqual(['conversions30d']);
+      expect(screen.queryByText(/Not available right now/)).toBeNull();
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+    });
+
+    it('running journeys shows the top 5 and "View all N"', async () => {
+      const journeys = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, name: `J${i + 1}`, status: 'active', joined: i }));
+      mockHome({ ...fullHome, runningJourneys: { available: true, total: 12, journeys } });
+      renderPage();
+      await screen.findByText('J5');
+      expect(screen.getByText('View all 12')).toBeTruthy();
+      expect(bodyText()).not.toMatch(/NaN|undefined/);
+    });
+
     it('shows failed sends in the last 24h from the status API', async () => {
-      vi.mocked(api.getOverviewHome).mockResolvedValue(fullHome);
+      mockHome(fullHome);
       const recent = new Date(Date.now() - 3600 * 1000).toISOString();
       const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
       vi.mocked(api.getOverviewStatus).mockResolvedValue({
@@ -235,7 +298,7 @@ describe('Dashboard page', () => {
 
     it('greets the signed-in user by first name', async () => {
       localStorage.setItem('rayna-auth', JSON.stringify({ token: 't', user: { id: 1, email: 'a@b.c', name: 'Avinash Kumar', role: 'admin' } }));
-      vi.mocked(api.getOverviewHome).mockResolvedValue(fullHome);
+      mockHome(fullHome);
       const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       render(<QueryClientProvider client={qc}><AuthProvider><BusinessTypeProvider><Dashboard /></BusinessTypeProvider></AuthProvider></QueryClientProvider>);
       expect(await screen.findByText(/^Good (morning|afternoon|evening), Avinash$/)).toBeTruthy();
