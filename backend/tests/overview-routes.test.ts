@@ -52,7 +52,7 @@ describe('GET /home', () => {
     expect(body.sentToday).toEqual({ available: true, email: 0, whatsapp: 0, sms: 0, total: 0 });
     expect(body.delivery7d).toEqual({ available: true, sent: 0, delivered: 0, deliveredPct: 0 });
     expect(body.conversions30d).toEqual({ available: true, count: 0 });
-    expect(body.runningJourneys).toEqual({ available: true, journeys: [] });
+    expect(body.runningJourneys).toEqual({ available: true, total: 0, journeys: [] });
     expect(body.sendingToday).toEqual({ available: true, journeys: [], total: 0 });
     const series = body.series14d as { available: boolean; days: { total: number }[] };
     expect(series.days).toHaveLength(14);
@@ -68,7 +68,7 @@ describe('GET /home', () => {
     const { body } = await get('/home');
     expect(body.sentToday).toMatchObject({ email: 3, whatsapp: 3, sms: 3, total: 9 });
     expect(body.delivery7d).toMatchObject({ sent: 9, delivered: 9, deliveredPct: 100 });
-    expect(body.runningJourneys).toEqual({ available: true, journeys: [{ id: 7, name: 'J', status: 'active', joined: 12 }] });
+    expect(body.runningJourneys).toMatchObject({ available: true, journeys: [{ id: 7, name: 'J', status: 'active', joined: 12 }] });
   });
 
   it('one failing section is marked unavailable while the others still return', async () => {

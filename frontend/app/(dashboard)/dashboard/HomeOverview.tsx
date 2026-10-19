@@ -147,12 +147,12 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
           </div>
 
           <div className={s.twoCol}>
-            <Card title="Running journeys" actions={<Link href="/journeys" className={s.headLink}>All journeys</Link>}>
+            <Card title="Running journeys" actions={<Link href="/journeys" className={s.headLink}>{running && (running.total ?? 0) > running.journeys.length ? `View all ${fmt(running.total ?? 0)}` : 'All journeys'}</Link>}>
               {loading ? <Skeleton height={60} /> : !running ? <Unavailable /> : running.journeys.length === 0 ? (
                 <p className={s.note}>No journeys are running.</p>
               ) : (
                 <ul className={s.list}>
-                  {running.journeys.map(j => (
+                  {running.journeys.slice(0, 5).map(j => (
                     <li key={j.id} className={s.listItem}>
                       <span style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
                         <span className={s.dot} aria-hidden="true" />
@@ -162,6 +162,9 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
                     </li>
                   ))}
                 </ul>
+              )}
+              {running && (running.total ?? 0) > running.journeys.length && (
+                <p className={s.note}>Showing the {Math.min(5, running.journeys.length)} most recently updated of {fmt(running.total ?? 0)} running journeys.</p>
               )}
             </Card>
 

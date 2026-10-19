@@ -128,11 +128,22 @@ router.get('/home', async (_req: Request, res: Response) => {
     }),
 
     section('runningJourneys', async () => {
-      const { rows } = await db.query<CountRow>(`SELECT jf.journey_id, jf.name, jf.status,
-          (SELECT COUNT(*) FROM journey_entries je WHERE je.journey_id = jf.journey_id) AS joined
-        FROM journey_flows jf WHERE jf.status = 'active'
-        ORDER BY jf.updated_at DESC NULLS LAST LIMIT 20`);
-      return { journeys: rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), status: String(r.status ?? ''), joined: num(r.joined) })) };
+      // Top 5 only (keeps Home fast). Joined = the larger of the stored total (segment journeys)
+      // and the GTM/giveaway entries table, which continuous journeys use instead of journey_entries.
+      // The per-row subqueries run only for the 5 rows kept by the LIMIT.
+      const { rows } = await db.query<CountRow>(`WITH top AS (
+          SELECT jf.journey_id, jf.name, jf.status, COALESCE(jf.total_entries, 0) AS stored, COUNT(*) OVER () AS running_total
+          FROM journey_flows jf WHERE jf.status = 'active'
+          ORDER BY jf.updated_at DESC NULLS LAST LIMIT 5)
+        SELECT t.journey_id, t.name, t.status, t.running_total,
+          GREATEST(t.stored,
+            (SELECT COUNT(*) FROM journey_entries je WHERE je.journey_id = t.journey_id),
+            (SELECT COUNT(*) FROM gtm_journey_entries g WHERE g.journey_id = t.journey_id)) AS joined
+        FROM top t`);
+      return {
+        total: num(rows[0]?.running_total),
+        journeys: rows.map(r => ({ id: num(r.journey_id), name: String(r.name ?? ''), status: String(r.status ?? ''), joined: num(r.joined) })),
+      };
     }),
 
     section('sendingToday', async () => {

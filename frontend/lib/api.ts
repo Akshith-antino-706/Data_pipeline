@@ -592,7 +592,7 @@ export interface OverviewHome {
   sentToday: OverviewSection<OverviewChannelCounts>;
   delivery7d: OverviewSection<{ sent: number; delivered: number; deliveredPct: number }>;
   conversions30d: OverviewSection<{ count: number }>;
-  runningJourneys: OverviewSection<{ journeys: { id: number; name: string; status: string; joined: number }[] }>;
+  runningJourneys: OverviewSection<{ total?: number; journeys: { id: number; name: string; status: string; joined: number }[] }>;
   sendingToday: OverviewSection<{ journeys: { id: number; name: string; due: number }[]; total: number }>;
   series14d: OverviewSection<{ days: ({ date: string } & OverviewChannelCounts)[] }>;
 }
