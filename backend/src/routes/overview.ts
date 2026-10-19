@@ -139,14 +139,39 @@ const SERIES_TODAY_TTL_MS = 120_000;
 const seriesDayCache = new Map<string, { at: number; v: ChannelCounts }>();
 /** Dubai-midnight timestamp `k` days ago; k is an internal integer 0–14, never user input. */
 const dubaiDayStart = (k: number) => `((date_trunc('day', NOW() AT TIME ZONE 'Asia/Dubai') - INTERVAL '${Math.trunc(k)} days') AT TIME ZONE 'Asia/Dubai')`;
-async function seriesDay(date: string, k: number): Promise<ChannelCounts> {
+/** Email sent on one Dubai day — answered from idx_esl_sent_at; past days cached 6h. */
+async function seriesEmailDay(date: string, k: number): Promise<number> {
   const hit = seriesDayCache.get(date);
   const ttl = k === 0 ? SERIES_TODAY_TTL_MS : SERIES_PAST_TTL_MS;
-  if (hit && Date.now() - hit.at < ttl) return hit.v;
-  const v = await homeSentBetween(dubaiDayStart(k), k === 0 ? DUBAI_TOMORROW : dubaiDayStart(k - 1));
-  seriesDayCache.set(date, { at: Date.now(), v });
+  if (hit && Date.now() - hit.at < ttl) return hit.v.email;
+  const { rows } = await hq(`SELECT COUNT(*) AS n FROM email_send_log
+    WHERE sent_at >= ${dubaiDayStart(k)} AND sent_at < ${k === 0 ? DUBAI_TOMORROW : dubaiDayStart(k - 1)}`);
+  const email = num(rows[0]?.n);
+  seriesDayCache.set(date, { at: Date.now(), v: { email, whatsapp: 0, sms: 0, total: email } });
   if (seriesDayCache.size > 40) for (const key of [...seriesDayCache.keys()].sort().slice(0, seriesDayCache.size - 40)) seriesDayCache.delete(key);
-  return v;
+  return email;
+}
+
+/**
+ * WhatsApp and SMS logs have no index on their time column, so per-day counts would scan each
+ * table 14 times. Instead read each table ONCE for the whole 14-day window, grouped by Dubai day,
+ * and cache that for 10 minutes.
+ */
+const WA_SMS_SERIES_TTL_MS = 10 * 60 * 1000;
+let waSmsSeriesCache: { at: number; wa: Map<string, number>; sms: Map<string, number> } | null = null;
+async function waSmsSeries(): Promise<{ wa: Map<string, number>; sms: Map<string, number> }> {
+  if (waSmsSeriesCache && Date.now() - waSmsSeriesCache.at < WA_SMS_SERIES_TTL_MS) return waSmsSeriesCache;
+  const day = (col: string) => `to_char((${col} AT TIME ZONE 'Asia/Dubai')::date, 'YYYY-MM-DD')`;
+  const start = dubaiDayStart(13);
+  const [w, s] = await Promise.all([
+    hq(`SELECT ${day('created_at')} AS d, COUNT(*) AS n FROM whatsapp_send_log
+      WHERE created_at >= ${start} AND created_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued') GROUP BY 1`),
+    hq(`SELECT ${day('sent_at')} AS d, COUNT(*) AS n FROM sms_send_log
+      WHERE sent_at >= ${start} AND sent_at < ${DUBAI_TOMORROW} AND status NOT IN ('failed','queued','blocked') GROUP BY 1`),
+  ]);
+  const toMap = (rows: CountRow[]) => new Map(rows.map(r => [String(r.d), num(r.n)]));
+  waSmsSeriesCache = { at: Date.now(), wa: toMap(w.rows), sms: toMap(s.rows) };
+  return waSmsSeriesCache;
 }
 
 /** Cap for the per-journey "joined" counts on Home (keeps each count bounded). */
@@ -226,18 +251,21 @@ const HOME_SECTION_FNS = {
   },
 
   series14d: async () => {
-    // One cheap one-day count per Dubai day (same query shape as sentToday). Past days never
-    // change, so each is computed once and kept for 6 hours; only today is recomputed.
+    // Email: one cheap indexed count per Dubai day (past days cached 6h, today 2 min).
+    // WhatsApp/SMS: one grouped read for the whole window (their time columns are unindexed).
     const today = dubaiTodayIso();
     const offsets = Array.from({ length: 14 }, (_, i) => 13 - i); // 13 … 0 days ago
-    const days: ({ date: string } & ChannelCounts)[] = [];
-    for (let i = 0; i < offsets.length; i += 3) {
-      const batch = await Promise.all(offsets.slice(i, i + 3).map(async k => {
-        const date = addDays(today, -k);
-        return { date, ...(await seriesDay(date, k)) };
-      }));
-      days.push(...batch);
+    const waSmsP = waSmsSeries();
+    const emails: number[] = [];
+    for (let i = 0; i < offsets.length; i += 4) {
+      emails.push(...await Promise.all(offsets.slice(i, i + 4).map(k => seriesEmailDay(addDays(today, -k), k))));
     }
+    const { wa, sms } = await waSmsP;
+    const days = offsets.map((k, i) => {
+      const date = addDays(today, -k);
+      const email = emails[i] ?? 0, whatsapp = wa.get(date) ?? 0, smsN = sms.get(date) ?? 0;
+      return { date, email, whatsapp, sms: smsN, total: email + whatsapp + smsN };
+    });
     return { days };
   },
 } as const;
@@ -259,6 +287,7 @@ const homeInFlight = new Map<HomeSectionName, Promise<AnyHomeResult>>();
 export function resetHomeCache(): void {
   homeCache.clear();
   seriesDayCache.clear();
+  waSmsSeriesCache = null;
   homeInFlight.clear();
 }
 

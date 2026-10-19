@@ -418,20 +418,24 @@ describe('slow Home section keeps computing after the response limit', () => {
   });
 });
 
-describe('series14d per-day computation', () => {
-  it('runs one small count per channel per day and fills 14 days', async () => {
-    mockQuery.mockResolvedValue({ rows: [{ n: '2' }] });
+describe('series14d computation', () => {
+  it('counts email per day (indexed) and reads WhatsApp/SMS once each, grouped by day', async () => {
+    const todayIso = new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
+    mockQuery.mockImplementation((sql: string) => Promise.resolve({
+      rows: String(sql).includes('GROUP BY') ? [{ d: todayIso, n: '3' }] : [{ n: '2' }],
+    }));
     const r = await getHomeSection('series14d');
     expect(r.available).toBe(true);
     if (r.available) {
       expect(r.days).toHaveLength(14);
-      expect(r.days[13]).toMatchObject({ email: 2, whatsapp: 2, sms: 2, total: 6 });
+      expect(r.days[13]).toMatchObject({ email: 2, whatsapp: 3, sms: 3, total: 8 });
+      expect(r.days[0]).toMatchObject({ whatsapp: 0, sms: 0 });
     }
-    expect(mockQuery.mock.calls.length).toBe(42);
-    for (const sql of sqlCalls()) {
-      expect(sql).not.toMatch(/GROUP BY|to_char/);
-      expect(sql).toMatch(/^\s*SELECT COUNT\(\*\)/);
-    }
+    const sqls = sqlCalls();
+    expect(sqls.filter(q => q.includes('email_send_log'))).toHaveLength(14);
+    expect(sqls.filter(q => q.includes('whatsapp_send_log'))).toHaveLength(1);
+    expect(sqls.filter(q => q.includes('sms_send_log'))).toHaveLength(1);
+    for (const q of sqls.filter(x => x.includes('email_send_log'))) expect(q).not.toMatch(/GROUP BY|status/);
   });
 });
 
