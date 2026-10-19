@@ -308,7 +308,7 @@ describe('Dashboard page', () => {
       });
       renderPage();
       await screen.findByText(/failed send in the last 24 hours/);
-      expect(screen.getByText('View log').closest('a')?.getAttribute('href')).toBe('/log');
+      expect(screen.getByText('View failed').closest('a')?.getAttribute('href')).toBe('/log?channel=all&status=failed');
     });
 
     it('greets the signed-in user by first name', async () => {

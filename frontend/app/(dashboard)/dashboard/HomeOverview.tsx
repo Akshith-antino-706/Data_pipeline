@@ -42,6 +42,8 @@ function Unavailable({ onRetry, retrying }: { onRetry?: () => void; retrying?: b
 }
 
 const MAX_POLLS = 24;
+/** The status endpoint returns at most the latest 50 failed sends, so 50 means "50 or more". */
+const FAILED_LIST_CAP = 50;
 const isTimeout = (sec: unknown): boolean =>
   !!sec && typeof sec === 'object' && (sec as { available?: unknown }).available === false && (sec as { reason?: unknown }).reason === 'timeout';
 
@@ -160,10 +162,10 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
           {failed24h > 0 && (
             <Card className={s.attention} aria-label="Needs your attention">
               <span className={s.attentionText}>
-                <span className={s.badChip}>{fmt(failed24h)}</span>
+                <span className={s.badChip}>{failed24h >= FAILED_LIST_CAP ? `${fmt(FAILED_LIST_CAP)}+` : fmt(failed24h)}</span>
                 failed send{failed24h === 1 ? '' : 's'} in the last 24 hours
               </span>
-              <Link href="/log" className={buttonClass('secondary', 'sm')}>View log</Link>
+              <Link href="/log?channel=all&status=failed" className={buttonClass('secondary', 'sm')}>View failed</Link>
             </Card>
           )}
 

@@ -166,6 +166,16 @@ export default function LogPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Selected | null>(null);
 
+  // Deep links such as /log?channel=all&status=failed (used by Home's "View failed").
+  // Read once on mount from window.location so the page needs no Suspense boundary.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const ch = q.get('channel');
+    if (ch === 'all' || ch === 'email' || ch === 'whatsapp' || ch === 'sms') setChannel(ch);
+    const st = q.get('status');
+    if (st && STATUS_FILTERS.some(f => f.key === st)) setStatusFilter(st);
+  }, []);
+
   const [journeys, setJourneys] = useState<LogJourney[]>([]);
   const [journeyNodes, setJourneyNodes] = useState<LogNode[]>([]);
 

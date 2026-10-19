@@ -41,6 +41,18 @@ const ROWS = [
 ];
 
 describe('Send Log page', () => {
+  it('opens pre-filtered from a deep link (?channel=all&status=failed)', async () => {
+    unified(MSGS, 2);
+    window.history.replaceState(null, '', '/log?channel=all&status=failed');
+    try {
+      render(<LogPage />);
+      await screen.findByText('Invalid number');
+      expect(lastUnified()).toMatchObject({ status: 'failed', page: 1 });
+      expect(lastUnified()?.channel).toBeUndefined();
+      expect(screen.getByRole('button', { name: 'Failed' }).getAttribute('aria-pressed')).toBe('true');
+    } finally { window.history.replaceState(null, '', '/'); }
+  });
+
   it('renders rows with typical data and requests page 1 / limit 20 for email', async () => {
     sendLog(ROWS, 2);
     render(<LogPage />);
