@@ -119,8 +119,10 @@ function hq(text: string, values: unknown[] = []) {
 
 async function homeSentBetween(startExpr: string, endExpr: string) {
   const [e, w, s] = await Promise.all([
+    // sent_at is only set once an email is actually sent (failed/queued rows have NULL), so the
+    // range alone means "sent" and the count can be answered from the sent_at index.
     hq(`SELECT COUNT(*) AS n FROM email_send_log
-      WHERE sent_at >= ${startExpr} AND sent_at < ${endExpr} AND status NOT IN ('failed','queued')`),
+      WHERE sent_at >= ${startExpr} AND sent_at < ${endExpr}`),
     hq(`SELECT COUNT(*) AS n FROM whatsapp_send_log
       WHERE created_at >= ${startExpr} AND created_at < ${endExpr} AND status NOT IN ('failed','queued')`),
     hq(`SELECT COUNT(*) AS n FROM sms_send_log
@@ -644,5 +646,15 @@ router.get('/website', async (req: Request, res: Response) => {
   ]);
   res.json({ range, eventsPerDay, topEvents, topPages, lastHour, utmLinks });
 });
+
+// Warm the slowest Home cards shortly after the server starts, so the first visitor
+// usually finds them ready. Read-only (the same SELECTs a page load would run); skipped in tests.
+if (process.env.NODE_ENV !== 'test' && process.env.OVERVIEW_PREWARM !== 'false') {
+  setTimeout(() => {
+    for (const name of ['series14d', 'sendingToday', 'delivery7d'] as const) {
+      void getHomeSection(name).catch(() => { /* a later page load will retry */ });
+    }
+  }, 15_000).unref();
+}
 
 export default router;
