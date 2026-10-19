@@ -1,0 +1,196 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import * as api from '@/lib/api';
+import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
+import UtmPage from '@/app/(dashboard)/utm/page';
+import ContactsPage from '@/app/(dashboard)/contacts/page';
+import ContactProfile from '@/app/(dashboard)/contacts/[id]/page';
+import CampaignDetail from '@/app/(dashboard)/campaigns/[id]/page';
+
+vi.mock('@/lib/api');
+
+const nav = vi.hoisted(() => ({
+  push: vi.fn<(href: string) => void>(),
+  params: { id: '1' } as Record<string, string>,
+}));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: nav.push, replace: nav.push, back: () => {}, prefetch: () => {}, refresh: () => {} }),
+  useParams: () => nav.params,
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock('next/link', () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>,
+}));
+
+beforeEach(() => {
+  // Every lib/api export is an auto-mock; default each to an empty successful response.
+  for (const fn of Object.values(api)) {
+    if (vi.isMockFunction(fn)) fn.mockResolvedValue({});
+  }
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+const bodyText = (): string => document.body.textContent ?? '';
+
+describe('UTM page', () => {
+  it('renders email visits with valid, invalid and missing destination_url without crashing', async () => {
+    vi.mocked(api.getEmailUtmLog).mockResolvedValue({ data: { total: 4, rows: [
+      { id: 1, email: 'a@x.com', destination_url: 'https://raynatours.com/dubai/tours?x=1', created_at: '2026-10-01T00:00:00Z' },
+      { id: 2, email: 'b@x.com', destination_url: 'not a url %%%', created_at: '2026-10-01T00:00:00Z' },
+      { id: 3, email: 'c@x.com', destination_url: '', created_at: 'garbage-date' },
+      { id: 4, email: 'd@x.com', created_at: '2026-10-01T00:00:00Z' },
+    ] } });
+    render(<UtmPage />);
+    await screen.findByText('a@x.com');
+    expect(screen.getByText('/dubai/tours')).toBeTruthy();
+    expect(screen.getByText('not a url %%%')).toBeTruthy();
+    expect(screen.getByText('d@x.com')).toBeTruthy();
+  });
+
+  it('survives API errors and null payloads', async () => {
+    vi.mocked(api.getEmailUtmLog).mockRejectedValue(new Error('HTTP 500'));
+    vi.mocked(api.getEmailUtmSummary).mockResolvedValue(null);
+    vi.mocked(api.getUTMAnalytics).mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.mocked(api.getUTMSegments).mockResolvedValue(null);
+    render(<UtmPage />);
+    await waitFor(() => expect(api.getEmailUtmLog).toHaveBeenCalled());
+    expect(bodyText()).not.toContain('NaN');
+  });
+});
+
+describe('Contacts list page', () => {
+  const renderContacts = () => render(<BusinessTypeProvider><ContactsPage /></BusinessTypeProvider>);
+
+  it('formatAED handles numeric strings from the API (regression)', async () => {
+    vi.mocked(api.getUnifiedStats).mockResolvedValue({ data: { total_contacts: 10, total_bookings: 3, total_revenue: '12345.6' } } as unknown as Awaited<ReturnType<typeof api.getUnifiedStats>>);
+    renderContacts();
+    await screen.findByText('AED 12,346');
+  });
+
+  it('formatAED renders AED 0 for null / non-numeric revenue, never NaN', async () => {
+    vi.mocked(api.getUnifiedStats).mockResolvedValue({ data: { total_contacts: 0, total_bookings: 0, total_revenue: 'abc' } } as unknown as Awaited<ReturnType<typeof api.getUnifiedStats>>);
+    renderContacts();
+    await screen.findByText('AED 0');
+    expect(bodyText()).not.toContain('NaN');
+  });
+
+  it('row revenue as string is formatted; list API error does not crash', async () => {
+    vi.mocked(api.getUnifiedContacts).mockResolvedValue({ data: [
+      { id: 1, name: 'Ann', email: 'ann@x.com', total_booking_revenue: '2500.4' },
+      { id: 2, name: 'Bob', email: 'bob@x.com', total_booking_revenue: 'oops' },
+    ], total: 2, totalPages: 1 });
+    renderContacts();
+    await screen.findByText('Ann');
+    expect(screen.getByText('AED 2,500')).toBeTruthy();
+    expect(bodyText()).not.toContain('NaN');
+    cleanup();
+    vi.mocked(api.getUnifiedContacts).mockRejectedValue(new Error('HTTP 503'));
+    renderContacts();
+    await waitFor(() => expect(api.getUnifiedContacts).toHaveBeenCalled());
+  });
+});
+
+describe('Contact profile page', () => {
+  beforeEach(() => { nav.params = { id: '42' }; });
+  const contact = (extra: Record<string, unknown>) => ({ data: { id: 42, name: 'Zed', email: 'z@x.com', ...extra } });
+
+  it('STATUS_COLOR falls back to slate for an unknown booking_status (regression)', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'PAST_ENQUIRY' }));
+    render(<ContactProfile />);
+    const badges = await screen.findAllByText('PAST_ENQUIRY');
+    const badge = badges.find(el => el.classList.contains('badge'));
+    expect(badge?.style.color).toBe('rgb(100, 116, 139)');
+  });
+
+  it('known status uses its mapped colour', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'FUTURE_TRAVEL' }));
+    render(<ContactProfile />);
+    const badge = (await screen.findAllByText('FUTURE_TRAVEL')).find(el => el.classList.contains('badge'));
+    expect(badge?.style.color).toBe('rgb(59, 130, 246)');
+  });
+
+  it('shows "Contact not found" when the API errors', async () => {
+    vi.mocked(api.getUnifiedContact).mockRejectedValue(new Error('HTTP 404'));
+    render(<ContactProfile />);
+    await screen.findByText(/Contact not found/);
+  });
+
+  // BUG app/(dashboard)/contacts/[id]/page.tsx:86 - formatAED does `(n || 0).toLocaleString(...)`;
+  // when the API sends total_booking_revenue as a numeric string (PG NUMERIC), String#toLocaleString
+  // ignores the options and prints the raw "12345.6" instead of "AED 12,346".
+  it.fails('profile formatAED formats string revenue', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'ON_TRIP', total_booking_revenue: '12345.6' }));
+    render(<ContactProfile />);
+    await screen.findByText('Zed');
+    expect(bodyText()).toContain('AED 12,346');
+  });
+});
+
+describe('Campaign (journey) detail page', () => {
+  beforeEach(() => { nav.params = { id: '9' }; });
+
+  const journey = {
+    data: {
+      name: 'J', status: 'active', total_entries: 'x',
+      nodes: [
+        { id: 'n0', type: 'trigger' },
+        { id: 'n1', type: 'action', data: { channel: 'email', templateName: 'T1' } },
+        { id: 'n2', type: 'action', data: { channel: 'whatsapp' } },
+      ],
+    },
+  };
+
+  it('sent counts never render NaN for garbage / missing counts (regression)', async () => {
+    vi.mocked(api.getJourney).mockResolvedValue(journey);
+    vi.mocked(api.getJourneyCampaignAnalytics).mockResolvedValue({ data: {
+      target_count: 'abc',
+      campaigns: [
+        { journey_node_id: 'n1', channel: 'email', sent_count: 'abc', target_count: '', bounce_count: 'NaN', fail_count: null },
+        { journey_node_id: 'n2', channel: 'whatsapp', sent_count: null, target_count: null, bounce_count: null, fail_count: 'x' },
+      ],
+      totals: { total_sent: undefined, total_read: null },
+    } });
+    vi.mocked(api.getJourneyAnalytics).mockResolvedValue({ data: { nodeStats: [{ node_id: 'n1', event_type: 'action_sent', count: 'zz' }], funnelData: [] } });
+    vi.mocked(api.getJourneyGtmNodeStats).mockResolvedValue({ data: {}, allEventTypes: ['purchase'] });
+    render(<CampaignDetail />);
+    await screen.findByText('T1');
+    expect(bodyText()).not.toContain('NaN');
+    // Expand an action node to pull analytics + GTM stats, and check again.
+    fireEvent.click(screen.getByText('T1'));
+    await waitFor(() => expect(api.getJourneyGtmNodeStats).toHaveBeenCalled());
+    await waitFor(() => expect(bodyText()).not.toContain('NaN'));
+  });
+
+  // BUG app/(dashboard)/campaigns/[id]/page.tsx:57 - fmt() is `Number(n || 0).toLocaleString()`,
+  // so a non-numeric string total (e.g. totals.total_clicked: 'abc') renders "NaN" in the stat tile.
+  it.fails('header stat tiles do not show NaN for non-numeric totals', async () => {
+    vi.mocked(api.getJourney).mockResolvedValue(journey);
+    vi.mocked(api.getJourneyCampaignAnalytics).mockResolvedValue({ data: { target_count: '1', campaigns: [], totals: { total_clicked: 'abc' } } });
+    render(<CampaignDetail />);
+    await screen.findByText('T1');
+    expect(bodyText()).not.toContain('NaN');
+  });
+
+  it('numeric-string counts are shown as numbers', async () => {
+    vi.mocked(api.getJourney).mockResolvedValue(journey);
+    vi.mocked(api.getJourneyCampaignAnalytics).mockResolvedValue({ data: {
+      target_count: '10',
+      campaigns: [{ journey_node_id: 'n1', channel: 'email', sent_count: '1234', target_count: '10', bounce_count: '0', fail_count: '0' }],
+      totals: { total_sent: 1234 },
+    } });
+    render(<CampaignDetail />);
+    await screen.findByText('T1');
+    expect(screen.getAllByText('1,234').length).toBeGreaterThan(0);
+  });
+
+  it('both initial APIs failing shows "Journey not found" instead of crashing', async () => {
+    vi.mocked(api.getJourney).mockRejectedValue(new Error('HTTP 500'));
+    vi.mocked(api.getJourneyCampaignAnalytics).mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<CampaignDetail />);
+    await screen.findByText('Journey not found');
+  });
+});
