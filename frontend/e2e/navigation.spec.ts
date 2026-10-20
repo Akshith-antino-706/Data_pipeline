@@ -38,3 +38,26 @@ test.describe('sidebar navigation', () => {
     });
   }
 });
+
+test.describe('create journey route', () => {
+  test('/journeys/new loads the wizard with Journeys highlighted, and back returns', async ({ authed: page, consoleErrors }) => {
+    await page.goto('/dashboard');
+    await page.getByRole('link', { name: 'Create journey' }).first().click();
+    await expect(page).toHaveURL(/\/journeys\/new$/);
+    await expect(page.getByRole('heading', { name: 'What is this journey for?' })).toBeVisible();
+    const nav = page.getByRole('navigation', { name: 'Main' });
+    await expect(nav.getByRole('link', { name: 'Journeys', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expectNoBadText(page);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test('Cancel on /journeys/new goes to the list', async ({ authed: page }) => {
+    await page.goto('/journeys/new');
+    await expect(page.getByRole('heading', { name: 'What is this journey for?' })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page).toHaveURL(/\/journeys$/);
+    await expect(page.getByText('Welcome Series').first()).toBeVisible();
+  });
+});

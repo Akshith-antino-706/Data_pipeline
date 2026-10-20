@@ -10,11 +10,12 @@ vi.mock('@/lib/api');
 const nav = vi.hoisted(() => ({
   replace: vi.fn<(href: string) => void>(),
   search: new URLSearchParams(),
+  pathname: '/journeys',
 }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: nav.replace, replace: nav.replace, back: () => {}, prefetch: () => {}, refresh: () => {} }),
   useParams: () => ({}),
-  usePathname: () => '/journeys',
+  usePathname: () => nav.pathname,
   useSearchParams: () => nav.search,
 }));
 vi.mock('next/link', () => ({
@@ -32,6 +33,7 @@ beforeEach(() => {
   }
   nav.replace.mockReset();
   nav.search = new URLSearchParams();
+  nav.pathname = '/journeys';
   toastMock.success.mockReset();
   toastMock.error.mockReset();
   localStorage.setItem('business-type', 'All');
@@ -237,11 +239,22 @@ describe('Journeys list page', () => {
     expect(api.deleteJourney).not.toHaveBeenCalled();
   });
 
-  it('New Journey opens the create wizard and Next is blocked until the step is valid', async () => {
+  it('Create journey links to the /journeys/new route (header and empty state)', async () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
-    fireEvent.click(screen.getByRole('button', { name: 'Create journey' }));
+    expect(screen.getByRole('link', { name: 'Create journey' }).getAttribute('href')).toBe('/journeys/new');
+    cleanup();
+    mockList([]);
+    renderPage();
+    await screen.findByText('Create your first journey');
+    for (const a of screen.getAllByRole('link', { name: 'Create journey' })) expect(a.getAttribute('href')).toBe('/journeys/new');
+  });
+
+  it('/journeys/new opens the create wizard; Next is blocked until the step is valid; Cancel goes to /journeys', async () => {
+    nav.pathname = '/journeys/new';
+    mockList(LIST);
+    renderPage();
     await screen.findByRole('heading', { name: 'Create journey' });
     expect(screen.getByRole('button', { name: /Basics/ }).getAttribute('aria-current')).toBe('step');
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
@@ -252,7 +265,14 @@ describe('Journeys list page', () => {
     expect(screen.getByRole('heading', { name: 'How do people join?' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+    expect(nav.replace).toHaveBeenCalledWith('/journeys');
+  });
+
+  it('/journeys still shows the list, not the wizard', async () => {
+    mockList(LIST);
+    renderPage();
     await screen.findByText('Welcome Series');
+    expect(screen.queryByRole('heading', { name: 'What is this journey for?' })).toBeNull();
   });
 
   it('clicking a journey card opens its detail and updates the URL', async () => {

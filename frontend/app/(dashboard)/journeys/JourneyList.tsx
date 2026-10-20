@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
   GitBranch, Plus, RefreshCw, Search, Trash2, LayoutGrid, List, ChevronRight, Clock,
 } from 'lucide-react';
+import Link from 'next/link';
 import hotToast from 'react-hot-toast';
 import { deleteJourney } from '@/lib/api';
 import {
-  Button, Card, Chip, StatusChip, ConfirmDialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Table, Tabs,
+  Button, buttonClass, Card, Chip, StatusChip, ConfirmDialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Table, Tabs,
 } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import type { JourneyNode, JourneySummary } from '@/types/f1Journeys';
@@ -51,7 +52,6 @@ export interface JourneyListProps {
   businessType: string;
   state: JourneyListState;
   onRefresh: () => void | Promise<void>;
-  onCreate: () => void;
   onOpen: (id: number) => void;
   /** Extra page-level nodes (e.g. the legacy toast) rendered after the list. */
   children?: ReactNode;
@@ -130,7 +130,7 @@ const muted = { color: 'var(--ink3)', fontSize: 12 } as const;
 
 // ══════════════════════════════════════════════════════════════════
 export default function JourneyList({
-  journeys, loading, error, businessType, state, onRefresh, onCreate, onOpen, children,
+  journeys, loading, error, businessType, state, onRefresh, onOpen, children,
 }: JourneyListProps) {
   const {
     searchQuery, setSearchQuery, statusFilter, setStatusFilter, viewMode, setViewMode,
@@ -245,7 +245,7 @@ export default function JourneyList({
       description="Automated series of messages. A journey keeps sending to the people in its segment until it ends or you pause it."
       actions={<>
         <Button icon aria-label="Refresh journeys" title="Refresh" onClick={() => { void onRefresh(); }}><RefreshCw size={16} /></Button>
-        <Button variant="primary" onClick={onCreate}><Plus size={16} aria-hidden="true" /> Create journey</Button>
+        <Link href="/journeys/new" className={buttonClass('primary')}><Plus size={16} aria-hidden="true" /> Create journey</Link>
       </>}
     />
   );
@@ -351,7 +351,7 @@ export default function JourneyList({
             icon={<GitBranch size={22} />}
             title="Create your first journey"
             description="Journeys send messages for you, for example a welcome email when someone signs up, then a WhatsApp offer three days later. Nothing sends until you review and start it."
-            action={<Button variant="primary" onClick={onCreate}><Plus size={16} aria-hidden="true" /> Create journey</Button>}
+            action={<Link href="/journeys/new" className={buttonClass('primary')}><Plus size={16} aria-hidden="true" /> Create journey</Link>}
           />
         ) : (
           <EmptyState

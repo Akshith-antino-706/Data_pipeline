@@ -197,7 +197,7 @@ describe('Dashboard page', () => {
       expect(screen.getByText('Pre-trip tips').getAttribute('href')).toBe('/journeys?id=43');
       expect(screen.getAllByText('610 due')).toHaveLength(2); // card total + the journey row
       expect(screen.getByTestId('trend-chart').textContent).toContain(':11');
-      expect(screen.getByText('Create journey').closest('a')?.getAttribute('href')).toBe('/journeys');
+      expect(screen.getByText('Create journey').closest('a')?.getAttribute('href')).toBe('/journeys/new');
       expect(screen.queryByText('Send a message')).toBeNull();
       expect(screen.queryByText(/Not available right now/)).toBeNull();
       expect(screen.getByText('Audience overview')).toBeTruthy();

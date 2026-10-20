@@ -1,0 +1,87 @@
+.editor { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.headTitle { font-size: 14px; font-weight: 700; color: var(--ink); }
+
+/* Vertical timeline: icon rail on the left, a line joining the steps. */
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.item { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; padding-bottom: 12px; }
+.item:last-child { padding-bottom: 0; }
+.item:not(:last-child)::before {
+  content: ''; position: absolute; left: 17px; top: 36px; bottom: 0; width: 2px; background: var(--line);
+}
+.icon {
+  width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  background: var(--sunken); color: var(--ink2); position: relative; z-index: 1;
+}
+.toneTrigger { background: var(--gold-soft); color: var(--gold-ink); }
+.toneAction { background: var(--ok-soft); color: var(--ok); }
+.toneWait { background: var(--warn-soft); color: var(--warn); }
+.toneGoal { background: var(--info-soft); color: var(--info); }
+
+.itemBody { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 8px 8px 12px; }
+.itemEditing { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+.itemRow { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.itemText { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.itemName { font-size: 14px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itemDetail { font-size: 12px; color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.itemActions { display: flex; align-items: center; gap: 2px; flex: none; }
+.editPanel { border-top: 1px solid var(--line); margin: 10px -8px 0 -12px; padding: 16px 12px 4px; display: flex; flex-direction: column; gap: 16px; }
+
+.addBtn {
+  font: inherit; font-size: 14px; font-weight: 600; min-height: 48px; width: 100%; border-radius: 10px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1.5px dashed var(--gold); background: transparent; color: var(--gold-ink);
+}
+.addBtn:hover { background: var(--gold-soft); }
+.addBtn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.formCard { border: 1px solid var(--gold); border-radius: 12px; background: var(--surface); padding: 18px; display: flex; flex-direction: column; gap: 18px; }
+.formTitle { font-size: 16px; font-weight: 700; margin: 0; color: var(--ink); }
+.fields { display: flex; flex-direction: column; gap: 18px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+
+.group { border: 1px solid var(--line); border-radius: 10px; margin: 0; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.legend { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); padding: 0 6px; }
+.subCard { background: var(--sunken); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Node type: cards with an icon and a one-line description. */
+.types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.typeCard {
+  font: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); min-width: 0;
+}
+.typeCard:hover { background: var(--sunken); }
+.typeCard:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.typeOn, .typeOn:hover { border-color: var(--gold); background: var(--gold-soft); box-shadow: 0 0 0 1px var(--gold); }
+.typeIcon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+.typeText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.typeText b { font-size: 13px; }
+.typeText span { font-size: 12px; color: var(--ink3); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  font: inherit; font-size: 13px; font-weight: 600; min-height: 36px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink2);
+}
+.chip:hover { background: var(--sunken); }
+.chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.chipOn, .chipOn:hover { border-color: var(--gold); background: var(--gold-soft); color: var(--gold-ink); }
+
+.aiBox { margin-top: 4px; padding: 10px 12px; border-radius: 10px; background: var(--info-soft); display: flex; flex-direction: column; gap: 8px; }
+.aiTitle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--info); }
+
+.inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.time { width: 140px; }
+.num { width: 96px; }
+.unit { width: auto; min-width: 110px; }
+.plus { font-weight: 700; color: var(--ink2); }
+
+@media (max-width: 900px) {
+  .types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .formCard { padding: 14px; }
+  .itemRow { flex-wrap: wrap; }
+  .itemActions { width: 100%; justify-content: flex-end; }
+}

@@ -15,4 +15,13 @@ test.describe('journeys', () => {
     await page.goto('/journeys?id=11');
     await expect(page.getByText('Welcome email').first()).toBeVisible();
   });
+
+  test('Create journey opens the wizard on /journeys/new', async ({ authed: page, api }) => {
+    await page.goto('/journeys');
+    await page.getByRole('link', { name: 'Create journey' }).first().click();
+    await expect(page).toHaveURL(/\/journeys\/new$/);
+    await expect(page.getByRole('heading', { name: 'What is this journey for?' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Basics/ })).toHaveAttribute('aria-current', 'step');
+    expect(api.calls.filter(c => c.startsWith('POST'))).toEqual([]);
+  });
 });

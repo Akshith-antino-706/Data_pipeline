@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { Button, Chip, ConfirmDialog, Field, Input, Toggle } from '@/components/ui';
 import type { CreateForm, NodeForm } from '@/types/f1Journeys';
+import { cleanSegmentLabel, formatDubaiStart, pluralSteps } from './nodeNames';
 import styles from './JourneyWizard.module.css';
 
 export interface WizardSegment { value: string; label: string }
@@ -74,11 +75,7 @@ const nodeSummary = (n: NodeForm): string => {
   return n.type;
 };
 
-const formatStart = (v: string): string => {
-  if (!v) return 'About 10 minutes after creating';
-  const [d, t] = v.split('T');
-  return t ? `${d}, ${t} Dubai time` : d;
-};
+export const formatStart = (v: string): string => (v ? formatDubaiStart(v) : 'About 10 minutes after creating');
 
 export default function JourneyWizard(props: JourneyWizardProps) {
   const {
@@ -96,7 +93,7 @@ export default function JourneyWizard(props: JourneyWizardProps) {
   const errors = stepErrors(step, form, nodes, nodeEditorOpen);
   const dirty = isWizardDirty(form, nodes);
   const isLast = step === WIZARD_STEPS.length - 1;
-  const segmentLabel = segments.find(s => s.value === form.segmentId)?.label || form.segmentId;
+  const segmentLabel = cleanSegmentLabel(segments.find(s => s.value === form.segmentId)?.label || form.segmentId);
   const continuous = form.journeyType === 'continuous';
   const giveaway = (form.triggerSource || 'gtm') === 'giveaway';
   const events = splitEvents(form.triggerEvent);
@@ -171,38 +168,46 @@ export default function JourneyWizard(props: JourneyWizardProps) {
         <Button variant="ghost" onClick={requestClose} disabled={creating}>Cancel</Button>
       </header>
 
-      <div className={styles.body}>
-        <nav aria-label="Wizard steps" className={styles.steps}>
-          <span className={styles.eyebrow} aria-hidden="true">Step {step + 1} of {WIZARD_STEPS.length}</span>
-          <ol className={styles.stepList}>
-            {WIZARD_STEPS.map((s, i) => {
-              const cur = i === step;
-              const done = i < step;
-              const reachable = i <= step || canReach(i);
-              return (
-                <li key={s.title}>
-                  <button
-                    type="button"
-                    className={[styles.stepBtn, cur ? styles.stepCur : ''].filter(Boolean).join(' ')}
-                    aria-current={cur ? 'step' : undefined}
-                    disabled={!reachable || creating}
-                    onClick={() => goTo(i)}
-                  >
-                    <span className={[styles.dot, done ? styles.dotDone : '', cur ? styles.dotCur : ''].filter(Boolean).join(' ')} aria-hidden="true">
-                      {done ? '✓' : i + 1}
-                    </span>
-                    <span className={styles.stepText}>
-                      <b>{s.title}</b>
-                      <span className={styles.help}>{s.hint}</span>
-                    </span>
-                    <span className={styles.srOnly}>{done ? ' (done)' : cur ? ' (current step)' : ''}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
+      <nav aria-label="Wizard steps" className={styles.stepper}>
+        <div className={styles.compact}>
+          <span className={styles.compactText}>Step {step + 1} of {WIZARD_STEPS.length} · {WIZARD_STEPS[step].title}</span>
+          <div className={styles.progress} role="progressbar" aria-label="Wizard progress"
+            aria-valuemin={1} aria-valuemax={WIZARD_STEPS.length} aria-valuenow={step + 1}
+            aria-valuetext={`Step ${step + 1} of ${WIZARD_STEPS.length}: ${WIZARD_STEPS[step].title}`}>
+            <span className={styles.progressFill} style={{ width: `${((step + 1) / WIZARD_STEPS.length) * 100}%` }} />
+          </div>
+        </div>
+        <ol className={styles.stepList}>
+          {WIZARD_STEPS.map((s, i) => {
+            const cur = i === step;
+            const done = i < step;
+            const reachable = i <= step || canReach(i);
+            return (
+              <li key={s.title} className={[styles.stepItem, done ? styles.stepItemDone : ''].filter(Boolean).join(' ')} data-state={done ? 'done' : cur ? 'current' : 'todo'}>
+                <button
+                  type="button"
+                  className={[styles.stepBtn, cur ? styles.stepCur : ''].filter(Boolean).join(' ')}
+                  aria-current={cur ? 'step' : undefined}
+                  disabled={!reachable || creating}
+                  onClick={() => goTo(i)}
+                >
+                  <span className={[styles.dot, done ? styles.dotDone : '', cur ? styles.dotCur : ''].filter(Boolean).join(' ')} aria-hidden="true">
+                    {done ? '✓' : i + 1}
+                  </span>
+                  <span className={styles.stepText}>
+                    <b>{s.title}</b>
+                    <span className={styles.help}>{s.hint}</span>
+                  </span>
+                  <span className={styles.srOnly}>{done ? ' (done)' : cur ? ' (current step)' : ''}</span>
+                </button>
+                {i < WIZARD_STEPS.length - 1 && <span className={styles.connector} aria-hidden="true" />}
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
 
+      <div className={styles.body}>
         <main className={styles.main}>
           <p className={styles.srOnly} aria-live="polite">Step {step + 1} of {WIZARD_STEPS.length}: {WIZARD_STEPS[step].title}</p>
 
@@ -373,7 +378,7 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                   ...(continuous && form.triggerFromDate ? [{ k: 'Events from', v: form.triggerFromDate, go: 1 }] : []),
                   { k: 'Segment', v: segmentLabel, go: 2 },
                   { k: 'Stop on booking', v: form.exitOnConversion ? 'Yes' : 'No — awareness mode', go: 2 },
-                  { k: 'Steps', v: nodes.map(n => n.label || nodeSummary(n)).join(' → '), go: 3 },
+                  { k: 'Steps', v: `${pluralSteps(nodes.length)}: ${nodes.map(n => n.label || nodeSummary(n)).join(' → ')}`, go: 3 },
                 ].map(r => (
                   <div key={r.k} className={styles.reviewRow}>
                     <dt className={styles.help}>{r.k}</dt>
@@ -390,7 +395,7 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                 <Input id={`${uid}-start`} type="datetime-local" value={form.scheduledStartAt} min={minScheduledStart}
                   onChange={e => onScheduledStartChange(e.target.value)} />
                 <span className={styles.help}>
-                  {form.scheduledStartAt ? 'The journey auto-starts at this Dubai time.' : 'Defaults to 10 minutes from now if left empty.'}
+                  {form.scheduledStartAt ? `Auto-starts ${formatStart(form.scheduledStartAt)}.` : 'Defaults to 10 minutes from now if left empty.'}
                 </span>
               </div>
             </section>
@@ -410,7 +415,12 @@ export default function JourneyWizard(props: JourneyWizardProps) {
           <dl className={styles.summary}>
             <div className={styles.row}><dt className={styles.help}>Joins</dt><dd>{joinsLabel}</dd></div>
             <div className={styles.row}><dt className={styles.help}>Segment</dt><dd>{segmentLabel || 'Not picked yet'}</dd></div>
-            <div className={styles.row}><dt className={styles.help}>Steps</dt><dd>{nodes.length}</dd></div>
+            <div className={styles.row}><dt className={styles.help}>Steps</dt><dd aria-live="polite">{pluralSteps(nodes.length)}</dd></div>
+            {nodes.length > 0 && (
+              <ol className={styles.summarySteps} aria-label="Steps so far">
+                {nodes.map((n, i) => <li key={i}>{n.label || nodeSummary(n)}</li>)}
+              </ol>
+            )}
             <div className={styles.row}><dt className={styles.help}>Messages</dt><dd>{messagesLabel}</dd></div>
             <div className={styles.row}><dt className={styles.help}>Starts</dt><dd>{formatStart(form.scheduledStartAt)}</dd></div>
           </dl>
