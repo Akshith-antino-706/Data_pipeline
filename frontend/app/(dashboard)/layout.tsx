@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Home, Users, Target, History, Heart, MessageSquare, GitBranch, Send, FileText, BarChart3, Megaphone,
+  Home, Users, Target, History, Heart, MessageSquare, GitBranch, FileText, BarChart3, Megaphone,
   Globe, Code, Download, Activity, Gauge, ClipboardList, BookOpen, Menu, Search, Sun, Moon, LogOut,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
@@ -39,7 +39,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Messaging',
     items: [
       { href: '/journeys', icon: GitBranch, label: 'Journeys' },
-      { href: '/test-sends', icon: Send, label: 'Sends' },
       { href: '/content', icon: FileText, label: 'Templates' },
     ],
   },

@@ -9,7 +9,6 @@ const PAGES: { label: string; href: string }[] = [
   { label: 'Booking interests', href: '/affinity' },
   { label: 'Leads', href: '/leads' },
   { label: 'Journeys', href: '/journeys' },
-  { label: 'Sends', href: '/test-sends' },
   { label: 'Templates', href: '/content' },
   { label: 'Performance', href: '/journeys/analytics' },
   { label: 'Campaign results', href: '/campaigns' },
