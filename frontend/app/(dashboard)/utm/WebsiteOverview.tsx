@@ -122,15 +122,6 @@ export function eventLabel(name: string | null | undefined): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : raw;
 }
 
-function NotAvailable({ onRetry, busy }: { onRetry: () => void; busy: boolean }) {
-  return (
-    <div className={styles.unavailable}>
-      <span>{UNAVAILABLE}</span>
-      <button type="button" className={styles.retry} onClick={onRetry} disabled={busy}>Try again</button>
-    </div>
-  );
-}
-
 function Tile({ label, help, value, extra, testId }: {
   label: string; help: string; value: string | null; extra?: ReactNode; testId: string;
 }) {
@@ -292,6 +283,21 @@ export default function WebsiteOverview() {
   const totalVisits = dayList ? dayList.reduce((s, d) => s + n0(d.events), 0) : null;
   const hourCount = isAvail(lastHour) ? n0(lastHour.count) : null;
   const totals = isAvail(utmLinks) && utmLinks.totals ? utmLinks.totals : null;
+  // Only show what has data: unavailable or empty sections are left out.
+  const showNow = hourCount != null;
+  const showVisits = totalVisits != null && totalVisits > 0;
+  const showLinks = !!totals && n0(totals.links) > 0;
+  const showChart = !!dayList && (totalVisits ?? 0) > 0;
+  const eventRows = isAvail(topEvents) && Array.isArray(topEvents.events)
+    ? topEvents.events.map((e, i) => ({
+        key: `${e.name}-${i}`, text: eventLabel(e.name),
+        title: `${eventLabel(e.name)} (${e.name})${Number.isFinite(Number(e.uniqueUsers)) ? ` · ${fmtNum(e.uniqueUsers)} people` : ''}`,
+        count: n0(e.count),
+      }))
+    : [];
+  const pageRows = isAvail(topPages) && Array.isArray(topPages.pages)
+    ? topPages.pages.map((p, i) => ({ key: `${p.url}-${i}`, text: pagePath(p.url), title: p.url, count: n0(p.count) }))
+    : [];
 
   return (
     <section className={styles.overview} aria-label="Website activity">
@@ -334,60 +340,73 @@ export default function WebsiteOverview() {
           action={<Button size="sm" onClick={retry}>Try again</Button>} />
       ) : (
         <div className={styles.body}>
-          <section aria-label="At a glance">
-            <h2 className={styles.glanceTitle}>At a glance</h2>
-            <div className={styles.kpiGrid}>
-              <Tile testId="kpi-now" label="Visits right now" help="Website activity in the last hour"
-                value={hourCount == null ? null : fmtNum(hourCount)}
-                extra={hourCount != null && (hourCount > 0
-                  ? <Chip tone="ok" dot>Tracking is live</Chip>
-                  : <Chip tone="mute">No visits this hour</Chip>)} />
-              <Tile testId="kpi-visits" label="Website visits" help="Everything people did on the site in this period"
-                value={totalVisits == null ? null : fmtNum(totalVisits)} />
-              <Tile testId="kpi-links" label="Tracked links" help="Personal links sent in campaigns"
-                value={totals ? fmtNum(totals.links) : null}
-                extra={totals && <span className={styles.valueSub}>{fmtNum(totals.clickedLinks)} clicked</span>} />
-              <Tile testId="kpi-clicks" label="Link clicks" help="Times those links were opened"
-                value={totals ? fmtNum(totals.clicks) : null}
-                extra={totals && <span className={styles.valueSub}>{fmtNum(totals.uniqueUsers)} people</span>} />
+          {/* Sections with no data are left out entirely instead of showing empty boxes. */}
+          {(showNow || showVisits || showLinks) && (
+            <section aria-label="At a glance">
+              <h2 className={styles.glanceTitle}>At a glance</h2>
+              <div className={styles.kpiGrid}>
+                {showNow && hourCount != null && (
+                  <Tile testId="kpi-now" label="Visits right now" help="Website activity in the last hour"
+                    value={fmtNum(hourCount)}
+                    extra={hourCount > 0
+                      ? <Chip tone="ok" dot>Tracking is live</Chip>
+                      : <Chip tone="mute">No visits this hour</Chip>} />
+                )}
+                {showVisits && totalVisits != null && (
+                  <Tile testId="kpi-visits" label="Website visits" help="Everything people did on the site in this period"
+                    value={fmtNum(totalVisits)} />
+                )}
+                {showLinks && totals && (
+                  <>
+                    <Tile testId="kpi-links" label="Tracked links" help="Personal links sent in campaigns"
+                      value={fmtNum(totals.links)}
+                      extra={<span className={styles.valueSub}>{fmtNum(totals.clickedLinks)} clicked</span>} />
+                    <Tile testId="kpi-clicks" label="Link clicks" help="Times those links were opened"
+                      value={fmtNum(totals.clicks)}
+                      extra={<span className={styles.valueSub}>{fmtNum(totals.uniqueUsers)} people</span>} />
+                  </>
+                )}
+              </div>
+            </section>
+          )}
+
+          {(showChart || eventRows.length > 0 || pageRows.length > 0) && (
+            <div className={styles.charts}>
+              {showChart && dayList && (
+                <section className={`${styles.panel} ${styles.chartPanel}`} aria-label="Visits per day">
+                  <div className={styles.panelHead}>
+                    <h3 className={styles.panelTitle}>Visits per day</h3>
+                    {totalVisits != null && <span className={styles.panelMeta}>{fmtNum(totalVisits)} in total</span>}
+                  </div>
+                  <VisitsChart days={dayList} />
+                </section>
+              )}
+
+              {eventRows.length > 0 && (
+                <section className={styles.panel} aria-label="What people did">
+                  <div className={styles.panelHead}>
+                    <h3 className={styles.panelTitle}>What people did</h3>
+                    <span className={styles.panelMeta}>Times</span>
+                  </div>
+                  <BarList label="What people did" unit="times" rows={eventRows} />
+                </section>
+              )}
+
+              {pageRows.length > 0 && (
+                <section className={styles.panel} aria-label="Most visited pages">
+                  <div className={styles.panelHead}>
+                    <h3 className={styles.panelTitle}>Most visited pages</h3>
+                    <span className={styles.panelMeta}>Visits</span>
+                  </div>
+                  <BarList label="Most visited pages" unit="visits" rows={pageRows} />
+                </section>
+              )}
             </div>
-          </section>
+          )}
 
-          <div className={styles.charts}>
-            <section className={`${styles.panel} ${styles.chartPanel}`} aria-label="Visits per day">
-              <div className={styles.panelHead}>
-                <h3 className={styles.panelTitle}>Visits per day</h3>
-                {totalVisits != null && totalVisits > 0 && <span className={styles.panelMeta}>{fmtNum(totalVisits)} in total</span>}
-              </div>
-              {dayList ? <VisitsChart days={dayList} /> : <NotAvailable onRetry={retry} busy={loading} />}
-            </section>
-
-            <section className={styles.panel} aria-label="What people did">
-              <div className={styles.panelHead}>
-                <h3 className={styles.panelTitle}>What people did</h3>
-                <span className={styles.panelMeta}>Times</span>
-              </div>
-              {!isAvail(topEvents) || !Array.isArray(topEvents.events) ? <NotAvailable onRetry={retry} busy={loading} />
-                : topEvents.events.length === 0 ? <p className={styles.empty}>No activity in this period</p>
-                : <BarList label="What people did" unit="times" rows={topEvents.events.map((e, i) => ({
-                    key: `${e.name}-${i}`, text: eventLabel(e.name),
-                    title: `${eventLabel(e.name)} (${e.name})${Number.isFinite(Number(e.uniqueUsers)) ? ` · ${fmtNum(e.uniqueUsers)} people` : ''}`,
-                    count: n0(e.count),
-                  }))} />}
-            </section>
-
-            <section className={styles.panel} aria-label="Most visited pages">
-              <div className={styles.panelHead}>
-                <h3 className={styles.panelTitle}>Most visited pages</h3>
-                <span className={styles.panelMeta}>Visits</span>
-              </div>
-              {!isAvail(topPages) || !Array.isArray(topPages.pages) ? <NotAvailable onRetry={retry} busy={loading} />
-                : topPages.pages.length === 0 ? <p className={styles.empty}>No page visits in this period</p>
-                : <BarList label="Most visited pages" unit="visits" rows={topPages.pages.map((p, i) => ({
-                    key: `${p.url}-${i}`, text: pagePath(p.url), title: p.url, count: n0(p.count),
-                  }))} />}
-            </section>
-          </div>
+          {!showNow && !showVisits && !showLinks && !showChart && eventRows.length === 0 && pageRows.length === 0 && (
+            <p className={styles.empty}>No website activity in {rangeText ? rangeText : 'this period'}.</p>
+          )}
         </div>
       )}
     </section>

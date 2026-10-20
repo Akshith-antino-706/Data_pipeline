@@ -97,14 +97,13 @@ describe('Website overview — loading states', () => {
     await screen.findByText('1,525');
   });
 
-  it('a section-level Try again reloads with skeletons', async () => {
+  it('Refresh reloads with skeletons', async () => {
     const pending = deferred<OverviewWebsite>();
-    vi.mocked(api.getOverviewWebsite).mockResolvedValueOnce(payload({ topPages: off })).mockReturnValueOnce(pending.promise);
+    vi.mocked(api.getOverviewWebsite).mockResolvedValueOnce(payload()).mockReturnValueOnce(pending.promise);
     render(<WebsiteOverview />);
-    await screen.findByText('Not available right now');
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('/dubai');
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
     await waitFor(() => expect(skeletonsShown()).toBe(true));
-    expect(screen.queryByText('Not available right now')).toBeNull();
     await act(async () => { pending.resolve(payload()); });
     await screen.findByText('/dubai');
   });
@@ -159,11 +158,12 @@ describe('Website overview — resilience', () => {
     expect(screen.getByText('222')).toBeTruthy();
   });
 
-  it('missing sections show "—", never NaN or undefined', async () => {
+  it('missing sections are left out, never NaN or undefined', async () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue({ range: payload().range, lastHour: { available: true, count: 5 } } as OverviewWebsite);
     render(<WebsiteOverview />);
     await screen.findByText('5');
-    expect(screen.getAllByText('—').length).toBe(3);
+    expect(screen.queryByTestId('kpi-visits')).toBeNull();
+    expect(screen.queryByTestId('kpi-links')).toBeNull();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 });

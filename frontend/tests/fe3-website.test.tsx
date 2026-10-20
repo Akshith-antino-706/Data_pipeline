@@ -59,28 +59,28 @@ describe('Website overview', () => {
     expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('shows "Not available right now" for every unavailable section, never fake numbers', async () => {
+  it('leaves out unavailable sections entirely (no empty boxes, no fake numbers)', async () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue({ range: full.range, eventsPerDay: off, topEvents: off, topPages: off, lastHour: off, utmLinks: off });
     render(<WebsiteOverview />);
-    // 4 KPI tiles + visits chart + what people did + pages
-    await waitFor(() => expect(screen.getAllByText('Not available right now').length).toBe(7));
-    expect(screen.getAllByText('—').length).toBe(4);
-    expect(screen.getAllByRole('button', { name: 'Try again' }).length).toBe(3); // chart, what people did, pages
+    await screen.findByText(/No website activity in/);
+    expect(screen.queryByText('Not available right now')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'At a glance' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Visits per day' })).toBeNull();
     expect(screen.queryByText('0')).toBeNull();
     expect(bodyText()).not.toContain('NaN');
   });
 
-  it('shows empty states when sections are available but empty', async () => {
+  it('leaves out sections that are available but empty', async () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue({ ...full,
       eventsPerDay: { available: true, days: [] }, topEvents: { available: true, events: [] }, topPages: { available: true, pages: [] },
       lastHour: { available: true, count: 0 },
       utmLinks: { available: true, totals: { links: 0, clickedLinks: 0, clicks: 0, campaigns: 0, uniqueUsers: 0 }, campaigns: [] } });
     render(<WebsiteOverview />);
-    await screen.findByText('No website visits in this period');
-    expect(screen.getByText('No visits this hour')).toBeTruthy();
-    expect(screen.getByText('No activity in this period')).toBeTruthy();
-    expect(screen.getByText('No page visits in this period')).toBeTruthy();
-    expect(screen.queryByText(/No tracked links yet/)).toBeNull();
+    await screen.findByText('No visits this hour'); // the live tile still shows (it has a real 0 count)
+    expect(screen.queryByRole('region', { name: 'What people did' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Most visited pages' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Visits per day' })).toBeNull();
+    expect(screen.queryByTestId('kpi-links')).toBeNull();
   });
 
   it('shows an error with retry when the request fails, and recovers', async () => {
