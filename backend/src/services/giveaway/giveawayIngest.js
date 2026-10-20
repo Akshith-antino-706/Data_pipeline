@@ -1,7 +1,7 @@
 /**
  * Persist a consumed giveaway message:
  *   1. Upsert the contact into unified_contacts (matched on lower(trim(email)) — NO duplicates),
- *      tagging `sources` with 'giveaway'.
+ *      tagging `sources` with the feed it came from: 'affiliate' or 'giveaway'.
  *   2. Insert the event into giveaway_affiliate_events (idempotent on the message id).
  *
  * Both steps are safe to run on a redelivery: the contact lookup is idempotent and the event
@@ -12,10 +12,14 @@ import pool from '../../config/database.js';
 const str = (v) => (v === '' || v == null) ? null : String(v);
 const int = (v) => { const m = String(v ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : null; };
 
-// Find-or-create the contact; append 'giveaway' to sources if missing. Returns unified_id (or null).
-// Giveaway contacts are tagged contact_type = 'B2C'.
-async function upsertContact(client, { email, name }) {
+// Find-or-create the contact; append this feed's own tag to sources if missing. Returns
+// unified_id (or null). Both feeds tag contact_type = 'B2C'.
+// The tag names the feed the contact actually came from — 'affiliate' or 'giveaway' — so a
+// contact's origin is readable from unified_contacts alone. A person active in both feeds
+// accumulates both tags.
+async function upsertContact(client, { email, name }, source = 'GIVEAWAY') {
   if (!email) return null;
+  const tag = source === 'AFFILIATE' ? 'affiliate' : 'giveaway';
 
   // NO DUPLICATES: serialize concurrent giveaway ingests for the SAME email with a
   // transaction-scoped advisory lock (auto-released on COMMIT/ROLLBACK). Without this the
@@ -30,26 +34,26 @@ async function upsertContact(client, { email, name }) {
   );
   if (found) {
     const src = found.sources || '';
-    const needsSource = !src.split(',').map(s => s.trim()).includes('giveaway');
+    const needsSource = !src.split(',').map(s => s.trim()).includes(tag);
     if (needsSource) {
-      // Append the giveaway source and backfill contact_type to 'B2C' when it isn't set yet
+      // Append this feed's source and backfill contact_type to 'B2C' when it isn't set yet
       // (never overrides an existing B2B/B2C classification).
       await client.query(
         `UPDATE unified_contacts
-           SET sources = CASE WHEN sources IS NULL OR sources = '' THEN 'giveaway' ELSE sources || ',giveaway' END,
+           SET sources = CASE WHEN sources IS NULL OR sources = '' THEN $2 ELSE sources || ',' || $2 END,
                contact_type = COALESCE(contact_type, 'B2C'),
                updated_at = NOW()
          WHERE id = $1`,
-        [found.id]
+        [found.id, tag]
       );
     }
     return found.id;
   }
   const { rows: [created] } = await client.query(
     `INSERT INTO unified_contacts (email, name, sources, contact_type, created_at, updated_at)
-     VALUES ($1, $2, 'giveaway', 'B2C', NOW(), NOW())
+     VALUES ($1, $2, $3, 'B2C', NOW(), NOW())
      RETURNING id`,
-    [email, name || null]
+    [email, name || null, tag]
   );
   return created.id;
 }
@@ -79,7 +83,7 @@ export async function ingestGiveawayEvent(p, source = 'GIVEAWAY') {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const unifiedId = await upsertContact(client, { email: p.to?.email, name: p.to?.name });
+    const unifiedId = await upsertContact(client, { email: p.to?.email, name: p.to?.name }, source);
 
     const res = await client.query(
       `INSERT INTO giveaway_affiliate_events
