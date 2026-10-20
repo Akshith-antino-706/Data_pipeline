@@ -280,15 +280,16 @@ function NodeFields(p: NodeFieldsProps) {
               const on = f.type === t.key;
               const Icon = t.icon;
               return (
-                <button key={t.key} type="button" role="radio" aria-checked={on}
+                <button key={t.key} type="button" role="radio" aria-checked={on} title={t.desc}
                   className={cx(styles.typeCard, on && styles.typeOn)}
                   onClick={() => set(n => ({ ...n, type: t.key, ...TYPE_DEFAULTS }))}>
-                  <span className={cx(styles.typeIcon, TYPE_TONE[t.key])} aria-hidden="true"><Icon size={16} /></span>
-                  <span className={styles.typeText}><b>{t.title}</b><span>{t.desc}</span></span>
+                  <Icon size={15} aria-hidden="true" className={styles.typeIcon} />
+                  <span>{t.title}</span>
                 </button>
               );
             })}
           </div>
+          <span className="ui-help">{ADDABLE_TYPES.find(t => t.key === f.type)?.desc}</span>
         </div>
       )}
 

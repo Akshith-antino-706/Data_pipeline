@@ -45,18 +45,16 @@
 .subCard { background: var(--sunken); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 
 /* Node type: cards with an icon and a one-line description. */
-.types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.types { display: inline-flex; gap: 2px; padding: 3px; background: var(--sunken); border-radius: 9px; max-width: 100%; }
 .typeCard {
-  font: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 8px; padding: 12px;
-  border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); min-width: 0;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 14px; border-radius: 7px; border: 0; background: transparent; color: var(--ink2); white-space: nowrap;
 }
-.typeCard:hover { background: var(--sunken); }
+.typeCard:hover { color: var(--ink); }
 .typeCard:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
-.typeOn, .typeOn:hover { border-color: var(--gold); background: var(--gold-soft); box-shadow: 0 0 0 1px var(--gold); }
-.typeIcon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
-.typeText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.typeText b { font-size: 13px; }
-.typeText span { font-size: 12px; color: var(--ink3); }
+.typeOn, .typeOn:hover { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+.typeIcon { flex: none; }
+.typeOn .typeIcon { color: var(--gold-ink); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
@@ -78,7 +76,6 @@
 .plus { font-weight: 700; color: var(--ink2); }
 
 @media (max-width: 900px) {
-  .types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 480px) {
   .formCard { padding: 14px; }
