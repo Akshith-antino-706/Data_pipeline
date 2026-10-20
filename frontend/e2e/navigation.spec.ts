@@ -73,7 +73,8 @@ test.describe('new template route', () => {
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(page).toHaveURL(/\/content$/);
     await expect(page.getByText('No templates yet')).toBeVisible();
-    expect(consoleErrors).toEqual([]);
+    // The email preview iframe is sandboxed on purpose (no scripts); the browser logs that it blocked them.
+    expect(consoleErrors.filter(e => !e.includes('frame is sandboxed'))).toEqual([]);
   });
 
   test('/content/new loads directly and browser back returns to the library', async ({ authed: page }) => {
