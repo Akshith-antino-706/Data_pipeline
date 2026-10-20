@@ -396,51 +396,86 @@ router.get('/home/:section', async (req: Request, res: Response) => {
 async function totalsFor(from: string, toExclusive: string) {
   const p = [from, toExclusive];
   const S = dubaiStart('$1'), E = dubaiStart('$2');
-  const [e, ses, w, s, u] = await Promise.all([
-    db.query<CountRow>(`SELECT
-        COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
+  // One scan per log. Email "delivered" uses the status the SES webhook moves forward
+  // (delivered → opened → clicked) instead of joining the large ses_events table.
+  const [e, w, s, u] = await Promise.all([
+    hq(`SELECT
+        COUNT(*) AS sent,
+        COUNT(*) FILTER (WHERE status IN ('delivered','opened','clicked')) AS delivered,
         COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS opened,
         COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) AS clicked
       FROM email_send_log WHERE sent_at >= ${S} AND sent_at < ${E}`, p),
-    db.query<CountRow>(`SELECT COUNT(*) AS delivered FROM email_send_log esl
-      JOIN ses_events se ON se.message_id = esl.external_id
-      WHERE esl.sent_at >= ${S} AND esl.sent_at < ${E} AND se.event_type = 'Delivery'`, p),
-    db.query<CountRow>(`SELECT
+    hq(`SELECT
         COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
         COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) AS delivered,
         COUNT(*) FILTER (WHERE read_at IS NOT NULL) AS opened
       FROM whatsapp_send_log WHERE created_at >= ${S} AND created_at < ${E}`, p),
-    db.query<CountRow>(`SELECT
+    hq(`SELECT
         COUNT(*) FILTER (WHERE status NOT IN ('failed','queued','blocked')) AS sent,
         COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) AS delivered
       FROM sms_send_log WHERE sent_at >= ${S} AND sent_at < ${E}`, p),
-    db.query<CountRow>(`SELECT COUNT(*) AS n FROM unsubscribe_log
+    hq(`SELECT COUNT(*) AS n FROM unsubscribe_log
       WHERE unsubscribed_at >= ${S} AND unsubscribed_at < ${E}`, p),
   ]);
   const E0 = e.rows[0] ?? {}, W0 = w.rows[0] ?? {}, S0 = s.rows[0] ?? {};
   return {
     sent: num(E0.sent) + num(W0.sent) + num(S0.sent),
-    delivered: num(ses.rows[0]?.delivered) + num(W0.delivered) + num(S0.delivered),
+    delivered: num(E0.delivered) + num(W0.delivered) + num(S0.delivered),
     opened: num(E0.opened) + num(W0.opened),
     clicked: num(E0.clicked),
     unsubscribed: num(u.rows[0]?.n),
+    // Email-only figures, reused by the funnel so the email log isn't scanned again.
+    email: { sent: num(E0.sent), opened: num(E0.opened), clicked: num(E0.clicked) },
   };
 }
 
+/** Insights responses cached per range: finished ranges for 30 min, ranges touching today for 3 min. */
+const INSIGHTS_TTL_PAST_MS = 30 * 60 * 1000;
+const INSIGHTS_TTL_LIVE_MS = 3 * 60 * 1000;
+const insightsCache = new Map<string, { at: number; ttl: number; body: object }>();
+const insightsInFlight = new Map<string, Promise<object>>();
+/** Test hook. */
+export function resetInsightsCache(): void { insightsCache.clear(); insightsInFlight.clear(); }
+
 router.get('/insights', async (req: Request, res: Response) => {
   const range = parseRange(req.query.from, req.query.to);
+  // The per-journey breakdown is heavy and the Performance page no longer shows it
+  // (its journeys table has its own paged endpoint), so it is only computed on request.
+  const withJourneys = req.query.include === 'journeys';
+  const key = `${range.from}|${range.to}|${withJourneys ? 'j' : ''}`;
+  const hit = insightsCache.get(key);
+  if (hit && Date.now() - hit.at < hit.ttl) { res.json(hit.body); return; }
+  let job = insightsInFlight.get(key);
+  if (!job) {
+    job = computeInsights(range, withJourneys).then(body => {
+      const failed = Object.values(body).some(v => typeof v === 'object' && v !== null && 'available' in v && (v as { available: boolean }).available === false);
+      const ttl = failed ? 15_000 : range.to < dubaiTodayIso() ? INSIGHTS_TTL_PAST_MS : INSIGHTS_TTL_LIVE_MS;
+      insightsCache.set(key, { at: Date.now(), ttl, body });
+      if (insightsCache.size > 50) insightsCache.delete(insightsCache.keys().next().value as string);
+      return body;
+    }).finally(() => { insightsInFlight.delete(key); });
+    insightsInFlight.set(key, job);
+  }
+  res.json(await job);
+});
+
+async function computeInsights(range: ReturnType<typeof parseRange>, withJourneys: boolean): Promise<object> {
   const toEx = addDays(range.to, 1);
   const prevTo = addDays(range.from, -1);
   const prevFrom = addDays(prevTo, -(range.days - 1));
   const p = [range.from, toEx];
   const S = dubaiStart('$1'), E = dubaiStart('$2');
 
+  // Current-period totals are computed once and shared by the totals and funnel sections.
+  const currentP = totalsFor(range.from, toEx);
+  currentP.catch(() => { /* surfaced per section */ });
+
   const [totals, previous, weeklyTrend, funnel, journeys] = await Promise.all([
-    section('totals', () => totalsFor(range.from, toEx)),
-    section('previous', async () => ({ from: prevFrom, to: prevTo, ...(await totalsFor(prevFrom, addDays(prevTo, 1))) })),
+    section('totals', async () => { const t = await currentP; return { sent: t.sent, delivered: t.delivered, opened: t.opened, clicked: t.clicked, unsubscribed: t.unsubscribed }; }),
+    section('previous', async () => { const t = await totalsFor(prevFrom, addDays(prevTo, 1)); return { from: prevFrom, to: prevTo, sent: t.sent, delivered: t.delivered, opened: t.opened, clicked: t.clicked, unsubscribed: t.unsubscribed }; }),
 
     section('weeklyTrend', async () => {
-      const { rows } = await db.query<CountRow>(`SELECT
+      const { rows } = await hq(`SELECT
           to_char(date_trunc('week', sent_at AT TIME ZONE 'Asia/Dubai'), 'YYYY-MM-DD') AS week,
           COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
           COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS opened,
@@ -456,22 +491,27 @@ router.get('/insights', async (req: Request, res: Response) => {
     }),
 
     section('funnel', async () => {
-      const [e, c] = await Promise.all([
-        db.query<CountRow>(`SELECT
-            COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
+      // Reuse the shared totals; if they failed (e.g. the unsubscribe count), count email alone.
+      const emailOnly = async () => {
+        const { rows } = await hq(`SELECT COUNT(*) AS sent,
             COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS opened,
             COUNT(*) FILTER (WHERE clicked_at IS NOT NULL) AS clicked
-          FROM email_send_log WHERE sent_at >= ${S} AND sent_at < ${E}`, p),
-        db.query<CountRow>(`SELECT COUNT(*) AS n FROM journey_entries
+          FROM email_send_log WHERE sent_at >= ${S} AND sent_at < ${E}`, p);
+        const r = rows[0] ?? {};
+        return { email: { sent: num(r.sent), opened: num(r.opened), clicked: num(r.clicked) } };
+      };
+      const [t, c] = await Promise.all([
+        currentP.catch(emailOnly),
+        hq(`SELECT COUNT(*) AS n FROM journey_entries
           WHERE completed_at >= ${S} AND completed_at < ${E}
             AND (status = 'converted' OR exit_reason IN ('booked','purchased'))`, p),
       ]);
-      const r = e.rows[0] ?? {};
-      return { channel: 'email' as const, sent: num(r.sent), opened: num(r.opened), clicked: num(r.clicked), converted: num(c.rows[0]?.n) };
+      return { channel: 'email' as const, sent: t.email.sent, opened: t.email.opened, clicked: t.email.clicked, converted: num(c.rows[0]?.n) };
     }),
 
-    section('journeys', async () => {
-      const { rows } = await db.query<CountRow>(`WITH s AS (
+    withJourneys
+      ? section('journeys', async () => {
+      const { rows } = await hq(`WITH s AS (
           SELECT journey_id,
             COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
             COUNT(*) FILTER (WHERE opened_at IS NOT NULL) AS opened,
@@ -498,10 +538,11 @@ router.get('/insights', async (req: Request, res: Response) => {
           };
         }),
       };
-    }),
+    })
+      : Promise.resolve({ available: false as const, reason: 'unavailable' as const }),
   ]);
-  res.json({ range, totals, previous, weeklyTrend, funnel, journeys });
-});
+  return { range, totals, previous, weeklyTrend, funnel, journeys };
+}
 
 // ── GET /status ───────────────────────────────────────────────────────────────
 const QUEUE_CHANNELS = ['email', 'whatsapp', 'sms', 'rcs', 'welcome', 'gtmJourney'] as const;

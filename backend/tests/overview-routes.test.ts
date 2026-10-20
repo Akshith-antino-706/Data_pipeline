@@ -21,7 +21,7 @@ vi.mock('../src/config/database.js', () => ({ default: { query: poolQuery }, que
 vi.mock('../src/services/queue/index.js', () => ({ queueCounts: mockQueueCounts }));
 vi.mock('../src/services/UTMService.js', () => ({ default: { getUserLinkStats: mockLinkStats } }));
 
-import overviewRouter, { parseRange, resetHomeCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_QUERY_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
+import overviewRouter, { parseRange, resetHomeCache, resetInsightsCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_QUERY_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
 
 type Json = Record<string, unknown>;
 let server: Server;
@@ -37,6 +37,7 @@ afterAll(() => { server.close(); });
 
 beforeEach(() => {
   resetHomeCache();
+  resetInsightsCache();
   vi.useRealTimers();
   vi.restoreAllMocks();
   mockQuery.mockReset();
@@ -266,8 +267,20 @@ describe('GET /insights', () => {
     expect(body.previous).toMatchObject({ available: true, from: '2025-12-22', to: '2025-12-31', sent: 0 });
     expect(body.funnel).toEqual({ available: true, channel: 'email', sent: 0, opened: 0, clicked: 0, converted: 0 });
     expect(body.weeklyTrend).toEqual({ available: true, weeks: [] });
-    expect(body.journeys).toEqual({ available: true, rows: [] });
+    expect(body.journeys).toEqual({ available: false, reason: 'unavailable' }); // only computed with ?include=journeys
     expect(hasNaN(body)).toBe(false);
+  });
+
+  it('scans the email log once for totals+funnel, never joins ses_events, and caches the response', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    await get('/insights?from=2026-01-01&to=2026-01-10');
+    const sqls = sqlCalls();
+    expect(sqls.some(q => q.includes('ses_events'))).toBe(false);
+    expect(sqls.filter(q => q.includes('FROM email_send_log WHERE sent_at') && !q.includes('GROUP BY'))).toHaveLength(2); // current + previous
+    const n = mockQuery.mock.calls.length;
+    await get('/insights?from=2026-01-01&to=2026-01-10');
+    expect(mockQuery.mock.calls.length).toBe(n); // served from cache
+    for (const q of sqls) expect(q).toMatch(/^\s*(SELECT|WITH)/);
   });
 
   it('clamps bad dates and over-long ranges', async () => {
@@ -286,7 +299,7 @@ describe('GET /insights', () => {
       if (sql.includes('unsubscribe_log')) return Promise.reject(new Error('boom'));
       return Promise.resolve({ rows: [] });
     });
-    const { body } = await get('/insights');
+    const { body } = await get('/insights?include=journeys');
     expect(body.journeys).toEqual({ available: true, rows: [{ id: 5, name: 'Welcome', status: 'active', sent: 10, opened: 4, clicked: 1, unsubscribed: 0, openRate: 40, clickRate: 10 }] });
     expect(body.totals).toEqual({ available: false, reason: 'unavailable' });
     expect(body.funnel).toMatchObject({ available: true });
