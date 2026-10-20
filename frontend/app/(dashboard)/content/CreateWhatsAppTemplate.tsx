@@ -167,7 +167,8 @@ export default function CreateWhatsAppTemplate() {
             <input type="number" min="1" max="90" value={f.code_expiration_minutes} onChange={e => set('code_expiration_minutes', e.target.value)} style={{ ...ctrl, marginTop: 4 }} />
           </label>
           <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 8, alignSelf: 'end', paddingBottom: 9 }}>
-            <input type="checkbox" checked={f.add_security_recommendation} onChange={e => set('add_security_recommendation', e.target.checked)} />
+            <input type="checkbox" checked={f.add_security_recommendation} onChange={e => set('add_security_recommendation', e.target.checked)}
+              style={{ width: 16, height: 16, flex: 'none', margin: 0, padding: 0 }} />
             Add security recommendation
           </label>
           <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: 'var(--text-tertiary)' }}>

@@ -61,6 +61,32 @@ test.describe('create journey route', () => {
   });
 });
 
+test.describe('new template route', () => {
+  test('/content/new opens the editor with Templates highlighted, and Cancel returns to the library', async ({ authed: page, consoleErrors }) => {
+    await page.goto('/content');
+    await page.getByRole('button', { name: 'New template' }).first().click();
+    await expect(page).toHaveURL(/\/content\/new$/);
+    await expect(page.getByRole('heading', { level: 1, name: 'New template' })).toBeVisible();
+    const nav = page.getByRole('navigation', { name: 'Main' });
+    await expect(nav.getByRole('link', { name: 'Templates', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expectNoBadText(page);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page).toHaveURL(/\/content$/);
+    await expect(page.getByText('No templates yet')).toBeVisible();
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test('/content/new loads directly and browser back returns to the library', async ({ authed: page }) => {
+    await page.goto('/content');
+    await expect(page.getByText('No templates yet')).toBeVisible();
+    await page.goto('/content/new');
+    await expect(page.getByRole('heading', { level: 1, name: 'New template' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save template' })).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/content$/);
+  });
+});
+
 test.describe('journey detail route', () => {
   test('/journeys/11 keeps Journeys highlighted in the sidebar', async ({ authed: page }) => {
     await page.goto('/journeys/11');
