@@ -189,7 +189,7 @@ export default function JourneyDashboardPage() {
   const statusChips = ['all', ...Object.keys(statusCounts).sort()];
   const statusMatch = (j: OpsJourney) => statusFilter === 'all' || j.status === statusFilter;
   const visibleJourneys = journeyList.filter(statusMatch);
-  const openJourney = (id: JourneyId) => router.push(`/journeys?id=${id}`);
+  const openJourney = (id: JourneyId) => router.push(`/journeys/${id}`);
   const tickStyle = { fontSize: 11, fill: 'var(--ink3)' };
   const tooltipStyle = { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--ink)' };
 

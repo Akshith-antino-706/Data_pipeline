@@ -178,9 +178,9 @@ describe('Journey Operations dashboard', () => {
     render(<JourneyDashboardPage />);
     await screen.findByText('Day 3 email');
     fireEvent.click(screen.getByText('Day 3 email'));
-    expect(nav.push).toHaveBeenCalledWith('/journeys?id=11');
+    expect(nav.push).toHaveBeenCalledWith('/journeys/11');
     fireEvent.click(screen.getAllByTitle('Open journey')[1]);
-    expect(nav.push).toHaveBeenLastCalledWith('/journeys?id=12');
+    expect(nav.push).toHaveBeenLastCalledWith('/journeys/12');
   });
 
   it('Refresh re-fetches the dashboard', async () => {

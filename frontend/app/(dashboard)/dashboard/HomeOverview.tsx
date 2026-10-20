@@ -185,7 +185,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
                     <li key={j.id} className={s.listItem}>
                       <span style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
                         <span className={s.dot} aria-hidden="true" />
-                        <Link href={`/journeys?id=${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
+                        <Link href={`/journeys/${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
                       </span>
                       <span className={s.listMeta}>{fmt(j.joined)} joined</span>
                     </li>
@@ -204,7 +204,7 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
                 <ul className={s.list}>
                   {sending.journeys.slice(0, 5).map(j => (
                     <li key={j.id} className={s.listItem}>
-                      <Link href={`/journeys?id=${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
+                      <Link href={`/journeys/${j.id}`} className={s.listName}>{j.name || `Journey ${j.id}`}</Link>
                       <span className={s.listMeta}>{fmt(j.due)} due</span>
                     </li>
                   ))}

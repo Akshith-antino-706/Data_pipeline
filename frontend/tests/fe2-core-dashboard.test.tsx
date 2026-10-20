@@ -193,8 +193,8 @@ describe('Dashboard page', () => {
       expect(screen.getByText('97.5%')).toBeTruthy();
       expect(screen.getByText('7,800 of 8,000 sent')).toBeTruthy();
       expect(screen.getByText('321')).toBeTruthy();
-      expect(screen.getByText('Abandoned cart').getAttribute('href')).toBe('/journeys?id=42');
-      expect(screen.getByText('Pre-trip tips').getAttribute('href')).toBe('/journeys?id=43');
+      expect(screen.getByText('Abandoned cart').getAttribute('href')).toBe('/journeys/42');
+      expect(screen.getByText('Pre-trip tips').getAttribute('href')).toBe('/journeys/43');
       expect(screen.getAllByText('610 due')).toHaveLength(2); // card total + the journey row
       expect(screen.getByTestId('trend-chart').textContent).toContain(':11');
       expect(screen.getByText('Create journey').closest('a')?.getAttribute('href')).toBe('/journeys/new');

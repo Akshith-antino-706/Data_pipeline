@@ -10,11 +10,12 @@ vi.mock('@/lib/api');
 const nav = vi.hoisted(() => ({
   replace: vi.fn<(href: string) => void>(),
   search: new URLSearchParams(),
+  pathname: '/journeys/5',
 }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: nav.replace, replace: nav.replace, back: () => {}, prefetch: () => {}, refresh: () => {} }),
   useParams: () => ({}),
-  usePathname: () => '/journeys',
+  usePathname: () => nav.pathname,
   useSearchParams: () => nav.search,
 }));
 vi.mock('next/link', () => ({
@@ -46,7 +47,9 @@ beforeEach(() => {
     if (vi.isMockFunction(fn)) fn.mockResolvedValue({});
   }
   nav.replace.mockReset();
-  nav.search = new URLSearchParams('id=5');
+  nav.search = new URLSearchParams();
+  nav.pathname = '/journeys/5';
+  window.history.replaceState(null, '', '/journeys/5');
   toastMock.success.mockReset();
   toastMock.error.mockReset();
   localStorage.setItem('business-type', 'All');
@@ -67,6 +70,14 @@ const renderPage = () => render(<BusinessTypeProvider><Journeys /></BusinessType
 const openDetail = async () => { renderPage(); await screen.findByRole('heading', { name: 'Welcome Series' }); };
 
 describe('Journey detail', () => {
+  it('/journeys/5 loads journey 5; "All journeys" goes back to /journeys and shows the list', async () => {
+    await openDetail();
+    expect(api.getJourney).toHaveBeenCalledWith(5);
+    fireEvent.click(screen.getByRole('button', { name: /All journeys/ }));
+    expect(window.location.pathname).toBe('/journeys');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /All journeys/ })).toBeNull());
+  });
+
   it('shows a loading skeleton while the journey loads', async () => {
     vi.mocked(api.getJourney).mockReturnValue(new Promise(() => {}));
     renderPage();
@@ -182,6 +193,6 @@ describe('Journey detail', () => {
     vi.mocked(api.getJourney).mockRejectedValue(new Error('boom'));
     renderPage();
     await waitFor(() => expect(bodyText()).toContain('Failed to load journey'));
-    expect(nav.replace).toHaveBeenCalledWith('/journeys', { scroll: false });
+    expect(window.location.pathname).toBe('/journeys');
   });
 });

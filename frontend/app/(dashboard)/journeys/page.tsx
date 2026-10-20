@@ -44,6 +44,21 @@ import type {
 // ── Constants ──────────────────────────────────────────────────
 const JOURNEYS_PATH = '/journeys';
 const CREATE_JOURNEY_PATH = '/journeys/new';
+/** URL of one journey's detail view. */
+const journeyPath = (id: number): string => `${JOURNEYS_PATH}/${id}`;
+/**
+ * Reads the journey id out of a /journeys/<id> pathname. Returns the id for a
+ * positive integer segment, 'invalid' for any other segment (e.g. /journeys/abc),
+ * and null when the URL is not a detail URL (/journeys itself, or /journeys/new,
+ * which is the create wizard, never an id).
+ */
+function parseJourneyPath(pathname: string | null): number | 'invalid' | null {
+  const m = /^\/journeys\/([^/]+)\/?$/.exec(pathname || '');
+  if (!m || m[1] === 'new') return null;
+  if (!/^\d+$/.test(m[1])) return 'invalid';
+  const id = Number(m[1]);
+  return Number.isSafeInteger(id) && id > 0 ? id : 'invalid';
+}
 const NODE_COLORS: Record<string, string> = {
   trigger: 'var(--red)', action: 'var(--green)', condition: 'var(--yellow)',
   wait: 'var(--yellow)', goal: 'var(--purple)'
@@ -621,9 +636,9 @@ export default function Journeys() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const rawPathname = usePathname();
-  // /journeys/new renders this same page in "create" mode (see ./new/page.tsx).
+  // /journeys/new renders this same page in "create" mode (see ./new/page.tsx), and
+  // /journeys/<id> renders it with that journey's detail open (see ./[id]/page.tsx).
   const isCreateRoute = rawPathname === CREATE_JOURNEY_PATH;
-  const pathname = isCreateRoute ? JOURNEYS_PATH : rawPathname;
 
   // ── State ─────────────────────────────────────────────────────
   const [journeys, setJourneys] = useState<JourneySummary[]>([]);
@@ -870,12 +885,6 @@ export default function Journeys() {
     snapshotPollRef.current = setTimeout(tick, 2000);
   }, [loadData]);
 
-  // Restore selected journey from URL on page load / refresh
-  useEffect(() => {
-    const idFromUrl = searchParams.get('id');
-    if (idFromUrl && !selected) openJourney(parseInt(idFromUrl));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   const loadEntries = useCallback(async (journeyId: number | null, page = 1, status = '') => {
     setEntriesLoading(true);
     try {
@@ -941,12 +950,18 @@ export default function Journeys() {
   // navigated away from can't overwrite the one now on screen.
   const openReqRef = useRef(0);
 
-  const openJourney = async (id: number) => {
+  // Opening/closing a journey from inside the page moves the URL with the native
+  // History API (which Next keeps in sync with usePathname) rather than router.push:
+  // /journeys and /journeys/<id> are different route segments, so a router navigation
+  // would remount the page and throw away the list's filters, scroll and toasts.
+  // Browser back/forward then just change the pathname, which the effect below follows.
+  const openJourney = async (id: number, { pushUrl = true } = {}) => {
     const reqId = ++openReqRef.current;
     const isCurrent = () => openReqRef.current === reqId;
 
+    selectedRef.current = id;
     setSelected(id);
-    router.replace(`${pathname}?id=${id}`, { scroll: false });
+    if (pushUrl && window.location.pathname !== journeyPath(id)) window.history.pushState(null, '', journeyPath(id));
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
@@ -984,13 +999,51 @@ export default function Journeys() {
       if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
     } catch (err) {
       if (isCurrent()) {
+        selectedRef.current = null;
         setSelected(null);
-        router.replace(pathname, { scroll: false });
+        window.history.replaceState(null, '', JOURNEYS_PATH);
         showToast('Failed to load journey', 'error');
       }
     }
     if (isCurrent()) setDetailLoading(false);
   };
+
+  // Leave the detail view for the list. pushUrl=false when the URL already moved
+  // (browser back/forward); replaceUrl when the detail URL should not stay in history.
+  const closeJourney = ({ pushUrl = true, replaceUrl = false } = {}) => {
+    ++openReqRef.current; // drop any in-flight detail load
+    selectedRef.current = null;
+    setSelected(null);
+    setDetail(null);
+    setDetailLoading(false);
+    setEditMode(false);
+    if (window.location.pathname === JOURNEYS_PATH) return;
+    if (replaceUrl) window.history.replaceState(null, '', JOURNEYS_PATH);
+    else if (pushUrl) window.history.pushState(null, '', JOURNEYS_PATH);
+  };
+
+  // The URL is the source of truth for which journey is open: /journeys/<id> on load,
+  // via a link, or via browser back/forward opens it; /journeys closes it. Old
+  // /journeys?id=<id> links (bookmarks, emails) are redirected to /journeys/<id>.
+  const legacyIdParam = searchParams.get('id');
+  const urlActionsRef = useRef({ openJourney, closeJourney, showToast, router });
+  useEffect(() => { urlActionsRef.current = { openJourney, closeJourney, showToast, router }; });
+  useEffect(() => {
+    const { openJourney: open, closeJourney: close, showToast: toast, router: nav } = urlActionsRef.current;
+    if (rawPathname === JOURNEYS_PATH) {
+      const legacyId = parseJourneyPath(`${JOURNEYS_PATH}/${legacyIdParam ?? ''}`);
+      if (typeof legacyId === 'number') { nav.replace(journeyPath(legacyId)); return; }
+      if (selectedRef.current != null) close({ pushUrl: false });
+      return;
+    }
+    const id = parseJourneyPath(rawPathname);
+    if (id === 'invalid') {
+      close({ replaceUrl: true });
+      toast('Journey not found', 'error');
+    } else if (id != null && id !== selectedRef.current) {
+      void open(id, { pushUrl: false });
+    }
+  }, [rawPathname, legacyIdParam]);
 
   const BLANK_NODE_FORM: NodeForm = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
 
@@ -1335,9 +1388,7 @@ export default function Journeys() {
     try {
       await deleteJourney(id!);
       showToast('Journey deleted', 'success');
-      setSelected(null);
-      setDetail(null);
-      router.replace(pathname, { scroll: false });
+      closeJourney({ replaceUrl: true });
       await loadData();
     } catch (err) { showToast((err as Error).message, 'error'); }
   };
@@ -1668,7 +1719,7 @@ export default function Journeys() {
                 </div>
               </div>
             ) : undefined}
-            onBack={() => { setSelected(null); setDetail(null); setEditMode(false); router.replace(pathname, { scroll: false }); }}
+            onBack={() => closeJourney()}
             onEdit={() => { setEditMode(true); setEditForm({ name: detail.name, description: detail.description, status: detail.status }); }}
             onStart={() => setConfirmAction('start')}
             onPauseResume={handlePause}

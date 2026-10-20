@@ -61,3 +61,12 @@ test.describe('create journey route', () => {
     await expect(page.getByText('Welcome Series').first()).toBeVisible();
   });
 });
+
+test.describe('journey detail route', () => {
+  test('/journeys/11 keeps Journeys highlighted in the sidebar', async ({ authed: page }) => {
+    await page.goto('/journeys/11');
+    await expect(page.getByText('Welcome email').first()).toBeVisible();
+    const nav = page.getByRole('navigation', { name: 'Main' });
+    await expect(nav.getByRole('link', { name: 'Journeys', exact: true })).toHaveAttribute('aria-current', 'page');
+  });
+});

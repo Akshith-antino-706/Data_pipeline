@@ -34,6 +34,7 @@ beforeEach(() => {
   nav.replace.mockReset();
   nav.search = new URLSearchParams();
   nav.pathname = '/journeys';
+  window.history.replaceState(null, '', '/journeys');
   toastMock.success.mockReset();
   toastMock.error.mockReset();
   localStorage.setItem('business-type', 'All');
@@ -283,16 +284,49 @@ describe('Journeys list page', () => {
     fireEvent.click(screen.getByText('Welcome Series'));
     await waitFor(() => expect(api.getJourney).toHaveBeenCalledWith(1));
     expect(api.getJourneyTimeline).toHaveBeenCalledWith(1);
-    expect(nav.replace).toHaveBeenCalledWith('/journeys?id=1', { scroll: false });
+    expect(window.location.pathname).toBe('/journeys/1');
+    expect(window.location.search).toBe('');
+    expect(nav.replace).not.toHaveBeenCalled();
     expect(screen.queryByText('Welcome Series')).toBeNull(); // detail skeleton
   });
 
-  it('restores the selected journey from ?id= on load', async () => {
-    nav.search = new URLSearchParams('id=7');
+  it('/journeys/7 opens that journey\'s detail on load', async () => {
+    nav.pathname = '/journeys/7';
+    window.history.replaceState(null, '', '/journeys/7');
     mockList(LIST);
     vi.mocked(api.getJourney).mockReturnValue(new Promise(() => {}));
     renderPage();
     await waitFor(() => expect(api.getJourney).toHaveBeenCalledWith(7));
+    expect(window.location.pathname).toBe('/journeys/7');
+    expect(nav.replace).not.toHaveBeenCalled();
+  });
+
+  it('an old /journeys?id=7 link redirects to /journeys/7', async () => {
+    nav.search = new URLSearchParams('id=7');
+    mockList(LIST);
+    renderPage();
+    await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/journeys/7'));
+    expect(api.getJourney).not.toHaveBeenCalled();
+  });
+
+  it('/journeys/new shows the wizard and never treats "new" as a journey id', async () => {
+    nav.pathname = '/journeys/new';
+    mockList(LIST);
+    renderPage();
+    await screen.findByRole('heading', { name: 'Create journey' });
+    expect(api.getJourney).not.toHaveBeenCalled();
+    expect(bodyText()).not.toContain('Journey not found');
+  });
+
+  it('a non-numeric /journeys/abc shows the list with "Journey not found" instead of crashing', async () => {
+    nav.pathname = '/journeys/abc';
+    window.history.replaceState(null, '', '/journeys/abc');
+    mockList(LIST);
+    renderPage();
+    await screen.findByText('Welcome Series');
+    expect(bodyText()).toContain('Journey not found');
+    expect(api.getJourney).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/journeys');
   });
 
   // BUG: app/(dashboard)/journeys/page.tsx:941-980 + 1515-1567 — when getJourney rejects,
@@ -307,5 +341,6 @@ describe('Journeys list page', () => {
     fireEvent.click(screen.getByText('Welcome Series'));
     await waitFor(() => expect(api.getJourney).toHaveBeenCalledWith(1));
     await waitFor(() => expect(bodyText()).toContain('Failed to load journey'));
+    expect(window.location.pathname).toBe('/journeys');
   });
 });

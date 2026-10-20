@@ -384,7 +384,7 @@ export default function ContactProfile() {
                       <ChevronDown size={15} aria-hidden="true" style={{ color: 'var(--ink3)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform .18s', flexShrink: 0 }} />
                     </button>
                     <Button size="sm" variant="ghost" icon aria-label="Open journey" style={{ marginRight: 6 }}
-                      onClick={() => router.push(`/journeys?id=${j.journey_id}`)}><ExternalLink size={13} /></Button>
+                      onClick={() => router.push(`/journeys/${j.journey_id}`)}><ExternalLink size={13} /></Button>
                   </div>
                   {isOpen && (
                     <div className={s.journeyBody}>

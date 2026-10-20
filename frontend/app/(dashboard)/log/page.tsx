@@ -439,7 +439,7 @@ export default function LogPage() {
                     <td><StatusPill status={row.status} /></td>
                     <td>
                       {row.journey_id ? (
-                        <a href={`/journeys?id=${row.journey_id}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journey_id}</a>
+                        <a href={`/journeys/${row.journey_id}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journey_id}</a>
                       ) : row.source ? <span className={styles.muted}>{row.source}</span> : '—'}
                       {row.node_id && <div className={styles.mono}>{row.node_id}</div>}
                     </td>
@@ -484,7 +484,7 @@ export default function LogPage() {
                   <td><StatusPill status={row.status} /></td>
                   <td>
                     {row.journeyId != null
-                      ? <a href={`/journeys?id=${row.journeyId}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journeyId}</a>
+                      ? <a href={`/journeys/${row.journeyId}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journeyId}</a>
                       : '—'}
                     {row.nodeId && <div className={styles.mono}>{row.nodeId}</div>}
                   </td>
