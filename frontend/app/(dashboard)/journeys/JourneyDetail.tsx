@@ -330,15 +330,16 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc); };
   }, [moreOpen]);
 
-  // People load once on open so the People tab count is ready.
+  // People load only when the People tab is opened (once), not on page open.
   const { entriesLoading, onLoadEntries } = p;
   const entries = useMemo(() => (Array.isArray(p.entries) ? p.entries : []), [p.entries]);
   const askedEntries = useRef(false);
+  const onPeopleTab = p.section === 'people';
   useEffect(() => {
-    if (askedEntries.current || entries.length > 0 || entriesLoading) return;
+    if (!onPeopleTab || askedEntries.current || entries.length > 0 || entriesLoading) return;
     askedEntries.current = true;
     onLoadEntries();
-  }, [entries.length, entriesLoading, onLoadEntries]);
+  }, [onPeopleTab, entries.length, entriesLoading, onLoadEntries]);
 
   const { onLoadDelivery } = p;
   const askedDelivery = useRef(false);
@@ -481,8 +482,8 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
   ];
 
   const tabs: TabItem<DetailSection>[] = [
-    { key: 'overview', label: 'Overview' },
     { key: 'flow', label: 'Flow' },
+    { key: 'overview', label: 'Overview' },
     { key: 'people', label: p.entriesTotal > 0 ? <>People <span className={styles.tabCount}>{fmtNum(p.entriesTotal)}</span></> : 'People' },
     { key: 'advanced', label: 'Advanced' },
   ];

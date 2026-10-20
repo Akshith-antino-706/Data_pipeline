@@ -400,3 +400,20 @@ describe('JourneyService.processJourney', () => {
     expect(calls('conversion_rate = CASE WHEN total_entries > 0')).toHaveLength(1);
   });
 });
+
+describe('getEntries includes GTM/giveaway people', () => {
+  it('reads journey_entries and gtm_journey_entries, mapping purchased exits to converted', async () => {
+    m.query.mockReset();
+    m.query.mockImplementation((sql: string) => Promise.resolve({ rows: String(sql).includes('COUNT(*)') ? [{ count: '1719' }] : [] }));
+    const r = await JourneyService.getEntries(277, { page: 1, limit: 50, status: 'converted' });
+    expect(r.total).toBe(1719);
+    const sqls = m.query.mock.calls.map(c => String(c[0]));
+    for (const q of sqls) {
+      expect(q).toMatch(/FROM journey_entries je WHERE je\.journey_id = \$1/);
+      expect(q).toMatch(/FROM gtm_journey_entries g WHERE g\.journey_id = \$1/);
+      expect(q).toMatch(/exit_reason = 'purchased' THEN 'converted'/);
+      expect(q).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/);
+    }
+    expect(m.query.mock.calls[0][1]).toEqual([277, 'converted']);
+  });
+});

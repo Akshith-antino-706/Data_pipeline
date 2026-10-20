@@ -2624,26 +2624,41 @@ class JourneyService {
 
   static async getEntries(journeyId: JourneyId, { page = 1, limit = 50, status }: { page?: number; limit?: number; status?: string } = {}) {
     const offset = (page - 1) * limit;
-    let where = 'je.journey_id = $1';
-    const params = [journeyId];
+    // Segment journeys keep people in journey_entries; GTM/giveaway (continuous) journeys keep
+    // them in gtm_journey_entries. Read both so every journey type lists its people.
+    // GTM rows are mapped to the same shape: purchased exits show as 'converted'.
+    const params: unknown[] = [journeyId];
+    let statusWhere = '';
     if (status) {
       params.push(status);
-      where += ` AND je.status = $${params.length}`;
+      statusWhere = `WHERE e.status = $${params.length}`;
     }
+    const people = `
+      SELECT je.entry_id::bigint AS entry_id, je.customer_id::bigint AS customer_id, je.current_node_id, je.status,
+             je.entered_at, je.completed_at, je.converted_at, je.exit_reason, je.next_fire_at, je.track::text AS track
+      FROM journey_entries je WHERE je.journey_id = $1
+      UNION ALL
+      SELECT g.id::bigint, g.unified_id::bigint, g.current_node_id,
+             CASE WHEN g.exit_reason = 'purchased' THEN 'converted' ELSE g.status END,
+             g.entered_at,
+             CASE WHEN g.status IN ('completed', 'exited') THEN g.updated_at END,
+             CASE WHEN g.exit_reason = 'purchased' THEN g.updated_at END,
+             g.exit_reason, g.next_fire_at, NULL::text
+      FROM gtm_journey_entries g WHERE g.journey_id = $1`;
 
     const { rows: [{ count }] } = await db.query<{ count: string }>(
-      `SELECT COUNT(*) FROM journey_entries je WHERE ${where}`, params
+      `SELECT COUNT(*) FROM (${people}) e ${statusWhere}`, params
     );
 
     const { rows } = await db.query<U1JourneyEntryListRow>(`
-      SELECT je.entry_id, je.customer_id, je.current_node_id, je.status,
-             je.entered_at, je.completed_at, je.converted_at, je.exit_reason,
-             je.next_fire_at, je.track,
+      SELECT e.entry_id, e.customer_id, e.current_node_id, e.status,
+             e.entered_at, e.completed_at, e.converted_at, e.exit_reason,
+             e.next_fire_at, e.track,
              uc.name, uc.email, uc.mobile AS phone, uc.booking_status
-      FROM journey_entries je
-      JOIN unified_contacts uc ON uc.id = je.customer_id
-      WHERE ${where}
-      ORDER BY je.entered_at DESC
+      FROM (${people}) e
+      JOIN unified_contacts uc ON uc.id = e.customer_id
+      ${statusWhere}
+      ORDER BY e.entered_at DESC
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `, [...params, limit, offset]);
 

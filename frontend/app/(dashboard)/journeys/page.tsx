@@ -50,7 +50,7 @@ const journeyPath = (id: number): string => `${JOURNEYS_PATH}/${id}`;
 /** The detail tab named in the URL (?tab=flow|people|advanced); Overview otherwise. */
 const detailSectionFromUrl = (): DetailSection => {
   const tab = new URLSearchParams(window.location.search).get('tab');
-  return isDetailSection(tab) ? tab : 'overview';
+  return isDetailSection(tab) ? tab : 'flow';
 };
 /**
  * Reads the journey id out of a /journeys/<id> pathname. Returns the id for a
@@ -690,7 +690,7 @@ export default function Journeys() {
   const [entriesError, setEntriesError] = useState(false);
   // The detail page's tabs: Overview, Flow (the flow builder), People and Advanced
   // (analytics, activity, settings…). Kept in the URL as ?tab=<name>.
-  const [detailSection, setDetailSection] = useState<DetailSection>('overview');
+  const [detailSection, setDetailSection] = useState<DetailSection>('flow');
   const [queueStats, setQueueStats] = useState<Record<string, QueueCounts> | null>(null); // BullMQ live counts
   const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
   const [timeline, setTimeline] = useState<TimelineItem[] | null>(null); // per-node predicted trigger times
@@ -1031,7 +1031,7 @@ export default function Journeys() {
     setDetailSection(section);
     const id = selectedRef.current;
     if (id == null) return;
-    const url = section === 'overview' ? journeyPath(id) : `${journeyPath(id)}?tab=${section}`;
+    const url = section === 'flow' ? journeyPath(id) : `${journeyPath(id)}?tab=${section}`;
     if (`${window.location.pathname}${window.location.search}` !== url) window.history.replaceState(null, '', url);
   };
 

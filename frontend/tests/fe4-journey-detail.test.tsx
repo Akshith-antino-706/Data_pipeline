@@ -94,7 +94,12 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localS
 
 const bodyText = (): string => document.body.textContent ?? '';
 const renderPage = () => render(<BusinessTypeProvider><Journeys /></BusinessTypeProvider>);
-const openDetail = async () => { renderPage(); await screen.findByRole('heading', { name: 'Welcome Series' }); };
+// Flow is the default tab; most checks below are about the Overview tab, so open it.
+const openDetail = async () => {
+  renderPage();
+  await screen.findByRole('heading', { name: 'Welcome Series' });
+  fireEvent.click(within(screen.getByRole('tablist', { name: 'Journey sections' })).getByRole('tab', { name: /Overview/ }));
+};
 const sections = () => screen.getByRole('tablist', { name: 'Journey sections' });
 const sectionTab = (name: RegExp) => within(sections()).getByRole('tab', { name });
 const openSection = (name: RegExp) => fireEvent.click(sectionTab(name));
@@ -102,6 +107,13 @@ const stepsList = () => screen.getByRole('list', { name: 'Journey steps' });
 const ISO = /\d{4}-\d{2}-\d{2}T/;
 
 describe('Journey detail', () => {
+  it('loads people only when the People tab is opened', async () => {
+    await openDetail();
+    expect(api.getJourneyEntries).not.toHaveBeenCalledWith(5, expect.objectContaining({ page: 1 }));
+    openSection(/People/);
+    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenCalledWith(5, expect.objectContaining({ page: 1 })));
+  });
+
   it('/journeys/5 loads journey 5; "All journeys" goes back to /journeys and shows the list', async () => {
     await openDetail();
     expect(api.getJourney).toHaveBeenCalledWith(5);
@@ -143,11 +155,12 @@ describe('Journey detail', () => {
     expect(bodyText()).toContain('New people who match the segment join automatically.');
   });
 
-  it('has Overview · Flow · People · Advanced tabs, with Overview selected by default', async () => {
-    await openDetail();
-    await waitFor(() => expect(within(sections()).getAllByRole('tab').map(t => t.textContent)).toEqual(['Overview', 'Flow', 'People 1', 'Advanced']));
-    expect(sectionTab(/Overview/).getAttribute('aria-selected')).toBe('true');
-    expect(screen.getByRole('tabpanel', { name: 'Overview' })).toBeTruthy();
+  it('has Flow · Overview · People · Advanced tabs, with Flow selected by default', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Welcome Series' });
+    await waitFor(() => expect(within(sections()).getAllByRole('tab').map(t => t.textContent)).toEqual(['Flow', 'Overview', 'People', 'Advanced']));
+    expect(sectionTab(/Flow/).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tabpanel', { name: 'Flow' })).toBeTruthy();
   });
 
   it('Overview shows 4 KPI tiles from entryStats, with % of joined, and unsubscribed / failed on a thin line', async () => {
@@ -320,9 +333,10 @@ describe('Journey detail', () => {
   it('People tab shows the people table with plain columns and human dates', async () => {
     await openDetail();
     expect(screen.queryByRole('region', { name: 'People in this journey' })).toBeNull(); // not on Overview
-    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenCalledWith(5, { page: 1, limit: 50 }));
+    expect(api.getJourneyEntries).not.toHaveBeenCalledWith(5, { page: 1, limit: 50 }); // lazy: not loaded yet
     openSection(/People/);
     expect(window.location.search).toBe('?tab=people');
+    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenCalledWith(5, { page: 1, limit: 50 }));
     const table = await screen.findByRole('region', { name: 'People in this journey' });
     expect(await within(table).findByText('Asha')).toBeTruthy();
     const heads = within(table).getAllByRole('columnheader').map(h => h.textContent);
@@ -382,13 +396,13 @@ describe('Journey detail', () => {
     await openDetail();
     expect(screen.queryByText('Flow builder')).toBeNull();
     openSection(/Flow/);
-    expect(window.location.search).toBe('?tab=flow');
+    expect(window.location.search).toBe('');
     const panel = screen.getByRole('tabpanel', { name: 'Flow' });
     expect(within(panel).getByText('Flow builder')).toBeTruthy();
     expect(within(panel).getByText('4 steps')).toBeTruthy(); // visual flow of this journey (incl. the entry)
     expect(screen.queryByRole('tablist', { name: 'Advanced tools' })).toBeNull();
     openSection(/Overview/);
-    expect(window.location.search).toBe('');
+    expect(window.location.search).toBe('?tab=overview');
     expect(screen.queryByText('Flow builder')).toBeNull();
   });
 
@@ -435,7 +449,8 @@ describe('Journey detail', () => {
 
   it('opens the tab named in the URL (?tab=people)', async () => {
     window.history.replaceState(null, '', '/journeys/5?tab=people');
-    await openDetail();
+    renderPage();
+    await screen.findByRole('heading', { name: 'Welcome Series' });
     expect(sectionTab(/People/).getAttribute('aria-selected')).toBe('true');
     expect(await screen.findByRole('region', { name: 'People in this journey' })).toBeTruthy();
   });
