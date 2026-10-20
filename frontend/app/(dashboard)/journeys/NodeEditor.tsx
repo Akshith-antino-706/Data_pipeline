@@ -64,6 +64,9 @@ export const NODE_TYPES: { key: string; title: string; desc: string; icon: Lucid
   { key: 'condition', title: 'Branch', desc: 'Split on what the contact did', icon: GitBranch },
   { key: 'goal', title: 'Conversion goal', desc: 'Count a booking, enquiry or sign-up', icon: Target },
 ];
+// Branch and Conversion goal are not in use, so they can't be added any more. Existing journeys
+// that already have them still show and edit normally (the type picker only appears when adding).
+const ADDABLE_TYPES = NODE_TYPES.filter(t => t.key === 'action' || t.key === 'wait');
 const TYPE_ICON: Record<string, LucideIcon> = { trigger: Zap, action: Send, wait: Clock, condition: GitBranch, goal: Target };
 const TYPE_TONE: Record<string, string> = { action: styles.toneAction, wait: styles.toneWait, condition: styles.toneWait, goal: styles.toneGoal };
 
@@ -273,7 +276,7 @@ function NodeFields(p: NodeFieldsProps) {
         <div className="ui-field">
           <span className="ui-label" id={`${uid}-type`}>Node type</span>
           <div role="radiogroup" aria-labelledby={`${uid}-type`} className={styles.types}>
-            {NODE_TYPES.map(t => {
+            {ADDABLE_TYPES.map(t => {
               const on = f.type === t.key;
               const Icon = t.icon;
               return (

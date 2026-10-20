@@ -365,17 +365,11 @@ describe('Create journey wizard', () => {
     fireEvent.click(btn('3 days'));
     expect(nameInput().value).toBe('Wait 3 days');
 
-    fireEvent.click(radio(/Branch/));
-    expect(nameInput().value).toBe('Branch: Has booked?');
-    fireEvent.click(radio('Opened email?'));
-    expect(nameInput().value).toBe('Branch: Opened email?');
-
-    fireEvent.click(radio(/Conversion goal/));
-    expect(nameInput().value).toBe('Goal: Booking');
-    fireEvent.click(radio('Enquiry'));
-    expect(nameInput().value).toBe('Goal: Enquiry');
+    // Branch and Conversion goal are no longer offered when adding a step.
+    expect(screen.queryByRole('radio', { name: /Branch/ })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Conversion goal/ })).toBeNull();
     fireEvent.click(btn('Add node'));
-    await screen.findAllByText('Goal: Enquiry');
+    await screen.findAllByText('Wait 3 days');
   });
 
   it('a name the user typed is never overwritten', async () => {
