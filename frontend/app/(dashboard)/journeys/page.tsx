@@ -681,6 +681,10 @@ export default function Journeys() {
   const [entriesPage, setEntriesPage] = useState(1);
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
+  const [entriesError, setEntriesError] = useState(false);
+  // The old tabbed tools (flow builder, analytics, activity, settings) live in a
+  // collapsed "Advanced" area under the plain-language overview.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [queueStats, setQueueStats] = useState<Record<string, QueueCounts> | null>(null); // BullMQ live counts
   const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
   const [timeline, setTimeline] = useState<TimelineItem[] | null>(null); // per-node predicted trigger times
@@ -887,6 +891,8 @@ export default function Journeys() {
 
   const loadEntries = useCallback(async (journeyId: number | null, page = 1, status = '') => {
     setEntriesLoading(true);
+    setEntriesError(false);
+    setEntriesStatusFilter(status);
     try {
       const params: { page: number; limit: number; status?: string } = { page, limit: 50 };
       if (status) params.status = status;
@@ -894,7 +900,7 @@ export default function Journeys() {
       setJourneyEntries(res.data || []);
       setEntriesTotal(res.total || 0);
       setEntriesPage(page);
-    } catch { setJourneyEntries([]); }
+    } catch { setJourneyEntries([]); setEntriesError(true); }
     setEntriesLoading(false);
   }, []);
 
@@ -968,6 +974,12 @@ export default function Journeys() {
     setNodeConversions(null);
     setSuggestions(null);
     setActiveTab('flow');
+    setAdvancedOpen(false);
+    setJourneyEntries([]);
+    setEntriesTotal(0);
+    setEntriesPage(1);
+    setEntriesStatusFilter('');
+    setEntriesError(false);
     setDetailLoading(true);
     setExpandedNode(null);
     setLiveNodeId(null);
@@ -1662,7 +1674,7 @@ export default function Journeys() {
 
     const funnelData = analytics?.funnelData || [];
     const entryFunnelData = [
-      { name: 'Snapshotted', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
+      { name: 'Audience', value: parseInt(stats.total_entries) || 0, color: 'var(--yellow)' },
       { name: 'Active', value: parseInt(stats.active) || 0, color: 'var(--green)' },
       { name: 'Completed', value: parseInt(stats.completed) || 0, color: 'var(--brand-primary)' },
       { name: 'Booked', value: parseInt(stats.exited_booked) || 0, color: 'var(--purple)' },
@@ -1687,13 +1699,20 @@ export default function Journeys() {
             journeyId={selected}
             detail={detail}
             channels={channels}
-            failedTotal={Number(campaignData?.totals?.total_failed) || 0}
+            failedTotal={campaignData?.totals?.total_failed === undefined || campaignData?.totals?.total_failed === null ? null : (Number(campaignData.totals.total_failed) || 0)}
             sentByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.sent || 0]))}
+            openedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.opened || 0]))}
+            clickedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.clicked || 0]))}
+            deliveryLoaded={campaignData !== null}
             queueStats={queueStats}
             timeline={timeline}
             entries={journeyEntries}
             entriesTotal={entriesTotal}
             entriesLoading={entriesLoading}
+            entriesError={entriesError}
+            entriesPage={entriesPage}
+            entriesStatus={entriesStatusFilter}
+            advancedOpen={advancedOpen}
             starting={starting}
             suggestLoading={suggestLoading}
             previewLoading={previewLoading}
@@ -1723,18 +1742,18 @@ export default function Journeys() {
             onEdit={() => { setEditMode(true); setEditForm({ name: detail.name, description: detail.description, status: detail.status }); }}
             onStart={() => setConfirmAction('start')}
             onPauseResume={handlePause}
-            onAISuggest={() => { setActiveTab('flow'); void handleAISuggest(); }}
+            onAISuggest={() => { setAdvancedOpen(true); setActiveTab('flow'); void handleAISuggest(); }}
             onCopyId={() => { navigator.clipboard?.writeText(String(selected)); showToast('Journey ID copied', 'info'); }}
             onDelete={() => setConfirmAction('delete')}
-            onEditSteps={() => { setActiveTab('flow'); setFlowEditMode(true); }}
-            onOpenTab={tab => { setActiveTab(tab); if (tab === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, ''); if (tab === 'analytics') loadNodeAnalytics(selected); }}
+            onEditSteps={() => { setAdvancedOpen(true); setActiveTab('flow'); setFlowEditMode(true); }}
+            onOpenTab={tab => { setAdvancedOpen(true); setActiveTab(tab); if (tab === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab === 'analytics') loadNodeAnalytics(selected); }}
+            onToggleAdvanced={() => setAdvancedOpen(o => !o)}
+            onEntriesQuery={(page, status) => loadEntries(selected, page, status)}
             onPreviewNode={node => { const tpl = getNodeTemplate(node); if (tpl) void previewNode(node, tpl); }}
             onRetryBlocked={nodeId => { void retryBlocked(nodeId); }}
             onLoadEntries={() => loadEntries(selected, 1, '')}
-          />
-        </motion.div>
-
-        <motion.div variants={fadeInUp}>
+            onLoadDelivery={() => { void loadNodeAnalytics(selected); }}
+            advancedSlot={(<>
         {/* ── Scheduled Start Countdown ────────────────────────── */}
         {schedCountdown && detail?.scheduled_start_at && (
           <div style={{
@@ -1774,18 +1793,20 @@ export default function Journeys() {
         )}
 
         {/* ── Tabs ──────────────────────────────────────────────── */}
-        <div className="tabs mb-5">
+        <div className="tabs mb-5" role="tablist" aria-label="Advanced tools">
           {[
-            { id: 'flow', label: 'Journey Flow', icon: GitBranch },
-            { id: 'entries', label: 'Entries', icon: Users },
+            { id: 'flow', label: 'Flow builder', icon: GitBranch },
+            { id: 'entries', label: 'People', icon: Users },
             { id: 'analytics', label: 'Analytics', icon: BarChart3 },
             { id: 'activity', label: 'Activity', icon: Activity },
             { id: 'settings', label: 'Settings', icon: Settings },
           ].map(tab => (
             <button
               key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
               className={`tab flex items-center gap-1.5 ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, ''); if (tab.id === 'analytics') loadNodeAnalytics(selected); }}
+              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab.id === 'analytics') loadNodeAnalytics(selected); }}
             >
               <tab.icon size={14} /> {tab.label}
             </button>
@@ -1849,9 +1870,9 @@ export default function Journeys() {
                 <div className="flex items-center gap-2">
                   <Layers size={16} color="var(--text-secondary)" />
                   <span className="font-semibold text-secondary" style={{ fontSize: 14, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Journey Flow
+                    Flow builder
                   </span>
-                  <span className="badge badge-gray">{nodes.length} nodes</span>
+                  <span className="badge badge-gray">{nodes.length} {nodes.length === 1 ? 'step' : 'steps'}</span>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="flex gap-3" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -1869,14 +1890,14 @@ export default function Journeys() {
                         className="btn btn-sm btn-secondary"
                         style={{ fontSize: 11, padding: '4px 12px' }}
                       >
-                        <Plus size={11} /> Add Node
+                        <Plus size={11} /> Add step
                       </button>
                       <button
                         onClick={() => setFlowEditMode(!flowEditMode)}
                         className={`btn btn-sm ${flowEditMode ? 'btn-primary' : 'btn-ghost'}`}
                         style={{ fontSize: 11, padding: '4px 12px' }}
                       >
-                        {flowEditMode ? 'Done Editing' : 'Edit Flow'}
+                        {flowEditMode ? 'Done editing' : 'Edit steps'}
                       </button>
                     </>
                   )}
@@ -1887,8 +1908,8 @@ export default function Journeys() {
                 {nodes.length === 0 ? (
                   <div className="empty" style={{ padding: '40px 20px' }}>
                     <GitBranch size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
-                    <h4 style={{ marginTop: 12 }}>No nodes in this journey</h4>
-                    <p className="text-secondary text-sm">Generate from a strategy to populate the flow.</p>
+                    <h4 style={{ marginTop: 12 }}>No steps in this journey yet</h4>
+                    <p className="text-secondary text-sm">Add a step to decide what people receive.</p>
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
@@ -2786,18 +2807,18 @@ export default function Journeys() {
           <div className="card">
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <h3>Journey Entries</h3>
+                <h3>People in this journey</h3>
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>{fmt(entriesTotal)} total</span>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <select className="form-input" style={{ width: 140, fontSize: 11, padding: '5px 8px' }}
                   value={entriesStatusFilter}
                   onChange={e => { setEntriesStatusFilter(e.target.value); loadEntries(selected, 1, e.target.value); }}>
-                  <option value="">All Status</option>
-                  <option value="active">Active</option>
-                  <option value="completed">Completed</option>
-                  <option value="converted">Converted</option>
-                  <option value="exited">Exited</option>
+                  <option value="">Everyone</option>
+                  <option value="active">In progress</option>
+                  <option value="completed">Finished</option>
+                  <option value="converted">Booked</option>
+                  <option value="exited">Left</option>
                 </select>
                 <button className="btn btn-sm btn-secondary" onClick={() => loadEntries(selected, entriesPage, entriesStatusFilter)} disabled={entriesLoading}>
                   <RefreshCw size={12} className={entriesLoading ? 'animate-spin' : ''} /> Refresh
@@ -2805,13 +2826,13 @@ export default function Journeys() {
               </div>
             </div>
             {entriesLoading && journeyEntries.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>Loading entries...</div>
+              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>Loading people…</div>
             ) : journeyEntries.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-tertiary)' }}>
                 <Users size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
-                <div style={{ fontSize: 13 }}>No entries yet. Click "Load Entries" or start the journey to enroll customers.</div>
+                <div style={{ fontSize: 13 }}>Nobody here yet. Click &quot;Load people&quot;, or start the journey so people can join.</div>
                 <button className="btn btn-sm btn-primary mt-3" onClick={() => loadEntries(selected, 1, '')}>
-                  <RefreshCw size={12} /> Load Entries
+                  <RefreshCw size={12} /> Load people
                 </button>
               </div>
             ) : (
@@ -2820,13 +2841,13 @@ export default function Journeys() {
                   <table>
                     <thead>
                       <tr>
-                        <th>Customer</th>
+                        <th>Contact</th>
                         <th>Email</th>
-                        <th>Current Node</th>
+                        <th>Current step</th>
                         <th>Status</th>
                         <th>Booking</th>
-                        <th>Next Fire</th>
-                        <th>Entered</th>
+                        <th>Next message</th>
+                        <th>Joined</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2879,7 +2900,7 @@ export default function Journeys() {
             {/* Entry Funnel */}
             <div className="card-grid card-grid-2">
               <div className="card">
-                <div className="card-header"><h3>Entry Funnel</h3></div>
+                <div className="card-header"><h3>People funnel</h3></div>
                 {entryFunnelData.length > 0 ? (
                   <div className="flex flex-col gap-3">
                     {entryFunnelData.map((d, i) => {
@@ -2898,7 +2919,7 @@ export default function Journeys() {
                     })}
                   </div>
                 ) : (
-                  <div className="text-secondary" style={{ textAlign: 'center', padding: 40, fontSize: 13 }}>No entry data yet. Enroll customers to see funnel data.</div>
+                  <div className="text-secondary" style={{ textAlign: 'center', padding: 40, fontSize: 13 }}>No people yet. Once people join, you will see how they move through the journey.</div>
                 )}
               </div>
 
@@ -2911,7 +2932,7 @@ export default function Journeys() {
                         <Pie data={channelDistribution} cx="50%" cy="50%" innerRadius={35} outerRadius={65} dataKey="value" paddingAngle={3}>
                           {channelDistribution.map((d, i) => <Cell key={i} fill={d.color} />)}
                         </Pie>
-                        <Tooltip formatter={(val) => [`${val} nodes`, '']} />
+                        <Tooltip formatter={(val) => [`${val} steps`, '']} />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="flex flex-col gap-2" style={{ flex: 1 }}>
@@ -2933,7 +2954,7 @@ export default function Journeys() {
             {/* Node Performance */}
             {nodeChartData.length > 0 && (
               <div className="card">
-                <div className="card-header"><h3>Node Performance</h3></div>
+                <div className="card-header"><h3>Step performance</h3></div>
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={nodeChartData} barCategoryGap="20%">
                     <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} />
@@ -2951,14 +2972,14 @@ export default function Journeys() {
             {/* Node Distribution Table */}
             {funnelData.length > 0 && (
               <div className="card">
-                <div className="card-header"><h3>Customer Distribution by Node</h3></div>
+                <div className="card-header"><h3>People by step</h3></div>
                 <div className="table-wrap">
                   <table>
                     <thead>
                       <tr>
-                        <th>Node</th>
+                        <th>Step</th>
                         <th>Status</th>
-                        <th>Count</th>
+                        <th>People</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2990,9 +3011,9 @@ export default function Journeys() {
             {nodeChartData.length === 0 && funnelData.length === 0 && entryFunnelData.length === 0 && (
               <div className="card" style={{ textAlign: 'center', padding: '60px 20px' }}>
                 <BarChart3 size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
-                <h4 className="mt-3 mb-1.5">No Analytics Data Yet</h4>
+                <h4 className="mt-3 mb-1.5">No analytics yet</h4>
                 <p className="text-secondary text-sm" style={{ maxWidth: 400, margin: '0 auto' }}>
-                  Enroll customers and process the journey to generate analytics data.
+                  Numbers appear here once people join and messages go out.
                 </p>
               </div>
             )}
@@ -3002,7 +3023,7 @@ export default function Journeys() {
         {/* ── TAB: Activity ─────────────────────────────────────── */}
         {activeTab === 'activity' && (
           <div className="card">
-            <div className="card-header"><h3>Journey Activity Timeline</h3></div>
+            <div className="card-header"><h3>What has happened so far</h3></div>
             {(detail.nodeAnalytics || []).length > 0 ? (
               <div className="flex flex-col">
                 {(detail.nodeAnalytics || []).slice(0, 50).map((event, i) => {
@@ -3046,9 +3067,9 @@ export default function Journeys() {
             ) : (
               <div style={{ textAlign: 'center', padding: '60px 20px' }}>
                 <Activity size={40} color="var(--text-muted)" style={{ opacity: 0.3 }} />
-                <h4 className="mt-3 mb-1.5">No Activity Yet</h4>
+                <h4 className="mt-3 mb-1.5">No activity yet</h4>
                 <p className="text-secondary text-sm" style={{ maxWidth: 400, margin: '0 auto' }}>
-                  Process the journey to see customer activity events here.
+                  Once the journey sends messages, what happened at each step shows here.
                 </p>
               </div>
             )}
@@ -3093,7 +3114,7 @@ export default function Journeys() {
                   <div style={{ fontSize: 14 }}>{detail.updated_at ? new Date(detail.updated_at).toLocaleString() : '—'}</div>
                 </div>
                 <div>
-                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Total Nodes</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 500, marginBottom: 4 }}>Total steps</div>
                   <div className="font-medium" style={{ fontSize: 14 }}>{nodes.length}</div>
                 </div>
                 <div>
@@ -3121,7 +3142,7 @@ export default function Journeys() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
                 <div style={{ textAlign: 'center', padding: 16 }}>
                   <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(detail.total_entries)}</div>
-                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>Total Entries</div>
+                  <div className="text-secondary" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 2 }}>People joined</div>
                 </div>
                 <div style={{ textAlign: 'center', padding: 16 }}>
                   <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--purple)' }}>{fmt(detail.total_conversions)}</div>
@@ -3150,6 +3171,11 @@ export default function Journeys() {
           </div>
         )}
 
+            </>)}
+          />
+        </motion.div>
+
+        <motion.div variants={fadeInUp}>
         {/* ── Create / Add Node Modal ──────────────────────────── */}
         {showNodeModal && (
           <div className="modal-overlay" onClick={() => setShowNodeModal(false)}>

@@ -106,6 +106,7 @@ export const defaultMocks: Mock[] = [
   { method: 'GET', path: /^\/api\/v3\/journeys\/\d+\/timeline(\?.*)?$/, body: ok([]) },
   { method: 'GET', path: /^\/api\/v3\/journeys\/\d+\/campaign-analytics(\?.*)?$/, body: ok(campaignAnalytics) },
   { method: 'GET', path: /^\/api\/v3\/journeys\/\d+\/analytics(\?.*)?$/, body: ok({ nodeStats: [], funnelData: [{ current_node_id: 'n2', status: 'active', count: '20' }] }) },
+  { method: 'GET', path: /^\/api\/v3\/journeys\/\d+\/node-conversions(\?.*)?$/, body: ok({}) },
   { method: 'GET', path: /^\/api\/v3\/journeys\/\d+\/gtm-node-stats(\?.*)?$/, body: { success: true, data: {}, allEventTypes: [] } },
 
   // ── Content ──
