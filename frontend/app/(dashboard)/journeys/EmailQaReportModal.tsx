@@ -48,12 +48,12 @@ export default function EmailQaReportModal({ templateId, templateName, onClose }
 
   useEffect(() => {
     let cancelled = false;
-    if (!templateId) { setState({ loading: false, report: null, error: 'This node has no email template attached.' }); return; }
+    if (!templateId) { setState({ loading: false, report: null, error: 'This step has no email attached.' }); return; }
     setState({ loading: true, report: null, error: null });
     getStoredQaReport(templateId)
       .then((res: unknown) => {
         if (cancelled) return;
-        if (!(res as { data?: QaReport } | null)?.data) setState({ loading: false, report: null, error: 'No QA report yet — it is generated automatically each morning, or run a Test Send to create one now.' });
+        if (!(res as { data?: QaReport } | null)?.data) setState({ loading: false, report: null, error: 'No email check yet — it runs automatically each morning, or send a test email to run one now.' });
         else setState({ loading: false, report: (res as { data: QaReport }).data, error: null });
       })
       .catch((e: Error) => { if (!cancelled) setState({ loading: false, report: null, error: e.message }); });
@@ -71,7 +71,7 @@ export default function EmailQaReportModal({ templateId, templateName, onClose }
       <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card)', borderRadius: 14, maxWidth: 640, width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--border)' }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📋 Email QA Report</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>📋 Email check</div>
             <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
               {templateName || `Template #${templateId}`}
               {report?.generatedAt ? ` — updated ${new Date(report.generatedAt).toLocaleString()}` : ''}

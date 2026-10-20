@@ -1,0 +1,102 @@
+/* Performance overview (top of /journeys/analytics). Uses tokens from app/globals.css. */
+
+.overview { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.body { display: flex; flex-direction: column; gap: 12px; min-width: 0; transition: opacity .15s ease; }
+.refreshing { opacity: .6; }
+
+/* Period picker */
+.periodRow { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.seg { display: inline-flex; flex-wrap: wrap; background: var(--sunken); padding: 3px; border-radius: 8px; gap: 2px; max-width: 100%; }
+.segBtn, .segOn {
+  font: inherit; font-size: 13px; font-weight: 600; height: 28px; padding: 0 12px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink2); cursor: pointer; white-space: nowrap;
+}
+.segBtn:hover { color: var(--ink); }
+.segOn { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(18, 24, 32, 0.08); }
+.segBtn:focus-visible, .segOn:focus-visible, .retry:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.customDates { display: flex; gap: 8px; flex-wrap: wrap; }
+.dateLabel { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink2); }
+.dateLabel :global(.ui-input) { height: 30px; width: 150px; }
+.periodMeta { font-size: 13px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+.warnText { color: var(--warn); }
+.spacer { flex: 1 1 auto; }
+
+/* Section heading */
+.sectionTitle { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--ink2); }
+
+/* KPI tiles */
+.kpiGrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.tileHead { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.tileLabel { font-size: 13px; font-weight: 700; color: var(--ink); }
+.channel { font-size: 11px; color: var(--ink3); white-space: nowrap; }
+.valueRow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.value { font-size: 24px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.valueSub { font-size: 12px; font-weight: 600; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.help { margin: 0; font-size: 12px; line-height: 1.35; color: var(--ink3); }
+.changeGood, .changeBad, .changeMute { font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.changeGood { font-weight: 600; color: var(--ok); }
+.changeBad { font-weight: 600; color: var(--bad); }
+.changeMute { color: var(--ink3); }
+
+/* Chart panels */
+.charts { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 10px; }
+.panel {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.panelHead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.panelTitle { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); }
+.unavailable { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0; font-size: 13px; color: var(--ink3); }
+.retry {
+  font: inherit; font-size: 12px; font-weight: 600; height: 26px; padding: 0 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.retry:hover { background: var(--sunken); }
+.retry:disabled { opacity: .6; cursor: default; }
+.empty { margin: 0; padding: 24px 0; text-align: center; font-size: 13px; color: var(--ink3); }
+.num { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+
+/* Weekly trend */
+.chart { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.plot { width: 100%; min-width: 0; }
+.legend { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink2); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.legendNote { color: var(--ink3); }
+.swatchLine { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.tooltip {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  font-size: 12px; line-height: 1.5; color: var(--ink2); font-variant-numeric: tabular-nums;
+  box-shadow: 0 4px 12px rgba(18, 24, 32, 0.08);
+}
+.tooltipTitle { font-weight: 700; color: var(--ink); }
+
+/* Funnel */
+.funnelWrap { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.caption { margin: 0; font-size: 12px; color: var(--ink3); }
+.captionStrong { font-weight: 600; color: var(--ink2); }
+.funnel { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.funnelRow { display: grid; grid-template-columns: 64px minmax(0, 1fr) minmax(96px, auto); align-items: center; gap: 10px; font-size: 13px; }
+.funnelLabel { font-weight: 600; color: var(--ink); }
+.funnelTrack { display: flex; justify-content: flex-start; height: 26px; background: var(--sunken); border-radius: 6px; overflow: hidden; }
+.funnelBar { display: block; height: 100%; background: var(--gold); border-radius: 4px; }
+.funnelValue { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+.funnelPct { font-size: 11px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+.footnote { margin: 0; font-size: 11px; color: var(--ink3); }
+
+@media (max-width: 1180px) {
+  .kpiGrid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+}
+@media (max-width: 900px) {
+  .charts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .value { font-size: 20px; }
+  .dateLabel :global(.ui-input) { width: 140px; }
+  .funnelRow { grid-template-columns: 56px minmax(0, 1fr) auto; gap: 8px; }
+}

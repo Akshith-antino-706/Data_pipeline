@@ -1,68 +1,143 @@
-/* Page-local styles for Performance (/journeys/analytics). Uses tokens from app/globals.css. */
+/* Performance page shell + "Your journeys" table (/journeys/analytics). Tokens from app/globals.css.
+   The top half (period, KPIs, charts) is styled in InsightsOverview.module.css. */
 
-.page { display: flex; flex-direction: column; gap: 18px; min-width: 0; max-width: 1440px; }
-.overview { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-
-/* Period picker */
-.periodCard { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-.periodRow { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; }
-.periodMeta { font-size: 13px; color: var(--ink2); }
-.warnText { color: var(--warn); }
-.spacer { flex: 1 1 auto; }
-.seg { display: inline-flex; flex-wrap: wrap; background: var(--sunken); padding: 3px; border-radius: 8px; gap: 2px; max-width: 100%; }
-.segBtn, .segOn {
-  font: inherit; font-size: 13px; font-weight: 600; height: 30px; padding: 0 12px; border: 0; border-radius: 6px;
-  background: transparent; color: var(--ink2); cursor: pointer; white-space: nowrap;
+.page { display: flex; flex-direction: column; gap: 14px; min-width: 0; max-width: 1440px; }
+.srOnly {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
-.segOn { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(18, 24, 32, 0.08); }
-.customDates { display: flex; gap: 8px; flex-wrap: wrap; }
-.dateLabel { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink2); }
-.dateLabel :global(.ui-input) { height: 32px; width: 150px; }
 
-/* KPI cards */
-.kpiGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.kpi { padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.kpiHead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); }
-.kpiValue { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.2; color: var(--ink); }
-.kpiSub { font-size: 12px; color: var(--ink3); }
-.changeUp { font-size: 12px; font-weight: 600; color: var(--ok); }
-.changeDown { font-size: 12px; font-weight: 600; color: var(--bad); }
-.changeMute { font-size: 12px; color: var(--ink3); }
+/* ── Header ─────────────────────────────────────────────────── */
+.header { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
+.title { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; color: var(--ink); }
+.subtitle { margin: 0; font-size: 13px; color: var(--ink3); }
 
-.twoCol { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
-.unavailable { margin: 0; padding: 16px 0; font-size: 13px; color: var(--ink3); }
-.help { margin: 0; font-size: 12px; color: var(--ink3); }
-.num { font-variant-numeric: tabular-nums; font-weight: 600; }
-.muted { color: var(--ink3); }
-.chart { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* ── Table card ─────────────────────────────────────────────── */
+.tableCard { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.tableHead { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.tableTitleBlock { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
+.sectionTitle { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+.metaLine { font-size: 12px; color: var(--ink3); }
+.tableActions { display: flex; gap: 8px; align-items: center; }
 
-/* Funnel */
-.funnel { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.funnelStep { display: flex; flex-direction: column; gap: 4px; }
-.funnelHead { display: flex; justify-content: space-between; font-size: 13px; }
-.funnelLabel { font-weight: 600; color: var(--ink); }
-.funnelTrack { height: 10px; background: var(--sunken); border-radius: 999px; overflow: hidden; }
-.funnelBar { height: 100%; background: var(--gold); border-radius: 999px; }
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.searchWrap { position: relative; display: flex; align-items: center; flex: 1 1 220px; max-width: 300px; min-width: 0; }
+.searchIcon { position: absolute; left: 10px; color: var(--ink3); pointer-events: none; }
+.searchInput { width: 100%; height: 34px; padding-left: 30px; padding-right: 28px; }
+.clearBtn {
+  border: 0; background: none; color: var(--ink3); cursor: pointer; padding: 4px; display: inline-flex; border-radius: 6px;
+}
+.searchWrap .clearBtn { position: absolute; right: 4px; }
+.clearBtn:hover, .clearBtn:focus-visible { color: var(--ink); background: var(--sunken); outline: none; }
+.select { height: 34px; width: auto; min-width: 140px; }
+.dayLabel { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink2); }
+.dayInput { height: 34px; width: 150px; }
 
-/* Per-journey table */
-.tableWrap { overflow-x: auto; margin: 0 -4px; }
-.perfTable { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
-.perfTable th { font-size: 12px; font-weight: 600; color: var(--ink3); text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-.perfTable td { padding: 9px 10px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; color: var(--ink); }
-.perfTable .left { text-align: left; }
+.errorBox {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 13px;
+}
+.errorText { margin: 0; font-size: 13px; color: var(--bad); }
+.loadingRows { display: flex; flex-direction: column; gap: 8px; }
 
-/* Existing analytics table area */
-.sectionHead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 6px 0 0; }
-.sectionTitle { margin: 0; font-size: 18px; font-weight: 700; color: var(--ink); }
-.metaLine { display: flex; align-items: center; gap: 8px 16px; font-size: 12px; color: var(--ink3); flex-wrap: wrap; }
-.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.toolbarActions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+/* ── Journeys table ─────────────────────────────────────────── */
+.tableScroll { overflow: auto; min-width: 0; border-top: 1px solid var(--line); }
+.journeyTable { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+.journeyTable th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  font-size: 12px; font-weight: 600; color: var(--ink3); text-align: right; padding: 8px 10px;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.journeyTable > tbody > tr > td {
+  padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums; color: var(--ink); vertical-align: middle;
+}
+.journeyTable .left { text-align: left; }
+.sortBtn {
+  font: inherit; font-weight: 600; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap;
+}
+.sortBtn:hover, .sortBtn:focus-visible { color: var(--ink); outline: none; text-decoration: underline; }
+.chevCol { width: 32px; padding-left: 4px !important; padding-right: 0 !important; text-align: center !important; }
+.menuCol { width: 44px; text-align: center !important; }
+.chevBtn, .iconBtn {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border: 0; border-radius: 6px; background: none; color: var(--ink3); cursor: pointer; padding: 0;
+}
+.iconBtn { border: 1px solid var(--line); background: var(--surface); }
+.chevBtn:hover, .iconBtn:hover, .chevBtn:focus-visible, .iconBtn:focus-visible { color: var(--ink); background: var(--sunken); outline: none; }
+
+.jrow { cursor: pointer; }
+.jrow:hover > td, .jrowOpen > td { background: var(--sunken); }
+.nameCell { max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jname { font-weight: 600; color: var(--ink); }
+.muted { color: var(--ink3); font-weight: 400; }
+.typeChip { margin-left: 6px; }
+.emptyCell { text-align: center !important; padding: 28px 12px !important; color: var(--ink3) !important; }
+
+.rateCell { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 64px; }
+.rateTrack { display: block; width: 64px; height: 4px; border-radius: 999px; background: var(--sunken); overflow: hidden; }
+.rateFill { display: block; height: 100%; background: var(--gold); border-radius: 999px; }
+.jrow:hover .rateTrack, .jrowOpen .rateTrack { background: var(--line); }
+
+/* ── Row menu ───────────────────────────────────────────────── */
+.menuWrap { position: relative; display: inline-flex; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 210px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(18, 24, 32, .14); padding: 4px; display: flex; flex-direction: column; text-align: left;
+}
+.menuItem {
+  font: inherit; font-size: 14px; display: flex; gap: 10px; align-items: center; text-align: left; white-space: nowrap;
+  padding: 8px 12px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer; text-decoration: none;
+}
+.menuItem:hover, .menuItem:focus-visible { background: var(--sunken); outline: none; }
+.menuItem:disabled { color: var(--ink3); cursor: default; }
+
+/* ── Expanded step breakdown ────────────────────────────────── */
+.stepRow > td { background: var(--sunken); padding: 12px 14px 14px 40px !important; text-align: left !important; }
+.steps { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.journeyFacts { margin: 0; display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 13px; }
+.journeyFacts > div { display: flex; gap: 6px; }
+.journeyFacts dt { color: var(--ink3); }
+.journeyFacts dd { margin: 0; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.help { margin: 0; font-size: 12px; color: var(--ink3); display: flex; align-items: center; gap: 6px; }
+.stepScroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.stepTable { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; }
+.stepTable th {
+  font-size: 12px; font-weight: 600; color: var(--ink3); text-align: right; padding: 7px 10px;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.stepTable td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; color: var(--ink); }
+.stepTable tr:last-child td { border-bottom: 0; }
+.stepTable .left { text-align: left; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.engaged { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.35; }
+.subNum { font-size: 11px; color: var(--ink3); white-space: nowrap; }
+.openLink { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--info); text-decoration: none; }
+.openLink:hover, .openLink:focus-visible { text-decoration: underline; }
+
+/* ── Pager ──────────────────────────────────────────────────── */
+.pager { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.pagerText { font-size: 13px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.pageSize { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink2); }
+.pageSizeSelect { height: 30px; width: 68px; }
+.pagerBtns { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.spin { animation: perfSpin 1s linear infinite; }
+@keyframes perfSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* One screen on desktop: the page fills the viewport and the journeys table scrolls inside
+   its card. Height = viewport − top bar (64px) − .main padding (2 × 32px), as on Journey detail.
+   If the top half is taller than usual the page itself can still scroll. */
+/* The page scrolls normally so the journeys table shows a full page of rows. */
 
 @media (max-width: 640px) {
-  .toolbarActions { margin-left: 0; }
-  .kpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .twoCol { grid-template-columns: minmax(0, 1fr); }
-  .kpiValue { font-size: 22px; }
-  .dateLabel :global(.ui-input) { width: 140px; }
+  .tableCard { padding: 12px; }
+  .searchWrap { flex: 1 1 100%; max-width: none; }
+  .select { flex: 1 1 140px; min-width: 0; }
+  .dayLabel { flex: 1 1 100%; }
+  .dayInput { flex: 1 1 auto; width: auto; min-width: 0; }
+  .pagerBtns { margin-left: 0; width: 100%; justify-content: space-between; }
+  .stepRow > td { padding: 10px !important; }
+  .menu { right: 0; }
 }

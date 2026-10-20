@@ -88,6 +88,14 @@ describe('request building', () => {
     expect(callUrl(1)).toContain('&only_new=1&limit=50&offset=0');
   });
 
+  it('journey analytics table: no options keeps the old URL; options add paging params', async () => {
+    fetchMock.mockResolvedValue(json({}));
+    await getJourneyAnalyticsTable();
+    await getJourneyAnalyticsTable('', { page: 2, limit: 50, search: 'visa & co', sort: 'openRate', dir: 'asc', type: 'fixed' });
+    expect(callUrl(0)).toBe(`${BASE}/api/v3/journeys/analytics/table`);
+    expect(callUrl(1)).toBe(`${BASE}/api/v3/journeys/analytics/table?page=2&limit=50&search=visa+%26+co&sort=openRate&dir=asc&type=fixed`);
+  });
+
   it('sends method and JSON body for writes', async () => {
     fetchMock.mockResolvedValueOnce(json({ ok: true }, 201));
     await createStrategy({ name: 'x', n: null });

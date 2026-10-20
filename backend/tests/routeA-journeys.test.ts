@@ -131,6 +131,41 @@ describe('GET /analytics/table', () => {
     expect(r.body.data).toEqual({ journeys: [], meta: null });
     expect(m.query).toHaveBeenCalledWith(expect.not.stringContaining(evil), [evil]);
   });
+
+  it('keeps the original full-list response when no paging params are sent', async () => {
+    m.query.mockImplementation((sql: string) => Promise.resolve(
+      sql.includes('journey_stats_meta') ? { rows: [{ journeys_run: 2 }] } : { rows: [{ journey_id: 1 }, { journey_id: 2 }] },
+    ));
+    const r = await get('/analytics/table?status=active');
+    expect(r.body.data).toEqual({ journeys: [{ journey_id: 1 }, { journey_id: 2 }], meta: { journeys_run: 2 } });
+    const sqls = m.query.mock.calls.map(c => String(c[0]));
+    expect(sqls.some(s => /LIMIT|OFFSET|COUNT\(/i.test(s))).toBe(false);
+  });
+
+  it('returns one page with total when page/limit/search/sort are sent', async () => {
+    m.query.mockImplementation((sql: string) => {
+      if (sql.includes('journey_stats_meta')) return Promise.resolve({ rows: [{ journeys_run: 9 }] });
+      if (sql.includes('COUNT(*)')) return Promise.resolve({ rows: [{ total: '57' }] });
+      return Promise.resolve({ rows: [{ journey_id: 21 }] });
+    });
+    const r = await get('/analytics/table?status=paused&page=2&limit=20&search=visa&sort=openRate&dir=asc&type=fixed');
+    expect(r.status).toBe(200);
+    expect(r.body.data).toEqual({
+      journeys: [{ journey_id: 21 }], total: 57, page: 2, limit: 20, sort: 'openRate', dir: 'asc', meta: { journeys_run: 9 },
+    });
+    const rowsCall = m.query.mock.calls.find(c => String(c[0]).includes('LIMIT'));
+    expect(rowsCall?.[1]).toEqual(['paused', '%visa%', 20, 20]);
+    for (const [sql] of m.query.mock.calls) {
+      expect(String(sql).trim()).toMatch(/^SELECT\b/i);
+      expect(String(sql)).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b/i);
+    }
+  });
+
+  it('clamps an oversized limit and a bad page', async () => {
+    m.query.mockImplementation((sql: string) => Promise.resolve(sql.includes('COUNT(*)') ? { rows: [{ total: 3 }] } : { rows: [] }));
+    const r = await get('/analytics/table?page=-4&limit=99999');
+    expect(r.body.data).toMatchObject({ page: 1, limit: 200, total: 3 });
+  });
 });
 
 describe('GET /analytics/:id/nodes', () => {

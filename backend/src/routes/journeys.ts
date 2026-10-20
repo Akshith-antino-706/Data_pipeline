@@ -9,6 +9,7 @@ import type { QueryParams, JourneyNode, DiagnoseReport, GtmEventStat } from '../
 import type { CreateJourneyInput, JourneyFlowNode } from '../types/journeyService.js';
 import type { JourneyStatsMetaRow, JourneyNodesRow, JourneyNodesEdgesRow, JourneyNodeStatsRow, TestSendEntryRow, HtmlTemplateIdRow, ActiveEntryTimingRow, SnapshotStatusRow, CustomerIdRow, GtmNodeEventRow, NodeSentRow, EventTypeTotalRow, NodeConversionRow, JourneyIdRow, EntryIdRow, AddNodeBody, ResetEntriesBody } from '../types/u5Journeys.js';
 import { parseId, isIsoDate } from '../utils/validate.js';
+import { getAnalyticsTablePage, wantsPaging } from '../services/JourneyAnalyticsTableService.js';
 const router = Router();
 
 // ── Journey-detail cache (Phase 0) ──
@@ -160,8 +161,19 @@ router.get('/dashboard', async (req, res, next) => {
 //    Declared before '/:id' so these static prefixes aren't parsed as a journey id.
 
 // Per-journey summary rows (the '__ALL__' rollup row of each journey) + freshness meta.
+// OPTIONAL read-only paging: when any of ?page/limit/search/sort/dir/type is present the
+// response is one page plus `total`/`page`/`limit` (LIMIT/OFFSET + COUNT, SELECT only).
+// Without them the response is exactly the original full list, so other callers are unaffected.
 router.get('/analytics/table', async (req, res, next) => {
   try {
+    if (wantsPaging(req.query)) {
+      const [pageData, { rows: [pmeta] }] = await Promise.all([
+        getAnalyticsTablePage(req.query),
+        db.query<JourneyStatsMetaRow>(`SELECT last_run_at, last_run_ms, journeys_run FROM journey_stats_meta WHERE id = true`),
+      ]);
+      res.json({ success: true, data: { ...pageData, meta: pmeta || null } });
+      return;
+    }
     const params = [];
     let where = `s.node_id = '__ALL__'`;
     if (req.query.status) { params.push(req.query.status); where += ` AND s.journey_status = $${params.length}`; }

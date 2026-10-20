@@ -196,7 +196,15 @@ export const getJourneys = (params: QueryParams = {}) => {
 };
 export const getJourneyOpsDashboard = () => request('/api/v3/journeys/dashboard');
 // Analytics tab — reads the precomputed journey_node_stats rollup (fast; never scans live)
-export const getJourneyAnalyticsTable = (status?: string) => request(`/api/v3/journeys/analytics/table${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+export type JourneyAnalyticsSort = 'entries' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'unsubscribed' | 'booked' | 'openRate' | 'clickRate' | 'name';
+/** Optional server-side paging for the analytics table. Omit it to get the original full list. */
+export interface JourneyAnalyticsTableOptions {
+  page?: number; limit?: number; search?: string; sort?: JourneyAnalyticsSort; dir?: 'asc' | 'desc'; type?: 'fixed' | 'continuous';
+}
+export const getJourneyAnalyticsTable = (status?: string, opts?: JourneyAnalyticsTableOptions) => {
+  if (!opts) return request(`/api/v3/journeys/analytics/table${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+  return request(`/api/v3/journeys/analytics/table${overviewQs({ status, ...opts })}`);
+};
 export const getJourneyAnalyticsNodes = (id: Id, date?: string) => request(`/api/v3/journeys/analytics/${id}/nodes${date ? `?date=${date}` : ''}`);
 export const refreshJourneyAnalytics  = (id: Id) => request(`/api/v3/journeys/analytics/${id}/refresh`, { method: 'POST' });
 export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analytics/regenerate-qa', { method: 'POST' });
