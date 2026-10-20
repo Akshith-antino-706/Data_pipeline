@@ -11,7 +11,6 @@ const PAGES: { label: string; href: string }[] = [
   { label: 'Journeys', href: '/journeys' },
   { label: 'Templates', href: '/content' },
   { label: 'Performance', href: '/journeys/analytics' },
-  { label: 'Campaign results', href: '/campaigns' },
   { label: 'Website & links', href: '/utm' },
   { label: 'GTM & BigQuery', href: '/tag-manager' },
   { label: 'Reports', href: '/daily-report' },

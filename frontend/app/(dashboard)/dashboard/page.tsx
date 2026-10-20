@@ -268,7 +268,8 @@ export default function Dashboard() {
           }
           <div className="kpi-label">Conversations (7d)</div>
         </Link>
-        <Link href="/campaigns" className="card kpi no-underline color-inherit">
+        {/* Was /campaigns (hidden from the UI for now); revenue detail lives on Segments. */}
+        <Link href="/segmentation" className="card kpi no-underline color-inherit">
           <div className="icon-box"><DollarSign size={18} color="var(--orange)" /></div>
           {treeLoading
             ? <div className="skeleton" style={{ width: 100, height: 28, borderRadius: 6, margin: '4px 0 8px' }} />
@@ -303,7 +304,8 @@ export default function Dashboard() {
       <motion.div variants={fadeInUp} className="card-grid card-grid-3 mb-24">
         {[
           { href: '/contacts',  Icon: UserCheck, color: 'var(--blue)',   label: 'Contacts',  val: quickStats.contacts },
-          { href: '/campaigns', Icon: Megaphone, color: 'var(--green)',  label: 'Campaigns', val: quickStats.campaigns },
+          // Campaigns is hidden from the UI for now (page kept at /campaigns).
+          // { href: '/campaigns', Icon: Megaphone, color: 'var(--green)',  label: 'Campaigns', val: quickStats.campaigns },
           { href: '/journeys',  Icon: GitBranch, color: 'var(--purple)', label: 'Journeys',  val: quickStats.journeys },
         ].map((item) => (
           <Link key={item.href} href={item.href} className="card action-card" style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: '20px 24px' }}>
