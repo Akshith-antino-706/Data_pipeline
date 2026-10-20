@@ -239,6 +239,10 @@ describe('batch-status and send-log reads', () => {
     m.st.getUtmLog.mockResolvedValue({});
     await call('GET', '/utm-log?utm_source=fb&email=');
     expect(m.st.getUtmLog).toHaveBeenCalledWith(expect.objectContaining({ page: 1, limit: 50, utmSource: 'fb', email: undefined }));
+    await call('GET', '/utm-log?page=3&limit=20');
+    expect(m.st.getUtmLog).toHaveBeenLastCalledWith(expect.objectContaining({ page: 3, limit: 20 }));
+    await call('GET', '/utm-log?page=99999999&limit=abc');
+    expect(m.st.getUtmLog).toHaveBeenLastCalledWith(expect.objectContaining({ page: 100000, limit: 50 }));
     m.st.getUtmSummary.mockRejectedValue(new Error('x'));
     expect((await call('GET', '/utm-log/summary')).status).toBe(500);
   });

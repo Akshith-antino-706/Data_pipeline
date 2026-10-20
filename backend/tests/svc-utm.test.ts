@@ -136,4 +136,54 @@ describe('UTMService DB methods (mocked)', () => {
     expect(m.query.mock.calls[0][0]).not.toContain('click_count >');
     expect(m.query.mock.calls[0][1]).toEqual([200, 0]);
   });
+
+  it('getAnalytics without page/limit keeps the old shape: newest 200, no total, no count query', async () => {
+    const r = await UTMService.getAnalytics({ segmentLabel: 'vip' });
+    expect(m.query).toHaveBeenCalledTimes(3);
+    expect(m.query.mock.calls[0][0]).toContain('LIMIT 200');
+    expect(m.query.mock.calls[0][0]).not.toContain('OFFSET');
+    expect(m.query.mock.calls[0][1]).toEqual(['vip']);
+    expect(r).not.toHaveProperty('total');
+  });
+
+  it('getAnalytics paged: parameterised LIMIT/OFFSET, escaped search on links + count only, SELECT only', async () => {
+    m.query
+      .mockResolvedValueOnce({ rows: [{ utm_id: 1 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ total: '41' }] });
+    const r = await UTMService.getAnalytics({ segmentLabel: 'vip', page: '3', limit: '20', search: " 50%_x'; DROP " });
+    expect(m.query).toHaveBeenCalledTimes(4);
+    const [linksSql, linksParams] = m.query.mock.calls[0];
+    expect(linksSql).toContain('c.name ILIKE $2');
+    expect(linksSql).toContain('LIMIT $3 OFFSET $4');
+    expect(linksParams).toEqual(['vip', "%50\\%\\_x'; DROP%", 20, 40]);
+    // Channel/segment summaries ignore the search and paging.
+    expect(m.query.mock.calls[1][1]).toEqual(['vip']);
+    expect(m.query.mock.calls[2][1]).toEqual(['vip']);
+    const [countSql, countParams] = m.query.mock.calls[3];
+    expect(countSql).toContain('COUNT(*)');
+    expect(countSql).not.toContain('LIMIT');
+    expect(countParams).toEqual(['vip', "%50\\%\\_x'; DROP%"]);
+    for (const [sql] of m.query.mock.calls) expect(sql.trim().startsWith('SELECT')).toBe(true);
+    expect(r).toMatchObject({ total: 41, page: 3, limit: 20, links: [{ utm_id: 1 }] });
+  });
+
+  it('getAnalytics clamps page/limit (bad → defaults, huge → max)', async () => {
+    await UTMService.getAnalytics({ page: 'abc', limit: '99999' });
+    expect(m.query.mock.calls[0][1]).toEqual([200, 0]);
+    expect(m.query.mock.calls[0][0]).toContain('LIMIT $1 OFFSET $2');
+    m.query.mockClear();
+    await UTMService.getAnalytics({ limit: '-5' });
+    expect(m.query.mock.calls[0][1]).toEqual([20, 0]);
+  });
+
+  it('getUserLinks: page → offset, limit clamped, offset ignored when page is sent', async () => {
+    await UTMService.getUserLinks({ page: '4', limit: '20', offset: '999' });
+    expect(m.query.mock.calls[0][1]).toEqual([20, 60]);
+    expect(m.query.mock.calls[0][0]).toContain('ul.link_id DESC');
+    m.query.mockClear();
+    await UTMService.getUserLinks({ limit: '99999999', offset: '-3' });
+    expect(m.query.mock.calls[0][1]).toEqual([200, 0]);
+  });
 });

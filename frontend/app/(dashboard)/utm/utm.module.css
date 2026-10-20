@@ -1,0 +1,170 @@
+/* "Website & links" page shell + the link tools below the overview (/utm).
+   Tokens come from app/globals.css. The overview at the top is styled in website.module.css. */
+
+.page { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 1440px; }
+.srOnly {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ── Tools section ──────────────────────────────────────────── */
+.tools { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.toolsTitle { margin: 8px 0 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+.tabPanel { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.tabPanel[hidden] { display: none; }
+.tabCount { margin-left: 6px; font-size: 12px; font-weight: 600; color: var(--ink3); font-variant-numeric: tabular-nums; }
+
+/* ── Cards / tables ─────────────────────────────────────────── */
+.card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cardHead { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.cardTitleBlock { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
+.cardTitle { margin: 0; font-size: 15px; font-weight: 700; color: var(--ink); }
+.metaLine { font-size: 12px; color: var(--ink3); }
+.cardActions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.intro { margin: 0; font-size: 13px; color: var(--ink2); }
+
+.toolbar { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.searchWrap { position: relative; display: flex; align-items: center; flex: 1 1 220px; max-width: 320px; min-width: 0; }
+.searchIcon { position: absolute; left: 10px; color: var(--ink3); pointer-events: none; }
+.searchInput { width: 100%; height: 34px; padding-left: 30px; padding-right: 28px; }
+.clearBtn {
+  position: absolute; right: 4px; border: 0; background: none; color: var(--ink3); cursor: pointer;
+  padding: 4px; display: inline-flex; border-radius: 6px;
+}
+.clearBtn:hover, .clearBtn:focus-visible { color: var(--ink); background: var(--sunken); outline: none; }
+.select { height: 34px; width: auto; min-width: 150px; max-width: 280px; }
+.control { height: 34px; }
+.filterField { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--ink2); min-width: 0; }
+.filterField .control { width: 100%; }
+.filterGrow { flex: 1 1 180px; }
+.filterDate { flex: 0 1 160px; }
+
+.slowNote { margin: 0; font-size: 12px; color: var(--ink3); }
+.tableScroll { overflow-x: auto; min-width: 0; border-top: 1px solid var(--line); }
+.dataTable { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 640px; }
+.dataTable th {
+  font-size: 12px; font-weight: 600; color: var(--ink3); text-align: left; padding: 8px 10px;
+  border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--surface);
+}
+.dataTable td {
+  padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line);
+  color: var(--ink); vertical-align: middle;
+}
+.dataTable .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dataTable tbody tr:hover > td { background: var(--sunken); }
+.dataTable[aria-busy="true"] tbody tr:hover > td { background: none; }
+.skelRow td { padding: 12px 10px; }
+/* One compact line used for "nothing here" — never an empty table or a big empty card. */
+.note { margin: 0; display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink2); }
+
+.strong { font-weight: 600; color: var(--ink); }
+.muted { color: var(--ink3); }
+.sub { display: block; font-size: 12px; color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.nameCell { max-width: 280px; }
+.nameText { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.chipRow { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* ── Link cell: path with ellipsis, full URL on hover, copy button ── */
+.linkCell { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; min-width: 0; vertical-align: middle; }
+.linkText {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; color: var(--info); text-decoration: none;
+}
+a.linkText:hover, a.linkText:focus-visible { text-decoration: underline; }
+.iconBtn {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink3); cursor: pointer; padding: 0;
+}
+.iconBtn:hover, .iconBtn:focus-visible { color: var(--ink); background: var(--sunken); outline: none; }
+.iconBtnDone { color: var(--ok); border-color: var(--ok); }
+
+/* ── Errors ─────────────────────────────────────────────────── */
+.errorBox {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 8px; background: var(--bad-soft); color: var(--bad); font-size: 13px;
+}
+
+/* ── Pager ──────────────────────────────────────────────────── */
+.pager { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.pagerText { font-size: 13px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.pageSize { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink2); }
+.pageSizeSelect { height: 30px; width: 68px; }
+.pagerBtns { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.channelStrip { display: flex; gap: 8px; flex-wrap: wrap; }
+.channelPill {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 6px 10px; border-radius: 999px;
+  background: var(--sunken); font-size: 12px; color: var(--ink2);
+}
+.channelPill b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.createRow { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.createRow .filterField { flex: 1 1 260px; max-width: 460px; }
+
+
+/* ── ⋯ menu ─────────────────────────────────────────────────── */
+.menuWrap { position: relative; display: inline-flex; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 240px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(18, 24, 32, .14); padding: 4px; display: flex; flex-direction: column;
+}
+.menuItem {
+  font: inherit; font-size: 14px; display: flex; gap: 10px; align-items: center; text-align: left; white-space: nowrap;
+  padding: 8px 12px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer;
+}
+.menuItem:hover, .menuItem:focus-visible { background: var(--sunken); outline: none; }
+.menuItem:disabled { color: var(--ink3); cursor: default; }
+
+/* ── Link builder ───────────────────────────────────────────── */
+.builder { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.builderStack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.formRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.paramName { margin-left: 6px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 400; color: var(--ink3); }
+.fixedValue { display: flex; align-items: center; height: 34px; padding: 0 10px; border-radius: 8px; background: var(--sunken); font-size: 13px; color: var(--ink2); }
+.preview {
+  margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--line);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; line-height: 1.7; color: var(--ink);
+  overflow-wrap: anywhere; word-break: break-all;
+}
+.previewKey { color: var(--ink3); }
+.previewVal { color: var(--gold-ink); font-weight: 600; }
+.previewEmpty { color: var(--ink3); font-family: inherit; }
+.previewHelp { margin: 0; font-size: 12px; color: var(--ink3); }
+.builderActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.resultTitle { margin: 0; font-size: 13px; font-weight: 700; color: var(--ok); display: flex; align-items: center; gap: 6px; }
+
+/* ── Drawer ─────────────────────────────────────────────────── */
+.drawerBackdrop { position: fixed; inset: 0; z-index: 150; background: rgba(16, 24, 32, .45); display: flex; justify-content: flex-end; }
+.drawer {
+  width: min(560px, 100%); height: 100%; background: var(--bg); box-shadow: -8px 0 24px rgba(18, 24, 32, .18);
+  display: flex; flex-direction: column; min-width: 0;
+}
+.drawerHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.drawerTitle { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+.drawerBody { flex: 1 1 auto; overflow-y: auto; padding: 16px; }
+.drawerBody .builder { grid-template-columns: minmax(0, 1fr); }
+
+.spin { animation: utmSpin 1s linear infinite; }
+@keyframes utmSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+@media (max-width: 960px) {
+  .builder { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .card { padding: 12px; }
+  .searchWrap { flex: 1 1 100%; max-width: none; }
+  .select { flex: 1 1 140px; min-width: 0; max-width: none; }
+  .filterGrow, .filterDate { flex: 1 1 calc(50% - 4px); }
+  .pagerBtns { margin-left: 0; width: 100%; justify-content: space-between; }
+  .formRow { grid-template-columns: minmax(0, 1fr); }
+  .linkCell { max-width: 200px; }
+  .menu { right: 0; }
+}
+
+/* Tab names stay on one line; on narrow screens the tab bar scrolls sideways. */
+.tabsScroll :global(.ui-tabs) { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.tabsScroll :global(.ui-tab) { white-space: nowrap; flex: none; }

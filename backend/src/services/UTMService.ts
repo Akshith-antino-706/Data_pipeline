@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import db from '../config/database.js';
+import { clampInt, MAX_PAGE } from '../utils/validate.js';
 import type { UtmCampaignRow, UtmCampaignWithLinkRow, UtmIdRow, UtmSegmentLabelRow, UtmSegmentListRow, UtmTrackingRow, UtmChannelSummaryRow, UtmSegmentSummaryRow, UtmCustomerRow, UserUtmLinkRow, UserUtmLinkListRow, UserUtmLinkStatsRow, UserUtmCampaignStatsRow, UserUtmTotalsRow } from '../types/u6Services.js';
 
 type Id = number | string;
@@ -25,6 +26,11 @@ interface UTMAnalyticsFilters {
   channel?: unknown;
   dateFrom?: unknown;
   dateTo?: unknown;
+  /** Optional paging: when `page` or `limit` is sent, `links` is one page and `total` is added. */
+  page?: unknown;
+  limit?: unknown;
+  /** Optional text search over campaign / template / segment name (paged mode only). */
+  search?: unknown;
 }
 
 interface UserLinkFilters {
@@ -34,7 +40,20 @@ interface UserLinkFilters {
   search?: unknown;
   limit?: unknown;
   offset?: unknown;
+  /** Optional 1-based page; when sent, offset = (page - 1) * limit. */
+  page?: unknown;
 }
+
+/** Upper bound for one page of links (old callers got up to 200 at once). */
+const MAX_LINKS_LIMIT = 200;
+const MAX_OFFSET = MAX_PAGE * MAX_LINKS_LIMIT;
+
+/** Escape LIKE wildcards so a search for "50%" matches the text literally. */
+function likeEscape(s: string): string {
+  return s.replace(/[\\%_]/g, c => `\\${c}`);
+}
+
+const present = (v: unknown): boolean => v !== undefined && v !== null && v !== '';
 
 /**
  * UTM Tracking Service — Campaign-Centric + Per-User Links
@@ -240,7 +259,7 @@ class UTMService {
   /**
    * Get UTM tracking data with analytics
    */
-  static async getAnalytics({ segmentLabel, channel, dateFrom, dateTo }: UTMAnalyticsFilters = {}) {
+  static async getAnalytics({ segmentLabel, channel, dateFrom, dateTo, page, limit, search }: UTMAnalyticsFilters = {}) {
     let where = '1=1';
     const params: unknown[] = [];
 
@@ -248,6 +267,21 @@ class UTMService {
     if (channel) { params.push(channel); where += ` AND ut.channel::text = $${params.length}`; }
     if (dateFrom) { params.push(dateFrom); where += ` AND ut.created_at >= $${params.length}`; }
     if (dateTo) { params.push(dateTo); where += ` AND ut.created_at <= $${params.length}`; }
+
+    // Paged mode is opt-in: without page/limit the response is exactly as before (newest 200, no total).
+    const paged = present(page) || present(limit);
+    let linkWhere = where;
+    const linkParams = [...params];
+    const q = typeof search === 'string' ? search.trim().slice(0, 200) : '';
+    if (paged && q) {
+      linkParams.push(`%${likeEscape(q)}%`);
+      const n = linkParams.length;
+      linkWhere += ` AND (c.name ILIKE $${n} OR ct.name ILIKE $${n} OR ut.segment_label ILIKE $${n} OR ut.utm_campaign ILIKE $${n})`;
+    }
+    const pageSize = paged ? clampInt(limit, 20, MAX_LINKS_LIMIT) : 200;
+    const pageNo = paged ? clampInt(page, 1, MAX_PAGE) : 1;
+    const pageParams = paged ? [...linkParams, pageSize, (pageNo - 1) * pageSize] : linkParams;
+    const limitSql = paged ? `LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}` : 'LIMIT 200';
 
     const { rows } = await db.query<UtmTrackingRow>(`
       SELECT ut.*,
@@ -258,10 +292,10 @@ class UTMService {
       FROM utm_tracking ut
       LEFT JOIN content_templates ct ON ct.id = ut.template_id
       LEFT JOIN campaigns c ON c.id = ut.campaign_id
-      WHERE ${where}
-      ORDER BY ut.created_at DESC
-      LIMIT 200
-    `, params);
+      WHERE ${linkWhere}
+      ORDER BY ut.created_at DESC${paged ? ', ut.utm_id DESC' : ''}
+      ${limitSql}
+    `, pageParams);
 
     const { rows: summary } = await db.query<UtmChannelSummaryRow>(`
       SELECT ut.channel::TEXT, COUNT(*) AS total_links,
@@ -280,7 +314,17 @@ class UTMService {
       ORDER BY total_links DESC
     `, params);
 
-    return { links: rows, summary, segmentSummary };
+    if (!paged) return { links: rows, summary, segmentSummary };
+
+    const { rows: countRows } = await db.query<{ total: string }>(`
+      SELECT COUNT(*) AS total
+      FROM utm_tracking ut
+      LEFT JOIN content_templates ct ON ct.id = ut.template_id
+      LEFT JOIN campaigns c ON c.id = ut.campaign_id
+      WHERE ${linkWhere}
+    `, linkParams);
+    const total = Number(countRows[0]?.total) || 0;
+    return { links: rows, summary, segmentSummary, total, page: pageNo, limit: pageSize };
   }
 
   /** Record a UTM click */
@@ -412,7 +456,7 @@ class UTMService {
   /**
    * Get user links for a campaign with click stats
    */
-  static async getUserLinks({ campaignId, segment, clicked, search, limit = 200, offset = 0 }: UserLinkFilters = {}) {
+  static async getUserLinks({ campaignId, segment, clicked, search, limit, offset, page }: UserLinkFilters = {}) {
     let where = '1=1';
     const params: unknown[] = [];
 
@@ -422,7 +466,12 @@ class UTMService {
     if (clicked === 'false') { where += ' AND ul.click_count = 0'; }
     if (search) { params.push(`%${search}%`); where += ` AND (ul.customer_name ILIKE $${params.length} OR ul.customer_email ILIKE $${params.length})`; }
 
-    params.push(limit, offset);
+    // Clamp paging so a bad query value can't ask for millions of rows; defaults keep the old 200/0.
+    const pageSize = clampInt(limit, 200, MAX_LINKS_LIMIT);
+    const skip = present(page)
+      ? (clampInt(page, 1, MAX_PAGE) - 1) * pageSize
+      : clampInt(offset, 0, MAX_OFFSET, 0);
+    params.push(pageSize, skip);
 
     const { rows } = await db.query<UserUtmLinkListRow>(`
       SELECT ul.*,
@@ -430,7 +479,7 @@ class UTMService {
       FROM user_utm_links ul
       LEFT JOIN campaigns c ON c.id = ul.campaign_id
       WHERE ${where}
-      ORDER BY ul.click_count DESC, ul.created_at DESC
+      ORDER BY ul.click_count DESC, ul.created_at DESC, ul.link_id DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `, params);
 

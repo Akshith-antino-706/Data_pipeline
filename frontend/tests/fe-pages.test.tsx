@@ -37,6 +37,9 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const bodyText = (): string => document.body.textContent ?? '';
 
 describe('UTM page', () => {
+  // The page keeps the open tab in ?tab=; start every test on the default tab.
+  beforeEach(() => { window.history.replaceState(null, '', '/utm'); });
+
   it('renders email visits with valid, invalid and missing destination_url without crashing', async () => {
     vi.mocked(api.getEmailUtmLog).mockResolvedValue({ data: { total: 4, rows: [
       { id: 1, email: 'a@x.com', destination_url: 'https://raynatours.com/dubai/tours?x=1', created_at: '2026-10-01T00:00:00Z' },
@@ -50,17 +53,19 @@ describe('UTM page', () => {
     expect(screen.getByText('not a url %%%')).toBeTruthy();
     expect(screen.getByText('d@x.com')).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1, name: 'Website & links' })).toBeTruthy();
+    expect(bodyText()).not.toContain('NaN');
+    expect(bodyText()).not.toContain('Invalid Date');
   });
 
   it('link builder rejects an invalid URL with an error toast and does not call the API', async () => {
-    vi.mocked(api.getUTMSegments).mockResolvedValue([{ segment_name: 'Upcoming trip', utm_count: '0', campaign_count: '0', customer_count: 5 }]);
+    vi.mocked(api.getUTMSegments).mockResolvedValue({ data: [{ segment_name: 'Upcoming trip', utm_count: '0', campaign_count: '0', customer_count: 5 }] });
     render(<UtmPage />);
-    fireEvent.click(await screen.findByRole('button', { name: /UTM Builder/i }));
-    const input = screen.getByDisplayValue('https://www.raynatours.com/activities');
-    fireEvent.change(input, { target: { value: 'not a url' } });
-    fireEvent.change(screen.getByDisplayValue('Select segment...'), { target: { value: 'Upcoming trip' } });
+    fireEvent.click(await screen.findByRole('tab', { name: 'Link builder' }));
+    const audience = await screen.findByRole('option', { name: 'Upcoming trip (5 people)' });
+    fireEvent.change(audience.closest('select') as HTMLSelectElement, { target: { value: 'Upcoming trip' } });
+    fireEvent.change(screen.getByDisplayValue('https://www.raynatours.com/activities'), { target: { value: 'not a url' } });
     fireEvent.change(screen.getByPlaceholderText('e.g. Spring_Sale_Email'), { target: { value: 'spring' } });
-    fireEvent.click(screen.getByRole('button', { name: /Generate UTM/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Create link/ }));
     await screen.findByText(/Please enter a valid landing page URL/);
     expect(api.buildUTM).not.toHaveBeenCalled();
   });
@@ -68,12 +73,14 @@ describe('UTM page', () => {
   it('survives API errors and null payloads', async () => {
     vi.mocked(api.getEmailUtmLog).mockRejectedValue(new Error('HTTP 500'));
     vi.mocked(api.getEmailUtmSummary).mockResolvedValue(null);
-    vi.mocked(api.getUTMAnalytics).mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.mocked(api.getUTMAnalytics).mockRejectedValue(new Error('HTTP 502'));
     vi.mocked(api.getUTMSegments).mockResolvedValue(null);
     vi.mocked(api.getOverviewWebsite).mockRejectedValue(new Error('HTTP 502'));
     render(<UtmPage />);
     await waitFor(() => expect(api.getEmailUtmLog).toHaveBeenCalled());
-    await screen.findByText("Couldn't load website activity");
+    await screen.findByText(/Couldn't load email visits/);
+    fireEvent.click(screen.getByRole('tab', { name: 'Campaign links' }));
+    await screen.findByText(/Couldn't load campaign links/);
     expect(bodyText()).not.toContain('NaN');
   });
 });

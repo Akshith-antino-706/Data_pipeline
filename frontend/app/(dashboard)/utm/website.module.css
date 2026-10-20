@@ -21,7 +21,8 @@
 .glanceTitle { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--ink2); }
 
 /* KPI tiles */
-.kpiGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+/* auto-fit: when tiles without data are hidden, the rest stretch to fill the row. */
+.kpiGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .tile {
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
   padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0;

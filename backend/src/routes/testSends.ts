@@ -27,7 +27,7 @@ import { SAMPLE_AFFINITY_VARS } from '../services/affinityVars.js';
 import type { PlaceholderContext } from '../types/utilsPlaceholder.js';
 import type { U4TestSendRequest, U4ContentTemplateBodyRow, U4EmailHtmlTemplateRow, U4ContentTemplateFullRow, U4ValRow, U4CountryRow, U4IdNameRow, U4TotalRow, U4ContactListRow, U4ContactSearchRow, U4QaReportRow, U4SendLogRow } from '../types/u4TestSends.js';
 import type { QueryParams, Recipient, EmailTransport, SendAttemptResult, SendAndLogArgs, SendOutcome, ParallelFailure, BatchJob, ResolvedTemplate } from '../types/routesTestSends.js';
-import { clampInt } from '../utils/validate.js';
+import { clampInt, MAX_PAGE } from '../utils/validate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -1069,8 +1069,8 @@ router.get('/send-log/user/:unifiedId', async (req, res, next) => {
 
 router.get('/utm-log', async (req, res, next) => {
   try {
-    const page   = Math.max(1, parseInt((req.query.page as string | undefined)  || '1'));
-    const limit  = Math.min(200, Math.max(1, parseInt((req.query.limit as string | undefined) || '50')));
+    const page   = clampInt(req.query.page, 1, MAX_PAGE);
+    const limit  = clampInt(req.query.limit, 50, 200);
     const result = await SendTrackService.getUtmLog({
       page, limit,
       utmSource:   (req.query.utm_source as string | undefined)   || undefined,
