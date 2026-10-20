@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useRef, Fragment } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import {
   getChatLeadsSummary, getChatLeadsTrend, getMailLeadsSummary, getMailLeadsTrend,
   getChatLeadsDepartmentPeriods, getMailLeadsDepartmentPeriods, getChatLeadsDepartmentUsers,
@@ -20,8 +19,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import GroupDepartmentModal from './GroupDepartmentModal';
 import RegistrationPanel, { type RegPanelQuery } from './RegistrationPanel';
 import {
-  AnalyticsSkeleton, COMPARE_LABEL, DeltaText, Kpi, Seg, TableSkeleton, TOOLTIP_STYLE,
-  comparisonRange, formatNum, getDaysAgo, getToday, getYesterday, pctChange, type CompareMode,
+  AnalyticsSkeleton, COMPARE_LABEL, DeltaText, Kpi, Seg, TableSkeleton, TrendBarChart,
+  comparisonRange, formatNum, formatPerDay, formatPeriod, formatRange, getDaysAgo, getToday, getYesterday,
+  latestKpiLabel, partialBucket, pctChange, rangeKpis, soFarLabel, type ChartSeries, type CompareMode,
 } from './leadsShared';
 import { useAuth } from '@/context/AuthContext';
 import type {
@@ -106,6 +106,7 @@ export default function Leads() {
   const [summary, setSummary] = useState<LeadsSummary | null>(null);
   const [prevSummary, setPrevSummary] = useState<LeadsSummary | null>(null);
   const [trend, setTrend] = useState<LeadsTrend | null>(null);
+  const [trendGran, setTrendGran] = useState('day');  // granularity the loaded trend was fetched with
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -226,6 +227,7 @@ export default function Leads() {
       const [summaryRes, trendRes] = await Promise.all([c.getSummary(from, to), c.getTrend(from, to, gran)]);
       setSummary(summaryRes as LeadsSummary | null);
       setTrend(trendRes as LeadsTrend | null);
+      setTrendGran(gran);
     } catch (err) {
       setError((err as Error).message || 'Failed to load leads');
     } finally {
@@ -344,6 +346,20 @@ export default function Leads() {
   // ── Derived, all from loaded API data ──
   const hasNewSplit = summary?.newUsers != null;
   const chartData = (trend?.points || []).map(p => ({ period: p.period, leads: p.leads ?? 0, newUsers: p.newUsers ?? 0, oldUsers: p.oldUsers ?? 0 }));
+  const chartSeries: ChartSeries[] = [
+    { key: 'leads', name: 'Leads', color: 'var(--gold)', rounded: true, labelled: true },
+    ...(hasNewSplit ? [
+      { key: 'newUsers', name: 'New', color: 'var(--info)', stackId: 'split' },
+      { key: 'oldUsers', name: 'Returning', color: 'var(--warn)', stackId: 'split', rounded: true },
+    ] : []),
+  ];
+  // The 4 headline KPIs: summary range + volume, and the chart's per-period leads.
+  const kpis = summary ? rangeKpis({
+    from: summary.from, to: summary.to, granularity: trendGran, total: cfg ? summary[cfg.volumeKey] : null,
+    points: chartData.map(p => ({ period: p.period, value: p.leads })),
+  }) : null;
+  const partialKey = summary ? partialBucket(summary.from, summary.to, trendGran) : null;
+  const rangeText = summary ? formatRange(summary.from, summary.to) : '';
   const totalLeads = summary?.totalLeads ?? 0;
   const shareOfLeads = (n?: number | null) => (typeof n === 'number' && totalLeads > 0 ? `${Math.round((n / totalLeads) * 100)}% of leads` : null);
   const cmpLabel = COMPARE_LABEL[compare];
@@ -381,48 +397,54 @@ export default function Leads() {
 
       {/* Period — shared by every tab */}
       <Card className={styles.periodCard} aria-label="Period">
-        <div className={styles.periodRow}>
-          <span className={styles.label}>Period</span>
-          <div className={styles.seg} role="group" aria-label="Quick period">
-            {presets.map(p => (
-              <button key={p.label} type="button" className={styles.segBtn} aria-pressed={fromDate === p.from && toDate === p.to} onClick={() => handlePreset(p.from, p.to)}>
-                {p.label}
-              </button>
-            ))}
+        <div className={styles.periodMain}>
+          <div className={styles.fieldGroup}>
+            <span className={styles.fieldLabel}>Period</span>
+            <div className={styles.seg} role="group" aria-label="Quick period">
+              {presets.map(p => (
+                <button key={p.label} type="button" className={styles.segBtn} aria-pressed={fromDate === p.from && toDate === p.to} onClick={() => handlePreset(p.from, p.to)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <span className={styles.spacer} />
-          <label htmlFor="leads-compare" className={styles.help}>Compare with</label>
-          <Select id="leads-compare" value={compare} onChange={e => handleCompare(e.target.value === 'year' ? 'year' : 'previous')} style={{ height: 32, width: 'auto' }}>
-            <option value="previous">Previous period</option>
-            <option value="year">Same period last year</option>
-          </Select>
-        </div>
-        <div className={styles.periodRow}>
-          <span className={styles.dateField}>
-            <label htmlFor="leads-from" className={styles.help}>From</label>
-            <Input id="leads-from" type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
-          </span>
-          <span className={styles.dateField}>
-            <label htmlFor="leads-to" className={styles.help}>To</label>
-            <Input id="leads-to" type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
-          </span>
-          <Button variant="primary" size="sm" onClick={() => load()} disabled={!!cfg && loading}>
-            {cfg && loading ? <><Loader2 size={14} className={styles.spin} aria-hidden="true" />Loading...</> : 'Load'}
-          </Button>
-          <span className={styles.inline}>
-            <label htmlFor="leads-month" className={styles.help}>Month</label>
-            <Select id="leads-month" value={pickedMonth} onChange={e => handleMonthPick(e.target.value)}>
+          <div className={styles.rangeGroup}>
+            <span className={styles.fieldGroup}>
+              <label htmlFor="leads-from" className={styles.fieldLabel}>From</label>
+              <Input id="leads-from" type="date" className={styles.dateInput} value={fromDate} onChange={e => setFromDate(e.target.value)} />
+            </span>
+            <span className={styles.fieldGroup}>
+              <label htmlFor="leads-to" className={styles.fieldLabel}>To</label>
+              <Input id="leads-to" type="date" className={styles.dateInput} value={toDate} onChange={e => setToDate(e.target.value)} />
+            </span>
+            <Button variant="primary" size="sm" className={styles.applyBtn} onClick={() => load()} disabled={!!cfg && loading}>
+              {cfg && loading ? <><Loader2 size={14} className={styles.spin} aria-hidden="true" />Loading...</> : 'Apply'}
+            </Button>
+          </div>
+          <span className={styles.fieldGroup}>
+            <label htmlFor="leads-month" className={styles.fieldLabel}>Month</label>
+            <Select id="leads-month" className={styles.monthSelect} value={pickedMonth} onChange={e => handleMonthPick(e.target.value)}>
               <option value="">Select month…</option>
               {MONTH_YEAR_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </Select>
           </span>
-          <span className={styles.spacer} />
-          <span className={styles.help}>Chart by</span>
-          <Seg label="Chart granularity" options={GRANULARITY_OPTIONS} value={granularity} onChange={handleGranularity} />
         </div>
-        <span className={styles.help}>
-          Applies to the KPIs, the chart and the Registrations tab. The department table has its own period below.
-        </span>
+        <div className={styles.periodFoot}>
+          <p className={styles.periodHelp}>
+            Applies to the KPIs, the chart and the Registrations tab. The department table has its own period below.
+          </p>
+          <span className={styles.fieldGroup}>
+            <label htmlFor="leads-compare" className={styles.fieldLabel}>Compare with</label>
+            <Select id="leads-compare" className={styles.compareSelect} value={compare} onChange={e => handleCompare(e.target.value === 'year' ? 'year' : 'previous')}>
+              <option value="previous">Previous period</option>
+              <option value="year">Same period last year</option>
+            </Select>
+          </span>
+          <span className={styles.fieldGroup}>
+            <span className={styles.fieldLabel} aria-hidden="true">Chart by</span>
+            <Seg label="Chart granularity" options={GRANULARITY_OPTIONS} value={granularity} onChange={handleGranularity} />
+          </span>
+        </div>
       </Card>
 
       <Tabs<TabKey>
@@ -430,79 +452,84 @@ export default function Leads() {
         value={channel}
         onChange={handleChannel}
         items={[
-          { key: 'whatsapp', label: <><MessageSquare size={15} aria-hidden="true" />WhatsApp chats{channel === 'whatsapp' && summary ? <Chip>{formatNum(summary.totalChats)}</Chip> : null}</> },
-          { key: 'mail', label: <><Mail size={15} aria-hidden="true" />Email enquiries{channel === 'mail' && summary ? <Chip>{formatNum(summary.totalEmails)}</Chip> : null}</> },
-          { key: 'registration', label: <><Users size={15} aria-hidden="true" />Registrations</> },
+          { key: 'whatsapp', label: <span className={styles.tabLabel}><MessageSquare size={15} aria-hidden="true" />WhatsApp chats{channel === 'whatsapp' && summary ? <Chip>{formatNum(summary.totalChats)}</Chip> : null}</span> },
+          { key: 'mail', label: <span className={styles.tabLabel}><Mail size={15} aria-hidden="true" />Email enquiries{channel === 'mail' && summary ? <Chip>{formatNum(summary.totalEmails)}</Chip> : null}</span> },
+          { key: 'registration', label: <span className={styles.tabLabel}><Users size={15} aria-hidden="true" />Registrations</span> },
         ]}
       />
 
       {!cfg ? <RegistrationPanel query={regQuery} /> : <>
         {error && (
-          <ErrorState
-            title={`Couldn't load ${cfg.label.toLowerCase()}`}
-            description={error}
-            action={<Button size="sm" variant="primary" onClick={() => load()}>Try again</Button>}
-          />
+          <Card className={styles.stateCard}>
+            <ErrorState
+              title={`Couldn't load ${cfg.label.toLowerCase()}`}
+              description={error}
+              action={<Button size="sm" variant="primary" onClick={() => load()}>Try again</Button>}
+            />
+          </Card>
         )}
 
         {loading && !summary && <AnalyticsSkeleton />}
 
-        {summary && (
+        {summary && kpis && (
           <>
             <div className={styles.kpiGrid}>
               <Kpi label={cfg.volumeLabel} value={formatNum(summary[cfg.volumeKey])}
                 trend={<DeltaText pct={pctChange(summary[cfg.volumeKey], prevSummary?.[cfg.volumeKey])} suffix={cmpLabel} />}
-                help={`${summary.from} to ${summary.to}`} />
-              <Kpi label="Leads" value={formatNum(summary.totalLeads)}
-                trend={<DeltaText pct={pctChange(summary.totalLeads, prevSummary?.totalLeads)} suffix={cmpLabel} />}
-                help="Unique contacts in the period" />
-              {hasNewSplit && (
-                <>
-                  <Kpi label="New contacts" value={formatNum(summary.newUsers)}
-                    trend={<span className={styles.kpiTrend}>{shareOfLeads(summary.newUsers)}</span>}
-                    help="First time we hear from this number" />
-                  <Kpi label="Returning" value={formatNum(summary.oldUsers)}
-                    trend={<span className={styles.kpiTrend}>{shareOfLeads(summary.oldUsers)}</span>}
-                    help="Contacted us before" />
-                </>
-              )}
-              {busiest && rowTotal(busiest) > 0 && (
-                <Kpi label="Busiest department" textValue value={busiest.department || busiest.receiver}
-                  trend={<span className={styles.kpiTrend}>{formatNum(rowTotal(busiest))} {volumeWord}{deptGrandTotal > 0 ? ` · ${Math.round((rowTotal(busiest) / deptGrandTotal) * 100)}%` : ''}</span>}
-                  help="Over the department table's periods below" />
-              )}
+                help={rangeText} />
+              <Kpi label="Average per day" value={formatPerDay(kpis.perDay)}
+                help={kpis.days != null ? `${volumeWord} a day · over ${formatNum(kpis.days)} day${kpis.days === 1 ? '' : 's'}` : 'Needs a valid date range'} />
+              <Kpi label={`Busiest ${trendGran}`} textValue
+                value={kpis.busiest ? formatPeriod(kpis.busiest.period, trendGran, 'kpi') : '—'}
+                trend={kpis.busiest ? <span className={styles.kpiTrend}>{formatNum(kpis.busiest.value)} leads</span> : undefined}
+                help={kpis.busiest ? 'From the chart below' : 'No leads in this range'} />
+              <Kpi label={latestKpiLabel(trendGran, !!kpis.latest?.partial)}
+                value={kpis.latest ? formatNum(kpis.latest.value) : '—'}
+                help={kpis.latest ? `leads · ${formatPeriod(kpis.latest.period, trendGran, 'kpi')}` : 'Needs a valid date range'} />
             </div>
 
             <Card className={styles.cardPad}>
               <div className={styles.cardHead}>
-                <div>
-                  <h2 className={styles.cardTitle}>{cfg.label} per {granularity}</h2>
+                <div className={styles.cardHeadText}>
+                  <h2 className={styles.cardTitle}>{cfg.label}: leads per {trendGran}</h2>
                   <span className={styles.help}>
                     {hasNewSplit ? 'New = first time we hear from this number · Returning = contacted us before' : 'Total unique leads'}
                   </span>
                 </div>
-                <div className={styles.legend} aria-hidden="true">
-                  <span className={styles.legendItem}><span className={styles.swatch} style={{ background: 'var(--gold)' }} />Leads</span>
-                  {hasNewSplit && <span className={styles.legendItem}><span className={styles.swatch} style={{ background: 'var(--info)' }} />New</span>}
-                  {hasNewSplit && <span className={styles.legendItem}><span className={styles.swatch} style={{ background: 'var(--warn)' }} />Returning</span>}
+                <div className={styles.legend}>
+                  <span className={styles.legendItem} aria-hidden="true"><span className={styles.swatch} style={{ background: 'var(--gold)' }} />Leads</span>
+                  {hasNewSplit && <span className={styles.legendItem} aria-hidden="true"><span className={styles.swatch} style={{ background: 'var(--info)' }} />New</span>}
+                  {hasNewSplit && <span className={styles.legendItem} aria-hidden="true"><span className={styles.swatch} style={{ background: 'var(--warn)' }} />Returning</span>}
+                  {partialKey && (
+                    <span className={styles.legendItem} title="The current period is still in progress, so its bar is not complete yet">
+                      <span className={`${styles.swatch} ${styles.swatchPartial}`} aria-hidden="true" />{soFarLabel(trendGran)}
+                    </span>
+                  )}
                 </div>
               </div>
+
+              <div className={styles.statStrip}>
+                <Kpi flat label="Leads" value={formatNum(summary.totalLeads)}
+                  trend={<DeltaText pct={pctChange(summary.totalLeads, prevSummary?.totalLeads)} suffix={cmpLabel} />}
+                  help="Unique contacts in the period" />
+                {hasNewSplit && (
+                  <>
+                    <Kpi flat label="New contacts" value={formatNum(summary.newUsers)}
+                      trend={<span className={styles.kpiTrend}>{shareOfLeads(summary.newUsers)}</span>}
+                      help="First time we hear from this number" />
+                    <Kpi flat label="Returning" value={formatNum(summary.oldUsers)}
+                      trend={<span className={styles.kpiTrend}>{shareOfLeads(summary.oldUsers)}</span>}
+                      help="Contacted us before" />
+                  </>
+                )}
+              </div>
+
               {chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-                    <XAxis dataKey="period" tick={{ fill: 'var(--ink3)', fontSize: 11 }} />
-                    <YAxis allowDecimals={false} width={40} tick={{ fill: 'var(--ink3)', fontSize: 11 }} />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: 'var(--sunken)' }} />
-                    <Bar dataKey="leads" name="Leads" fill="var(--gold)" radius={[3, 3, 0, 0]} />
-                    {hasNewSplit && <Bar dataKey="newUsers" name="New" stackId="split" fill="var(--info)" />}
-                    {hasNewSplit && <Bar dataKey="oldUsers" name="Returning" stackId="split" fill="var(--warn)" radius={[3, 3, 0, 0]} />}
-                  </BarChart>
-                </ResponsiveContainer>
+                <TrendBarChart data={chartData} series={chartSeries} granularity={trendGran} partialKey={partialKey} />
               ) : (
                 <div className={styles.chartEmpty}>No data for the selected range.</div>
               )}
-              <span className={styles.help}>Y axis: number of leads. Hover a bar for exact counts.</span>
+              <span className={styles.chartFoot}>Y axis: number of leads. Hover a bar for exact counts.</span>
             </Card>
           </>
         )}
@@ -544,8 +571,10 @@ export default function Leads() {
 
         {/* By department — independent period filter */}
         {deptError && (
-          <ErrorState title="Couldn't load departments" description={deptError}
-            action={<Button size="sm" variant="primary" onClick={() => loadDept()}>Try again</Button>} />
+          <Card className={styles.stateCard}>
+            <ErrorState title="Couldn't load departments" description={deptError}
+              action={<Button size="sm" variant="primary" onClick={() => loadDept()}>Try again</Button>} />
+          </Card>
         )}
 
         {deptLoading && deptPeriods.length === 0 && <TableSkeleton label="Loading department data" />}
@@ -591,6 +620,14 @@ export default function Leads() {
                 </Button>
               )}
             </div>
+
+            {busiest && rowTotal(busiest) > 0 && (
+              <div className={styles.callout}>
+                <Kpi flat label="Busiest department" textValue value={busiest.department || busiest.receiver}
+                  trend={<span className={styles.kpiTrend}>{formatNum(rowTotal(busiest))} {volumeWord}{deptGrandTotal > 0 ? ` · ${Math.round((rowTotal(busiest) / deptGrandTotal) * 100)}%` : ''}</span>}
+                  help="Over the periods in this table" />
+              </div>
+            )}
 
             <span className={styles.help}>
               Each period: <b>{volumeWord}</b> · <span className={styles.cellNew}>new</span> / <span className={styles.cellOld}>returning</span>.
@@ -715,7 +752,7 @@ export default function Leads() {
           <EmptyState
             icon={<cfg.icon size={20} />}
             title="Select a date range to get started"
-            description={`Pick a period above, then click "Load" to see ${cfg.label.toLowerCase()} by department.`}
+            description={`Pick a period above, then click "Apply" to see ${cfg.label.toLowerCase()} by department.`}
           />
         )}
 

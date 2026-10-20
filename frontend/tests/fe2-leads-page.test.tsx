@@ -5,6 +5,10 @@ import { Component } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import Leads from '@/app/(dashboard)/leads/page';
+import {
+  bucketKey, daysInRange, dubaiToday, formatDay, formatPerDay, formatPeriod, formatRange, latestKpiLabel,
+  parseLeadDate, partialBucket, rangeKpis, soFarLabel,
+} from '@/app/(dashboard)/leads/leadsShared';
 
 vi.mock('@/lib/api');
 
@@ -70,7 +74,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const bodyText = (): string => document.body.textContent ?? '';
 const deptTable = () => screen.findByRole('region', { name: 'Leads by department' });
@@ -110,7 +114,14 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     expect(within(screen.getByRole('region', { name: 'New contacts' })).getByText('300')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'New contacts' })).getByText('38% of leads')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'Returning' })).getByText('500')).toBeTruthy();
-    expect(bodyText()).toContain('2026-10-12 to 2026-10-19');
+    // Human dates (no raw ISO) and the 4 headline KPIs derived from the mocked summary + trend
+    expect(within(screen.getByRole('region', { name: 'Total chats' })).getByText('12 – 19 Oct 2026')).toBeTruthy();
+    expect(bodyText()).not.toContain('2026-10-12 to 2026-10-19');
+    expect(within(screen.getByRole('region', { name: 'Average per day' })).getByText('150')).toBeTruthy(); // 1,200 ÷ 8 days
+    expect(screen.getByRole('region', { name: 'Average per day' }).textContent).toContain('chats a day · over 8 days');
+    const busiestDay = screen.getByRole('region', { name: 'Busiest day' });
+    expect(within(busiestDay).getByText('Mon, 12 Oct')).toBeTruthy();
+    expect(within(busiestDay).getByText('10 leads')).toBeTruthy();
     // Busiest department is derived from the department table (Sales: 1,500 + 5 of 1,507 chats)
     const busiest = screen.getByRole('region', { name: 'Busiest department' });
     expect(within(busiest).getByText('Sales')).toBeTruthy();
@@ -181,7 +192,7 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     expect(api.getChatLeadsSummary).not.toHaveBeenCalled();
   });
 
-  it('quick presets, Load button and trend granularity call the API with the right args', async () => {
+  it('quick presets, Apply button and trend granularity call the API with the right args', async () => {
     mockWhatsapp();
     render(<Leads />);
     await findDept('Sales');
@@ -191,7 +202,7 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     await waitFor(() => expect(api.getChatLeadsTrend).toHaveBeenLastCalledWith(today(), today(), 'week'));
     const [fromInput] = document.querySelectorAll('input[type="date"]');
     fireEvent.change(fromInput, { target: { value: '2026-09-01' } });
-    fireEvent.click(await screen.findByRole('button', { name: 'Load' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(api.getChatLeadsSummary).toHaveBeenLastCalledWith('2026-09-01', today()));
   });
 
@@ -421,8 +432,12 @@ describe('Leads page — Registrations tab', () => {
     expect(screen.getByText('Guest User Id')).toBeTruthy();
     expect(screen.getByText('Created At')).toBeTruthy();
     expect(screen.getByText('2026-10-18')).toBeTruthy();
-    expect(screen.getByText('—')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Guest Users records' })).getByText('—')).toBeTruthy();
     expect(screen.getByText('raynatours.com')).toBeTruthy();
+    // no chart points → busiest shows a dash, not "NaN"/"undefined"/"Invalid Date"
+    expect(within(screen.getByRole('region', { name: 'Busiest day' })).getByText('No registrations in this range')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Guest Users registered' })).getByText('12 – 19 Oct 2026')).toBeTruthy();
+    expect(bodyText()).not.toContain('Invalid Date');
     expect(screen.getByText('No registrations in the selected range.')).toBeTruthy();
     expect(bodyText()).toContain('30 records · page 1 of 2');
     const group = screen.getByRole('radiogroup', { name: 'Registration type' });
@@ -504,5 +519,151 @@ describe('Leads page — Registrations tab', () => {
     await new Promise(r => setTimeout(r, 50));
     expect(onError).not.toHaveBeenCalled();
     expect(screen.queryByText('crashed')).toBeNull();
+  });
+});
+
+describe('Leads page — tabs, KPIs and today-partial marking', () => {
+  it('renders each tab icon inline with its label inside the same tab element', async () => {
+    mockWhatsapp();
+    render(<Leads />);
+    await findDept('Sales');
+    for (const name of [/WhatsApp chats/, /Email enquiries/, /Registrations/]) {
+      const tab = screen.getByRole('tab', { name });
+      // one inline wrapper per tab (Tailwind preflight makes a bare <svg> block-level)
+      expect(tab.children).toHaveLength(1);
+      const row = tab.firstElementChild as HTMLElement;
+      expect(row.tagName).toBe('SPAN');
+      expect(row.className).toContain('tabLabel');
+      const icon = row.querySelector('svg');
+      expect(icon).toBeTruthy();
+      expect(icon?.parentElement).toBe(row);
+      expect(row.textContent).toMatch(name);
+    }
+    expect(screen.getByRole('tab', { name: /WhatsApp chats/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /Registrations/ }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('computes the 4 KPIs from the mocked data and marks today as partial', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-20T08:00:00Z')); // 12:00 in Dubai
+    vi.mocked(api.getChatLeadsSummary).mockResolvedValue(as(api.getChatLeadsSummary,
+      { totalChats: 1400, totalLeads: 900, newUsers: 300, oldUsers: 600, from: '2026-10-14', to: '2026-10-20' }));
+    vi.mocked(api.getChatLeadsTrend).mockResolvedValue(as(api.getChatLeadsTrend, { points: [
+      { period: '2026-10-14', leads: 10, newUsers: 4, oldUsers: 6 },
+      { period: '2026-10-15', leads: 1040, newUsers: 40, oldUsers: 1000 },
+      { period: '2026-10-16', leads: 12, newUsers: 2, oldUsers: 10 },
+      { period: '2026-10-20', leads: 7, newUsers: 3, oldUsers: 4 },
+    ] }));
+    vi.mocked(api.getChatLeadsDepartmentPeriods).mockResolvedValue(as(api.getChatLeadsDepartmentPeriods, DEPT));
+    render(<Leads />);
+    const total = await screen.findByRole('region', { name: 'Total chats' });
+    expect(within(total).getByText('1,400')).toBeTruthy();
+    expect(within(total).getByText('14 – 20 Oct 2026')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Average per day' })).getByText('200')).toBeTruthy(); // 1,400 ÷ 7
+    const busiest = screen.getByRole('region', { name: 'Busiest day' });
+    expect(within(busiest).getByText('Thu, 15 Oct')).toBeTruthy();
+    expect(within(busiest).getByText('1,040 leads')).toBeTruthy();
+    const todayKpi = screen.getByRole('region', { name: 'Today so far' });
+    expect(within(todayKpi).getByText('7')).toBeTruthy();
+    expect(todayKpi.textContent).toContain('leads · Tue, 20 Oct');
+    expect(screen.getByText('Today (so far)')).toBeTruthy(); // chart legend for the partial bar
+    expect(bodyText()).not.toMatch(/\d{4}-\d{2}-\d{2} to/);
+    noBadText();
+  });
+
+  it('Registrations: KPIs use the latest day when the range ends before today, counts use separators', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-20T08:00:00Z'));
+    vi.mocked(api.getRegistrationSummary).mockResolvedValue(as(api.getRegistrationSummary, {
+      ...REG_SUMMARY, counts: { guestuser: 1300, agent: 12345, affiliate: 0 }, total: 1300,
+      points: [{ period: '2026-10-13', registrations: 1234 }, { period: '2026-10-19', registrations: 5 }],
+    }));
+    vi.mocked(api.getRegistrationPeriods).mockResolvedValue(as(api.getRegistrationPeriods, REG_PERIODS));
+    vi.mocked(api.getRegistrationLeads).mockResolvedValue(as(api.getRegistrationLeads, REG_RECORDS));
+    render(<Leads />);
+    fireEvent.click(screen.getByRole('tab', { name: /Registrations/ }));
+    const busiest = await screen.findByRole('region', { name: 'Busiest day' });
+    expect(within(busiest).getByText('Tue, 13 Oct')).toBeTruthy();
+    expect(within(busiest).getByText('1,234 registrations')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Average per day' })).getByText('163')).toBeTruthy(); // 1,300 ÷ 8
+    const latest = screen.getByRole('region', { name: 'Latest day' });
+    expect(within(latest).getByText('5')).toBeTruthy();
+    expect(latest.textContent).toContain('registrations · Mon, 19 Oct');
+    expect(screen.queryByRole('region', { name: 'Today so far' })).toBeNull();
+    expect(screen.queryByText('Today (so far)')).toBeNull();
+    const group = screen.getByRole('radiogroup', { name: 'Registration type' });
+    expect(within(group).getByRole('radio', { name: /Agents/ }).textContent).toContain('12,345');
+    expect(within(group).getByRole('radio', { name: /Guest Users/ }).getAttribute('aria-checked')).toBe('true');
+    noBadText();
+  });
+});
+
+describe('Leads date + KPI helpers', () => {
+  it('parses safely and never returns Invalid Date', () => {
+    for (const bad of ['', 'garbage', '2026-02-30', '2026-13-01', '2026-00-10', '15/10/2026', 'Invalid Date', null, undefined, 20261015]) {
+      expect(parseLeadDate(bad)).toBeNull();
+      expect(formatDay(bad)).toBe('—');
+      expect(formatPeriod(bad, 'day')).toBe('—');
+    }
+    expect(formatRange('nope', 'also-nope')).toBe('—');
+    expect(formatRange('2026-10-13', 'bad')).toBe('13 Oct 2026');
+    expect(parseLeadDate('2026-10-15')).toEqual({ y: 2026, m: 10, d: 15, wd: 4 });
+    expect(parseLeadDate('2026-10')).toEqual({ y: 2026, m: 10, d: 1, wd: 4 });
+    expect(parseLeadDate('2026-10-15 23:30:00')?.d).toBe(15);
+    // an instant is converted to the Dubai calendar day (UTC+4)
+    expect(parseLeadDate('2026-10-19T21:00:00Z')?.d).toBe(20);
+    expect(dubaiToday(new Date('2026-10-19T21:00:00Z'))).toBe('2026-10-20');
+    expect(dubaiToday(new Date('2026-10-19T19:59:00Z'))).toBe('2026-10-19');
+  });
+
+  it('formats days, ranges and chart periods for humans', () => {
+    expect(formatDay('2026-10-15')).toBe('Thu, 15 Oct');
+    expect(formatDay('2026-10-15', { year: true })).toBe('Thu, 15 Oct 2026');
+    expect(formatRange('2026-10-13', '2026-10-20')).toBe('13 – 20 Oct 2026');
+    expect(formatRange('2026-09-28', '2026-10-04')).toBe('28 Sep – 4 Oct 2026');
+    expect(formatRange('2025-12-28', '2026-01-03')).toBe('28 Dec 2025 – 3 Jan 2026');
+    expect(formatRange('2026-10-15', '2026-10-15')).toBe('15 Oct 2026');
+    expect(formatPeriod('2026-10-15', 'day')).toBe('15 Oct');
+    expect(formatPeriod('2026-10-13', 'week')).toBe('w/c 13 Oct');
+    expect(formatPeriod('2026-10-01', 'month')).toBe('Oct 2026');
+    expect(formatPeriod('2026-10-15', 'day', 'kpi')).toBe('Thu, 15 Oct');
+    expect(formatPeriod('2026-10-15', 'day', 'full')).toBe('Thu, 15 Oct 2026');
+    expect(formatPeriod('2026-10-13', 'week', 'full')).toBe('w/c 13 Oct 2026');
+    expect(soFarLabel('day')).toBe('Today (so far)');
+    expect(soFarLabel('week')).toBe('This week (so far)');
+    expect(latestKpiLabel('day', true)).toBe('Today so far');
+    expect(latestKpiLabel('month', false)).toBe('Latest month');
+    expect(formatPerDay(null)).toBe('—');
+    expect(formatPerDay(12.345)).toBe('12.3');
+    expect(formatPerDay(1234.4)).toBe('1,234');
+  });
+
+  it('buckets, counts days and finds the partial bucket', () => {
+    expect(bucketKey('2026-10-15', 'week')).toBe('2026-10-12'); // Monday
+    expect(bucketKey('2026-10-18', 'week')).toBe('2026-10-12'); // Sunday → same week
+    expect(bucketKey('2026-10-15', 'month')).toBe('2026-10-01');
+    expect(bucketKey('bad', 'day')).toBeNull();
+    expect(daysInRange('2026-10-13', '2026-10-20')).toBe(8);
+    expect(daysInRange('2026-10-20', '2026-10-13')).toBeNull();
+    expect(daysInRange('a', 'b')).toBeNull();
+    expect(partialBucket('2026-10-13', '2026-10-20', 'day', '2026-10-20')).toBe('2026-10-20');
+    expect(partialBucket('2026-10-01', '2026-10-31', 'week', '2026-10-20')).toBe('2026-10-19');
+    expect(partialBucket('2026-10-01', '2026-10-31', 'month', '2026-10-20')).toBe('2026-10-01');
+    expect(partialBucket('2026-10-01', '2026-10-19', 'day', '2026-10-20')).toBeNull();
+  });
+
+  it('derives the 4 KPIs only from the range, total and points', () => {
+    const points = [{ period: '2026-10-14', value: 3 }, { period: '2026-10-15', value: 9 }, { period: '2026-10-20', value: 2 }];
+    expect(rangeKpis({ from: '2026-10-14', to: '2026-10-20', granularity: 'day', total: 70, points, today: '2026-10-20' })).toEqual({
+      days: 7, perDay: 10, busiest: { period: '2026-10-15', value: 9 }, latest: { period: '2026-10-20', value: 2, partial: true },
+    });
+    // range ends before today → latest = the last day, 0 when it has no point
+    expect(rangeKpis({ from: '2026-10-14', to: '2026-10-19', granularity: 'day', total: 12, points, today: '2026-10-20' }).latest)
+      .toEqual({ period: '2026-10-19', value: 0, partial: false });
+    // invalid range / no activity → nulls, never NaN
+    expect(rangeKpis({ from: 'a', to: 'b', granularity: 'day', total: 5, points: [], today: '2026-10-20' }))
+      .toEqual({ days: null, perDay: null, busiest: null, latest: null });
+    expect(rangeKpis({ from: '2026-10-14', to: '2026-10-20', granularity: 'day', total: undefined, points: [{ period: '2026-10-14', value: 0 }], today: '2026-10-20' }))
+      .toMatchObject({ perDay: null, busiest: null });
   });
 });
