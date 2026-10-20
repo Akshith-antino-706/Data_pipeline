@@ -9,7 +9,7 @@
  * `available:false` (or omits) shows "Not available right now" — never placeholder numbers.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -128,17 +128,38 @@ export default function InsightsOverview() {
   const rFrom = range?.from;
   const rTo = range?.to;
 
+  // Each load gets an id so a slow response for an old period can't overwrite a newer one.
+  const reqId = useRef(0);
+  const [slow, setSlow] = useState(false);
   const load = useCallback(async () => {
     if (!rFrom || !rTo) return;
+    const id = ++reqId.current;
     setLoading(true);
+    setError(null);              // show the loading state, not the previous error, while retrying
+    setSlow(false);
+    const slowTimer = setTimeout(() => { if (id === reqId.current) setSlow(true); }, 8000);
+    const fetchOnce = () => getOverviewInsights(rFrom, rTo);
     try {
-      const res = await getOverviewInsights(rFrom, rTo);
+      let res: OverviewInsights | null | undefined;
+      try {
+        res = await fetchOnce();
+      } catch (e) {
+        // A dropped connection (e.g. the server restarting) gets one quiet retry before an error is shown.
+        if (!(e instanceof TypeError)) throw e;
+        await new Promise(r => setTimeout(r, 3000));
+        if (id !== reqId.current) return;
+        res = await fetchOnce();
+      }
+      if (id !== reqId.current) return;
       setData(res ?? null);
-      setError(null);
     } catch (e) {
+      if (id !== reqId.current) return;
       setError((e as Error).message || 'Failed to load performance data');
       setData(null);
-    } finally { setLoading(false); }
+    } finally {
+      clearTimeout(slowTimer);
+      if (id === reqId.current) { setLoading(false); setSlow(false); }
+    }
   }, [rFrom, rTo]);
 
   useEffect(() => { load(); }, [load]);
@@ -202,13 +223,9 @@ export default function InsightsOverview() {
         </Button>
       </div>
 
-      {error ? (
-        <ErrorState title="Couldn't load performance data"
-          description="Showing nothing rather than numbers that may be wrong."
-          details={error}
-          action={<Button size="sm" onClick={retry}>Try again</Button>} />
-      ) : loading && !data ? (
-        <div className={styles.body} data-testid="insights-loading">
+      {loading && !data ? (
+        <div className={styles.body} data-testid="insights-loading" aria-busy="true">
+          {slow && <p className={styles.slowNote} role="status">Still working on it — there is a lot of data for this period, this can take up to a minute.</p>}
           <div className={styles.kpiGrid}>
             {KPIS.map(k => (
               <div key={k.key} className={styles.tile}>
@@ -221,6 +238,11 @@ export default function InsightsOverview() {
             <div className={styles.panel}><Skeleton height={14} width="40%" /><Skeleton height={170} /></div>
           </div>
         </div>
+      ) : error ? (
+        <ErrorState title="Couldn't load performance data"
+          description="Showing nothing rather than numbers that may be wrong."
+          details={error}
+          action={<Button size="sm" onClick={retry}>Try again</Button>} />
       ) : (
         <div className={loading ? `${styles.body} ${styles.refreshing}` : styles.body} aria-busy={loading}>
           <section aria-label="At a glance">

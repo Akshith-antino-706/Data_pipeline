@@ -194,3 +194,40 @@ describe('InsightsOverview', () => {
     expect(vi.mocked(api.getOverviewInsights).mock.calls.length).toBe(calls);
   });
 });
+
+describe('InsightsOverview loading behaviour', () => {
+  it('shows the loading skeleton (not the old error) while "Try again" is running', async () => {
+    vi.mocked(api.getOverviewInsights).mockRejectedValueOnce(new Error('HTTP 500'));
+    render(<InsightsOverview />);
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    let resolve: (v: api.OverviewInsights) => void = () => {};
+    vi.mocked(api.getOverviewInsights).mockReturnValueOnce(new Promise(r => { resolve = r; }));
+    fireEvent.click(retry);
+    expect(await screen.findByTestId('insights-loading')).toBeTruthy();
+    expect(screen.queryByText("Couldn't load performance data")).toBeNull();
+    resolve(INSIGHTS);
+    await waitFor(() => expect(screen.queryByTestId('insights-loading')).toBeNull());
+  });
+
+  it('quietly retries once when the connection drops, before showing an error', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getOverviewInsights).mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(INSIGHTS);
+      render(<InsightsOverview />);
+      await vi.advanceTimersByTimeAsync(3100);
+      await waitFor(() => expect(api.getOverviewInsights).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.queryByTestId('insights-loading')).toBeNull());
+      expect(screen.queryByText("Couldn't load performance data")).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('says it is still working when loading takes long', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getOverviewInsights).mockReturnValueOnce(new Promise(() => {}));
+      render(<InsightsOverview />);
+      await vi.advanceTimersByTimeAsync(8100);
+      expect(await screen.findByText(/Still working on it/)).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+});
