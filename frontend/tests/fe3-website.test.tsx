@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import * as api from '@/lib/api';
 import type { OverviewWebsite } from '@/lib/api';
-import WebsiteOverview, { periodFrom, fmtNum } from '@/app/(dashboard)/utm/WebsiteOverview';
+import WebsiteOverview, { periodFrom, periodTo, fmtNum } from '@/app/(dashboard)/utm/WebsiteOverview';
 
 vi.mock('@/lib/api');
 
@@ -28,37 +28,44 @@ beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Website overview', () => {
-  it('renders KPIs, top events, top pages and campaigns from real data', async () => {
+  it('renders KPIs, what people did, top pages and campaigns from real data', async () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue(full);
     render(<WebsiteOverview />);
-    await screen.findByText('1,234'); // total events = sum of days
+    await screen.findByText('1,234'); // website visits = sum of days
     expect(screen.getByText('17')).toBeTruthy();
     expect(screen.getByText('5,000')).toBeTruthy();
     expect(screen.getByText('412')).toBeTruthy();
+    expect(screen.getByText('230 clicked')).toBeTruthy();
+    expect(screen.getByText('198 people')).toBeTruthy();
     expect(screen.getByText('Tracking is live')).toBeTruthy();
-    expect(screen.getByText('view_item')).toBeTruthy();
+    expect(screen.getByText('Viewed a product')).toBeTruthy();
+    expect(screen.getByText('Booked')).toBeTruthy();
+    expect(screen.queryByText('view_item')).toBeNull();
     expect(screen.getByText('/dubai/desert-safari?x=1')).toBeTruthy();
     expect(screen.getByText('weird path')).toBeTruthy();
-    expect(screen.getByText('Spring sale')).toBeTruthy();
-    expect(screen.getByText('Campaign #8')).toBeTruthy();
-    expect(screen.getByText('Never')).toBeTruthy();
+    expect(screen.queryByText('Spring sale')).toBeNull(); // campaign list removed from the overview
     expect(screen.getByRole('img', { name: /1,234 in total/ })).toBeTruthy();
     expect(bodyText()).not.toContain('NaN');
+    expect(bodyText()).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
-  it('period picker refetches with a from date for the chosen range', async () => {
+  it('period picker refetches with a from/to range for the chosen period', async () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue(full);
     render(<WebsiteOverview />);
     await screen.findByText('1,234');
-    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(30));
-    fireEvent.change(screen.getByLabelText('Period'), { target: { value: '7' } });
-    await waitFor(() => expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(7)));
+    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(7), periodTo());
+    fireEvent.click(screen.getByRole('button', { name: '30 days' }));
+    await waitFor(() => expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(30), periodTo()));
+    expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('shows "Not available right now" for every unavailable section, never fake numbers', async () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue({ range: full.range, eventsPerDay: off, topEvents: off, topPages: off, lastHour: off, utmLinks: off });
     render(<WebsiteOverview />);
-    await waitFor(() => expect(screen.getAllByText('Not available right now').length).toBe(8));
+    // 4 KPI tiles + visits chart + what people did + pages
+    await waitFor(() => expect(screen.getAllByText('Not available right now').length).toBe(7));
+    expect(screen.getAllByText('—').length).toBe(4);
+    expect(screen.getAllByRole('button', { name: 'Try again' }).length).toBe(3); // chart, what people did, pages
     expect(screen.queryByText('0')).toBeNull();
     expect(bodyText()).not.toContain('NaN');
   });
@@ -69,9 +76,11 @@ describe('Website overview', () => {
       lastHour: { available: true, count: 0 },
       utmLinks: { available: true, totals: { links: 0, clickedLinks: 0, clicks: 0, campaigns: 0, uniqueUsers: 0 }, campaigns: [] } });
     render(<WebsiteOverview />);
-    await screen.findByText('No website events in this period');
-    expect(screen.getByText('No events this hour')).toBeTruthy();
-    expect(screen.getByText('No tracked links yet')).toBeTruthy();
+    await screen.findByText('No website visits in this period');
+    expect(screen.getByText('No visits this hour')).toBeTruthy();
+    expect(screen.getByText('No activity in this period')).toBeTruthy();
+    expect(screen.getByText('No page visits in this period')).toBeTruthy();
+    expect(screen.queryByText(/No tracked links yet/)).toBeNull();
   });
 
   it('shows an error with retry when the request fails, and recovers', async () => {
@@ -91,8 +100,9 @@ describe('Website overview', () => {
   });
 
   it('fmtNum never yields NaN', () => {
-    expect(fmtNum(Number.NaN)).toBe('–');
-    expect(fmtNum(undefined)).toBe('–');
+    expect(fmtNum(Number.NaN)).toBe('—');
+    expect(fmtNum(undefined)).toBe('—');
+    expect(fmtNum(null)).toBe('—');
     expect(fmtNum(1500)).toBe('1,500');
   });
 });
