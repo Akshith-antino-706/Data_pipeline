@@ -1,38 +1,13 @@
 'use client';
 
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, Cell, LabelList } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 
-// Charts for the journey detail page. Loaded lazily (next/dynamic) like the other
+// Chart for the journey detail page ("People at each step", on the Advanced tab). Loaded lazily (next/dynamic) like the other
 // Recharts charts so Recharts stays out of the initial bundle.
 
 const fmt = (v: unknown) => (Number(v) || 0).toLocaleString('en-US');
 const tooltipStyle = { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--ink)' };
 const tick = { fill: 'var(--ink3)', fontSize: 12 };
-
-/** One funnel stage. `pct` is the share of people joined, when known. */
-export interface FunnelDatum { name: string; value: number; pct: number | null; color: string }
-
-export function JourneyFunnelChart({ data }: { data: FunnelDatum[] }) {
-  const rows = data.map(d => ({ ...d, label: d.pct === null ? fmt(d.value) : `${fmt(d.value)} · ${d.pct}%` }));
-  return (
-    <ResponsiveContainer width="100%" height={Math.max(140, rows.length * 44 + 16)}>
-      <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 88, left: 0, bottom: 4 }} barCategoryGap={8}>
-        <CartesianGrid horizontal={false} stroke="var(--line)" />
-        <XAxis type="number" hide domain={[0, 'dataMax']} />
-        <YAxis type="category" dataKey="name" width={104} tick={tick} tickLine={false} axisLine={false} />
-        <Tooltip
-          cursor={{ fill: 'var(--sunken)' }}
-          formatter={(v) => [fmt(v), 'People']}
-          contentStyle={tooltipStyle}
-        />
-        <Bar dataKey="value" name="People" radius={[0, 6, 6, 0]} isAnimationActive={false}>
-          {rows.map(d => <Cell key={d.name} fill={d.color} />)}
-          <LabelList dataKey="label" position="right" style={{ fill: 'var(--ink2)', fontSize: 12, fontWeight: 600 }} />
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
 
 /** One step: people on it now, and (when known) people who are done with it. */
 export interface StepDatum { name: string; now: number; done: number | null }

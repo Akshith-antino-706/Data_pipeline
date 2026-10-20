@@ -21,7 +21,8 @@ import RcsTemplatePicker from './RcsTemplatePicker';
 import JourneyList, { useJourneyListState } from './JourneyList';
 import JourneyWizard from './JourneyWizard';
 import NodeEditor from './NodeEditor';
-import { JourneyDetailOverview, JourneyDetailSkeleton } from './JourneyDetail';
+import { JourneyDetailOverview, JourneyDetailSkeleton, isDetailSection } from './JourneyDetail';
+import type { DetailSection } from './JourneyDetail';
 import styles from './JourneyDetail.module.css';
 import { Button } from '@/components/ui';
 import {
@@ -46,6 +47,11 @@ const JOURNEYS_PATH = '/journeys';
 const CREATE_JOURNEY_PATH = '/journeys/new';
 /** URL of one journey's detail view. */
 const journeyPath = (id: number): string => `${JOURNEYS_PATH}/${id}`;
+/** The detail tab named in the URL (?tab=flow|people|advanced); Overview otherwise. */
+const detailSectionFromUrl = (): DetailSection => {
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return isDetailSection(tab) ? tab : 'overview';
+};
 /**
  * Reads the journey id out of a /journeys/<id> pathname. Returns the id for a
  * positive integer segment, 'invalid' for any other segment (e.g. /journeys/abc),
@@ -649,7 +655,7 @@ export default function Journeys() {
   const [nodeConversions, setNodeConversions] = useState<Record<string, { converted?: number }> | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('flow');
+  const [activeTab, setActiveTab] = useState('analytics'); // tool shown on the detail's Advanced tab
   const [showCreate, setShowCreate] = useState(isCreateRoute);
   const [suggestions, setSuggestions] = useState<FlowSuggestions | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -682,9 +688,9 @@ export default function Journeys() {
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesStatusFilter, setEntriesStatusFilter] = useState('');
   const [entriesError, setEntriesError] = useState(false);
-  // The old tabbed tools (flow builder, analytics, activity, settings) live in a
-  // collapsed "Advanced" area under the plain-language overview.
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // The detail page's tabs: Overview, Flow (the flow builder), People and Advanced
+  // (analytics, activity, settings…). Kept in the URL as ?tab=<name>.
+  const [detailSection, setDetailSection] = useState<DetailSection>('overview');
   const [queueStats, setQueueStats] = useState<Record<string, QueueCounts> | null>(null); // BullMQ live counts
   const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
   const [timeline, setTimeline] = useState<TimelineItem[] | null>(null); // per-node predicted trigger times
@@ -973,8 +979,8 @@ export default function Journeys() {
     setCampaignData(null);
     setNodeConversions(null);
     setSuggestions(null);
-    setActiveTab('flow');
-    setAdvancedOpen(false);
+    setActiveTab('analytics');
+    setDetailSection(detailSectionFromUrl());
     setJourneyEntries([]);
     setEntriesTotal(0);
     setEntriesPage(1);
@@ -1018,6 +1024,15 @@ export default function Journeys() {
       }
     }
     if (isCurrent()) setDetailLoading(false);
+  };
+
+  // Switch the detail page's tab and mirror it in the URL (?tab=…) without a navigation.
+  const changeSection = (section: DetailSection) => {
+    setDetailSection(section);
+    const id = selectedRef.current;
+    if (id == null) return;
+    const url = section === 'overview' ? journeyPath(id) : `${journeyPath(id)}?tab=${section}`;
+    if (`${window.location.pathname}${window.location.search}` !== url) window.history.replaceState(null, '', url);
   };
 
   // Leave the detail view for the list. pushUrl=false when the URL already moved
@@ -1712,7 +1727,8 @@ export default function Journeys() {
             entriesError={entriesError}
             entriesPage={entriesPage}
             entriesStatus={entriesStatusFilter}
-            advancedOpen={advancedOpen}
+            section={detailSection}
+            onSectionChange={changeSection}
             starting={starting}
             suggestLoading={suggestLoading}
             previewLoading={previewLoading}
@@ -1742,128 +1758,17 @@ export default function Journeys() {
             onEdit={() => { setEditMode(true); setEditForm({ name: detail.name, description: detail.description, status: detail.status }); }}
             onStart={() => setConfirmAction('start')}
             onPauseResume={handlePause}
-            onAISuggest={() => { setAdvancedOpen(true); setActiveTab('flow'); void handleAISuggest(); }}
+            onAISuggest={() => { changeSection('advanced'); void handleAISuggest(); }}
             onCopyId={() => { navigator.clipboard?.writeText(String(selected)); showToast('Journey ID copied', 'info'); }}
             onDelete={() => setConfirmAction('delete')}
-            onEditSteps={() => { setAdvancedOpen(true); setActiveTab('flow'); setFlowEditMode(true); }}
-            onOpenTab={tab => { setAdvancedOpen(true); setActiveTab(tab); if (tab === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab === 'analytics') loadNodeAnalytics(selected); }}
-            onToggleAdvanced={() => setAdvancedOpen(o => !o)}
+            onEditSteps={() => { changeSection('flow'); setFlowEditMode(true); }}
+            onOpenTab={tab => { changeSection(tab === 'entries' ? 'people' : 'advanced'); setActiveTab(tab); if (tab === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab === 'analytics') loadNodeAnalytics(selected); }}
             onEntriesQuery={(page, status) => loadEntries(selected, page, status)}
             onPreviewNode={node => { const tpl = getNodeTemplate(node); if (tpl) void previewNode(node, tpl); }}
             onRetryBlocked={nodeId => { void retryBlocked(nodeId); }}
             onLoadEntries={() => loadEntries(selected, 1, '')}
             onLoadDelivery={() => { void loadNodeAnalytics(selected); }}
-            advancedSlot={(<>
-        {/* ── Scheduled Start Countdown ────────────────────────── */}
-        {schedCountdown && detail?.scheduled_start_at && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-            padding: '14px 20px', marginBottom: 20, borderRadius: 12,
-            background: 'linear-gradient(135deg, rgba(255,153,51,0.08) 0%, rgba(234,179,8,0.08) 100%)',
-            border: '1px solid rgba(255,153,51,0.35)',
-          }}>
-            <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 0 }}>
-              <Clock size={16} color="var(--orange)" />
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)' }}>Auto-starts in</span>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                ({new Date(detail.scheduled_start_at).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })} Dubai)
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              {[
-                { v: schedCountdown.days,  l: 'D' },
-                { v: schedCountdown.hours, l: 'H' },
-                { v: schedCountdown.mins,  l: 'M' },
-                { v: schedCountdown.secs,  l: 'S' },
-              ].map(({ v, l }) => (
-                <div key={l} style={{ textAlign: 'center', minWidth: 44 }}>
-                  <div style={{
-                    fontSize: 22, fontWeight: 800, color: 'var(--orange)',
-                    background: 'var(--orange-dim)', borderRadius: 8,
-                    padding: '4px 8px', lineHeight: 1, border: '1px solid rgba(255,153,51,0.3)',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}>
-                    {String(v).padStart(2, '0')}
-                  </div>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', marginTop: 3, letterSpacing: '0.5px' }}>{l}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── Tabs ──────────────────────────────────────────────── */}
-        <div className="tabs mb-5" role="tablist" aria-label="Advanced tools">
-          {[
-            { id: 'flow', label: 'Flow builder', icon: GitBranch },
-            { id: 'entries', label: 'People', icon: Users },
-            { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-            { id: 'activity', label: 'Activity', icon: Activity },
-            { id: 'settings', label: 'Settings', icon: Settings },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              role="tab"
-              aria-selected={activeTab === tab.id}
-              className={`tab flex items-center gap-1.5 ${activeTab === tab.id ? 'active' : ''}`}
-              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab.id === 'analytics') loadNodeAnalytics(selected); }}
-            >
-              <tab.icon size={14} /> {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ── TAB: Flow ─────────────────────────────────────────── */}
-        {activeTab === 'flow' && (
-          <>
-            {/* AI Suggestions Banner */}
-            {suggestions && (
-              <div className="card mb-4" style={{ borderLeft: '4px solid var(--purple)' }}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={16} color="var(--purple)" />
-                    <span className="font-semibold text-sm">AI Flow Analysis</span>
-                  </div>
-                  <span style={{
-                    padding: '4px 12px', borderRadius: 20, fontSize: 13, fontWeight: 700,
-                    background: suggestions.overall_score >= 80 ? 'var(--green-dim)' : suggestions.overall_score >= 60 ? 'var(--orange-dim)' : 'rgba(220,38,38,0.1)',
-                    color: suggestions.overall_score >= 80 ? 'var(--green)' : suggestions.overall_score >= 60 ? 'var(--orange)' : 'var(--red)'
-                  }}>
-                    Score: {suggestions.overall_score}/100
-                  </span>
-                </div>
-                {(suggestions.suggestions || []).length > 0 ? (
-                  <div className="flex flex-col gap-2">
-                    {suggestions.suggestions!.map((s, i) => (
-                      <div key={i} className="flex gap-3" style={{
-                        padding: '10px 14px',
-                        background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)'
-                      }}>
-                        <span style={{
-                          display: 'inline-flex', alignItems: 'center', padding: '2px 8px',
-                          borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-                          alignSelf: 'flex-start', marginTop: 2,
-                          background: s.impact === 'high' ? 'rgba(220,38,38,0.1)' : s.impact === 'medium' ? 'var(--orange-dim)' : 'var(--green-dim)',
-                          color: s.impact === 'high' ? 'var(--red)' : s.impact === 'medium' ? 'var(--orange)' : 'var(--green)'
-                        }}>
-                          {s.impact}
-                        </span>
-                        <div>
-                          <div className="font-semibold text-sm">{s.title}</div>
-                          <div className="text-secondary" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>{s.description}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-secondary" style={{ padding: 12, textAlign: 'center', fontSize: 13 }}>
-                    <CheckCircle2 size={16} style={{ marginRight: 6, verticalAlign: -3 }} />
-                    Flow looks optimized — no suggestions at this time.
-                  </div>
-                )}
-              </div>
-            )}
-
+            flowSlot={(<>
             {/* Visual Flow Canvas */}
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <div className="flex justify-between items-center" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)' }}>
@@ -2799,8 +2704,113 @@ export default function Journeys() {
                 )}
               </div>
             </div>
-          </>
+            </>)}
+            advancedSlot={(<>
+        {/* ── Scheduled Start Countdown ────────────────────────── */}
+        {schedCountdown && detail?.scheduled_start_at && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+            padding: '14px 20px', marginBottom: 20, borderRadius: 12,
+            background: 'linear-gradient(135deg, rgba(255,153,51,0.08) 0%, rgba(234,179,8,0.08) 100%)',
+            border: '1px solid rgba(255,153,51,0.35)',
+          }}>
+            <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 0 }}>
+              <Clock size={16} color="var(--orange)" />
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)' }}>Auto-starts in</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                ({new Date(detail.scheduled_start_at).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })} Dubai)
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {[
+                { v: schedCountdown.days,  l: 'D' },
+                { v: schedCountdown.hours, l: 'H' },
+                { v: schedCountdown.mins,  l: 'M' },
+                { v: schedCountdown.secs,  l: 'S' },
+              ].map(({ v, l }) => (
+                <div key={l} style={{ textAlign: 'center', minWidth: 44 }}>
+                  <div style={{
+                    fontSize: 22, fontWeight: 800, color: 'var(--orange)',
+                    background: 'var(--orange-dim)', borderRadius: 8,
+                    padding: '4px 8px', lineHeight: 1, border: '1px solid rgba(255,153,51,0.3)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {String(v).padStart(2, '0')}
+                  </div>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', marginTop: 3, letterSpacing: '0.5px' }}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
+
+        {/* ── AI flow assist results ────────────────────────────── */}
+            {suggestions && (
+              <div className="card mb-4" style={{ borderLeft: '4px solid var(--purple)' }}>
+                <div className="flex justify-between items-center mb-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} color="var(--purple)" />
+                    <span className="font-semibold text-sm">AI Flow Analysis</span>
+                  </div>
+                  <span style={{
+                    padding: '4px 12px', borderRadius: 20, fontSize: 13, fontWeight: 700,
+                    background: suggestions.overall_score >= 80 ? 'var(--green-dim)' : suggestions.overall_score >= 60 ? 'var(--orange-dim)' : 'rgba(220,38,38,0.1)',
+                    color: suggestions.overall_score >= 80 ? 'var(--green)' : suggestions.overall_score >= 60 ? 'var(--orange)' : 'var(--red)'
+                  }}>
+                    Score: {suggestions.overall_score}/100
+                  </span>
+                </div>
+                {(suggestions.suggestions || []).length > 0 ? (
+                  <div className="flex flex-col gap-2">
+                    {suggestions.suggestions!.map((s, i) => (
+                      <div key={i} className="flex gap-3" style={{
+                        padding: '10px 14px',
+                        background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)'
+                      }}>
+                        <span style={{
+                          display: 'inline-flex', alignItems: 'center', padding: '2px 8px',
+                          borderRadius: 12, fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                          alignSelf: 'flex-start', marginTop: 2,
+                          background: s.impact === 'high' ? 'rgba(220,38,38,0.1)' : s.impact === 'medium' ? 'var(--orange-dim)' : 'var(--green-dim)',
+                          color: s.impact === 'high' ? 'var(--red)' : s.impact === 'medium' ? 'var(--orange)' : 'var(--green)'
+                        }}>
+                          {s.impact}
+                        </span>
+                        <div>
+                          <div className="font-semibold text-sm">{s.title}</div>
+                          <div className="text-secondary" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>{s.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-secondary" style={{ padding: 12, textAlign: 'center', fontSize: 13 }}>
+                    <CheckCircle2 size={16} style={{ marginRight: 6, verticalAlign: -3 }} />
+                    Flow looks optimized — no suggestions at this time.
+                  </div>
+                )}
+              </div>
+            )}
+
+        {/* ── Tabs ──────────────────────────────────────────────── */}
+        <div className="tabs mb-5" role="tablist" aria-label="Advanced tools">
+          {[
+            { id: 'entries', label: 'People', icon: Users },
+            { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+            { id: 'activity', label: 'Activity', icon: Activity },
+            { id: 'settings', label: 'Settings', icon: Settings },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={`tab flex items-center gap-1.5 ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => { setActiveTab(tab.id); if (tab.id === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab.id === 'analytics') loadNodeAnalytics(selected); }}
+            >
+              <tab.icon size={14} /> {tab.label}
+            </button>
+          ))}
+        </div>
 
         {/* ── TAB: Entries ──────────────────────────────────────── */}
         {activeTab === 'entries' && (

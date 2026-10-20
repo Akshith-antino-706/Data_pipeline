@@ -1,33 +1,49 @@
-.page { display: flex; flex-direction: column; gap: 20px; max-width: 1280px; min-width: 0; }
-.headSkel { display: flex; flex-direction: column; gap: 10px; }
+/* Journey detail: one screen, no page scroll on desktop.
+   Height = viewport − top bar (64px) − .main padding (2 × 32px). Under 1025px the
+   layout stacks and the page scrolls normally. */
+.page { display: flex; flex-direction: column; gap: 12px; min-width: 0; max-width: 1440px; }
+.headSkel { display: flex; flex-direction: column; gap: 8px; }
 .skelList { display: flex; flex-direction: column; gap: 10px; }
 .srOnly {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+.help { font-size: 12px; color: var(--ink3); }
+.bad { color: var(--bad); }
 
-/* ── Header + summary ───────────────────────────────────────── */
-.header { display: flex; flex-direction: column; gap: 12px; }
-.crumbs { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink3); }
-.back { font: inherit; font-size: 13px; color: var(--ink3); background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
-.back:hover { color: var(--ink); }
-.headRow { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
-.headMain { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.title { margin: 0; font-size: 24px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
-.desc { margin: 0; font-size: 14px; color: var(--ink2); max-width: 640px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-
-.summaryBox {
-  display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; border-radius: 12px;
-  background: var(--surface); border: 1px solid var(--line);
+/* ── Header (one line) ──────────────────────────────────────── */
+.header { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.back {
+  flex: none; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink3); cursor: pointer;
 }
-.summary { margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 16px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
-.explain { margin: 0; font-size: 14px; color: var(--ink2); }
-.facts { margin: 0; display: flex; flex-wrap: wrap; gap: 8px 28px; font-size: 13px; }
-.facts > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.facts dt { color: var(--ink3); font-size: 12px; }
-.facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
-.testMode { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--ink2); }
+.back:hover { color: var(--ink); border-color: var(--ink3); }
+.back:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.titleBlock { flex: 1 1 360px; min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.title {
+  margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; color: var(--ink);
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.titleBlock > :global(.ui-chip), .tipWrap { flex: none; }
+.summary { font-size: 13px; color: var(--ink3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.tipWrap { position: relative; display: inline-flex; }
+.tipBtn {
+  width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%; background: transparent; color: var(--ink3); cursor: help; padding: 0;
+}
+.tipBtn:hover, .tipBtn:focus-visible { color: var(--ink); background: var(--sunken); outline: none; }
+.tip {
+  display: none; position: absolute; top: calc(100% + 6px); left: -8px; z-index: 70; width: 320px; max-width: 80vw;
+  flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(18, 24, 32, .14);
+  font-size: 13px; line-height: 1.45; color: var(--ink2); font-weight: 400;
+}
+.tipWrap:hover .tip, .tipWrap:focus-within .tip { display: flex; }
+.tipDesc { color: var(--ink); }
+.tipLead { color: var(--ink); font-weight: 600; }
+.tipFact b { font-weight: 600; color: var(--ink); }
 
 .moreWrap { position: relative; }
 .menu {
@@ -37,118 +53,174 @@
 }
 .menuItem {
   font: inherit; font-size: 14px; display: flex; gap: 10px; align-items: center; text-align: left;
-  padding: 9px 12px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer;
+  padding: 8px 12px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer;
 }
 .menuItem:hover, .menuItem:focus-visible { background: var(--sunken); outline: none; }
 .danger { color: var(--bad); }
 
-/* ── How is it doing? ───────────────────────────────────────── */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 14px; }
-.kpi { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; border-radius: 10px; background: var(--sunken); min-width: 0; }
-.kpiLabel { font-size: 13px; font-weight: 600; color: var(--ink2); }
-.kpiValue { font-size: 28px; line-height: 1.15; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.kpiPct { font-size: 13px; font-weight: 600; color: var(--ink2); }
-.help { font-size: 12px; color: var(--ink3); }
-
-/* ── Charts ──────────────────────────────────────────────────── */
-.chartBlock { display: flex; flex-direction: column; gap: 4px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); min-width: 0; }
-.chartTitle { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); }
-.chart { margin-top: 8px; width: 100%; min-width: 0; }
-.noData { margin: 8px 0 0; padding: 20px; text-align: center; font-size: 13px; color: var(--ink3); background: var(--sunken); border-radius: 10px; }
-
-/* ── Steps ──────────────────────────────────────────────────── */
-.split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-.splitOn { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
-.flowStart { margin: 14px 0 10px; display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink2); }
-.flow { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; }
-.stepItem, .waitItem { position: relative; display: flex; flex-direction: column; }
-/* vertical connector line between steps */
-.stepItem + .stepItem, .stepItem + .waitItem, .waitItem + .stepItem, .waitItem + .waitItem { padding-top: 14px; }
-.stepItem + .stepItem::before, .stepItem + .waitItem::before, .waitItem + .stepItem::before, .waitItem + .waitItem::before {
-  content: ''; position: absolute; top: 0; left: 29px; width: 2px; height: 14px; background: var(--line);
+.tabCount {
+  display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px;
+  background: var(--sunken); color: var(--ink3); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
+
+/* ── Tab panels ─────────────────────────────────────────────── */
+.tabOverview, .tabFlow, .tabPeople, .tabAdvanced { min-width: 0; display: flex; flex-direction: column; }
+.flowBuilder { min-width: 0; }
+.advanced { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+/* ── Overview grid ──────────────────────────────────────────── */
+.overview { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; min-width: 0; }
+.col { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 16px; }
+.col :global(.ui-card-head) { margin-bottom: 8px; }
+.col :global(.ui-card-title) { font-size: 15px; }
+
+.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.kpi {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 12px;
+  border-radius: 10px; background: var(--sunken);
+}
+.kpiAccent { background: var(--gold-soft); }
+.kpiLabel { font-size: 12px; font-weight: 600; color: var(--ink2); }
+.kpiValue { font-size: 22px; line-height: 1.2; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kpiSub { font-size: 12px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+.minor { margin: 8px 0 0; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink3); }
+.minor b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.minor .bad b { color: var(--bad); }
+.sep { color: var(--line); }
+
+.funnelBlock { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.blockTitle { margin: 0; font-size: 13px; font-weight: 700; color: var(--ink); }
+.funnel { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.funnelRow { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 12px; }
+.funnelName { color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.funnelTrack { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.funnelBar { display: block; height: 100%; border-radius: 3px; }
+.barPeople { background: var(--gold); }
+.barMessages { background: var(--gold); opacity: .55; }
+.barOutcome { background: var(--ok); }
+.funnelValue { min-width: 84px; text-align: right; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.funnelPct { font-weight: 400; color: var(--ink3); }
+.noData { margin: 0; padding: 14px; text-align: center; font-size: 12px; color: var(--ink3); background: var(--sunken); border-radius: 8px; }
+
+/* ── Steps list ─────────────────────────────────────────────── */
+.flowStart { margin: 0 0 8px; display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink3); }
+.stepsScroll { min-height: 0; }
+.flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.stepItem, .waitItem { min-width: 0; }
 .step, .wait {
-  display: flex; gap: 14px; align-items: center; border-radius: 12px; text-align: left; font: inherit; color: var(--ink);
-  cursor: pointer; width: 100%; box-sizing: border-box;
+  font: inherit; width: 100%; display: flex; align-items: center; text-align: left; cursor: pointer;
+  border-radius: 8px; color: var(--ink); background: transparent;
 }
-.step { padding: 12px 14px; border: 1px solid var(--line); background: var(--surface); }
-.wait { padding: 8px 14px; border: 1px dashed var(--line); background: transparent; color: var(--ink2); }
-.step:hover, .wait:hover { border-color: var(--gold); }
-.step:focus-visible, .wait:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-.stepOn { border-color: var(--gold); background: var(--gold-soft); }
-.stepNum, .waitIcon {
-  flex: none; width: 30px; height: 30px; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
+.step { gap: 10px; min-height: 40px; padding: 6px 10px; border: 1px solid transparent; }
+.step:hover { background: var(--sunken); }
+.stepOn, .stepOn:hover { background: var(--gold-soft); border-color: var(--gold); }
+.step:focus-visible, .wait:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.stepNum {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; background: var(--gold-soft); color: var(--gold-ink); font-variant-numeric: tabular-nums;
 }
-.stepNum { background: var(--gold-soft); color: var(--gold-ink); }
-.waitIcon { background: var(--sunken); color: var(--ink3); }
-.stepBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-.stepTop { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.day { font-size: 12px; font-weight: 700; color: var(--gold-ink); }
-.sentence { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.wait .sentence { font-size: 14px; font-weight: 500; }
-.metric { font-weight: 400; color: var(--ink3); font-size: 13px; }
-.stepStats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink3); }
-.stepStats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.stepIcon { flex: none; color: var(--ink3); }
+.stepMain { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.stepName { min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stepMeta { flex: none; display: inline-flex; gap: 6px; font-size: 12px; color: var(--ink3); white-space: nowrap; }
+.day { font-weight: 700; color: var(--gold-ink); }
+.now { flex: none; min-width: 56px; text-align: right; font-size: 12px; color: var(--ink3); white-space: nowrap; }
+.now b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.dotCell { flex: none; width: 10px; display: inline-flex; justify-content: center; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dotOk { background: var(--ok); }
+.dotInfo { background: var(--info); }
+.dotWarn { background: var(--warn); }
+.dotBad { background: var(--bad); }
+.dotMute { background: var(--ink3); }
+.dotGold { background: var(--gold); }
 .chev { flex: none; color: var(--ink3); }
 
-.panel { position: sticky; top: 16px; }
-.panelBody { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+/* A wait is a thin dashed connector between two steps. */
+.wait { position: relative; gap: 6px; padding: 4px 10px 4px 42px; min-height: 28px; border: 0; font-size: 12px; color: var(--ink3); }
+.wait:hover, .waitOn { color: var(--gold-ink); }
+.waitLine { position: absolute; left: 20px; top: 0; bottom: 0; border-left: 2px dashed var(--line); }
+.waitOn .waitLine, .wait:hover .waitLine { border-left-color: var(--gold); }
+
+/* ── People tab ─────────────────────────────────────────────── */
+.peopleCard { display: flex; flex-direction: column; min-height: 0; padding: 16px; }
+.peopleCard :global(.ui-card-title) { font-size: 15px; }
+.filter { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink3); }
+.filter select { width: auto; min-width: 140px; }
+.tableScroll { min-height: 0; display: flex; flex-direction: column; }
+.tableScroll th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.contact { display: flex; flex-direction: column; min-width: 0; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pager { display: flex; gap: 8px; justify-content: center; align-items: center; padding-top: 10px; }
+
+/* ── Advanced tab ───────────────────────────────────────────── */
+.advGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.chart { width: 100%; min-width: 0; }
+.queue { display: flex; flex-direction: column; }
+.queueRow { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; font-size: 13px; color: var(--ink3); padding: 8px 0; border-bottom: 1px solid var(--line); }
+.queueRow strong { color: var(--ink); min-width: 80px; }
+.queueRow b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.tech { font-size: 13px; color: var(--ink2); margin-top: 10px; }
+.tech > summary { cursor: pointer; color: var(--ink3); font-weight: 600; padding: 4px 0; }
+.tech > .dl { margin-top: 8px; }
+
+/* ── Step drawer ────────────────────────────────────────────── */
+.drawerLayer { position: fixed; inset: 0; z-index: 200; display: flex; justify-content: flex-end; }
+.scrim { position: absolute; inset: 0; background: rgba(16, 24, 32, .28); }
+.drawer {
+  position: relative; width: min(420px, 100vw); height: 100%; display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(18, 24, 32, .16);
+  animation: drawerIn .18s ease-out;
+}
+@keyframes drawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+.drawerHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.drawerTitle { margin: 0; font-size: 15px; font-weight: 700; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
+.drawerBody { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
+
+.panelBody { display: flex; flex-direction: column; gap: 14px; }
 .tplBox { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 12px; border-radius: 10px; background: var(--sunken); }
 .dl { margin: 0; display: grid; gap: 8px; }
 .dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .dl dt { color: var(--ink3); }
 .dl dd { margin: 0; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
 .warnBox { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
-.bad { color: var(--bad); }
 
-.tech { font-size: 13px; color: var(--ink2); }
-.tech > summary { cursor: pointer; color: var(--ink3); font-weight: 600; padding: 4px 0; }
-.tech > .dl { margin-top: 8px; }
+/* ── Rename form (rendered by page.tsx in the header) ───────── */
+.editForm { display: flex; flex-direction: column; gap: 8px; width: min(560px, 100%); }
+.editForm textarea { min-height: 56px; padding: 8px 12px; height: auto; }
+.editActions { display: flex; gap: 8px; }
 
-/* ── People ─────────────────────────────────────────────────── */
-.filter { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink3); }
-.filter select { width: auto; min-width: 140px; }
-.contact { display: flex; flex-direction: column; min-width: 0; }
-.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.pager { display: flex; gap: 8px; justify-content: center; align-items: center; padding-top: 12px; }
-
-/* ── Advanced ───────────────────────────────────────────────── */
-.advanced { display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 16px; }
-.advToggle {
-  font: inherit; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; text-align: left; width: 100%;
-  padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
+/* ── Desktop: everything fits one screen; only lists scroll ─── */
+@media (min-width: 1025px) {
+  .page { height: calc(100dvh - 128px); overflow: hidden; }
+  .header { flex-wrap: nowrap; }
+  .titleBlock { flex-wrap: nowrap; }
+  .tabOverview, .tabFlow, .tabPeople, .tabAdvanced { flex: 1; min-height: 0; }
+  .tabFlow, .tabAdvanced { overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+  .overview { flex: 1; min-height: 0; }
+  .col { overflow: hidden; }
+  .col:first-child { overflow-y: auto; }
+  .stepsScroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; margin: 0 -6px; padding: 0 6px; }
+  .peopleCard { flex: 1; }
+  .tableScroll { flex: 1; }
+  .tableScroll > :global(.ui-table-wrap) { flex: 1; min-height: 0; overflow: auto; }
 }
-.advToggle:hover { border-color: var(--gold); }
-.advToggle:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-.advTitle { font-size: 15px; font-weight: 700; }
-.advBody { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.advBody > .tech { padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
 
-.queue { display: flex; flex-direction: column; gap: 8px; }
-.queueRow { display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; font-size: 13px; color: var(--ink3); padding: 8px 0; border-bottom: 1px solid var(--line); }
-.queueRow strong { color: var(--ink); min-width: 90px; }
-.queueRow b { color: var(--ink); font-variant-numeric: tabular-nums; }
-
-@media (max-width: 900px) {
-  .splitOn { grid-template-columns: minmax(0, 1fr); }
-  .panel { position: static; }
+/* ── Narrow: stack, page scrolls ────────────────────────────── */
+@media (max-width: 1024px) {
+  .overview { grid-template-columns: minmax(0, 1fr); }
+  .advGrid { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 480px) {
-  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .kpi { padding: 12px; }
-  .kpiValue { font-size: 22px; }
+@media (max-width: 640px) {
   .actions { width: 100%; }
   .menu { right: auto; left: 0; }
-  .title { font-size: 20px; }
-  .summaryBox { padding: 14px; }
-  .summary { font-size: 15px; }
-  .step, .wait { gap: 10px; padding-left: 10px; padding-right: 10px; }
-  .stepItem + .stepItem::before, .stepItem + .waitItem::before, .waitItem + .stepItem::before, .waitItem + .waitItem::before { left: 25px; }
+  .title { font-size: 18px; white-space: normal; }
+  .summary { white-space: normal; }
+  .stepMeta { display: none; }
+  .funnelRow { grid-template-columns: 84px minmax(0, 1fr) auto; }
+  .funnelValue { min-width: 0; }
   .filter { width: 100%; }
   .filter select { flex: 1; }
+  .tip { left: auto; right: -8px; }
 }
-
-.editForm { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
-.editForm textarea { min-height: 64px; padding: 8px 12px; height: auto; }
-.editActions { display: flex; gap: 8px; }
