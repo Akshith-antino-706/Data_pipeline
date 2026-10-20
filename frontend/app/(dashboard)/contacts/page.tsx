@@ -158,7 +158,7 @@ export default function UnifiedContacts() {
   const kpis = [
     { label: 'Contacts', value: formatNum(stats?.total_contacts) },
     { label: 'Bookings', value: formatNum(stats?.total_bookings) },
-    { label: 'Revenue', value: formatAED(stats?.total_revenue) },
+    { label: 'Confirmed revenue', value: formatAED(stats?.total_revenue) },
   ];
 
   const sortHead = (col: string, label: string) => {

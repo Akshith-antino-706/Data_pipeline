@@ -332,9 +332,10 @@ export default class UnifiedContactService {
       ${btClause}
     `, btParam);
 
-    // Compute total revenue and total booking count from rayna tables
+    // Confirmed revenue and booking count from the rayna tables — cancelled bookings excluded from
+    // BOTH, so this matches the Dashboard/Segmentation "Total Confirmed Revenue".
     const revenueSQL = RAYNA_TABLES.map(t =>
-      `SELECT COALESCE(SUM(selling_price), 0) AS rev, COUNT(*) FILTER (WHERE ${cancelFilter()}) AS cnt FROM ${t}`
+      `SELECT COALESCE(SUM(selling_price) FILTER (WHERE ${cancelFilter()}), 0) AS rev, COUNT(*) FILTER (WHERE ${cancelFilter()}) AS cnt FROM ${t}`
     ).join(' UNION ALL ');
     const { rows: revRows } = await pool.query<U7RevenueTotalsRow>(
       `SELECT SUM(rev)::numeric AS total_revenue, SUM(cnt)::int AS total_bookings FROM (${revenueSQL}) t`

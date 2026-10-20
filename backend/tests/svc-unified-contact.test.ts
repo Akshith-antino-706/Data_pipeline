@@ -88,3 +88,13 @@ describe('UnifiedContactService._computeSegmentationTree — date validation', (
     expect(m.query).not.toHaveBeenCalled();
   });
 });
+
+describe('getStats revenue', () => {
+  it('excludes cancelled bookings from revenue (matches Total Confirmed Revenue)', async () => {
+    m.query.mockResolvedValue({ rows: [{ total_revenue: '100', total_bookings: 2, conversations_7d: 0 }] });
+    await UnifiedContactService.getStats({});
+    const revSql = m.query.mock.calls.map(c => String(c[0])).find(s => s.includes('total_revenue')) ?? '';
+    expect(revSql).toMatch(/SUM\(selling_price\) FILTER \(WHERE is_cancel <> '1'\)/);
+    expect(revSql).not.toMatch(/COALESCE\(SUM\(selling_price\), 0\)/);
+  });
+});
