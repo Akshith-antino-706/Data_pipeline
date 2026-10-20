@@ -1159,10 +1159,13 @@ class JourneyService {
     const recType = (recommendationType && ['on_trip','future_trip','past_trip'].includes(recommendationType))
       ? recommendationType : null;
 
-    // Email-only sender selection ('default' AWS API | 'giveaway' SMTP). Does not affect wa/sms/rcs.
-    const emailCred = emailCredential === 'giveaway' ? 'giveaway' : 'default';
+    // Email-only sender selection ('default' AWS API | 'giveaway' SMTP | 'affiliate' SMTP).
+    // Does not affect wa/sms/rcs. Anything unrecognised falls back to 'default'.
+    const emailCred = emailCredential === 'giveaway' || emailCredential === 'affiliate' ? emailCredential : 'default';
     // Continuous-journey trigger source ('gtm' GTM events | 'giveaway' giveaway events).
-    const trigSource = triggerSource === 'giveaway' ? 'giveaway' : 'gtm';
+    // Continuous-journey trigger feed: 'gtm' (GTM events) | 'giveaway' | 'affiliate'
+    // (both RabbitMQ feeds). Anything unrecognised falls back to 'gtm'.
+    const trigSource = triggerSource === 'giveaway' || triggerSource === 'affiliate' ? triggerSource : 'gtm';
 
     // Reject graphs whose edges point at nodes that don't exist.
     const nodeIds = new Set((nodes || []).map(n => String(n.id)));

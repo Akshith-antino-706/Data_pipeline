@@ -54,6 +54,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.GIVEAWAY_SMTP_HOST;
   delete process.env.GIVEAWAY_SMTP_USER;
+  delete process.env.AFFILIATE_SMTP_HOST;
+  delete process.env.AFFILIATE_SMTP_USER;
+  delete process.env.AFFILIATE_FROM;
   delete process.env.TRACKING_BASE_URL;
 });
 
@@ -187,6 +190,27 @@ describe('JourneyEmailSender', () => {
     expect(m.createTransport).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  it('affiliate uses its own AFFILIATE_SMTP_* mailbox and transport', async () => {
+    const r1 = await sendJourneyEmail({ emailCredential: 'affiliate', to: 'a@b.com', subject: 's', html: 'h' });
+    expect(r1).toMatchObject({ success: false, provider: 'affiliate-smtp' });
+    expect(r1.error).toContain('AFFILIATE_SMTP_');
+    process.env.AFFILIATE_SMTP_HOST = 'smtp.aff';
+    process.env.AFFILIATE_SMTP_USER = 'aff-user';
+    process.env.AFFILIATE_FROM = 'Affiliates <aff@x.test>';
+    m.sendMail.mockResolvedValue({ messageId: 'a1' });
+    const r2 = await sendJourneyEmail({ emailCredential: 'affiliate', to: 'a@b.com', subject: 's', html: 'h' });
+    expect(r2).toMatchObject({ success: true, provider: 'affiliate-smtp', externalId: 'a1' });
+    expect(m.createTransport).toHaveBeenCalledWith(expect.objectContaining({ host: 'smtp.aff', auth: { user: 'aff-user', pass: undefined } }));
+    expect(m.sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: 'Affiliates <aff@x.test>', to: 'a@b.com' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('unknown credential (incl. prototype keys) falls back to the default AWS channel', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ status: 'success', id: 'x' }), { status: 200 }));
+    for (const cred of ['bogus', 'constructor']) {
+      expect((await sendJourneyEmail({ emailCredential: cred, to: 'a@b.com', subject: 's', html: 'h' })).success).toBe(true);
+    }
+    expect(m.createTransport).not.toHaveBeenCalled();
+  });
   it('giveaway respects allow-list', async () => {
     process.env.WELCOME_EMAILS = 'z@z.com';
     expect(await sendJourneyEmail({ emailCredential: 'giveaway', to: 'a@b.com', subject: 's', html: 'h' })).toMatchObject({ skipped: true });
@@ -210,9 +234,16 @@ describe('GiveawayJourneyService.onEvent', () => {
     m.enter.mockResolvedValueOnce(11).mockResolvedValueOnce(null);
     const n = await GiveawayJourneyService.onEvent({ giveawayType: 'winner', unifiedId: 9, eventId: 'ev1' });
     expect(n).toBe(2);
-    expect(m.query.mock.calls[0][1]).toEqual(['winner']);
+    // Default source is the giveaway feed → only trigger_source='giveaway' journeys match.
+    expect(m.query.mock.calls[0][1]).toEqual(['winner', 'giveaway']);
     expect(m.enter.mock.calls[0][0]).toMatchObject({ journeyId: 1, firstNodeId: 'a', entryDelayMs: 5000, itemId: 'ev1' });
     expect(m.enter.mock.calls[1][0]).toMatchObject({ journeyId: 3, firstNodeId: 'a3', entryDelayMs: 0 });
+  });
+  it('affiliate events only match affiliate journeys (trigger_source bound to $2)', async () => {
+    m.query.mockResolvedValue({ rows: [] });
+    expect(await GiveawayJourneyService.onEvent({ giveawayType: 'joined', unifiedId: 4, eventId: 'a1', source: 'AFFILIATE' })).toBe(0);
+    expect(String(m.query.mock.calls[0][0])).toContain('trigger_source = $2');
+    expect(m.query.mock.calls[0][1]).toEqual(['joined', 'affiliate']);
   });
   it('errors in one journey do not stop others; no first node is skipped', async () => {
     m.query.mockResolvedValue({ rows: [journey(1, [{ id: 'a', type: 'action' }]), journey(2, [{ id: 'x', type: 'wait' }]), journey(3, [{ id: 'b', type: 'action' }])] });

@@ -6,6 +6,7 @@
     "start": "tsx server.ts",
     "dev": "tsx watch server.ts",
     "giveaway:consumer": "tsx src/giveaway-consumer.ts",
+    "watch:giveaway": "tsx scripts/watch-giveaway.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p .",

@@ -60,8 +60,44 @@ export interface GtmContactRow extends PlaceholderContact {
   wa_unsubscribe?: string | null;
 }
 
-/** giveaway_events row loaded by processJob. */
+/**
+ * The producer's original message as stored in giveaway_affiliate_events.raw_payload.
+ * Only the nested affiliate blocks are read directly (handed to Liquid as-is).
+ */
+export interface GiveawayAffiliatePayload {
+  to?: Record<string, unknown>;
+  coupon?: Record<string, unknown>;
+  commission?: Record<string, unknown>;
+  link?: Record<string, unknown>;
+  cardOffer?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** giveaway_affiliate_events row loaded by processJob (giveaway AND affiliate feeds). */
 export interface GiveawayEventRow {
+  source?: 'GIVEAWAY' | 'AFFILIATE' | string | null;
+  raw_payload?: GiveawayAffiliatePayload | null;
+  // ── affiliate-specific columns (null for giveaway rows) ──
+  coupon_id?: string | null;
+  valid_from?: Date | string | null;          // TIMESTAMPTZ
+  max_per_user?: number | null;
+  discount_type?: string | null;
+  max_discount_value?: string | number | null; // NUMERIC → string from pg
+  currency?: string | null;
+  commission_rate?: string | number | null;
+  commission_prev_rate?: string | number | null;
+  effective_from?: Date | string | null;      // TIMESTAMPTZ
+  link_slug?: string | null;
+  tracking_url?: string | null;
+  destination_url?: string | null;
+  campaign_source?: string | null;
+  campaign_medium?: string | null;
+  campaign_name?: string | null;
+  offer_subtitle?: string | null;
+  bank_name?: string | null;
+  min_order_value?: string | number | null;
+  max_discount_cap?: string | number | null;
+  // ── giveaway columns (some shared with affiliate: value, code, offer, offer_code, expiry) ──
   name?: string | null;
   giveaway?: string | null;
   giveaway_image?: string | null;

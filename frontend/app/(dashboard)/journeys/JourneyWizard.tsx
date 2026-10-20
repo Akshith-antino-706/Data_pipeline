@@ -40,6 +40,25 @@ export const WIZARD_STEPS = [
 ] as const;
 
 export const GIVEAWAY_TYPES = ['participation', 'eligible', 'winner', 'loser'] as const;
+export const AFFILIATE_TYPES = ['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated'] as const;
+
+/**
+ * Giveaway and Affiliate both arrive on the SAME RabbitMQ exchange and differ only by event
+ * type, so they share one chip picker. Keyed by the journey's trigger source.
+ */
+export const RABBIT_FEEDS = {
+  giveaway:  { label: 'Giveaway',  where: 'the giveaway site',    types: GIVEAWAY_TYPES },
+  affiliate: { label: 'Affiliate', where: 'the affiliate portal', types: AFFILIATE_TYPES },
+} as const;
+type RabbitFeedKey = keyof typeof RABBIT_FEEDS;
+
+/** The RabbitMQ feed a trigger source selects, or null for GTM (or anything unknown). */
+export function rabbitFeed(triggerSource: string | undefined): (typeof RABBIT_FEEDS)[RabbitFeedKey] | null {
+  return triggerSource === 'giveaway' || triggerSource === 'affiliate' ? RABBIT_FEEDS[triggerSource] : null;
+}
+
+/** "coupon_assigned" → "coupon assigned" (chip and summary text). */
+const typeLabel = (t: string): string => t.replace(/_/g, ' ');
 
 const splitEvents = (v: string | undefined): string[] => (v || '').split(',').map(s => s.trim()).filter(Boolean);
 
@@ -47,8 +66,9 @@ const splitEvents = (v: string | undefined): string[] => (v || '').split(',').ma
 export function stepErrors(step: number, form: CreateForm, nodes: NodeForm[], nodeEditorOpen: boolean): Record<string, string> {
   const e: Record<string, string> = {};
   if (step === 0 && !form.name.trim()) e.name = 'Give the journey a name.';
-  if (step === 1 && form.journeyType === 'continuous' && form.triggerSource === 'giveaway' && splitEvents(form.triggerEvent).length === 0) {
-    e.trigger = 'Pick at least one giveaway type.';
+  const feed = rabbitFeed(form.triggerSource);
+  if (step === 1 && form.journeyType === 'continuous' && feed && splitEvents(form.triggerEvent).length === 0) {
+    e.trigger = `Pick at least one ${feed.label.toLowerCase()} type.`;
   }
   if (step === 2 && !form.segmentId) e.segment = 'Pick a segment.';
   if (step === 3) {
@@ -95,7 +115,7 @@ export default function JourneyWizard(props: JourneyWizardProps) {
   const isLast = step === WIZARD_STEPS.length - 1;
   const segmentLabel = cleanSegmentLabel(segments.find(s => s.value === form.segmentId)?.label || form.segmentId);
   const continuous = form.journeyType === 'continuous';
-  const giveaway = (form.triggerSource || 'gtm') === 'giveaway';
+  const feed = rabbitFeed(form.triggerSource);
   const events = splitEvents(form.triggerEvent);
 
   // Move focus to the new step's heading so keyboard and screen-reader users land on it.
@@ -147,10 +167,10 @@ export default function JourneyWizard(props: JourneyWizardProps) {
     ? Object.entries(channelCounts).map(([k, v]) => `${v} ${k}`).join(' · ')
     : 'None yet';
   const joinsLabel = continuous
-    ? (giveaway ? 'Giveaway event' : 'GTM event')
+    ? (feed ? `${feed.label} event` : 'GTM event')
     : 'Once, from a segment';
   const triggerLabel = continuous
-    ? (events.length ? events.join(' / ') : (giveaway ? 'No giveaway type picked' : 'Any — one entry per segment user'))
+    ? (events.length ? events.map(typeLabel).join(' / ') : (feed ? `No ${feed.label.toLowerCase()} type picked` : 'Any — one entry per segment user'))
     : 'Not used for fixed journeys';
 
   const typeOptions = [
@@ -257,7 +277,7 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                   <div className="ui-field">
                     <span className="ui-label" id={`${uid}-src`}>Trigger source</span>
                     <div role="group" aria-labelledby={`${uid}-src`} className={styles.pills}>
-                      {[{ k: 'gtm', label: 'GTM event' }, { k: 'giveaway', label: 'Giveaway' }].map(o => {
+                      {[{ k: 'gtm', label: 'GTM event' }, { k: 'giveaway', label: 'Giveaway' }, { k: 'affiliate', label: 'Affiliate' }].map(o => {
                         const on = (form.triggerSource || 'gtm') === o.k;
                         return (
                           <button key={o.k} type="button" aria-pressed={on}
@@ -270,11 +290,11 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                     </div>
                   </div>
 
-                  {giveaway ? (
+                  {feed ? (
                     <div className="ui-field">
-                      <span className="ui-label" id={`${uid}-gw`}>Giveaway type(s) <span className={styles.req} aria-hidden="true">*</span></span>
+                      <span className="ui-label" id={`${uid}-gw`}>{feed.label} type(s) <span className={styles.req} aria-hidden="true">*</span></span>
                       <div role="group" aria-labelledby={`${uid}-gw`} className={styles.pills}>
-                        {GIVEAWAY_TYPES.map(t => {
+                        {feed.types.map((t: string) => {
                           const on = events.includes(t);
                           return (
                             <button key={t} type="button" aria-pressed={on}
@@ -283,15 +303,15 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                                 const nextList = on ? events.filter(x => x !== t) : [...events, t];
                                 setForm(f => ({ ...f, triggerEvent: nextList.join(',') }));
                               }}>
-                              {on ? '✓ ' : ''}{t}
+                              {on ? '✓ ' : ''}{typeLabel(t)}
                             </button>
                           );
                         })}
                       </div>
                       <span className={styles.help}>
                         {events.length
-                          ? <>A segment user who fires <b>{events.join(' / ')}</b> on the giveaway site enters — one entry per event.</>
-                          : <>Only segment members who fire the selected type enter the journey.</>}
+                          ? <>A segment user who fires <b>{events.map(typeLabel).join(' / ')}</b> on {feed.where} enters — one entry per event.</>
+                          : <>Pick one or more {feed.label.toLowerCase()} types. Only segment members who fire the selected type enter the journey.</>}
                       </span>
                       {err('trigger') && <span className="ui-err" role="alert">{err('trigger')}</span>}
                     </div>

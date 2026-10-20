@@ -48,10 +48,10 @@ describe('hydrateProducts', () => {
     expect(params).toEqual([[1, 3, 2]]);
   });
 
-  it('legacy AED fields: price, strike and discount', async () => {
+  it('default market: price, strike and discount in AED (formatted strings, *_local are aliases)', async () => {
     productRows = [row(1)];
     const [p] = await hydrateProducts([1]);
-    expect(p).toMatchObject({ product_price: 100, product_strike_price: 125, product_discount_percent: 20, product_currency: 'AED', product_price_local: '100', product_rating: '4.7' });
+    expect(p).toMatchObject({ product_price: '100', product_strike_price: '125', product_discount_percent: 20, product_currency: 'AED', product_price_local: '100', product_strike_price_local: '125', product_rating: '4.7' });
   });
 
   it('no strike when normal <= sale; null prices -> empty strings', async () => {
@@ -71,7 +71,10 @@ describe('hydrateProducts', () => {
   it('converts plan prices into the market currency (case-insensitive) with thousands separators', async () => {
     productRows = [row(1, { market_prices: { default: { sale_price: 100, price: 200 }, IN: { sale_price: 90, price: 100 } } })];
     const [p] = await hydrateProducts([1], { plan: 'IN', currency: 'inr' });
-    expect(p).toMatchObject({ product_currency: 'INR', product_price_local: '2,025', product_strike_price_local: '2,250', product_price: 100, product_strike_price: 200 });
+    // Every price key is market-aware now: product_price carries the converted plan price too.
+    expect(p).toMatchObject({ product_currency: 'INR', product_price_local: '2,025', product_strike_price_local: '2,250', product_price: '2,025', product_strike_price: '2,250' });
+    // Discount % comes from the plan's own AED figures (90 vs 100), not the default plan.
+    expect(p?.product_discount_percent).toBe(10);
   });
 
   it.each([['XYZ'], ['IRR']])('unknown or hyper-devalued currency %s falls back to AED', async (cur) => {

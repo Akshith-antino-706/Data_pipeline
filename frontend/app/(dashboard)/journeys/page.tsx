@@ -520,6 +520,7 @@ const RECOMMENDATION_TYPE_OPTIONS = [
 const EMAIL_CREDENTIAL_OPTIONS = [
   { value: 'default',  label: 'Default — Marketing',  description: 'AWS Email API · explore@promotions.raynatours.com' },
   { value: 'giveaway', label: 'Giveaway SMTP',         description: 'Giveaway mailbox · giveaways@promotions.raynatours.com' },
+  { value: 'affiliate', label: 'Affiliate SMTP',       description: 'Affiliate mailbox · affiliates@m.raynatours.com' },
 ];
 
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.

@@ -7,7 +7,7 @@ import b from './builder.module.css';
 import { previewSegmentCount, createCustomSegment, updateCustomSegment, getGTMAnalytics, searchContactsByEmail, searchAffinityProducts } from '@/lib/api';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
 import type { JsonBody } from '@/types/api';
-import type { SegmentCondition, EditableCustomSegment } from '@/types/f2Segments';
+import type { SegmentCondition, EditableCustomSegment, GiveawaySource } from '@/types/f2Segments';
 
 interface BooleanOption { label: string; value: boolean }
 interface FieldConfig {
@@ -557,7 +557,7 @@ function isConditionValid(cond: SegmentCondition) {
     const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
     return !!cond.gtmEvent || hasCount;   // valid with a specific event OR a count (any event)
   }
-  if (cond.type === 'giveaway') {
+  if (cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') {
     const cv = cond.countValue;
     const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
     return !!cond.giveawayType || !!cond.giveawayName || hasCount;  // valid with a type/name OR a count
@@ -566,8 +566,19 @@ function isConditionValid(cond: SegmentCondition) {
   return false;
 }
 
-// Giveaway event types (from the RabbitMQ giveaway feed).
-const GIVEAWAY_TYPES = ['participation', 'eligible', 'winner', 'loser'];
+// Event types from the RabbitMQ feeds. Both land in giveaway_affiliate_events, told apart
+// by `source`; a blank/any source counts BOTH feeds.
+const GIVEAWAY_TYPES  = ['participation', 'eligible', 'winner', 'loser'];
+const AFFILIATE_TYPES = ['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated'];
+const TYPES_BY_SOURCE: Record<GiveawaySource, string[]> = {
+  any: [...GIVEAWAY_TYPES, ...AFFILIATE_TYPES], GIVEAWAY: GIVEAWAY_TYPES, AFFILIATE: AFFILIATE_TYPES,
+};
+const SOURCE_OPTIONS: { k: GiveawaySource; l: string }[] = [
+  { k: 'any', l: 'Any' }, { k: 'GIVEAWAY', l: 'Giveaway' }, { k: 'AFFILIATE', l: 'Affiliate' },
+];
+/** Words for a feed in the plain-words summary and the type picker. */
+const SOURCE_WORDS: Record<GiveawaySource, string> = { any: 'giveaway or affiliate', GIVEAWAY: 'giveaway', AFFILIATE: 'affiliate' };
+const typeWords = (t: string) => t.replace(/_/g, ' ');
 
 const emptyCondition = (): SegmentCondition => ({
   type: '',
@@ -577,6 +588,7 @@ const emptyCondition = (): SegmentCondition => ({
   gtmEvent: '',
   giveawayType: '',
   giveawayName: '',
+  giveawaySource: 'any',
   exclude: false,
   joinOp: 'AND',
 });
@@ -604,8 +616,9 @@ function describeCondition(cond: SegmentCondition): string {
     const cnt = countWords(cond);
     return `triggered ${evt}${cnt ? ` ${cnt}` : ''}${win}`;
   }
-  if (cond.type === 'giveaway') {
-    const kind = cond.giveawayType ? `a giveaway "${cond.giveawayType}" event` : 'any giveaway activity';
+  if (cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') {
+    const feed = SOURCE_WORDS[cond.giveawaySource || 'any'];
+    const kind = cond.giveawayType ? `${/^[aeiou]/.test(feed) ? 'an' : 'a'} ${feed} "${typeWords(cond.giveawayType)}" event` : `any ${feed} activity`;
     const nm = cond.giveawayName ? ` for "${cond.giveawayName}"` : '';
     const cnt = countWords(cond);
     return `had ${kind}${nm}${cnt ? ` ${cnt}` : ''}${win}`;
@@ -667,7 +680,7 @@ function PlainWords({ conditions }: { conditions: SegmentCondition[] }) {
 const RULE_KINDS = [
   { type: 'contact', name: 'Contact property', desc: 'Booking status, product, location, revenue, dates…' },
   { type: 'gtm', name: 'Website event (GTM)', desc: 'Events tracked on the website' },
-  { type: 'giveaway', name: 'Giveaway', desc: 'Giveaway entries and results' },
+  { type: 'giveaway_affiliate', name: 'Giveaway / Affiliate', desc: 'Giveaway entries and results, affiliate activity' },
 ];
 const kindName = (type: string) => RULE_KINDS.find(k => k.type === type)?.name || type;
 
@@ -678,13 +691,16 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
   const [conditions, setConditions] = useState<SegmentCondition[]>(() => {
     if (segment?.conditions?.length as number > 0) {
       return segment!.conditions!.map(c => ({
-        type: c.type || (c.giveawayType || c.giveawayName ? 'giveaway' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
+        // Legacy segments stored type:'giveaway'; show them in the merged editor.
+        type: (c.type === 'giveaway' ? 'giveaway_affiliate' : c.type)
+              || (c.giveawayType || c.giveawayName ? 'giveaway_affiliate' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
         field: c.field || '',
         operator: c.operator || '',
         value: c.value ?? null,
         gtmEvent: c.gtmEvent || '',
         giveawayType: c.giveawayType || '',
         giveawayName: c.giveawayName || '',
+        giveawaySource: c.giveawaySource || 'any',
         countOp: c.countOp || 'gte',
         countValue: c.countValue ?? '',
         windowDays: c.windowDays ?? '',
@@ -949,11 +965,20 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                         </>
                       )}
 
-                      {cond.type === 'giveaway' && (
+                      {(cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') && (
                         <>
-                          <select aria-label="Giveaway event type" value={cond.giveawayType || ''} onChange={e => setCond({ giveawayType: e.target.value })} style={selectStyle}>
-                            <option value="">— Any type (all giveaway activity) —</option>
-                            {GIVEAWAY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          {/* Feed: both land in one table, told apart by `source`.
+                              'any' counts BOTH — which is exactly what legacy segments did. */}
+                          <div className={b.seg} role="group" aria-label="Feed">
+                            {SOURCE_OPTIONS.map(o => (
+                              <button key={o.k} type="button" className={b.segBtn} aria-pressed={(cond.giveawaySource || 'any') === o.k}
+                                onClick={() => setCond({ giveawaySource: o.k, giveawayType: '' })}>{o.l}</button>
+                            ))}
+                          </div>
+                          {/* Event type — the list follows the selected feed */}
+                          <select aria-label="Event type" value={cond.giveawayType || ''} onChange={e => setCond({ giveawayType: e.target.value })} style={selectStyle}>
+                            <option value="">— Any type (all {(cond.giveawaySource || 'any') === 'any' ? '' : `${SOURCE_WORDS[cond.giveawaySource || 'any']} `}activity) —</option>
+                            {(TYPES_BY_SOURCE[cond.giveawaySource || 'any'] || TYPES_BY_SOURCE.any).map(t => <option key={t} value={t}>{typeWords(t)}</option>)}
                           </select>
                           <input type="text" aria-label="Giveaway name" placeholder="Giveaway name (optional, exact match)"
                             value={cond.giveawayName || ''} onChange={e => setCond({ giveawayName: e.target.value })} style={inputStyle} />
