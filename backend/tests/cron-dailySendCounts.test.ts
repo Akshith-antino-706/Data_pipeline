@@ -52,7 +52,7 @@ describe('runDailySendCounts', () => {
   it('missing table is reported and nothing else runs', async () => {
     mockQuery.mockRejectedValueOnce(Object.assign(new Error('relation "daily_send_counts" does not exist'), { code: '42P01' }));
     const r = await runDailySendCounts();
-    expect(r.error).toMatch(/run migration 118/);
+    expect(r.error).toMatch(/run migration 119/);
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 });

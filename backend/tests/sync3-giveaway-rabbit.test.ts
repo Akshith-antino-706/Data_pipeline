@@ -132,8 +132,14 @@ describe('giveawayRabbitConsumer — connection & topology', () => {
     expect(ch.assertQueue.mock.calls).toEqual([
       ['giveaways.email.dlq', { durable: true }],
       ['giveaways.email.send', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx' } }],
+      ['affiliate-emails-prod', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx' } }],
     ]);
-    expect(ch.bindQueue.mock.calls).toEqual([['giveaways.email.dlq', 'giveaways.dlx', ''], ['giveaways.email.send', 'giveaways', 'giveaway.email.prod.*']]);
+    expect(ch.bindQueue.mock.calls).toEqual([
+      ['giveaways.email.dlq', 'giveaways.dlx', ''],
+      ['giveaways.email.send', 'giveaways', 'giveaway.email.prod.*'],
+      ['affiliate-emails-prod', 'giveaways', 'affiliate.email.prod.*'],
+    ]);
+    expect(ch.consume.mock.calls.map(c => c[0])).toEqual(['giveaways.email.send', 'affiliate-emails-prod']);
     expect(ch.prefetch).toHaveBeenCalledWith(7);
     expect(ch.consume.mock.calls[0][0]).toBe('giveaways.email.send');
     expect(ch.consume.mock.calls[0][2]).toEqual({ noAck: false });
@@ -247,7 +253,7 @@ describe('giveawayRabbitConsumer — message handling', () => {
     const conn = await started();
     deliver(conn, valid);
     await until(settled(conn));
-    expect(m.ingest).toHaveBeenCalledWith(valid);
+    expect(m.ingest).toHaveBeenCalledWith(valid, 'GIVEAWAY');
     expect(m.set).toHaveBeenCalledWith('giveaway:email:g-1', '1', 'NX', 'EX', 604800);
     expect(m.sendMail).not.toHaveBeenCalled();
     expect(events()[0]).toMatchObject({ outcome: 'received' });
@@ -269,7 +275,7 @@ describe('giveawayRabbitConsumer — message handling', () => {
     const conn = await started({ GIVEAWAY_SEND_ENABLED: 'true' });
     deliver(conn, valid);
     await until(settled(conn));
-    expect(m.onEvent).toHaveBeenCalledWith({ giveawayType: 'winner', unifiedId: 5, eventId: 'g-1' });
+    expect(m.onEvent).toHaveBeenCalledWith({ giveawayType: 'winner', unifiedId: 5, eventId: 'g-1', source: 'GIVEAWAY' });
     expect(m.set).not.toHaveBeenCalled();
     expect(m.sendMail).not.toHaveBeenCalled();
     expect(events()[0].outcome).toBe('journey_handled');

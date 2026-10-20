@@ -5,6 +5,68 @@
  */
 export type GiveawayType = 'participation' | 'eligible' | 'winner' | 'loser';
 
+/**
+ * Affiliate feed event types. The affiliate app publishes to the same exchange with routing
+ * key `affiliate.email.<env>.<type>`; its messages carry DATA blocks, not a rendered email.
+ */
+export type AffiliateType = 'joined' | 'coupon_assigned' | 'commission_assigned' | 'link_generated' | 'card_offer_generated';
+
+/** Which RabbitMQ feed a message came from (first segment of its routing key). */
+export type GiveawayFeedSource = 'GIVEAWAY' | 'AFFILIATE';
+
+/** The affiliate data block that accompanies each affiliate type. */
+export type AffiliateBlockKey = 'coupon' | 'commission' | 'link' | 'cardOffer';
+
+/** coupon.discounts[] entry (affiliate `joined` / `coupon_assigned`). */
+export interface AffiliateCouponDiscount {
+  value?: unknown;
+  discountType?: unknown;
+  maxDiscountValue?: unknown;
+  maxDiscountCurrency?: unknown;
+  amountCurrency?: unknown;
+}
+
+export interface AffiliateCoupon {
+  couponId?: unknown;
+  code?: unknown;
+  validFrom?: unknown;
+  validUntil?: unknown;
+  maxTotalRedemptions?: unknown;
+  maxPerUser?: unknown;
+  discounts?: AffiliateCouponDiscount[];
+}
+
+export interface AffiliateCommission {
+  ratePercent?: unknown;
+  previousRatePercent?: unknown;
+  effectiveFrom?: unknown;
+}
+
+export interface AffiliateLink {
+  linkId?: unknown;
+  slug?: unknown;
+  trackingUrl?: unknown;
+  destinationUrl?: unknown;
+  campaignSource?: unknown;
+  campaignMedium?: unknown;
+  campaignName?: unknown;
+}
+
+export interface AffiliateCardOffer {
+  offerId?: unknown;
+  title?: unknown;
+  subTitle?: unknown;
+  code?: unknown;
+  bankName?: unknown;
+  discount?: unknown;
+  discountType?: unknown;
+  minOrderValue?: unknown;
+  maxDiscountCap?: unknown;
+  currency?: unknown;
+  amountCurrency?: unknown;
+  validUntil?: unknown;
+}
+
 export interface GiveawayRecipient {
   email?: string;
   name?: string;
@@ -31,6 +93,12 @@ export interface GiveawayMessage {
   bodyFormat?: string;
   createdAt?: string;
   data?: GiveawayEventData;
+  // ── AFFILIATE feed (top-level blocks; exactly one is present, selected by `type`) ──
+  userTenantId?: string | number;
+  coupon?: AffiliateCoupon;
+  commission?: AffiliateCommission;
+  link?: AffiliateLink;
+  cardOffer?: AffiliateCardOffer;
 }
 
 export type GiveawayValidation = { ok: true } | { ok: false; reason: string };

@@ -9,7 +9,7 @@ vi.mock('@/lib/api');
 const preview = vi.mocked(api.previewSegmentCount);
 const create = vi.mocked(api.createCustomSegment);
 
-interface SentCondition { type?: string; field?: string; operator?: string; value?: unknown; countValue?: unknown }
+interface SentCondition { type?: string; field?: string; operator?: string; value?: unknown; countValue?: unknown; giveawaySource?: string; giveawayType?: string }
 const lastPreviewConditions = (): SentCondition[] => preview.mock.calls[preview.mock.calls.length - 1][0] as SentCondition[];
 
 beforeEach(() => {
@@ -141,6 +141,35 @@ describe('CreateSegmentModal', () => {
     fireEvent.click(screen.getByText('Save as draft'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Big spenders', status: 'draft' }));
+  });
+
+  it('giveaway / affiliate rule: the feed picker narrows the type list and is sent with the rule', async () => {
+    render(<CreateSegmentModal onClose={() => {}} />);
+    fireEvent.click(screen.getByText('Giveaway / Affiliate'));
+    const typeSelect = screen.getByLabelText('Event type') as HTMLSelectElement;
+    const options = () => Array.from(typeSelect.options).map(o => o.value);
+    // 'Any' feed lists both feeds' types.
+    expect(screen.getByRole('button', { name: 'Any' }).getAttribute('aria-pressed')).toBe('true');
+    expect(options()).toEqual(expect.arrayContaining(['winner', 'joined', 'card_offer_generated']));
+    fireEvent.change(typeSelect, { target: { value: 'winner' } });
+    // Switching feed clears the type and lists only that feed's types.
+    fireEvent.click(screen.getByRole('button', { name: 'Affiliate' }));
+    expect(typeSelect.value).toBe('');
+    expect(options()).toEqual(['', 'joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated']);
+    expect(screen.getByText('coupon assigned')).toBeTruthy();
+    fireEvent.change(typeSelect, { target: { value: 'coupon_assigned' } });
+    expect(screen.getByText('had an affiliate "coupon assigned" event')).toBeTruthy();
+    await waitFor(() => expect(lastPreviewConditions()[0]).toMatchObject({ type: 'giveaway_affiliate', giveawaySource: 'AFFILIATE', giveawayType: 'coupon_assigned' }), { timeout: 2000 });
+  });
+
+  it('a legacy "giveaway" rule opens in the merged editor with the Any feed', () => {
+    render(<CreateSegmentModal onClose={() => {}} segment={{
+      id: 8, name: 'Winners', description: null,
+      conditions: [{ type: 'giveaway', giveawayType: 'winner' }],
+    }} />);
+    expect(screen.getByRole('button', { name: 'Any' }).getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByLabelText('Event type') as HTMLSelectElement).value).toBe('winner');
+    expect(screen.getByText('had a giveaway or affiliate "winner" event')).toBeTruthy();
   });
 
   it('incomplete rules are flagged and preview failure offers a retry', async () => {

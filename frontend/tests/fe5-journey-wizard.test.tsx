@@ -235,6 +235,31 @@ describe('Create journey wizard', () => {
     });
   });
 
+  it('continuous affiliate journey: affiliate types, its own validation, and triggerSource affiliate', async () => {
+    await openWizard();
+    fillBasics('Affiliate onboarding', '');
+    next();
+    fireEvent.click(screen.getByRole('radio', { name: /Whenever something happens/ }));
+    fireEvent.click(btn('Affiliate'));
+    expect(screen.queryByRole('button', { name: /winner/ })).toBeNull();
+    next();
+    expect(screen.getByText('Pick at least one affiliate type.')).toBeTruthy();
+    fireEvent.click(btn(/^joined$/));
+    fireEvent.click(btn(/coupon assigned/));
+    expect(screen.getByText(/on the affiliate portal enters/)).toBeTruthy();
+    next();
+    await pickSegment(/VIP travellers/);
+    next();
+    await addWaitNode();
+    next();
+    expect(bodyText()).toContain('Affiliate event');
+    expect(bodyText()).toContain('joined / coupon assigned');
+    fireEvent.click(btn('Create journey'));
+    await waitFor(() => expect(api.createJourney).toHaveBeenCalledTimes(1));
+    const payload = vi.mocked(api.createJourney).mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ journeyType: 'continuous', triggerSource: 'affiliate', triggerEvent: 'joined,coupon_assigned' });
+  });
+
   it('keeps the wizard open and shows the error when create fails', async () => {
     vi.mocked(api.createJourney).mockRejectedValue(new Error('Segment snapshot failed'));
     await openWizard();

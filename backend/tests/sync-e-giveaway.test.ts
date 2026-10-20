@@ -100,7 +100,7 @@ describe('ingestGiveawayEvent', () => {
     m.clientQuery.mockImplementation(async (sql: string): Promise<Q> => {
       if (sql.startsWith('SELECT id, sources')) return { rows: found ? [found] : [] };
       if (sql.includes('INSERT INTO unified_contacts')) return { rows: [{ id: 500 }] };
-      if (sql.includes('INSERT INTO giveaway_events')) return { rows: [], rowCount: inserted };
+      if (sql.includes('INSERT INTO giveaway_affiliate_events')) return { rows: [], rowCount: inserted };
       return { rows: [], rowCount: 1 };
     });
   const sqls = () => m.clientQuery.mock.calls.map(c => c[0].trim().split(/\s+/).slice(0, 3).join(' '));
@@ -111,12 +111,14 @@ describe('ingestGiveawayEvent', () => {
     expect(r).toEqual({ unifiedId: 500, stored: true });
     expect(sqls()[0]).toBe('BEGIN');
     expect(m.clientQuery.mock.calls[1]).toEqual([expect.stringContaining('pg_advisory_xact_lock'), ['win@x.test']]);
-    expect(m.clientQuery.mock.calls.find(c => c[0].includes('INSERT INTO unified_contacts'))?.[1]).toEqual(['win@x.test', 'Win']);
-    const ev = m.clientQuery.mock.calls.find(c => c[0].includes('giveaway_events'))![1]!;
-    expect(ev.slice(0, 8)).toEqual(['u-1', 1, 'winner', '3', 'g9', 500, 'win@x.test', 'Win']);   // empty user.name → to.name
-    expect(ev[14]).toBe('0');     // prize value 0 kept (not null)
-    expect(ev[15]).toBe(1);       // rank '1st' → 1
-    expect(JSON.parse(String(ev[26]))).toMatchObject({ id: 'u-1' });
+    expect(m.clientQuery.mock.calls.find(c => c[0].includes('INSERT INTO unified_contacts'))?.[1]).toEqual(['win@x.test', 'Win', 'giveaway']);
+    const ev = m.clientQuery.mock.calls.find(c => c[0].includes('giveaway_affiliate_events'))![1]!;
+    expect(ev.slice(0, 9)).toEqual(['u-1', 1, 'winner', 'GIVEAWAY', '3', 'g9', 500, 'win@x.test', 'Win']);   // empty user.name → to.name
+    expect(ev[15]).toBe('0');     // prize value 0 kept (not null)
+    expect(ev[16]).toBe(1);       // rank '1st' → 1
+    expect(JSON.parse(String(ev[27]))).toMatchObject({ id: 'u-1' });
+    expect(ev).toHaveLength(51);
+    expect(ev.slice(28)).toEqual(Array(23).fill(null));   // affiliate-only columns stay null
     expect(sqls().at(-1)).toBe('COMMIT');
     expect(m.release).toHaveBeenCalledTimes(1);
   });
@@ -124,7 +126,7 @@ describe('ingestGiveawayEvent', () => {
   it('existing contact without giveaway source → appends source; with it → no UPDATE', async () => {
     route({ id: 7, sources: 'web, booking' });
     expect((await ingestGiveawayEvent(valid())).unifiedId).toBe(7);
-    expect(m.clientQuery.mock.calls.filter(c => c[0].includes('UPDATE unified_contacts'))[0][1]).toEqual([7]);
+    expect(m.clientQuery.mock.calls.filter(c => c[0].includes('UPDATE unified_contacts'))[0][1]).toEqual([7, 'giveaway']);
     m.clientQuery.mockClear();
     route({ id: 7, sources: 'web, giveaway' });
     await ingestGiveawayEvent(valid());
@@ -136,14 +138,51 @@ describe('ingestGiveawayEvent', () => {
     const r = await ingestGiveawayEvent({ id: 'x', type: 'loser' });
     expect(r).toEqual({ unifiedId: null, stored: false });
     expect(m.clientQuery.mock.calls.some(c => c[0].includes('advisory'))).toBe(false);
-    const ev = m.clientQuery.mock.calls.find(c => c[0].includes('giveaway_events'))![1]!;
+    const ev = m.clientQuery.mock.calls.find(c => c[0].includes('giveaway_affiliate_events'))![1]!;
     expect(ev[1]).toBe(1);      // version defaults to 1
-    expect(ev[3]).toBe('');     // tenantId missing → ''
+    expect(ev[3]).toBe('GIVEAWAY');   // source defaults to the giveaway feed
+    expect(ev[4]).toBe('');     // tenantId missing → ''
+  });
+
+  it('affiliate message → tags the contact "affiliate" and maps coupon onto shared + affiliate columns', async () => {
+    route({ id: 7, sources: 'web, giveaway' });
+    const aff: GiveawayMessage = {
+      version: 1, id: 'aff-1', type: 'coupon_assigned', tenantId: 'T1', userTenantId: 'UT9',
+      to: { email: 'aff@x.test', name: 'Aff' },
+      coupon: { couponId: 'cp1', code: 'SAVE10', validFrom: '2026-10-01T00:00:00Z', validUntil: '2026-12-31', maxTotalRedemptions: '100', maxPerUser: 2,
+        discounts: [{ value: 10, discountType: 'percentage', maxDiscountValue: '50', maxDiscountCurrency: 'AED' }] },
+    };
+    expect(await ingestGiveawayEvent(aff, 'AFFILIATE')).toEqual({ unifiedId: 7, stored: true });
+    // A giveaway-only contact gets the affiliate tag appended.
+    expect(m.clientQuery.mock.calls.filter(c => c[0].includes('UPDATE unified_contacts'))[0][1]).toEqual([7, 'affiliate']);
+    const ev = m.clientQuery.mock.calls.find(c => c[0].includes('giveaway_affiliate_events'))![1]!;
+    expect(ev[3]).toBe('AFFILIATE');
+    expect(ev[15]).toBe('10');            // value ← discounts[0].value
+    expect(ev[17]).toBe('SAVE10');        // code ← coupon.code
+    expect(ev[20]).toBe('2026-12-31');    // expiry ← coupon.validUntil
+    expect(ev.slice(23, 26)).toEqual([null, null, null]);   // no subject/body/format
+    expect(ev.slice(28, 36)).toEqual(['UT9', 'cp1', '2026-10-01T00:00:00Z', 100, 2, 'percentage', 50, 'AED']);
+  });
+
+  it('affiliate commission / link / cardOffer blocks fill their own columns', async () => {
+    route(null);
+    await ingestGiveawayEvent({
+      version: 1, id: 'aff-2', type: 'card_offer_generated', to: { email: 'c@x.test' },
+      commission: { ratePercent: '7.5', previousRatePercent: 5, effectiveFrom: '2026-11-01' },
+      link: { linkId: 'L1', slug: 'abc', trackingUrl: 'https://t', destinationUrl: 'https://d', campaignSource: 's', campaignMedium: 'm', campaignName: 'n' },
+      cardOffer: { offerId: 'O1', title: 'Bank deal', subTitle: 'sub', code: 'BANK5', bankName: 'ENBD', discount: 5, minOrderValue: '200', maxDiscountCap: 'x' },
+    }, 'AFFILIATE');
+    expect(m.clientQuery.mock.calls.find(c => c[0].includes('INSERT INTO unified_contacts'))?.[1]).toEqual(['c@x.test', null, 'affiliate']);
+    const ev = m.clientQuery.mock.calls.find(c => c[0].includes('giveaway_affiliate_events'))![1]!;
+    expect(ev.slice(15, 21)).toEqual(['5', null, 'BANK5', 'Bank deal', 'BANK5', null]);
+    expect(ev.slice(36, 39)).toEqual([7.5, 5, '2026-11-01']);
+    expect(ev.slice(39, 46)).toEqual(['L1', 'abc', 'https://t', 'https://d', 's', 'm', 'n']);
+    expect(ev.slice(46)).toEqual(['O1', 'sub', 'ENBD', 200, null]);   // non-numeric cap → null
   });
 
   it('DB error → ROLLBACK, release, rethrow', async () => {
     m.clientQuery.mockImplementation(async (sql: string): Promise<Q> => {
-      if (sql.includes('giveaway_events')) throw new Error('constraint');
+      if (sql.includes('giveaway_affiliate_events')) throw new Error('constraint');
       if (sql.includes('INSERT INTO unified_contacts')) return { rows: [{ id: 1 }] };
       return { rows: [] };
     });
@@ -256,10 +295,10 @@ type Handler = (msg: ConsumeMessage | null) => void;
 describe('giveawayRabbitConsumer', () => {
   const ORIG = process.env.GIVEAWAY_RABBITMQ_URL;
   let handler: Handler;
-  const msg = (body: string): ConsumeMessage => ({ content: Buffer.from(body), fields: {}, properties: {} } as unknown as ConsumeMessage);
+  const msg = (body: string, routingKey?: string): ConsumeMessage => ({ content: Buffer.from(body), fields: routingKey ? { routingKey } : {}, properties: {} } as unknown as ConsumeMessage);
   // handle() is fire-and-forget inside consume; flush microtasks until ack/nack lands.
-  const deliver = async (body: string) => {
-    const mm = msg(body);
+  const deliver = async (body: string, routingKey?: string) => {
+    const mm = msg(body, routingKey);
     handler(mm);
     for (let i = 0; i < 50 && !m.ch.ack.mock.calls.length && !m.ch.nack.mock.calls.length; i++) await new Promise(r => setImmediate(r));
     return mm;
@@ -269,7 +308,7 @@ describe('giveawayRabbitConsumer', () => {
   beforeEach(async () => {
     process.env.GIVEAWAY_RABBITMQ_URL = 'amqp://127.0.0.1:1';
     await startGiveawayRabbitConsumer();
-    handler = m.ch.consume.mock.calls.at(-1)![1] as Handler;
+    handler = m.ch.consume.mock.calls.find(c => c[0] === 'giveaways.email.send')![1] as Handler;
     m.ch.ack.mockClear(); m.ch.nack.mockClear(); m.multi.lpush.mockClear();
   });
   afterEach(async () => { await stopGiveawayRabbitConsumer(); process.env.GIVEAWAY_RABBITMQ_URL = ORIG; });
@@ -281,8 +320,38 @@ describe('giveawayRabbitConsumer', () => {
     expect(m.ch.bindQueue).toHaveBeenCalledWith('giveaways.email.send', 'giveaways', 'giveaway.email.prod.*');
     expect(m.ch.bindQueue).toHaveBeenCalledWith('giveaways.email.dlq', 'giveaways.dlx', '');
     expect(m.ch.prefetch).toHaveBeenCalledWith(10);
-    expect(m.ch.consume.mock.calls.at(-1)![0]).toBe('giveaways.email.send');
-    expect(m.ch.consume.mock.calls.at(-1)![2]).toEqual({ noAck: false });
+    expect(m.ch.consume.mock.calls.map(c => c[0])).toEqual(['giveaways.email.send', 'affiliate-emails-prod']);
+    for (const c of m.ch.consume.mock.calls) expect(c[2]).toEqual({ noAck: false });
+  });
+
+  it('declares the affiliate queue on the same exchange, bound to the prod key only, sharing the DLX', () => {
+    expect(m.ch.assertQueue).toHaveBeenCalledWith('affiliate-emails-prod', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx' } });
+    expect(m.ch.bindQueue).toHaveBeenCalledWith('affiliate-emails-prod', 'giveaways', 'affiliate.email.prod.*');
+  });
+
+  it('affiliate message → ingested + journey with source AFFILIATE, never sends directly, ack', async () => {
+    m.ingest.mockResolvedValue({ unifiedId: 5, stored: true });
+    const aff = { version: 1, id: 'a-1', type: 'joined', to: { email: 'aff@x.test' }, coupon: { code: 'X' } };
+    await deliver(JSON.stringify(aff), 'affiliate.email.prod.joined');
+    expect(m.ingest).toHaveBeenCalledWith(aff, 'AFFILIATE');
+    expect(m.onEvent).toHaveBeenCalledWith({ giveawayType: 'joined', unifiedId: 5, eventId: 'a-1', source: 'AFFILIATE' });
+    expect(m.sendMail).not.toHaveBeenCalled();
+    expect(m.redisSet).not.toHaveBeenCalled();
+    expect(m.ch.ack).toHaveBeenCalledTimes(1);
+    expect(lastEvent()).toMatchObject({ outcome: 'stored' });
+  });
+
+  it('affiliate contract: no subject/body needed, but the type block is; giveaway types are poison', async () => {
+    await deliver(JSON.stringify({ version: 1, id: 'a-2', type: 'commission_assigned', to: { email: 'a@x.test' } }), 'affiliate.email.prod.commission_assigned');
+    expect(lastEvent()).toMatchObject({ outcome: 'poison', reason: 'missing_block:commission' });
+    await deliver(JSON.stringify({ version: 1, id: 'a-3', type: 'winner', to: { email: 'a@x.test' } }), 'affiliate.email.prod.winner');
+    expect(lastEvent()).toMatchObject({ outcome: 'poison', reason: 'bad_type:winner' });
+    expect(m.ingest).not.toHaveBeenCalled();
+  });
+
+  it('affiliate types are poison on the giveaway feed', async () => {
+    await deliver(JSON.stringify(valid({ type: 'joined' })));
+    expect(lastEvent()).toMatchObject({ outcome: 'poison', reason: 'bad_type:joined' });
   });
 
   it('no URL → stays idle, never connects', async () => {
@@ -326,7 +395,7 @@ describe('giveawayRabbitConsumer', () => {
     m.ingest.mockResolvedValue({ unifiedId: 5, stored: true });
     m.onEvent.mockResolvedValue(1);
     await deliver(JSON.stringify(valid()));
-    expect(m.onEvent).toHaveBeenCalledWith({ giveawayType: 'winner', unifiedId: 5, eventId: 'u-1' });
+    expect(m.onEvent).toHaveBeenCalledWith({ giveawayType: 'winner', unifiedId: 5, eventId: 'u-1', source: 'GIVEAWAY' });
     expect(m.sendMail).not.toHaveBeenCalled();
     expect(m.redisSet).not.toHaveBeenCalled();
     expect(lastEvent().outcome).toBe('journey_handled');

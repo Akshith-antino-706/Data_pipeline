@@ -66,6 +66,16 @@ describe('JourneyService.create / update / node CRUD', () => {
     // no segment → no snapshot build
     expect(calls('snapshot_count = -1')).toHaveLength(0);
   });
+  it('create: accepts the affiliate credential and trigger source; unknown source falls back to gtm', async () => {
+    route([['INSERT INTO journey_flows', () => rows([{ journey_id: 3 }])]]);
+    await JourneyService.create({ name: 'A', journeyType: 'continuous', triggerEvent: 'joined', emailCredential: 'affiliate', triggerSource: 'affiliate' });
+    await JourneyService.create({ name: 'B', journeyType: 'continuous', triggerEvent: 'x', triggerSource: 'bogus' });
+    const [a, b] = calls('INSERT INTO journey_flows').map(c => c[1] ?? []);
+    expect(a[20]).toBe('affiliate');
+    expect(a[21]).toBe('affiliate');
+    expect(b[20]).toBe('default');
+    expect(b[21]).toBe('gtm');
+  });
   it('create: fixed journey ignores trigger + from-date; empty nodes/edges stored as []', async () => {
     route([['INSERT INTO journey_flows', () => rows([{ journey_id: 1 }])]]);
     await JourneyService.create({ name: 'F', journeyType: 'fixed', triggerEvent: 'view_item', triggerFromDate: '2026-01-01', exitOnConversion: false });

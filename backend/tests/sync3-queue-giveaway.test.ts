@@ -301,7 +301,7 @@ describe('giveawayIngest', () => {
     const c = client(async (sql) => {
       if (sql.startsWith('SELECT id')) return { rows: [] };
       if (sql.includes('INSERT INTO unified_contacts')) return { rows: [{ id: 55 }] };
-      if (sql.includes('INSERT INTO giveaway_events')) return { rows: [], rowCount: 1 };
+      if (sql.includes('INSERT INTO giveaway_affiliate_events')) return { rows: [], rowCount: 1 };
       return { rows: [] };
     });
     st.poolConnect.mockResolvedValue(c);
@@ -311,13 +311,14 @@ describe('giveawayIngest', () => {
     expect(sqls[0]).toBe('BEGIN');
     expect(sqls[1]).toContain('pg_advisory_xact_lock');
     expect(sqls.at(-1)).toBe('COMMIT');
-    const ev = c.query.mock.calls.find(x => x[0].includes('giveaway_events'))?.[1] ?? [];
-    expect(ev[3]).toBe('7');           // tenant id stringified
-    expect(ev[7]).toBe('Ann');         // empty user.name falls back to to.name
-    expect(ev[14]).toBe('0');          // prize value 0 kept
-    expect(ev[15]).toBe(3);            // rank '#3rd' → 3
-    expect(ev[20]).toBe('2');
-    expect(JSON.parse(String(ev[26]))).toEqual(msg);
+    const ev = c.query.mock.calls.find(x => x[0].includes('giveaway_affiliate_events'))?.[1] ?? [];
+    expect(ev[3]).toBe('GIVEAWAY');    // source column
+    expect(ev[4]).toBe('7');           // tenant id stringified
+    expect(ev[8]).toBe('Ann');         // empty user.name falls back to to.name
+    expect(ev[15]).toBe('0');          // prize value 0 kept
+    expect(ev[16]).toBe(3);            // rank '#3rd' → 3
+    expect(ev[21]).toBe('2');
+    expect(JSON.parse(String(ev[27]))).toEqual(msg);
     expect(c.release).toHaveBeenCalled();
   });
 
@@ -347,7 +348,7 @@ describe('giveawayIngest', () => {
   it('rolls back and releases on error, even if ROLLBACK itself fails', async () => {
     const c = client(async (sql) => {
       if (sql === 'ROLLBACK') throw new Error('rb');
-      if (sql.includes('giveaway_events')) throw new Error('insert boom');
+      if (sql.includes('giveaway_affiliate_events')) throw new Error('insert boom');
       return { rows: [{ id: 1, sources: null }] };
     });
     st.poolConnect.mockResolvedValue(c);

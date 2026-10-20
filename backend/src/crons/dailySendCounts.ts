@@ -71,7 +71,7 @@ export async function runDailySendCounts({ days = DEFAULT_DAYS }: { days?: numbe
     console.log(`[DailySendCounts] checked ${result.checked}, written ${result.written}, skipped ${result.skipped}`);
   } catch (err) {
     const e = err as { code?: string; message?: string };
-    result.error = e.code === '42P01' ? `${TARGET_TABLE} does not exist yet (run migration 118)` : (e.message ?? String(err));
+    result.error = e.code === '42P01' ? `${TARGET_TABLE} does not exist yet (run migration 119)` : (e.message ?? String(err));
     console.error('[DailySendCounts] Error:', result.error);
   }
   return result;

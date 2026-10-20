@@ -24,6 +24,7 @@ const m = vi.hoisted(() => ({
   markFailed: vi.fn<(id: unknown, a: Record<string, unknown>) => Promise<void>>(),
   skipRecord: vi.fn(),
   segRows: vi.fn<(j: unknown) => Promise<{ sql: string; params: unknown[] } | null>>(),
+  liquidRender: vi.fn<(tpl: string, vars: Record<string, unknown>) => Promise<string>>(),
 }));
 
 vi.mock('../src/config/database.js', () => ({ default: { query: m.query }, query: m.query, transaction: vi.fn() }));
@@ -43,7 +44,7 @@ vi.mock('../src/utils/reviewUrl.js', () => ({ buildReviewUrl: async () => 'https
 vi.mock('../src/services/channels/JourneyEmailSender.js', () => ({ sendJourneyEmail: m.sendEmail }));
 vi.mock('../src/services/SendTrackService.js', () => ({ SendTrackService: { logSend: m.logSend, markSent: m.markSent, markFailed: m.markFailed } }));
 vi.mock('../src/services/SkipLogService.js', () => ({ default: { record: m.skipRecord } }));
-vi.mock('../src/services/LiquidRenderer.js', () => ({ default: { render: async (t: string) => t } }));
+vi.mock('../src/services/LiquidRenderer.js', () => ({ default: { render: m.liquidRender } }));
 vi.mock('../src/services/JourneyService.js', () => ({ default: { _journeySegmentRows: m.segRows } }));
 vi.mock('../src/services/RecommendationRenderer.js', () => ({ injectPerUserProducts: vi.fn(), isRecipientAllowedForRec: () => true }));
 
@@ -83,6 +84,7 @@ beforeEach(() => {
   m.logSend.mockResolvedValue(101);
   m.markSent.mockResolvedValue(undefined);
   m.markFailed.mockResolvedValue(undefined);
+  m.liquidRender.mockImplementation(async (t: string) => t);
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -267,7 +269,7 @@ describe('GtmJourneyService.processJob (email/WA/RCS node send)', () => {
     route([
       ...extra,
       ['FROM unified_contacts WHERE id = $1', () => [c]],
-      ['FROM giveaway_events', () => []],
+      ['FROM giveaway_affiliate_events', () => []],
       ['FROM gtm_events WHERE event_id', () => []],
       ['SELECT nodes, edges, email_credential', () => [{ ...flow, email_credential: cred }]],
       ['SELECT nodes, edges FROM journey_flows', () => [flow]],
@@ -311,6 +313,26 @@ describe('GtmJourneyService.processJob (email/WA/RCS node send)', () => {
     expect(m.releaseSend).toHaveBeenCalledTimes(1);
     expect(m.markFailed).toHaveBeenCalledTimes(1);
     expect(calls('SET current_node_id=$2')).toHaveLength(0);
+  });
+  it('affiliate trigger row: flat affiliate vars + nested payload blocks reach Liquid (body and dotted subject)', async () => {
+    base([
+      ['FROM giveaway_affiliate_events', () => [{ source: 'AFFILIATE', raw_payload: { coupon: { code: 'SAVE10' }, commission: { ratePercent: 7.5 }, to: { name: 'Aff' } },
+        code: 'SAVE10', expiry: '2026-12-31', value: '10', commission_rate: '7.5', tracking_url: 'https://t.example/abc', bank_name: 'ENBD' }]],
+      ['FROM content_templates', () => [{ subject: 'Hi {{ to.name }}', body: '<html><body>{% if coupon_code %}Use {{ coupon_code }}{% endif %}</body></html>', html_template_id: null }]],
+    ], contact, FLOW, 'affiliate');
+    m.sendEmail.mockResolvedValue({ success: true, provider: 'affiliate-smtp', externalId: 'X1' });
+    await GtmJourneyService.processJob({ entryId: 1, journeyId: 7, unifiedId: 10, nodeId: 'a1', itemId: 'aff-1' });
+    expect(m.sendEmail.mock.calls[0][0].emailCredential).toBe('affiliate');
+    expect(String(calls('FROM giveaway_affiliate_events')[0][0])).toContain('raw_payload');
+    // Body (has {% %}) and the dotted-path subject both render through Liquid with the same vars.
+    const tpls = m.liquidRender.mock.calls.map(c => c[0]);
+    expect(tpls).toContain('Hi {{ to.name }}');
+    const vars = m.liquidRender.mock.calls[0][1];
+    expect(vars).toMatchObject({
+      coupon_code: 'SAVE10', valid_until: '2026-12-31', discount_value: '10', commission_rate: '7.5',
+      tracking_url: 'https://t.example/abc', bank_name: 'ENBD', giveaway: '',
+      coupon: { code: 'SAVE10' }, commission: { ratePercent: 7.5 }, to: { name: 'Aff' }, link: {}, cardOffer: {},
+    });
   });
   it('frequency cap: skip + advance, nothing logged', async () => {
     base();

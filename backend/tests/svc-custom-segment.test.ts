@@ -176,14 +176,33 @@ describe('CustomSegmentService.buildWhereClause — gtm / giveaway', () => {
   it('giveaway with type/name and no count → EXISTS; nothing → none', () => {
     const r = one({ type: 'giveaway', giveawayType: 'winner', giveawayName: 'Ramadan' });
     expect(r.params).toEqual(['winner', 'Ramadan']);
-    expect(r.clauseItems[0].clause).toContain('EXISTS (SELECT 1 FROM giveaway_events');
+    expect(r.clauseItems[0].clause).toContain('EXISTS (SELECT 1 FROM giveaway_affiliate_events');
     expect(one({ type: 'giveaway' }).clauseItems).toHaveLength(0);
+  });
+
+  it('giveaway_affiliate behaves like legacy giveaway; source filter is upper-cased, "any" adds none', () => {
+    const legacy = one({ type: 'giveaway', giveawayType: 'winner' });
+    const merged = one({ type: 'giveaway_affiliate', giveawayType: 'winner' });
+    expect(merged).toEqual(legacy);
+    expect(merged.clauseItems[0].clause).not.toContain('gv.source');
+
+    const aff = one({ type: 'giveaway_affiliate', giveawaySource: 'affiliate', giveawayType: 'coupon_assigned' });
+    expect(aff.params).toEqual(['AFFILIATE', 'coupon_assigned']);
+    expect(aff.clauseItems[0].clause).toBe('EXISTS (SELECT 1 FROM giveaway_affiliate_events gv WHERE gv.unified_id = uc.id AND gv.source = $1 AND gv.type = $2)');
+
+    expect(one({ type: 'giveaway_affiliate', giveawaySource: 'any', giveawayType: 'joined' }).params).toEqual(['joined']);
+  });
+
+  it('giveaway_affiliate count with a source counts only that feed', () => {
+    const r = one({ type: 'giveaway_affiliate', giveawaySource: 'GIVEAWAY', countValue: 2 });
+    expect(r.params).toEqual(['GIVEAWAY', 2]);
+    expect(r.clauseItems[0].clause).toBe('(SELECT COUNT(*) FROM giveaway_affiliate_events gv WHERE gv.unified_id = uc.id AND gv.source = $1) >= $2');
   });
 
   it('giveaway windowDays only applies the window via EXISTS (params match placeholders)', () => {
     const r = one({ type: 'giveaway', windowDays: 5 });
     expect(r.clauseItems).toHaveLength(1);
-    expect(r.clauseItems[0].clause).toContain('EXISTS (SELECT 1 FROM giveaway_events gv');
+    expect(r.clauseItems[0].clause).toContain('EXISTS (SELECT 1 FROM giveaway_affiliate_events gv');
     expect(r.clauseItems[0].clause).toContain('$1');
     expect(r.params).toEqual([5]);
   });

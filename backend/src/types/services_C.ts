@@ -2,6 +2,7 @@
  * Type-only definitions for GTMService, GiveawayJourneyService, JourneyStatsService,
  * JourneyTemplateQAService and SegmentEngine.
  */
+import type { GiveawayFeedSource } from './giveaway.js';
 
 /** One item inside a GTM ecommerce payload. */
 export interface GtmEcommerceItem {
@@ -79,6 +80,8 @@ export interface GiveawayEventInput {
   giveawayType?: string | null;
   unifiedId?: string | number | null;
   eventId?: string | number | null;
+  /** Feed the event came from; defaults to 'GIVEAWAY'. */
+  source?: GiveawayFeedSource;
 }
 
 /** Journey node as read for stats display. */

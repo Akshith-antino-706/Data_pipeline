@@ -175,7 +175,7 @@ async function waSmsSeries(): Promise<{ wa: Map<string, number>; sms: Map<string
 }
 
 /**
- * Finished-day totals from daily_send_counts (migration 118), keyed by YYYY-MM-DD. Only days
+ * Finished-day totals from daily_send_counts (migration 119), keyed by YYYY-MM-DD. Only days
  * with all three channels are used. Missing table / any error → empty map (live counting).
  */
 async function storedDailyCounts(): Promise<Map<string, { email: number; whatsapp: number; sms: number }>> {

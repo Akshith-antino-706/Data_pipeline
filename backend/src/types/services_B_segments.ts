@@ -13,6 +13,8 @@ export interface SegmentCondition {
   gtmEvent?: string;
   giveawayType?: string;
   giveawayName?: string;
+  // Feed filter for giveaway/affiliate conditions: 'any' (or unset) counts both feeds.
+  giveawaySource?: 'any' | 'GIVEAWAY' | 'AFFILIATE' | string;
   windowDays?: string | number;
   countOp?: string;
   countValue?: SegmentScalar | SegmentScalar[];
