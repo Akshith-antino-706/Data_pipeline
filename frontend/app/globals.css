@@ -447,12 +447,8 @@
 }
 
 /* ── Nav ─────────────────────────────────────────────────── */
-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-}
+/* No bare `nav` rule: it made every <nav> (breadcrumbs, pagers) a vertical
+   column. The sidebar is styled by .shell-nav. */
 .nav-item {
   display: flex;
   align-items: center;

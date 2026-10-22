@@ -30,25 +30,23 @@ const ACTIVE_UNSUB = ['active', 'unsubscribed'];
 /** Every select filter the list API accepts, grouped like the design's "Add filter" menu. */
 export const FILTER_GROUPS: { label: string; items: SelectDef[] }[] = [
   { label: 'Booking', items: [
-    { key: 'bookingStatus', label: 'Booking status', options: o => o?.bookingStatuses || [] },
+    { key: 'bookingStatus', label: 'Status', options: o => o?.bookingStatuses || [] },
     { key: 'hasBookings', label: 'Has bookings', options: () => YES_NO, labels: ['Yes', 'No'] },
     { key: 'productTier', label: 'Tier', options: o => o?.productTiers || [] },
-  ] },
-  { label: 'Location', items: [
-    { key: 'country', label: 'Country', options: o => o?.countries || [] },
-    { key: 'geography', label: 'Geography', options: o => o?.geographies || [] },
   ] },
   { label: 'Contact', items: [
     { key: 'contactType', label: 'Type', options: o => o?.contactTypes || [] },
     { key: 'source', label: 'Source', options: o => o?.sources || [] },
   ] },
-  { label: 'Messaging', items: [
-    { key: 'emailStatus', label: 'Email status', options: () => ACTIVE_UNSUB, labels: ['Active', 'Unsubscribed'] },
-    { key: 'waStatus', label: 'WhatsApp status', options: () => ACTIVE_UNSUB, labels: ['Active', 'Unsubscribed'] },
+  { label: 'Location', items: [
+    { key: 'country', label: 'Country', options: o => o?.countries || [] },
+    { key: 'geography', label: 'Geography', options: o => o?.geographies || [] },
   ] },
-  { label: 'Chats', items: [
+  { label: 'Messaging & chats', items: [
+    { key: 'emailStatus', label: 'Email', options: () => ACTIVE_UNSUB, labels: ['Active', 'Unsubscribed'] },
+    { key: 'waStatus', label: 'WhatsApp', options: () => ACTIVE_UNSUB, labels: ['Active', 'Unsubscribed'] },
     { key: 'hasChats', label: 'Has chats', options: () => YES_NO, labels: ['Yes', 'No'] },
-    { key: 'chatDepartment', label: 'Chat department', options: () => ['B2B', 'B2C'] },
+    { key: 'chatDepartment', label: 'Chat dept', options: () => ['B2B', 'B2C'] },
   ] },
 ];
 
@@ -88,17 +86,23 @@ export function ContactFilterPanel({ filters, options, onChange }: PanelProps) {
         </FilterGroup>
       ))}
       <FilterGroup label="Dates">
-        <DateRangeFilter label="Booking date" from={filters.bookingDateFrom} to={filters.bookingDateTo}
+        <DateRangeFilter label="Booked" from={filters.bookingDateFrom} to={filters.bookingDateTo}
           onFrom={v => onChange('bookingDateFrom', v)} onTo={v => onChange('bookingDateTo', v)} />
-        <DateRangeFilter label="Travel date" from={filters.travelDateFrom} to={filters.travelDateTo}
+        <DateRangeFilter label="Travel" from={filters.travelDateFrom} to={filters.travelDateTo}
           onFrom={v => onChange('travelDateFrom', v)} onTo={v => onChange('travelDateTo', v)} />
       </FilterGroup>
     </div>
   );
 }
 
+/** One column of the panel: a small heading, then label + control rows. */
 function FilterGroup({ label, children }: { label: string; children: ReactNode }) {
-  return (<><div className={s.filterGroup}>{label}</div>{children}</>);
+  return (
+    <section className={s.fgCol} aria-label={label}>
+      <h3 className={s.filterGroup}>{label}</h3>
+      {children}
+    </section>
+  );
 }
 
 interface FilterSelectProps { label: string; value: string; onChange: (v: string) => void; options: string[]; labels?: string[] }
@@ -126,10 +130,9 @@ function FilterSelect({ label, value, onChange, options, labels }: FilterSelectP
 
   return (
     <div ref={ref} className={s.fsWrap}>
-      <label className="ui-label" htmlFor={id}>{label}</label>
-      <button id={id} type="button" className={`ui-input ${s.fsButton}`} aria-haspopup="listbox" aria-expanded={open}
-        onClick={() => { setOpen(o => !o); setFilterText(''); }}
-        style={{ color: value ? 'var(--ink)' : 'var(--ink3)' }}>
+      <label className={s.fsLabel} htmlFor={id}>{label}</label>
+      <button id={id} type="button" className={`ui-input ${s.fsButton} ${value ? s.fsSet : ''}`} aria-haspopup="listbox" aria-expanded={open}
+        onClick={() => { setOpen(o => !o); setFilterText(''); }}>
         <span>{displayValue}</span>
         <ChevronDown size={14} aria-hidden="true" style={{ flexShrink: 0 }} />
       </button>
@@ -156,13 +159,16 @@ function FilterSelect({ label, value, onChange, options, labels }: FilterSelectP
 interface DateRangeFilterProps { label: string; from: string; to: string; onFrom: (v: string) => void; onTo: (v: string) => void }
 
 function DateRangeFilter({ label, from, to, onFrom, onTo }: DateRangeFilterProps) {
+  const idBase = useId();
   return (
-    <fieldset className={s.dateRange} style={{ border: 0, margin: 0, padding: 0 }}>
-      <legend className="ui-label" style={{ padding: 0, marginBottom: 6 }}>{label}</legend>
-      <div className={s.dateRow}>
-        <Input type="date" aria-label={`${label} from`} value={from} onChange={e => onFrom(e.target.value)} />
-        <Input type="date" aria-label={`${label} to`} value={to} onChange={e => onTo(e.target.value)} />
-      </div>
-    </fieldset>
+    <>
+      {([['from', from, onFrom], ['to', to, onTo]] as const).map(([end, value, set]) => (
+        <div key={end} className={s.fsWrap}>
+          <label className={s.fsLabel} htmlFor={`${idBase}-${end}`}>{label} {end}</label>
+          <Input id={`${idBase}-${end}`} type="date" className={`${s.dateIn} ${value ? s.fsSet : ''}`}
+            value={value} onChange={e => set(e.target.value)} />
+        </div>
+      ))}
+    </>
   );
 }

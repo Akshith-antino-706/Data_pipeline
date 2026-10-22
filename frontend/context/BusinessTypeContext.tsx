@@ -7,6 +7,8 @@ import type { Scope } from '@/types/api';
 export interface BusinessTypeContextValue {
   businessType: Scope;
   setBusinessType: Dispatch<SetStateAction<Scope>>;
+  /** True once the saved scope has been read from localStorage (after the first render). */
+  ready: boolean;
 }
 
 // undefined outside a provider, exactly like the old createContext() with no default.
@@ -21,12 +23,14 @@ const isScope = (v: string | null): v is Scope => v !== null && (SCOPES as strin
 
 export function BusinessTypeProvider({ children }: { children: ReactNode }) {
   const [businessType, setBusinessType] = useState<Scope>('B2C');
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem('business-type');
       if (isScope(stored)) setBusinessType(stored);
     } catch { /* ignore */ }
+    setReady(true);
   }, []);
 
   useEffect(() => {
@@ -34,7 +38,7 @@ export function BusinessTypeProvider({ children }: { children: ReactNode }) {
   }, [businessType]);
 
   return (
-    <BusinessTypeContext.Provider value={{ businessType, setBusinessType }}>
+    <BusinessTypeContext.Provider value={{ businessType, setBusinessType, ready }}>
       {children}
     </BusinessTypeContext.Provider>
   );

@@ -26,6 +26,14 @@ const fmtAED = (n: unknown) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 
 const fmtM = (n: unknown) => `AED ${(Number(n || 0) / 1000000).toFixed(2)}M`;
 const pct = (n: number | undefined, total: number | undefined) => { const v = ((n ?? 0) / (total ?? 0)) * 100; return (total ?? 0) > 0 && Number.isFinite(v) ? v.toFixed(1) + '%' : '0%'; };
 
+/** Short tag for a custom-segment condition. GTM / giveaway rules keep their detail outside `field`. */
+interface CondLike { type?: string; field?: string; gtmEvent?: string; giveawayType?: string; giveawayName?: string }
+const conditionLabel = (c: CondLike) => {
+  const words = (v?: string) => (v || '').replace(/_/g, ' ').trim();
+  if (c.type === 'gtm') return `GTM: ${words(c.gtmEvent) || 'event'}`;
+  if (c.type === 'giveaway') return `Giveaway: ${words(c.giveawayType) || words(c.giveawayName) || 'any'}`;
+  return words(c.field) || words(c.type) || 'rule';
+};
 const fmtDate = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 const today = new Date();
 const onTripFrom = new Date(); onTripFrom.setDate(today.getDate() - 7);
@@ -210,7 +218,10 @@ export default function CustomerSegmentation() {
   const expandedTitle = expandedStatus === GENERAL ? 'General' : expandedStatus ? segmentStatusMeta(expandedStatus).label : '';
 
   const cq = customQuery.toLowerCase();
-  const visibleCustom = customSegments.filter(seg => (seg.name ?? '').toLowerCase().includes(cq) || (seg.description || '').toLowerCase().includes(cq));
+  const matchingCustom = customSegments.filter(seg => (seg.name ?? '').toLowerCase().includes(cq) || (seg.description || '').toLowerCase().includes(cq));
+  // The overview shows the latest few; "View all" has the full list. A search covers every segment.
+  const OVERVIEW_LIMIT = 10;
+  const visibleCustom = cq ? matchingCustom : matchingCustom.slice(0, OVERVIEW_LIMIT);
 
   return (
     <div className={s.page}>
@@ -359,7 +370,7 @@ export default function CustomerSegmentation() {
           />
         ) : (
           <>
-            <div className={s.search} style={{ position: 'relative' }}>
+            <div className={s.search} style={{ position: 'relative', flex: 'none', width: '100%' }}>
               <Search size={14} aria-hidden="true" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink3)' }} />
               <Input aria-label="Search custom segments" placeholder="Search segments" value={customQuery} onChange={e => setCustomQuery(e.target.value)} style={{ paddingLeft: 34 }} />
             </div>
@@ -377,7 +388,7 @@ export default function CustomerSegmentation() {
                         <button type="button" className={s.nameBtn} onClick={e => { e.stopPropagation(); open(); }}>{seg.name}</button>
                         <div className={s.help}>{conds.length} condition{conds.length !== 1 ? 's' : ''}</div>
                         <div className={s.tags}>
-                          {conds.slice(0, 3).map((c, i) => <span key={i} className={s.tag}>{c.field?.replace(/_/g, ' ')}</span>)}
+                          {conds.slice(0, 3).map((c, i) => <span key={i} className={s.tag}>{conditionLabel(c)}</span>)}
                           {conds.length > 3 && <span className={s.help}>+{conds.length - 3} more</span>}
                         </div>
                       </td>
@@ -397,6 +408,12 @@ export default function CustomerSegmentation() {
                 {visibleCustom.length === 0 && <tr><td colSpan={5} className={s.note}>No segments match your search.</td></tr>}
               </tbody>
             </Table>
+            {!cq && matchingCustom.length > OVERVIEW_LIMIT && (
+              <div className={s.help} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                <span>Showing {OVERVIEW_LIMIT} of {matchingCustom.length.toLocaleString()} segments</span>
+                <Button variant="ghost" size="sm" onClick={() => router.push('/segmentation/all-segments')}>View all segments</Button>
+              </div>
+            )}
           </>
         )}
       </section>

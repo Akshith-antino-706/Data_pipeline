@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { getUnifiedContacts, getUnifiedStats, getUnifiedFilters, createUnifiedContact, deleteUnifiedContact } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { CONTACT_TYPES, CONTACT_TYPE_LABELS, SCOPE_DESCRIPTIONS } from '@/lib/contactTypes';
@@ -52,17 +52,56 @@ function pageList(page: number, totalPages: number): (number | null)[] {
   return out;
 }
 
-export default function UnifiedContacts() {
+const DEFAULT_SORT = 'last_seen_at';
+const DEFAULT_LIMIT = 20;
+const FILTER_KEYS = Object.keys(EMPTY_FILTERS) as ContactFilterKey[];
+
+/** List state ⇄ URL query string: ?q=&page=&limit=&sort=&dir=&<filter>=… (defaults left out). */
+function stateFromUrl(sp: URLSearchParams) {
+  const filters = { ...EMPTY_FILTERS };
+  for (const k of FILTER_KEYS) filters[k] = sp.get(k) || '';
+  const limit = Number(sp.get('limit'));
+  const sort = sp.get('sort') || '';
+  return {
+    search: sp.get('q') || '',
+    page: Math.max(1, Number(sp.get('page')) || 1),
+    limit: PAGE_SIZE_OPTIONS.includes(limit) ? limit : DEFAULT_LIMIT,
+    sortBy: SORT_LABELS[sort] ? sort : DEFAULT_SORT,
+    sortDir: sp.get('dir') === 'ASC' ? 'ASC' : 'DESC',
+    filters,
+  };
+}
+
+function urlFromState(st: ReturnType<typeof stateFromUrl>) {
+  const sp = new URLSearchParams();
+  if (st.search) sp.set('q', st.search);
+  for (const k of FILTER_KEYS) if (st.filters[k]) sp.set(k, st.filters[k]);
+  if (st.sortBy !== DEFAULT_SORT) sp.set('sort', st.sortBy);
+  if (st.sortDir !== 'DESC') sp.set('dir', st.sortDir);
+  if (st.limit !== DEFAULT_LIMIT) sp.set('limit', String(st.limit));
+  if (st.page > 1) sp.set('page', String(st.page));
+  return sp.toString();
+}
+
+// useSearchParams needs a Suspense boundary in the app router.
+export default function UnifiedContactsPage() {
+  return <Suspense fallback={null}><UnifiedContacts /></Suspense>;
+}
+
+function UnifiedContacts() {
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const [initial] = useState(() => stateFromUrl(new URLSearchParams(searchParams.toString())));
   const [contacts, setContacts] = useState<UnifiedContactRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<UnifiedStats | null>(null);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(initial.page);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState('');
-  const [searchInput, setSearchInput] = useState('');
-  const [sortBy, setSortBy] = useState('last_seen_at');
-  const [sortDir, setSortDir] = useState('DESC');
+  const [search, setSearch] = useState(initial.search);
+  const [searchInput, setSearchInput] = useState(initial.search);
+  const [sortBy, setSortBy] = useState(initial.sortBy);
+  const [sortDir, setSortDir] = useState(initial.sortDir);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -70,12 +109,13 @@ export default function UnifiedContacts() {
   const [addForm, setAddForm] = useState(EMPTY_ADD);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(() => FILTER_KEYS.some(k => initial.filters[k]));
   const [filterOptions, setFilterOptions] = useState<FilterOptions | null>(null);
-  const [filters, setFilters] = useState<ContactFilterState>(EMPTY_FILTERS);
-  const [limit, setLimit] = useState(20);
-  const { businessType } = useBusinessType();
+  const [filters, setFilters] = useState<ContactFilterState>(initial.filters);
+  const [limit, setLimit] = useState(initial.limit);
+  const { businessType, ready: scopeReady } = useBusinessType();
   const router = useRouter();
+  const prevScope = useRef<string | null>(null);
 
   const showToast = (msg: string, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
@@ -105,8 +145,29 @@ export default function UnifiedContacts() {
     const btParam = businessType === 'All' ? {} : { businessType };
     getUnifiedStats(btParam).then(res => setStats(res.data)).catch(() => {});
     getUnifiedFilters(btParam).then(res => setFilterOptions((res as { data: FilterOptions }).data)).catch(() => {});
-    setPage(1);
   }, [businessType]);
+
+  // Back to page 1 when the user switches scope — not when the saved scope is restored
+  // on load, so a ?page= link survives a reload.
+  useEffect(() => {
+    if (!scopeReady) return;
+    if (prevScope.current !== null && prevScope.current !== businessType) setPage(1);
+    prevScope.current = businessType;
+  }, [businessType, scopeReady]);
+
+  // Keep the URL in step with search, filters, sort and paging (replace — no history spam).
+  useEffect(() => {
+    const qs = urlFromState({ search, page, limit, sortBy, sortDir, filters });
+    if (qs !== searchParams.toString()) router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [search, page, limit, sortBy, sortDir, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Back/forward or a pasted link changes the URL → load that state.
+  useEffect(() => {
+    const st = stateFromUrl(new URLSearchParams(searchParams.toString()));
+    if (urlFromState(st) === urlFromState({ search, page, limit, sortBy, sortDir, filters })) return;
+    setSearch(st.search); setSearchInput(st.search); setPage(st.page); setLimit(st.limit);
+    setSortBy(st.sortBy); setSortDir(st.sortDir); setFilters(st.filters);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearch = (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); setPage(1); setSearch(searchInput); };
   const clearSearch = () => { setSearchInput(''); setSearch(''); setPage(1); };
@@ -237,9 +298,12 @@ export default function UnifiedContacts() {
 
       {showFilters && (
         <Card className={s.filterPanel} aria-label="Filters">
-          <div className={s.meta}>
-            <b style={{ color: 'var(--ink)' }}>Filters</b>
+          <div className={s.fpHead}>
+            <b>Filters</b>
+            {activeFilterCount > 0 && <span className={s.fpCount}>{activeFilterCount} active</span>}
+            <span className={s.spacer} />
             {activeFilterCount > 0 && <Button size="sm" variant="ghost" onClick={clearFilters}>Reset all</Button>}
+            <Button size="sm" variant="ghost" onClick={() => setShowFilters(false)} aria-label="Close filters"><X size={14} /></Button>
           </div>
           <ContactFilterPanel filters={filters} options={filterOptions} onChange={updateFilter} />
         </Card>
@@ -247,7 +311,7 @@ export default function UnifiedContacts() {
 
       <div className={s.meta}>
         <span>
-          <b className={s.num} style={{ color: 'var(--ink)' }}>{formatNum(total)}</b> contacts match · sorted by <b>{SORT_LABELS[sortBy] || sortBy}</b>, {sortDir === 'ASC' ? 'oldest / lowest first' : 'newest / highest first'}
+          <b className={s.num} style={{ color: 'var(--ink)' }}>{loading && !total ? '…' : formatNum(total)}</b> contacts match · sorted by <b>{SORT_LABELS[sortBy] || sortBy}</b>, {sortDir === 'ASC' ? 'oldest / lowest first' : 'newest / highest first'}
         </span>
       </div>
 
@@ -327,7 +391,7 @@ export default function UnifiedContacts() {
         </Table>
 
       <div className={s.meta}>
-        <span>{total > 0 ? <>Showing {formatNum(from)}–{formatNum(to)} of {formatNum(total)}</> : 'No results'}</span>
+        <span>{total > 0 ? <>Showing {formatNum(from)}–{formatNum(to)} of {formatNum(total)}</> : loading ? 'Loading…' : 'No results'}</span>
         <nav aria-label="Pagination" className={s.pager}>
           <Button size="sm" variant="ghost" onClick={() => setPage(1)} disabled={page === 1} aria-label="First page">«</Button>
           <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Previous</Button>
