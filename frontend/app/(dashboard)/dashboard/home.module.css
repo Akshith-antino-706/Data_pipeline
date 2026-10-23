@@ -39,3 +39,7 @@
   .greeting { font-size: 22px; line-height: 30px; }
   .actions { width: 100%; }
 }
+
+/* Segment chart loader: ranked rows like the real chart */
+.chartSkel { display: flex; flex-direction: column; gap: 14px; padding: 8px 4px; }
+.chartSkelRow { display: flex; align-items: center; gap: 12px; }

@@ -170,3 +170,18 @@ describe('UnifiedContactService.getSegmentDailyLog — split caches, audience-aw
     expect(/^\s*SELECT/i.test(String(sql))).toBe(true);
   });
 });
+
+describe('UnifiedContactService.getQuickStats', () => {
+  it('runs only a contact count and the 7-day conversations count, audience-filtered and parameterised', async () => {
+    m.query.mockReset();
+    m.query.mockImplementation(async (sql: string) => ({ rows: [sql.includes('conversations_7d') ? { conversations_7d: 3 } : { total_contacts: 42 }] }));
+    const r = await UnifiedContactService.getQuickStats({ businessType: 'B2B' });
+    expect(r).toEqual({ total_contacts: 42, conversations_7d: 3 });
+    expect(m.query).toHaveBeenCalledTimes(2);
+    for (const [sql, params] of m.query.mock.calls) {
+      expect(/^\s*SELECT/i.test(String(sql))).toBe(true);
+      expect(params).toEqual(['B2B']);
+      expect(String(sql)).not.toMatch(/rayna_|DISTINCT country|multi_source/);
+    }
+  });
+});

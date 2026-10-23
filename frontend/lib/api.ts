@@ -724,7 +724,8 @@ export const getOverviewHomeSection = <K extends OverviewHomeSectionName>(sectio
   request<OverviewHome[K]>(`/api/v3/overview/home/${section}`);
 export const getOverviewInsights = (from?: string, to?: string) =>
   request<OverviewInsights>(`/api/v3/overview/insights${overviewQs({ from, to })}`);
-export const getOverviewStatus = () => request<OverviewStatus>('/api/v3/overview/status');
+/** `only`: compute just these sections (e.g. 'failedSends' for Home); the rest come back as skipped. */
+export const getOverviewStatus = (opts: { only?: string } = {}) => request<OverviewStatus>(`/api/v3/overview/status${opts.only ? `?only=${encodeURIComponent(opts.only)}` : ''}`);
 export const getOverviewMessages = (params: OverviewMessagesParams = {}) =>
   request<OverviewMessages>(`/api/v3/overview/messages${overviewQs({ ...params })}`);
 export const getOverviewWebsite = (from?: string, to?: string) =>

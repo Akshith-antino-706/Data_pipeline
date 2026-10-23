@@ -1,18 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSegmentationTree, getSegmentActivity, getCampaigns, getJourneys, getUnifiedStats, getContactSourcesBreakdown } from '@/lib/api';
-import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, Megaphone, UserCheck, Filter } from 'lucide-react';
+import { getSegmentationTree, getSegmentActivity, getJourneys, getUnifiedStats, getContactSourcesBreakdown } from '@/lib/api';
+import { RefreshCw, Target, TrendingUp, Users, GitBranch, DollarSign, UserCheck, Filter } from 'lucide-react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
 import type { QueryParams } from '@/types/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import HomeOverview from './HomeOverview';
 import ContactSourcesCard from './ContactSourcesCard';
 import homeStyles from './home.module.css';
+import { Skeleton } from '@/components/ui';
+import { segmentStatusMeta } from '@/components/ui/SegmentStatus';
 
 // Recharts is only needed for the Segment Distribution chart — load it on the client after
 // the page shell so it stays out of the initial bundle.
@@ -32,35 +32,39 @@ interface ActivityLog { entered?: number; converted?: number; total_reached?: nu
 interface SegmentActivityData { logs?: ActivityLog[] }
 interface TotalResponse { total?: number }
 
+// The loaded chart is a ranked horizontal list (label · bar · count), so the loader is too.
 function ChartSkeleton() {
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 250, padding: '0 8px 8px' }}>
-      {[65, 85, 45, 90, 55, 70, 40, 60].map((h, i) => (
-        <div key={i} className="skeleton" style={{ flex: 1, height: `${h}%`, borderRadius: '6px 6px 0 0' }} />
+    <div className={homeStyles.chartSkel} aria-busy="true" aria-label="Loading segment chart">
+      {[88, 64, 40, 28, 16].map((w, i) => (
+        <div key={i} className={homeStyles.chartSkelRow}>
+          <Skeleton width={110} height={12} className="skeleton" />
+          <Skeleton width={`${w}%`} height={10} radius={5} className="skeleton" />
+          <Skeleton width={48} height={12} className="skeleton" />
+        </div>
       ))}
     </div>
   );
 }
 
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
+/** Returns `value` after it has been stable for `ms` — keeps typing in a date box from refetching on every keystroke. */
+function useDebounced<T>(value: T, ms = 400): T {
+  const [v, setV] = useState(value);
+  useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);
+  return v;
+}
 
-const STATUS_COLORS = {
-  ON_TRIP: 'var(--ok)', FUTURE_TRAVEL: 'var(--info)', ACTIVE_ENQUIRY: 'var(--warn)',
-  PAST_BOOKING: 'var(--gold)', PAST_ENQUIRY: 'var(--gold-ink)', PROSPECT: 'var(--ink3)', CANCELLED: 'var(--bad)',
-  B2B_ACTIVE_PARTNER: 'var(--ok)', B2B_DORMANT_PARTNER: 'var(--warn)',
-  B2B_NEW_LEAD: 'var(--info)', B2B_PROSPECT: 'var(--ink3)',
+// B2B statuses are not in the shared map; they keep their own labels/colours here.
+const B2B_STATUS: Record<string, { label: string; color: string }> = {
+  B2B_ACTIVE_PARTNER: { label: 'Active Partner', color: 'var(--ok)' }, B2B_DORMANT_PARTNER: { label: 'Dormant Partner', color: 'var(--warn)' },
+  B2B_NEW_LEAD: { label: 'New Lead', color: 'var(--info)' }, B2B_PROSPECT: { label: 'B2B Prospect', color: 'var(--ink3)' },
 };
-
-const STATUS_LABELS = {
-  ON_TRIP: 'On Trip', FUTURE_TRAVEL: 'Future Travel', ACTIVE_ENQUIRY: 'Active Enquiry',
-  PAST_BOOKING: 'Past Booking', PAST_ENQUIRY: 'Past Enquiry', PROSPECT: 'Prospect', CANCELLED: 'Cancelled',
-  B2B_ACTIVE_PARTNER: 'Active Partner', B2B_DORMANT_PARTNER: 'Dormant Partner',
-  B2B_NEW_LEAD: 'New Lead', B2B_PROSPECT: 'B2B Prospect',
-};
-
 // Unknown status codes (e.g. NEW_STATUS) → "New Status" instead of raw caps.
 const titleCase = (v: string) => String(v || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+const SEGMENT_KNOWN = new Set(['ON_TRIP', 'FUTURE_TRAVEL', 'ACTIVE_ENQUIRY', 'PAST_BOOKING', 'PAST_ENQUIRY', 'PROSPECT', 'CANCELLED']);
+/** One label/colour source for every status on this page: shared map, then B2B, then title case for unknown codes. */
+const statusMeta = (code: string): { label: string; color: string } =>
+  SEGMENT_KNOWN.has(code) ? segmentStatusMeta(code) : (B2B_STATUS[code] ?? { label: titleCase(code), color: 'var(--ink3)' });
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // Month-year options (e.g. "Jan 2026") from 1 year ahead down to 2 years back.
@@ -107,9 +111,11 @@ export default function Dashboard() {
   // cached for STALE_MS, so fast input changes can't leave a stale response on screen.
   const queryOpts = { staleTime: STALE_MS, refetchOnWindowFocus: false };
 
+  const sourceFromQ = useDebounced(sourceFrom);
+  const sourceToQ = useDebounced(sourceTo);
   const sourcesQ = useQuery({
-    queryKey: ['dashboard', 'sources', sourceFrom, sourceTo],
-    queryFn: () => getContactSourcesBreakdown(sourceFrom || undefined, sourceTo || undefined).then(r => r.data || null),
+    queryKey: ['dashboard', 'sources', sourceFromQ, sourceToQ],
+    queryFn: () => getContactSourcesBreakdown(sourceFromQ || undefined, sourceToQ || undefined).then(r => r.data || null),
     ...queryOpts,
   });
 
@@ -118,18 +124,17 @@ export default function Dashboard() {
     // allSettled so one failing call can't blank the other tiles.
     queryFn: () => Promise.allSettled([
       // cached=1: the backend serves this from a 10-min cache for the dashboard only.
-      getUnifiedStats({ ...btParams, cached: 1 }),
-      getCampaigns({ limit: 1 }) as Promise<TotalResponse>,
+      // quick=1: only the two numbers shown here (no six-table revenue pass); cached=1: 10-min server cache.
+      getUnifiedStats({ ...btParams, cached: 1, quick: 1 }),
       getJourneys({ limit: 1 }) as Promise<TotalResponse>,
-    ]).then(([contacts, campaigns, journeys]) => ({
+    ]).then(([contacts, journeys]) => ({
       contacts:      contacts.status  === 'fulfilled' ? contacts.value?.data?.total_contacts   ?? null : null,
       conversations: contacts.status  === 'fulfilled' ? contacts.value?.data?.conversations_7d ?? null : null,
-      campaigns:     campaigns.status === 'fulfilled' ? campaigns.value?.total ?? null : null,
       journeys:      journeys.status  === 'fulfilled' ? journeys.value?.total  ?? null : null,
     })),
     ...queryOpts,
   });
-  const quickStats = quickQ.data || { contacts: null, campaigns: null, journeys: null, conversations: null };
+  const quickStats = quickQ.data || { contacts: null, journeys: null, conversations: null };
 
   // Base dashboard data — NOT affected by the Revenue-by-Segment filter.
   const treeQ = useQuery({
@@ -139,20 +144,23 @@ export default function Dashboard() {
   });
   const activityQ = useQuery({
     queryKey: ['dashboard', 'activity'],
-    queryFn: () => getSegmentActivity({ days: 7 }).catch(() => ({})) as Promise<SegmentActivityData>,
+    // includeLive=0: Home only shows the daily log, so the server skips the heavy live-counts join.
+    queryFn: () => getSegmentActivity({ days: 7, includeLive: 0 }).catch(() => ({})) as Promise<SegmentActivityData>,
     ...queryOpts,
   });
 
   // Filtered revenue-by-segment — scoped to THIS section only (separate from the base
   // `tree`, so the filter doesn't change any other card). Only fetched once a filter is set.
+  const travelFromQ = useDebounced(travelFrom), travelToQ = useDebounced(travelTo);
+  const bookingFromQ = useDebounced(bookingFrom), bookingToQ = useDebounced(bookingTo);
   const revQ = useQuery({
-    queryKey: ['dashboard', 'rev', businessType, travelFrom, travelTo, bookingFrom, bookingTo, product],
+    queryKey: ['dashboard', 'rev', businessType, travelFromQ, travelToQ, bookingFromQ, bookingToQ, product],
     queryFn: () => {
       const params: QueryParams = { ...btParams };
-      if (travelFrom) params.travelFrom = travelFrom;
-      if (travelTo) params.travelTo = travelTo;
-      if (bookingFrom) params.bookingFrom = bookingFrom;
-      if (bookingTo) params.bookingTo = bookingTo;
+      if (travelFromQ) params.travelFrom = travelFromQ;
+      if (travelToQ) params.travelTo = travelToQ;
+      if (bookingFromQ) params.bookingFrom = bookingFromQ;
+      if (bookingToQ) params.bookingTo = bookingToQ;
       if (product && product !== 'all') params.product = product;
       return getSegmentationTree(params).catch(() => ({})) as Promise<SegmentationTreeData>;
     },
@@ -213,14 +221,14 @@ export default function Dashboard() {
   const totalReached = logs.reduce((s, r) => s + (r.total_reached || 0), 0);
 
   const barData = statusCounts.map(s => ({
-    name: STATUS_LABELS[s.booking_status as keyof typeof STATUS_LABELS] || titleCase(s.booking_status),
+    name: statusMeta(s.booking_status).label || titleCase(s.booking_status),
     customers: s.count,
-    color: STATUS_COLORS[s.booking_status as keyof typeof STATUS_COLORS] || 'var(--ink3)',
+    color: statusMeta(s.booking_status).color || 'var(--ink3)',
   }));
 
   return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
-      <motion.div variants={fadeInUp}>
+    <div>
+      <div>
         <HomeOverview
           extraActions={
             <button
@@ -234,16 +242,16 @@ export default function Dashboard() {
             </button>
           }
         />
-      </motion.div>
+      </div>
 
       {/* Audience overview — the original dashboard, kept below the new Home sections. */}
-      <motion.div variants={fadeInUp}>
+      <div>
         <h2 className={homeStyles.sectionTitle}>Audience overview</h2>
         <p className={homeStyles.sectionSub}>Rayna Tours — {businessType === 'All' ? 'All' : businessType} Overview</p>
-      </motion.div>
+      </div>
 
       {/* KPIs */}
-      <motion.div variants={fadeInUp} className="card-grid card-grid-4 mb-24">
+      <div className="card-grid card-grid-4 mb-24">
         <Link href="/segmentation" className="card kpi no-underline color-inherit">
           <div className="icon-box"><Users size={18} color="var(--blue)" /></div>
           {treeLoading
@@ -277,10 +285,10 @@ export default function Dashboard() {
           }
           <div className="kpi-label">Total Confirmed Revenue</div>
         </Link>
-      </motion.div>
+      </div>
 
       {/* Segment Distribution Chart */}
-      <motion.div variants={fadeInUp}>
+      <div>
         <div className="card mb-24">
           <div className="card-header">
             <h3>Segment Distribution</h3>
@@ -289,42 +297,42 @@ export default function Dashboard() {
           {treeLoading ? (
             <ChartSkeleton />
           ) : barData.length > 0 ? (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+            <div >
               <SegmentBarChart data={barData} fmt={fmt} />
-            </motion.div>
+            </div>
           ) : (
             <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
               No segment data available
             </div>
           )}
         </div>
-      </motion.div>
+      </div>
 
       {/* Quick Actions — always visible */}
-      <motion.div variants={fadeInUp} className="card-grid card-grid-3 mb-24">
+      <div className="card-grid card-grid-3 mb-24">
         {[
           { href: '/contacts',  Icon: UserCheck, color: 'var(--blue)',   label: 'Contacts',  val: quickStats.contacts },
           // Campaigns is hidden from the UI for now (page kept at /campaigns).
           // { href: '/campaigns', Icon: Megaphone, color: 'var(--green)',  label: 'Campaigns', val: quickStats.campaigns },
           { href: '/journeys',  Icon: GitBranch, color: 'var(--purple)', label: 'Journeys',  val: quickStats.journeys },
-        ].map((item) => (
+        ].filter(item => quickQ.isPending || item.val !== null).map((item) => (
           <Link key={item.href} href={item.href} className="card action-card" style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: '20px 24px' }}>
             <div style={{ width: 48, height: 48, borderRadius: 12, background: `color-mix(in srgb, ${item.color} 12%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <item.Icon size={22} color={item.color} />
             </div>
             <div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{item.label}</div>
-              {item.val === null
+              {quickQ.isPending || item.val === null
                 ? <div className="skeleton" style={{ width: 80, height: 22, borderRadius: 4, marginTop: 4 }} />
                 : <div style={{ fontSize: 22, fontWeight: 700, color: item.color, marginTop: 2, letterSpacing: -0.5 }}>{fmt(item.val)}</div>
               }
             </div>
           </Link>
         ))}
-      </motion.div>
+      </div>
 
       {/* Last 7 Days Activity */}
-      <motion.div variants={fadeInUp}>
+      <div>
         <div className="card mb-24">
           <div className="card-header">
             <h3>Last 7 Days Activity</h3>
@@ -340,9 +348,7 @@ export default function Dashboard() {
               ))}
             </div>
           ) : logs.length > 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}
-              style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '0 4px' }}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '0 4px' }}
             >
               <div style={{ textAlign: 'center', padding: 16 }}>
                 <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ok)' }}>{fmt(totalEntered)}</div>
@@ -356,18 +362,18 @@ export default function Dashboard() {
                 <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--info)' }}>{fmt(totalReached)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>Messages Sent</div>
               </div>
-            </motion.div>
+            </div>
           ) : (
             <div style={{ padding: '20px 4px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>
               No activity in the last 7 days
             </div>
           )}
         </div>
-      </motion.div>
+      </div>
 
       {/* Contacts by Source — with a Dubai-date filter (future dates disabled). Picking a
           date shows how many contacts were ADDED to unified_contacts that day, by source. */}
-      <motion.div variants={fadeInUp}>
+      <div>
         <div className="card mb-24">
           <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
             <h3 style={{ margin: 0 }}>Contacts by Source</h3>
@@ -412,10 +418,10 @@ export default function Dashboard() {
             )
           )}
         </div>
-      </motion.div>
+      </div>
 
       {/* Revenue by Segment */}
-      <motion.div variants={fadeInUp}>
+      <div>
         <div className="card">
           <div className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <h3>Revenue by Segment</h3>
@@ -518,7 +524,7 @@ export default function Dashboard() {
               </table>
             </div>
           ) : statusCounts.length > 0 ? (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+            <div >
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -531,8 +537,8 @@ export default function Dashboard() {
                       <tr key={s.booking_status}>
                         <td>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: 2, background: STATUS_COLORS[s.booking_status as keyof typeof STATUS_COLORS] || 'var(--ink3)' }} />
-                            {STATUS_LABELS[s.booking_status as keyof typeof STATUS_LABELS] || s.booking_status}
+                            <span style={{ width: 8, height: 8, borderRadius: 2, background: statusMeta(s.booking_status).color }} />
+                            {statusMeta(s.booking_status).label}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(s.count)}</td>
@@ -542,24 +548,24 @@ export default function Dashboard() {
                   </tbody>
                 </table>
               </div>
-            </motion.div>
+            </div>
           ) : (
             <div style={{ padding: '20px 16px', color: 'var(--text-tertiary)', fontSize: 13, textAlign: 'center' }}>
               No segment revenue data available
             </div>
           )}
         </div>
-      </motion.div>
+      </div>
 
       {!treeLoading && !tree?.totals && (
-        <motion.div variants={fadeInUp}>
+        <div>
           <div className="card empty">
             <h3 className="mb-8">No Data Available</h3>
             <p className="text-secondary mb-20">Run the unified sync to populate segmentation data.</p>
             <Link href="/segmentation" className="btn btn-primary">Go to Segmentation</Link>
           </div>
-        </motion.div>
+        </div>
       )}
-    </motion.div>
+    </div>
   );
 }

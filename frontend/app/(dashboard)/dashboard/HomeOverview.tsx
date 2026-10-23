@@ -115,7 +115,8 @@ export default function HomeOverview({ extraActions }: HomeOverviewProps) {
   const seriesC = useHomeCard('series14d', () => getOverviewHomeSection('series14d'));
   const statusQ = useQuery({
     queryKey: ['dashboard', 'status'],
-    queryFn: getOverviewStatus,
+    // Home only shows failed sends; skip the queue counts and sync_metadata read.
+    queryFn: () => getOverviewStatus({ only: 'failedSends' }),
     staleTime: STALE_MS,
     refetchOnWindowFocus: false,
   });

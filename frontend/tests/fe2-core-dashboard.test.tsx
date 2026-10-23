@@ -73,9 +73,10 @@ describe('Dashboard page', () => {
     expect(screen.getByText('Website')).toBeTruthy();
     expect(screen.getByText('5')).toBeTruthy(); // entered 3 + 2
     expect(screen.getByText('B2C Overview', { exact: false })).toBeTruthy();
-    expect(api.getUnifiedStats).toHaveBeenCalledWith({ businessType: 'B2C', cached: 1 });
+    expect(api.getUnifiedStats).toHaveBeenCalledWith({ businessType: 'B2C', cached: 1, quick: 1 });
+    expect(api.getCampaigns).not.toHaveBeenCalled(); // the Campaigns tile is hidden; no wasted request
     expect(api.getSegmentationTree).toHaveBeenCalledWith({ businessType: 'B2C' });
-    expect(api.getSegmentActivity).toHaveBeenCalledWith({ days: 7 });
+    expect(api.getSegmentActivity).toHaveBeenCalledWith({ days: 7, includeLive: 0 }); // Home shows only the daily log
     expect(api.getContactSourcesBreakdown).toHaveBeenCalledWith(undefined, undefined);
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });

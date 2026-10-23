@@ -8,7 +8,7 @@ import { once } from 'node:events';
 const m = vi.hoisted(() => ({
   svc: {
     createContact: vi.fn(), getStats: vi.fn(), getFilterOptions: vi.fn(), getAll: vi.fn(), snapshotDailySegments: vi.fn(),
-    getSegmentChanges: vi.fn(), getSegmentDailyLog: vi.fn(), getSegmentCustomers: vi.fn(), getSegmentationTree: vi.fn(),
+    getSegmentChanges: vi.fn(), getSegmentDailyLog: vi.fn(), getSegmentCustomers: vi.fn(), getSegmentationTree: vi.fn(), getQuickStats: vi.fn(),
     recomputeSegmentation: vi.fn(), getById: vi.fn(), getBookings: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
     BOOKING_TABLES: { tours: 'rayna_tours', packages: 'rayna_packages', hotels: 'rayna_hotels', visas: 'rayna_visas', others: 'rayna_others', flights: 'rayna_flights' },
   },
@@ -193,6 +193,13 @@ describe('stats / filters / tree', () => {
     await get('/stats?cached=1&businessType=B2B');
     expect(m.cached).toHaveBeenCalledWith('contacts:stats:B2B', expect.any(Function), 600);
   });
+  it('stats ?quick=1 runs the light version only (own cache key)', async () => {
+    m.svc.getQuickStats.mockResolvedValue({ total_contacts: 5, conversations_7d: 1 });
+    const body = await (await get('/stats?quick=1&cached=1&businessType=B2C')).json();
+    expect(body).toEqual({ success: true, data: { total_contacts: 5, conversations_7d: 1 } });
+    expect(m.cached).toHaveBeenCalledWith('contacts:stats:quick:B2C', expect.any(Function), 600);
+    expect(m.svc.getStats).not.toHaveBeenCalled();
+  });
   it('stats 500 on error', async () => {
     m.svc.getStats.mockRejectedValue(new Error('x'));
     expect((await get('/stats')).status).toBe(500);
@@ -221,6 +228,11 @@ describe('GET /sources-breakdown', () => {
     await get('/sources-breakdown?from=2024-01-01&to=2024-01-31&fresh=1');
     expect(m.query.mock.calls[0][1]).toEqual(['2024-01-01', '2024-01-31']);
     expect(m.cached).not.toHaveBeenCalled();
+    // Range compares created_at to Dubai day boundaries (index-friendly), not a per-row cast.
+    const sql = String(m.query.mock.calls[0][0]);
+    expect(sql).toContain("created_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Dubai')");
+    expect(sql).toContain("created_at < (($2::date + 1)::timestamp AT TIME ZONE 'Asia/Dubai')");
+    expect(sql).not.toContain("(created_at AT TIME ZONE 'Asia/Dubai')::date");
   });
   it('500 on query error', async () => {
     m.query.mockRejectedValue(new Error('x'));

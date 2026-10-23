@@ -320,6 +320,22 @@ describe('GET /status', () => {
     expect(body.failedSends).toEqual({ available: true, rows: [{ channel: 'sms', id: 9, recipient: '971500', reason: 'bad', time: '2026-10-19T01:00:00Z', journeyId: null }] });
   });
 
+  it('?only=failedSends computes just that section; the others are marked skipped and no queue/sync query runs', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockQueueCounts.mockClear();
+    const { body } = await get('/status?only=failedSends');
+    expect(body.failedSends).toEqual({ available: true, rows: [] });
+    expect(body.dataSources).toEqual({ available: false, reason: 'skipped' });
+    expect(body.queues).toEqual({ available: false, reason: 'skipped' });
+    expect(mockQueueCounts).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls.some(c => String(c[0]).includes('sync_metadata'))).toBe(false);
+  });
+  it('an unknown ?only value is ignored and everything is computed', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { body } = await get('/status?only=bogus');
+    expect(body.dataSources).toEqual({ available: true, sources: [] });
+  });
+
   it('leaves the unmaintained rayna_* sync_metadata rows out of the data sources', async () => {
     await get('/status');
     const sql = mockQuery.mock.calls.map(c => String(c[0])).find(s => s.includes('FROM sync_metadata'));
