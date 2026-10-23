@@ -17,6 +17,7 @@ import type { ChipTone } from '@/components/ui';
 import { ContactStatusChip } from '@/components/ui/ContactStatusChip';
 import { ContactAvatar } from '@/components/ui/ContactAvatar';
 import s from '../contacts.module.css';
+import { nodeLabel } from '@/lib/nodeLabel';
 
 type DateInput = string | number | Date | null | undefined;
 type TableRow = Record<string, string>;
@@ -246,7 +247,8 @@ export default function ContactProfile() {
   const sources = (contact.sources || '').split(',').map(x => x.trim()).filter(Boolean);
   const hasMessages = Boolean(contact.first_msg_text || contact.last_msg_text);
 
-  const activityItems: TimelineItem[] = (activity?.items ?? []).map(it => ({ at: new Date(it.at), dateOnly: it.dateOnly, kind: it.kind, title: it.title, sub: it.sub }))
+  // A title that quotes a bare node id (“node_3”) reads as “Node 3”.
+  const activityItems: TimelineItem[] = (activity?.items ?? []).map(it => ({ at: new Date(it.at), dateOnly: it.dateOnly, kind: it.kind, title: it.title.replace(/“([^”]+)”/, (_m, id: string) => `“${nodeLabel(id)}”`), sub: it.sub }))
     .filter(it => !Number.isNaN(it.at.getTime()));
   const activityTotal = activity?.total ?? 0;
   const kindsPresent = new Set<TimelineKind>((Object.entries(activity?.kinds ?? {}) as [TimelineKind, number][]).filter(([, n]) => n > 0).map(([k]) => k));
@@ -406,7 +408,7 @@ export default function ContactProfile() {
                         <div className={s.journeyName}>{j.name || `Journey ${j.journey_id}`}</div>
                         <div className={s.help}>
                           {entry}
-                          {j.current_node_id && j.entry_status === 'active' && <> · at {j.current_node_id}</>}
+                          {j.current_node_id && j.entry_status === 'active' && <> · at {nodeLabel(j.current_node_id)}</>}
                           {nodes.length > 0 && <> · {nodes.length} email{nodes.length > 1 ? 's' : ''}</>}
                         </div>
                       </div>
@@ -424,7 +426,7 @@ export default function ContactProfile() {
                         <div key={`${n.node_id}-${i}`} className={s.node}>
                           <div className={s.nodeTitle}>
                             {n.day_number ? <Chip tone="info" className={s.miniChip}>Day {n.day_number}</Chip> : <span />}
-                            <span>{n.label || n.subject || n.node_id}</span>
+                            <span>{n.label || n.subject || nodeLabel(n.node_id)}</span>
                           </div>
                           <div className={s.chips}>
                             {([

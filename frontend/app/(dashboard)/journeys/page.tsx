@@ -37,6 +37,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import hotToast from 'react-hot-toast';
 import type { LucideIcon } from 'lucide-react';
+import { nodeLabel } from '@/lib/nodeLabel';
 import type {
   NodeForm, JourneyNode, JourneyEdge, ContentTemplate, JourneySummary, JourneyDetail, CampaignData, CampaignRow,
   JourneyAnalytics, QueueCounts, TimelineItem, JourneyEntry, FlowSuggestions, PreviewTemplateState, ApiData, TplId, NodeStat, CreateForm, EntryStats, NodeCampaign, NodeFireTimes
@@ -2884,7 +2885,7 @@ export default function Journeys() {
                             <td>
                               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
                                 <span style={{ width: 7, height: 7, borderRadius: 2, background: NODE_COLORS[node?.type as string] || '#78716c' }} />
-                                {node?.data?.label || node?.type || e.current_node_id || '—'}
+                                {node?.data?.label || node?.type || nodeLabel(e.current_node_id) || '—'}
                               </span>
                             </td>
                             <td><span className={`badge ${statusColors[e.status] || 'badge-gray'}`} style={{ fontSize: 10 }}>{e.status}{e.exit_reason ? ` (${e.exit_reason})` : ''}</span></td>
@@ -3013,7 +3014,7 @@ export default function Journeys() {
                             <td>
                               <span className="flex items-center gap-1.5">
                                 <span style={{ width: 8, height: 8, borderRadius: 2, background: NODE_COLORS[node?.type as string] || '#78716c' }} />
-                                {node?.data?.label || node?.type || row.current_node_id}
+                                {node?.data?.label || node?.type || nodeLabel(row.current_node_id)}
                               </span>
                             </td>
                             <td>
@@ -3076,7 +3077,7 @@ export default function Journeys() {
                             </span>
                           )}
                           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                            {node?.data?.label || event.node_id}
+                            {node?.data?.label || nodeLabel(event.node_id)}
                           </span>
                         </div>
                         <div className="text-secondary" style={{ fontSize: 12, marginTop: 2 }}>

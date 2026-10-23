@@ -18,12 +18,14 @@ interface Props {
   /** Sort newest id first (numeric ids) or keep the given order. */
   sortByIdDesc?: boolean;
   noun?: string;
+  /** Hide the raw id in options and the selected value (e.g. nodes, whose id is already in the name as "Node 3"). */
+  showId?: boolean;
 }
 
 const MAX_SHOWN = 60;
 
 /** Searchable picker (design system): type part of the name or the id; arrows + Enter to choose. Used by the Message log for journeys and nodes. */
-export default function SearchPicker({ items, value, onChange, label = 'Journey', allLabel = 'All journeys', idPrefix = '#', sortByIdDesc = true, noun = 'journey' }: Props) {
+export default function SearchPicker({ items, value, onChange, label = 'Journey', allLabel = 'All journeys', idPrefix = '#', sortByIdDesc = true, noun = 'journey', showId = true }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -75,7 +77,7 @@ export default function SearchPicker({ items, value, onChange, label = 'Journey'
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={open && matches[active] ? `${listId}-${matches[active].id}` : undefined}
-          placeholder={selected ? (selected.name && selected.name !== selected.id ? `${idPrefix}${selected.id} · ${selected.name}` : `${idPrefix}${selected.id}`) : `${allLabel} — type to search`}
+          placeholder={selected ? (!showId ? selected.name : selected.name && selected.name !== selected.id ? `${idPrefix}${selected.id} · ${selected.name}` : `${idPrefix}${selected.id}`) : `${allLabel} — type to search`}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
@@ -107,7 +109,7 @@ export default function SearchPicker({ items, value, onChange, label = 'Journey'
                 onMouseEnter={() => setActive(i)}
                 onMouseDown={e => { e.preventDefault(); choose(j.id); }}
               >
-                <span className={styles.pickerId}>{idPrefix}{j.id}</span> {j.name !== j.id ? j.name : ''}
+                {showId ? <><span className={styles.pickerId}>{idPrefix}{j.id}</span> {j.name !== j.id ? j.name : ''}</> : j.name}
               </li>
             ))}
             {items.length > MAX_SHOWN && matches.length === MAX_SHOWN && (

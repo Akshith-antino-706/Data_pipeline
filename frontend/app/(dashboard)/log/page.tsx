@@ -10,6 +10,7 @@ import type { ChipTone } from '@/components/ui';
 import styles from './log.module.css';
 import SearchPicker from './SearchPicker';
 import { friendlyError } from '@/lib/friendlyError';
+import { nodeLabel } from '@/lib/nodeLabel';
 
 const friendlyText = (raw: string | null | undefined): string => {
   const f = friendlyError(raw);
@@ -137,7 +138,7 @@ function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () =
       ['Why it failed', friendlyText(selected.row.error_message)],
       ['Technical details', selected.row.error_message || '—'],
       ['Journey', selected.row.journey_id != null ? `#${selected.row.journey_id}` : '—'],
-      ['Node', selected.row.node_id || '—'],
+      ['Node', nodeLabel(selected.row.node_id) || '—'],
       ['Day number', selected.row.day_number != null ? String(selected.row.day_number) : '—'],
       ['Source', selected.row.source || '—'],
       ['Provider', selected.row.provider || '—'],
@@ -159,7 +160,7 @@ function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () =
       ['Why it failed', friendlyText(selected.row.error)],
       ['Technical details', selected.row.error || '—'],
       ['Journey', selected.row.journeyId != null ? `#${selected.row.journeyId}` : '—'],
-      ['Node', selected.row.nodeId || '—'],
+      ['Node', nodeLabel(selected.row.nodeId) || '—'],
       ['Time', fmtDate(selected.row.time)],
       ['Opened', fmtDate(selected.row.openedAt)],
       ['Clicked', fmtDate(selected.row.clickedAt)],
@@ -410,7 +411,8 @@ export default function LogPage() {
               allLabel={journeyNodes.length === 0 ? 'No action nodes' : 'All nodes'}
               idPrefix=""
               sortByIdDesc={false}
-              items={journeyNodes.map(n => ({ id: String(n.id), name: n.data?.label || String(n.id) }))}
+              items={journeyNodes.map(n => ({ id: String(n.id), name: n.data?.label ? `${nodeLabel(n.id)} · ${n.data.label}` : nodeLabel(n.id) }))}
+              showId={false}
               value={nodeId}
               onChange={setNodeId}
             />
@@ -456,7 +458,7 @@ export default function LogPage() {
                       {row.journey_id ? (
                         <a href={`/journeys/${row.journey_id}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journey_id}</a>
                       ) : row.source ? <span className={styles.muted}>{row.source}</span> : '—'}
-                      {row.node_id && <div className={styles.mono}>{row.node_id}</div>}
+                      {row.node_id && <div className={styles.mono}>{nodeLabel(row.node_id)}</div>}
                     </td>
                     <td className={styles.nowrap}>{fmtDate(row.sent_at || row.created_at)}</td>
                     <td>

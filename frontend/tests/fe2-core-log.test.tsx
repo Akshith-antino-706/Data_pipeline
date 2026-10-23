@@ -172,14 +172,15 @@ describe('Send Log page', () => {
     // Node picker is searchable too: only action nodes, by label or id
     const nodePicker = screen.getByRole('combobox', { name: 'Node' });
     fireEvent.focus(nodePicker);
-    expect(screen.getByRole('option', { name: 'n1 Send email' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'n3' })).toBeTruthy();
+    // nodes read "Node N" (with their label when they have one), never the raw "n1" / "node_1" id
+    expect(screen.getByRole('option', { name: 'Node 1 · Send email' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Node 3' })).toBeTruthy();
     expect(screen.queryByRole('option', { name: /n2/ })).toBeNull();
     fireEvent.change(nodePicker, { target: { value: 'send' } });
-    expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['n1 Send email']);
+    expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['Node 1 · Send email']);
     fireEvent.keyDown(nodePicker, { key: 'Enter' });
     await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '5', nodeId: 'n1' }));
-    expect((nodePicker as HTMLInputElement).placeholder).toBe('n1 · Send email');
+    expect((nodePicker as HTMLInputElement).placeholder).toBe('Node 1 · Send email');
     fireEvent.click(screen.getByRole('button', { name: 'Clear node' }));
     await waitFor(() => expect(lastParams()).not.toHaveProperty('nodeId'));
   });
@@ -281,7 +282,8 @@ describe('Send Log page', () => {
     const dlg = await screen.findByRole('dialog', { name: 'Message details' });
     expect(dlg.textContent).toContain('Welcome');
     expect(dlg.textContent).toContain('Unified contact ID');
-    expect(dlg.textContent).toContain('n1');
+    expect(dlg.textContent).toContain('Node 1');
+    expect(dlg.textContent).not.toContain('n1');
     fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));

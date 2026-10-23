@@ -28,6 +28,7 @@ import { Button, Card, Chip, Skeleton } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import EmailQaReportModal from '../EmailQaReportModal';
 import styles from './analytics.module.css';
+import { nodeLabel } from '@/lib/nodeLabel';
 
 interface AnalyticsRow {
   [key: string]: string | number | null | undefined;
@@ -388,7 +389,7 @@ export default function JourneysTable() {
             <tbody>
               {exp.nodes.map(n => (
                 <tr key={n.node_id}>
-                  <td className={styles.left} title={n.node_label}>{n.node_label || n.node_id}</td>
+                  <td className={styles.left} title={n.node_label}>{n.node_label || nodeLabel(n.node_id)}</td>
                   <td>
                     {n.template_id ? (
                       <button type="button" className={styles.iconBtn}
