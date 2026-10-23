@@ -206,6 +206,12 @@ export const getJourneyAnalyticsTable = (status?: string, opts?: JourneyAnalytic
   if (!opts) return request(`/api/v3/journeys/analytics/table${status ? `?status=${encodeURIComponent(status)}` : ''}`);
   return request(`/api/v3/journeys/analytics/table${overviewQs({ status, ...opts })}`);
 };
+/** One CSV of every journey matching the filters, built on the server. */
+export async function downloadJourneyAnalyticsCsv(status?: string, opts: JourneyAnalyticsTableOptions = {}): Promise<void> {
+  const res = await authFetch(`${BASE}/api/v3/journeys/analytics/table.csv${overviewQs({ status, ...opts })}`);
+  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+  saveBlob(await res.blob(), `journey-performance-${new Date().toISOString().slice(0, 10)}.csv`);
+}
 export const getJourneyAnalyticsNodes = (id: Id, date?: string) => request(`/api/v3/journeys/analytics/${id}/nodes${date ? `?date=${date}` : ''}`);
 export const refreshJourneyAnalytics  = (id: Id) => request(`/api/v3/journeys/analytics/${id}/refresh`, { method: 'POST' });
 export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analytics/regenerate-qa', { method: 'POST' });
@@ -377,6 +383,8 @@ export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'P
 // ── Booking Affinity (top 3 services / products per customer) ─
 const affinityQs = (params: QueryParams = {}) => toQuery(Object.entries(params).filter(([, value]) => value !== '' && value != null));
 export const getAffinitySummary = (params: QueryParams = {}) => request(`/api/v3/booking-affinity/summary?${affinityQs(params)}`);
+/** Build status only — what the page polls while a rebuild runs. */
+export const getAffinityStatus = () => request('/api/v3/booking-affinity/status');
 export const getAffinityTopProducts = (params: QueryParams = {}) => request(`/api/v3/booking-affinity/top-products?${affinityQs(params)}`);
 export const getAffinityCustomers = (params: QueryParams = {}) => request(`/api/v3/booking-affinity/customers?${affinityQs(params)}`);
 export const getContactAffinity = (id: Id) => request(`/api/v3/booking-affinity/customers/${id}`);
@@ -410,11 +418,12 @@ export const getMailLeadsDepartmentPeriods = (unit: string, count: number, from?
   `/api/v3/chat-leads/mail-department-periods?unit=${unit}${from && to ? `&from=${from}&to=${to}` : `&count=${count}`}`
 );
 // Users of one department (receiver) in a range — number, first message + its timestamp (expand row).
+/** `firstMsg: false` returns the list at once without the per-user ChatHead lookups; ask again with `true` for the texts. */
 export const getChatLeadsDepartmentUsers = (
   receiver: string, from: string, to: string,
-  { onlyNew = false, limit = 50, offset = 0 }: { onlyNew?: boolean; limit?: number; offset?: number } = {},
+  { onlyNew = false, limit = 50, offset = 0, firstMsg }: { onlyNew?: boolean; limit?: number; offset?: number; firstMsg?: boolean } = {},
 ) => request(
-  `/api/v3/chat-leads/department-users?receiver=${encodeURIComponent(receiver)}&from=${from}&to=${to}${onlyNew ? '&only_new=1' : ''}&limit=${limit}&offset=${offset}`
+  `/api/v3/chat-leads/department-users?receiver=${encodeURIComponent(receiver)}&from=${from}&to=${to}${onlyNew ? '&only_new=1' : ''}&limit=${limit}&offset=${offset}${firstMsg === false ? '&first_msg=0' : ''}`
 );
 
 // ── Department Groups (Leads screen) ──
@@ -730,8 +739,9 @@ export const OVERVIEW_HOME_SECTIONS: readonly OverviewHomeSectionName[] =
 /** One Home card's data (GET /api/v3/overview/home/:section), so each card loads on its own. */
 export const getOverviewHomeSection = <K extends OverviewHomeSectionName>(section: K) =>
   request<OverviewHome[K]>(`/api/v3/overview/home/${section}`);
-export const getOverviewInsights = (from?: string, to?: string) =>
-  request<OverviewInsights>(`/api/v3/overview/insights${overviewQs({ from, to })}`);
+/** `only`: comma list of sections to compute (totals,previous,weeklyTrend,funnel); the rest come back skipped. */
+export const getOverviewInsights = (from?: string, to?: string, only?: string) =>
+  request<OverviewInsights>(`/api/v3/overview/insights${overviewQs({ from, to, only })}`);
 /** `only`: compute just these sections (e.g. 'failedSends' for Home); the rest come back as skipped. */
 export const getOverviewStatus = (opts: { only?: string } = {}) => request<OverviewStatus>(`/api/v3/overview/status${opts.only ? `?only=${encodeURIComponent(opts.only)}` : ''}`);
 export const getOverviewMessages = (params: OverviewMessagesParams = {}) =>

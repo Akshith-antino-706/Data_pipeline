@@ -283,6 +283,23 @@ describe('GET /insights', () => {
     for (const q of sqls) expect(q).toMatch(/^\s*(SELECT|WITH)/);
   });
 
+  it('?only= computes just those sections and skips the rest (no email log scan for the trend alone)', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { body } = await get('/insights?from=2026-01-01&to=2026-01-10&only=weeklyTrend');
+    expect(body.weeklyTrend).toEqual({ available: true, weeks: [] });
+    expect(body.totals).toEqual({ available: false, reason: 'skipped' });
+    expect(body.previous).toEqual({ available: false, reason: 'skipped' });
+    expect(body.funnel).toEqual({ available: false, reason: 'skipped' });
+    const sqls = sqlCalls();
+    expect(sqls.filter(q => q.includes('FROM email_send_log WHERE sent_at') && !q.includes('GROUP BY'))).toHaveLength(0);
+    expect(sqls.some(q => q.includes("date_trunc('week'"))).toBe(true);
+    const n = mockQuery.mock.calls.length;
+    const kpis = await get('/insights?from=2026-01-01&to=2026-01-10&only=totals,previous');
+    expect(kpis.body.totals).toEqual({ available: true, sent: 0, delivered: 0, opened: 0, clicked: 0, unsubscribed: 0 });
+    expect(kpis.body.weeklyTrend).toEqual({ available: false, reason: 'skipped' });
+    expect(mockQuery.mock.calls.length).toBeGreaterThan(n); // a different key: not served from the trend-only cache
+  });
+
   it('clamps bad dates and over-long ranges', async () => {
     mockQuery.mockResolvedValue({ rows: [] });
     const { body } = await get('/insights?from=garbage&to=2026-13-45');

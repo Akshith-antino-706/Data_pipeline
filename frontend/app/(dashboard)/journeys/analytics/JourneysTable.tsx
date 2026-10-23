@@ -21,7 +21,7 @@ import {
   ShieldCheck, X,
 } from 'lucide-react';
 import {
-  getJourneyAnalyticsTable, getJourneyAnalyticsNodes, refreshJourneyAnalytics, regenerateJourneyQaReports,
+  getJourneyAnalyticsTable, getJourneyAnalyticsNodes, refreshJourneyAnalytics, regenerateJourneyQaReports, downloadJourneyAnalyticsCsv,
 } from '@/lib/api';
 import type { JourneyAnalyticsSort, JourneyAnalyticsTableOptions } from '@/lib/api';
 import { Button, Card, Chip, Skeleton } from '@/components/ui';
@@ -54,7 +54,6 @@ interface QaModalState { templateId: string | number | null | undefined; templat
 type TypeFilter = 'all' | 'fixed' | 'continuous';
 
 export const PAGE_SIZES = [20, 50] as const;
-const EXPORT_BATCH = 200;
 const TZ = 'Asia/Dubai';
 
 // ── Formatting (plain words, thousands separators, never NaN) ─────────────
@@ -335,34 +334,11 @@ export default function JourneysTable() {
     setDir(field === 'name' ? 'asc' : 'desc');
   };
 
-  /** CSV of every journey matching the current filters (all pages), fetched in batches. */
+  /** CSV of every journey matching the current filters — one request; the server builds the file. */
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const all: AnalyticsRow[] = [];
-      for (let p = 1; p <= 500; p++) {
-        const res = await getJourneyAnalyticsTable(status, { ...filterOpts(), page: p, limit: EXPORT_BATCH }) as AnalyticsTableResponse | null;
-        const batch = res?.data?.journeys || [];
-        all.push(...batch);
-        const t = res?.data?.total;
-        if (typeof t !== 'number' || batch.length < EXPORT_BATCH || all.length >= t) break;
-      }
-      const cell = (v: unknown) => (has(v) ? String(num(v)) : '');
-      const headers = ['Journey', 'Journey ID', 'Status', 'Type', 'People entered', 'Sent', 'Delivered', "Didn't send", 'Opened', 'Opened (real people)', 'Opened %',
-        'Clicked', 'Clicked (real people)', 'Clicked % of opened', 'Reached website', 'Bounced', 'Unsubscribed', 'Website actions', 'Booked'];
-      const lines = [headers.join(',')];
-      for (const r of all) {
-        lines.push([
-          `"${String(r.journey_name || '').replace(/"/g, '""')}"`, r.journey_id, statusOf(r.journey_status).label, isAlwaysOn(r) ? 'Always on' : 'One-time',
-          cell(r.entries), cell(r.sent), cell(r.delivered), cell(r.failed), cell(r.opened), cell(r.human_opened), openRate(r) ?? '',
-          cell(r.clicked), cell(r.human_clicked), clickRate(r) ?? '', cell(r.landed), cell(r.bounced), cell(r.unsubscribed), cell(r.gtm_events), cell(r.booked),
-        ].join(','));
-      }
-      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `journey-performance-${dubaiToday()}.csv`; a.click();
-      URL.revokeObjectURL(url);
+      await downloadJourneyAnalyticsCsv(status, filterOpts());
     } catch (e) {
       alert(`Download failed: ${(e as Error).message}`);
     } finally { setExporting(false); }

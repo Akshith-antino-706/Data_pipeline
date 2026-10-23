@@ -48,6 +48,8 @@ interface SyncStatusEntry {
  * Provides record counts, bill-level summaries, revenue, half-data preview,
  * and CSV generation for all synced data tables.
  */
+const PREVIEW_ROWS = 50;
+
 class DailyReportService {
 
   // ── Table Configuration ──
@@ -188,9 +190,10 @@ class DailyReportService {
       `SELECT COUNT(*) AS cnt FROM ${tableName} ${dateFilter}`, [from, to]
     );
     const totalRows = parseInt(countResult.rows[0]!.cnt);
-    const halfRows = Math.min(Math.ceil(totalRows / 2), 500);
+    // The preview is a glance at the newest rows, not a dump: 50 is enough to check the data arrived.
+    const previewLimit = Math.min(totalRows, PREVIEW_ROWS);
 
-    const sql = `SELECT ${columns.join(', ')} FROM ${tableName} ${dateFilter} ORDER BY ${dateColumn} DESC LIMIT ${halfRows}`;
+    const sql = `SELECT ${columns.join(', ')} FROM ${tableName} ${dateFilter} ORDER BY ${dateColumn} DESC LIMIT ${previewLimit}`;
     const result = await query(sql, [from, to]);
 
     return {

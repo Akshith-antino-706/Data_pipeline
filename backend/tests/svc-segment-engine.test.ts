@@ -17,9 +17,10 @@ vi.mock('../src/config/database.js', () => ({
 vi.mock('../src/config/mysql.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../src/config/cache.js', () => ({ cached: vi.fn(), invalidate: vi.fn() }));
 
-import SegmentEngine from '../src/services/SegmentEngine.js';
+import SegmentEngine, { clearSegmentCustomerCounts } from '../src/services/SegmentEngine.js';
 
 beforeEach(() => {
+  clearSegmentCustomerCounts();
   m.query.mockReset();
   m.clientQuery.mockReset();
   m.release.mockReset();
@@ -82,14 +83,16 @@ describe('SegmentEngine.getSegmentCustomers', () => {
     countThenRows('0');
     await SegmentEngine.getSegmentCustomers(3, { page: 0, limit: 10 });
     expect(m.query.mock.calls[1][1]).toEqual([3, 10, 0]);
+    // the count is now cached per (segment, search) for a minute: later pages only run the page query
     m.query.mockClear();
-    countThenRows('0');
+    m.query.mockResolvedValue({ rows: [] });
     await SegmentEngine.getSegmentCustomers(3, { page: -2, limit: 0 });
-    expect(m.query.mock.calls[1][1]).toEqual([3, 25, 0]);
+    expect(m.query).toHaveBeenCalledTimes(1);
+    expect(m.query.mock.calls[0][1]).toEqual([3, 25, 0]);
     m.query.mockClear();
-    countThenRows('0');
+    m.query.mockResolvedValue({ rows: [] });
     await SegmentEngine.getSegmentCustomers(3, { page: 2, limit: 10000 });
-    expect(m.query.mock.calls[1][1]).toEqual([3, 500, 500]);
+    expect(m.query.mock.calls[0][1]).toEqual([3, 500, 500]);
   });
 
   it('total 0 → totalPages 0', async () => {

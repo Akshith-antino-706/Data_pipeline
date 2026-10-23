@@ -6,6 +6,10 @@ import type { GenericRow, FunnelStageRow, SegmentPageStatsRow, SchemaColumnRow, 
  * SegmentEngine — Auto-assigns customers to the 28 defined segments
  * based on their SQL criteria. Runs as a batch job.
  */
+const segmentCustomerCounts = new Map<string, { at: number; total: number }>();
+const SEGMENT_COUNT_TTL_MS = 60_000;
+export function clearSegmentCustomerCounts(): void { segmentCustomerCounts.clear(); }
+
 class SegmentEngine {
 
   /**
@@ -182,20 +186,28 @@ class SegmentEngine {
       where += ` AND (c.first_name ILIKE $${params.length} OR c.last_name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
     }
 
-    const { rows: [{ count }] } = await db.query<{ count: string }>(
-      `SELECT COUNT(*) FROM segment_customers sc JOIN customers c ON c.customer_id = sc.customer_id WHERE ${where}`, params
-    );
+    // Count and page run together; the count is cached per (segment, search) for a minute so
+    // page/sort changes only run the page query.
+    const countKey = `${segmentId}|${search ?? ''}`;
+    const hit = segmentCustomerCounts.get(countKey);
+    const countP: Promise<number> = hit && Date.now() - hit.at < SEGMENT_COUNT_TTL_MS
+      ? Promise.resolve(hit.total)
+      : db.query<{ count: string }>(
+          `SELECT COUNT(*) FROM segment_customers sc JOIN customers c ON c.customer_id = sc.customer_id WHERE ${where}`, params
+        ).then(r => { const total = parseInt(r.rows[0]?.count ?? '0', 10) || 0; segmentCustomerCounts.set(countKey, { at: Date.now(), total }); return total; });
 
-    const { rows } = await db.query<GenericRow>(`
+    const [{ rows }, totalCount] = await Promise.all([
+      db.query<GenericRow>(`
       SELECT c.*, sc.assigned_at, sc.confidence, sc.assigned_by
       FROM segment_customers sc
       JOIN customers c ON c.customer_id = sc.customer_id
       WHERE ${where}
       ORDER BY ${orderCol === 'assigned_at' ? 'sc.assigned_at' : 'c.' + orderCol} ${dir}
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-    `, [...params, limit, offset]);
+    `, [...params, limit, offset]),
+      countP,
+    ]);
 
-    const totalCount = parseInt(count);
     return { data: rows, total: totalCount, page, limit, totalPages: Math.ceil(totalCount / limit) };
   }
 
@@ -204,6 +216,7 @@ class SegmentEngine {
    * and assign customers accordingly
    */
   static async runSegmentation() {
+    segmentCustomerCounts.clear();
     const { rows: segments } = await db.query<SegmentDefinitionRow>(
       'SELECT segment_id, segment_name, sql_criteria FROM segment_definitions ORDER BY segment_number'
     );

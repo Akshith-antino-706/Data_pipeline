@@ -157,7 +157,7 @@ describe('InsightsOverview', () => {
     vi.mocked(api.getOverviewInsights).mockResolvedValue(INSIGHTS);
     fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
     await screen.findByText('12,000');
-    expect(vi.mocked(api.getOverviewInsights).mock.calls.length).toBe(calls + 1);
+    expect(vi.mocked(api.getOverviewInsights).mock.calls.length).toBe(calls + 3);
     expect(screen.queryByText('Not available right now')).toBeNull();
   });
 
@@ -186,7 +186,7 @@ describe('InsightsOverview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
     fireEvent.change(screen.getByLabelText('Period from'), { target: { value: '2026-01-01' } });
     fireEvent.change(screen.getByLabelText('Period to'), { target: { value: '2026-01-31' } });
-    await waitFor(() => expect(api.getOverviewInsights).toHaveBeenLastCalledWith('2026-01-01', '2026-01-31'));
+    await waitFor(() => expect(api.getOverviewInsights).toHaveBeenLastCalledWith('2026-01-01', '2026-01-31', expect.any(String)));
     const calls = vi.mocked(api.getOverviewInsights).mock.calls.length;
     fireEvent.change(screen.getByLabelText('Period from'), { target: { value: '2026-02-15' } });
     expect(screen.getByText(/Pick a valid from and to date/)).toBeTruthy();
@@ -215,7 +215,8 @@ describe('InsightsOverview loading behaviour', () => {
       vi.mocked(api.getOverviewInsights).mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(INSIGHTS);
       render(<InsightsOverview />);
       await vi.advanceTimersByTimeAsync(3100);
-      await waitFor(() => expect(api.getOverviewInsights).toHaveBeenCalledTimes(2));
+      // three section requests on open, plus the one quiet retry of the dropped request
+      await waitFor(() => expect(api.getOverviewInsights).toHaveBeenCalledTimes(4));
       await waitFor(() => expect(screen.queryByTestId('insights-loading')).toBeNull());
       expect(screen.queryByText("Couldn't load performance data")).toBeNull();
     } finally { vi.useRealTimers(); }

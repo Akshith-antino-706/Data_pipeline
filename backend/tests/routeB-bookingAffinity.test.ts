@@ -7,7 +7,7 @@ import { once } from 'node:events';
 
 const m = vi.hoisted(() => ({
   ensureTables: vi.fn(), getSummary: vi.fn(), getTopProducts: vi.fn(), searchProducts: vi.fn(),
-  getCustomers: vi.fn(), getCustomersCsv: vi.fn(), getCustomerDetail: vi.fn(), isRunning: vi.fn(), build: vi.fn(),
+  getCustomers: vi.fn(), getCustomersCsv: vi.fn(), getCustomerDetail: vi.fn(), isRunning: vi.fn(), build: vi.fn(), getStatus: vi.fn(),
 }));
 vi.mock('../src/config/database.js', () => ({ default: { query: vi.fn(), connect: vi.fn() }, query: vi.fn() }));
 vi.mock('../src/services/BookingAffinityService.js', () => ({
@@ -40,6 +40,12 @@ describe('bookingAffinity.ts', () => {
     m.ensureTables.mockRejectedValue(new Error('ddl'));
     expect((await get('/summary')).status).toBe(500);
     expect(m.getSummary).not.toHaveBeenCalled();
+  });
+  it('status: build status only, no counts', async () => {
+    m.getStatus.mockResolvedValue({ status: 'running', builtAt: null });
+    expect(await (await get('/status')).json()).toEqual({ success: true, status: 'running', builtAt: null });
+    expect(m.getSummary).not.toHaveBeenCalled();
+    expect(m.getCustomers).not.toHaveBeenCalled();
   });
   it('summary: default filters', async () => {
     m.getSummary.mockResolvedValue({ total: 1 });

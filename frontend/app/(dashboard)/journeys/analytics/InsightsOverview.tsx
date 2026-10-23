@@ -59,6 +59,27 @@ function shortDate(iso: string | undefined, withYear = false): string {
 const weekLabel = (iso: string) => { const d = shortDate(iso); return d ? `w/c ${d}` : ''; };
 const periodWords = (days: number) => (days === 1 ? 'the previous day' : `the previous ${fmtN(days)} days`);
 
+type PartKey = 'kpis' | 'trend' | 'funnel';
+const PARTS: { key: PartKey; only: string; sections: (keyof Omit<OverviewInsights, 'range'>)[] }[] = [
+  { key: 'kpis', only: 'totals,previous', sections: ['totals', 'previous'] },
+  { key: 'trend', only: 'weeklyTrend', sections: ['weeklyTrend'] },
+  { key: 'funnel', only: 'funnel', sections: ['funnel'] },
+];
+const NOT_YET = { available: false, reason: 'unavailable' } as const;
+const EMPTY_INSIGHTS = (range: OverviewInsights['range']): OverviewInsights =>
+  ({ range, totals: NOT_YET, previous: NOT_YET, weeklyTrend: NOT_YET, funnel: NOT_YET, journeys: NOT_YET });
+
+/** Copies only the sections a part owns into the merged payload (a failed part leaves them unavailable). */
+function mergePart(prev: OverviewInsights | null, res: OverviewInsights | null, part: typeof PARTS[number]): OverviewInsights {
+  const base = prev ?? EMPTY_INSIGHTS(res?.range ?? { from: '', to: '', days: 0 });
+  const next: OverviewInsights = { ...base, range: part.key === 'kpis' && res?.range ? res.range : base.range };
+  for (const key of part.sections) {
+    const v = res?.[key];
+    (next as unknown as Record<string, unknown>)[key] = v && typeof v === 'object' ? v : NOT_YET;
+  }
+  return next;
+}
+
 function NotAvailable({ onRetry, busy }: { onRetry: () => void; busy: boolean }) {
   return (
     <div className={styles.unavailable}>
@@ -131,35 +152,50 @@ export default function InsightsOverview() {
   // Each load gets an id so a slow response for an old period can't overwrite a newer one.
   const reqId = useRef(0);
   const [slow, setSlow] = useState(false);
+  // Which parts are still in flight: the page asks for KPIs, the weekly trend and the funnel in
+  // three parallel requests (?only=…) so each section shows as soon as its own query is done.
+  const [pending, setPending] = useState<Set<PartKey>>(new Set());
   const load = useCallback(async () => {
     if (!rFrom || !rTo) return;
     const id = ++reqId.current;
     setLoading(true);
     setError(null);              // show the loading state, not the previous error, while retrying
     setSlow(false);
+    setPending(new Set(PARTS.map(p => p.key)));
     const slowTimer = setTimeout(() => { if (id === reqId.current) setSlow(true); }, 8000);
-    const fetchOnce = () => getOverviewInsights(rFrom, rTo);
-    try {
-      let res: OverviewInsights | null | undefined;
+    const fetchPart = async (only: string): Promise<OverviewInsights | null | undefined> => {
       try {
-        res = await fetchOnce();
+        return await getOverviewInsights(rFrom, rTo, only);
       } catch (e) {
         // A dropped connection (e.g. the server restarting) gets one quiet retry before an error is shown.
         if (!(e instanceof TypeError)) throw e;
         await new Promise(r => setTimeout(r, 3000));
-        if (id !== reqId.current) return;
-        res = await fetchOnce();
+        if (id !== reqId.current) return undefined;
+        return await getOverviewInsights(rFrom, rTo, only);
       }
-      if (id !== reqId.current) return;
-      setData(res ?? null);
-    } catch (e) {
-      if (id !== reqId.current) return;
-      setError((e as Error).message || 'Failed to load performance data');
-      setData(null);
-    } finally {
-      clearTimeout(slowTimer);
-      if (id === reqId.current) { setLoading(false); setSlow(false); }
-    }
+    };
+    let failed = false;
+    await Promise.all(PARTS.map(async part => {
+      try {
+        const res = await fetchPart(part.only);
+        if (id !== reqId.current || failed) return;
+        if (res && typeof res === 'object') setData(prev => mergePart(prev, res, part));
+      } catch (e) {
+        if (id !== reqId.current) return;
+        if (part.key === 'kpis') {
+          // Without the KPIs there is no page to show; the charts fall back to "Not available".
+          failed = true;
+          setError((e as Error).message || 'Failed to load performance data');
+          setData(null);
+        } else {
+          setData(prev => mergePart(prev, null, part));
+        }
+      } finally {
+        if (id === reqId.current) setPending(p => { const n = new Set(p); n.delete(part.key); return n; });
+      }
+    }));
+    clearTimeout(slowTimer);
+    if (id === reqId.current) { setLoading(false); setSlow(false); }
   }, [rFrom, rTo]);
 
   useEffect(() => { load(); }, [load]);
@@ -282,16 +318,20 @@ export default function InsightsOverview() {
                 <h3 className={styles.panelTitle}>Opens and clicks by week</h3>
                 <span className={styles.channel}>Email only</span>
               </div>
-              {isAvail(data?.weeklyTrend)
-                ? <TrendChart weeks={data.weeklyTrend.weeks ?? []} />
-                : <NotAvailable onRetry={retry} busy={loading} />}
+              {pending.has('trend')
+                ? <div data-testid="trend-loading" aria-busy="true"><Skeleton height={170} /></div>
+                : isAvail(data?.weeklyTrend)
+                  ? <TrendChart weeks={data.weeklyTrend.weeks ?? []} />
+                  : <NotAvailable onRetry={retry} busy={loading} />}
             </section>
             <section className={styles.panel} aria-label="From sent to booked">
               <div className={styles.panelHead}>
                 <h3 className={styles.panelTitle}>From sent to booked</h3>
                 <span className={styles.channel}>Email only</span>
               </div>
-              {isAvail(data?.funnel) ? <Funnel f={data.funnel} /> : <NotAvailable onRetry={retry} busy={loading} />}
+              {pending.has('funnel')
+                ? <div data-testid="funnel-loading" aria-busy="true"><Skeleton height={170} /></div>
+                : isAvail(data?.funnel) ? <Funnel f={data.funnel} /> : <NotAvailable onRetry={retry} busy={loading} />}
             </section>
           </div>
         </div>

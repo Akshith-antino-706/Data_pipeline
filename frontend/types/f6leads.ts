@@ -62,7 +62,7 @@ export interface DeptPeriodValue { chats: number; newUsers: number; oldUsers: nu
 export interface DeptRow { receiver: string; department?: string; values: DeptPeriodValue[] }
 export interface DeptPeriodsResponse { periods?: PeriodColumn[]; rows?: DeptRow[] }
 
-export interface DeptUser { wa_id: string; wa_name?: string; first_msg?: string; first_msg_at?: string }
+export interface DeptUser { wa_id: string; wa_name?: string; first_msg?: string | null; first_msg_at?: string; /** True once the first-message lookup (second request) has answered for this row. */ first_msg_loaded?: boolean }
 export interface DeptUsersResponse { users?: DeptUser[]; has_more?: boolean }
 
 export interface DeptGroup {

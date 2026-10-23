@@ -245,20 +245,16 @@ describe('Journey Analytics page', () => {
     await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Email checks failed: nope'));
   });
 
-  it('Download CSV fetches every page with the current filters', async () => {
-    const createObjectURL = vi.fn(() => 'blob:x');
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }));
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  it('Download CSV asks the server for one file with the current filters', async () => {
     mockTable(ROWS, undefined, 3);
     render(<JourneyAnalyticsPage />);
     await screen.findByText('Welcome Series');
     fireEvent.change(screen.getByTitle('Journey status'), { target: { value: 'active' } });
     await waitFor(() => expect(api.getJourneyAnalyticsTable).toHaveBeenLastCalledWith('active', expect.objectContaining({ page: 1 })));
+    const pages = vi.mocked(api.getJourneyAnalyticsTable).mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: /Download CSV/ }));
-    await waitFor(() => expect(click).toHaveBeenCalled());
-    expect(api.getJourneyAnalyticsTable).toHaveBeenLastCalledWith('active', { page: 1, limit: 200, sort: 'entries', dir: 'desc' });
-    expect(createObjectURL).toHaveBeenCalled();
+    await waitFor(() => expect(api.downloadJourneyAnalyticsCsv).toHaveBeenCalledWith('active', { sort: 'entries', dir: 'desc' }));
+    expect(vi.mocked(api.getJourneyAnalyticsTable).mock.calls.length).toBe(pages); // no page-by-page fetching
   });
 
   it('handles rows with null/missing metrics without NaN', async () => {
@@ -327,7 +323,7 @@ describe('Performance overview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
     fireEvent.change(screen.getByLabelText('Period from'), { target: { value: '2026-01-01' } });
     fireEvent.change(screen.getByLabelText('Period to'), { target: { value: '2026-01-31' } });
-    await waitFor(() => expect(api.getOverviewInsights).toHaveBeenLastCalledWith('2026-01-01', '2026-01-31'));
+    await waitFor(() => expect(api.getOverviewInsights).toHaveBeenLastCalledWith('2026-01-01', '2026-01-31', expect.any(String)));
     const calls = vi.mocked(api.getOverviewInsights).mock.calls.length;
     fireEvent.change(screen.getByLabelText('Period from'), { target: { value: '2026-02-15' } });
     expect(screen.getByText(/Pick a valid from and to date/)).toBeTruthy();

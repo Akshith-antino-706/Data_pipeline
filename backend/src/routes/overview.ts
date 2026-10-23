@@ -437,17 +437,25 @@ const insightsInFlight = new Map<string, Promise<object>>();
 /** Test hook. */
 export function resetInsightsCache(): void { insightsCache.clear(); insightsInFlight.clear(); }
 
+const INSIGHTS_SECTIONS = ['totals', 'previous', 'weeklyTrend', 'funnel'] as const;
+type InsightsSection = typeof INSIGHTS_SECTIONS[number];
+
+// ?only=totals,previous (comma list) computes just those sections; the rest come back as
+// { available: false, reason: 'skipped' }. The Performance page asks for KPIs, trend and
+// funnel in three parallel requests so each shows as soon as it is ready.
 router.get('/insights', async (req: Request, res: Response) => {
   const range = parseRange(req.query.from, req.query.to);
   // The per-journey breakdown is heavy and the Performance page no longer shows it
   // (its journeys table has its own paged endpoint), so it is only computed on request.
   const withJourneys = req.query.include === 'journeys';
-  const key = `${range.from}|${range.to}|${withJourneys ? 'j' : ''}`;
+  const onlyQ = typeof req.query.only === 'string' ? req.query.only.split(',').map(x => x.trim()) : [];
+  const only = new Set<InsightsSection>(onlyQ.filter((x): x is InsightsSection => (INSIGHTS_SECTIONS as readonly string[]).includes(x)));
+  const key = `${range.from}|${range.to}|${withJourneys ? 'j' : ''}|${[...only].sort().join(',')}`;
   const hit = insightsCache.get(key);
   if (hit && Date.now() - hit.at < hit.ttl) { res.json(hit.body); return; }
   let job = insightsInFlight.get(key);
   if (!job) {
-    job = computeInsights(range, withJourneys).then(body => {
+    job = computeInsights(range, withJourneys, only).then(body => {
       const failed = Object.values(body).some(v => typeof v === 'object' && v !== null && 'available' in v && (v as { available: boolean }).available === false);
       const ttl = failed ? 15_000 : range.to < dubaiTodayIso() ? INSIGHTS_TTL_PAST_MS : INSIGHTS_TTL_LIVE_MS;
       insightsCache.set(key, { at: Date.now(), ttl, body });
@@ -459,22 +467,24 @@ router.get('/insights', async (req: Request, res: Response) => {
   res.json(await job);
 });
 
-async function computeInsights(range: ReturnType<typeof parseRange>, withJourneys: boolean): Promise<object> {
+async function computeInsights(range: ReturnType<typeof parseRange>, withJourneys: boolean, only: Set<InsightsSection> = new Set()): Promise<object> {
   const toEx = addDays(range.to, 1);
   const prevTo = addDays(range.from, -1);
   const prevFrom = addDays(prevTo, -(range.days - 1));
   const p = [range.from, toEx];
   const S = dubaiStart('$1'), E = dubaiStart('$2');
+  const want = (name: InsightsSection) => only.size === 0 || only.has(name);
+  const SKIPPED = { available: false as const, reason: 'skipped' };
 
   // Current-period totals are computed once and shared by the totals and funnel sections.
-  const currentP = totalsFor(range.from, toEx);
+  const currentP = want('totals') || want('funnel') ? totalsFor(range.from, toEx) : Promise.reject(new Error('skipped'));
   currentP.catch(() => { /* surfaced per section */ });
 
   const [totals, previous, weeklyTrend, funnel, journeys] = await Promise.all([
-    section('totals', async () => { const t = await currentP; return { sent: t.sent, delivered: t.delivered, opened: t.opened, clicked: t.clicked, unsubscribed: t.unsubscribed }; }),
-    section('previous', async () => { const t = await totalsFor(prevFrom, addDays(prevTo, 1)); return { from: prevFrom, to: prevTo, sent: t.sent, delivered: t.delivered, opened: t.opened, clicked: t.clicked, unsubscribed: t.unsubscribed }; }),
+    !want('totals') ? Promise.resolve(SKIPPED) : section('totals', async () => { const t = await currentP; return { sent: t.sent, delivered: t.delivered, opened: t.opened, clicked: t.clicked, unsubscribed: t.unsubscribed }; }),
+    !want('previous') ? Promise.resolve(SKIPPED) : section('previous', async () => { const t = await totalsFor(prevFrom, addDays(prevTo, 1)); return { from: prevFrom, to: prevTo, sent: t.sent, delivered: t.delivered, opened: t.opened, clicked: t.clicked, unsubscribed: t.unsubscribed }; }),
 
-    section('weeklyTrend', async () => {
+    !want('weeklyTrend') ? Promise.resolve(SKIPPED) : section('weeklyTrend', async () => {
       const { rows } = await hq(`SELECT
           to_char(date_trunc('week', sent_at AT TIME ZONE 'Asia/Dubai'), 'YYYY-MM-DD') AS week,
           COUNT(*) FILTER (WHERE status NOT IN ('failed','queued')) AS sent,
@@ -490,7 +500,7 @@ async function computeInsights(range: ReturnType<typeof parseRange>, withJourney
       };
     }),
 
-    section('funnel', async () => {
+    !want('funnel') ? Promise.resolve(SKIPPED) : section('funnel', async () => {
       // Reuse the shared totals; if they failed (e.g. the unsubscribe count), count email alone.
       const emailOnly = async () => {
         const { rows } = await hq(`SELECT COUNT(*) AS sent,

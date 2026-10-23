@@ -80,8 +80,8 @@ describe('Affinity page', () => {
     expect(screen.getByText('Bulk')).toBeTruthy();
     expect(screen.getByText('score 12.3 · 1 booking')).toBeTruthy();
     expect(bodyText()).toMatch(/1 customers · booked all time · page 1 of 1/);
-    const visas = screen.getByText('No bookings').closest('button')!;
-    expect(visas.disabled).toBe(true);
+    // a service nobody booked (visas: 0) is left out instead of shown as a disabled row
+    expect(screen.queryByText('No bookings')).toBeNull();
     expect(lastCall('getAffinityCustomers')).toMatchObject({ businessType: 'B2C', period: 'all', excludeBulk: 1, view: 'service', sort: 'score', limit: 25, page: 1 });
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
@@ -99,6 +99,30 @@ describe('Affinity page', () => {
     fireEvent.click(screen.getByText('Build now'));
     await waitFor(() => expect(api.rebuildAffinity).toHaveBeenCalledTimes(1));
     await screen.findByText('Building… (a few minutes)');
+  });
+
+  it('while a build runs it polls only the status endpoint, then reloads the summary when done', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockOk('getAffinitySummary', { ...summary, status: 'running' });
+      mockOk('getAffinityStatus', { status: 'running' });
+      renderPage();
+      await waitFor(() => expect(api.getAffinitySummary).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(8100);
+      await waitFor(() => expect(api.getAffinityStatus).toHaveBeenCalledTimes(1));
+      expect(api.getAffinitySummary).toHaveBeenCalledTimes(1);
+      mockOk('getAffinityStatus', { status: 'success' });
+      mockOk('getAffinitySummary', summary);
+      await vi.advanceTimersByTimeAsync(8100);
+      await waitFor(() => expect(api.getAffinitySummary).toHaveBeenCalledTimes(2));
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('services nobody booked are not listed', async () => {
+    renderPage();
+    await screen.findByText('Tours', { exact: false });
+    expect(screen.queryByText('No bookings')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Visas/ })).toBeNull();
   });
 
   it('shows summary, list and rebuild errors without crashing', async () => {

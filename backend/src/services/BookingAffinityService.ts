@@ -345,6 +345,7 @@ export default class BookingAffinityService {
         duration: ((Date.now() - started) / 1000).toFixed(1),
       };
       await this.writeStatus('success', { startedAt, rows: customers.rowCount, durationMs: Date.now() - started });
+      this.clearCounts();
       console.log(`[BookingAffinity] Done — ${result.customers} customers, ${result.serviceRows} service rows, ${result.productRows} product rows in ${result.duration}s`);
       return result;
     } catch (err) {
@@ -425,12 +426,27 @@ export default class BookingAffinityService {
     };
   }
 
+  // Counts only change when a build finishes, so they are kept for a minute per filter set
+  // (and dropped after a build). Paging and sorting never re-count.
+  private static readonly counts = new Map<string, { at: number; value: unknown }>();
+  private static readonly COUNT_TTL_MS = 60_000;
+  static clearCounts(): void { this.counts.clear(); }
+  private static async countCached<T>(key: string, compute: () => Promise<T>): Promise<T> {
+    const hit = this.counts.get(key);
+    if (hit && Date.now() - hit.at < this.COUNT_TTL_MS) return hit.value as T;
+    const value = await compute();
+    this.counts.set(key, { at: Date.now(), value });
+    if (this.counts.size > 500) this.counts.delete(this.counts.keys().next().value as string);
+    return value;
+  }
+
   /** Build status + customer counts by #1 service. */
   static async getSummary(filters: BookingAffinityFilters) {
     const { sql, params } = this.buildWhere({ ...filters, view: null, search: null });
     const [status, { rows }] = await Promise.all([
       this.getStatus(),
-      query<{ service: string; customers: number }>(`SELECT service_1 AS service, COUNT(*)::int AS customers FROM user_affinity_top3 ${sql} GROUP BY 1`, params),
+      this.countCached(`summary|${sql}|${JSON.stringify(params)}`, () =>
+        query<{ service: string; customers: number }>(`SELECT service_1 AS service, COUNT(*)::int AS customers FROM user_affinity_top3 ${sql} GROUP BY 1`, params)),
     ]);
     const counts = Object.fromEntries(rows.map(r => [r.service, r.customers]));
     const topService = SERVICES.map(s => ({ service: s, customers: counts[s] || 0 }));
@@ -486,11 +502,14 @@ export default class BookingAffinityService {
     const limit = Math.min(Math.max(parseInt(filters.limit as string) || 25, 1), 200);
     const page = Math.max(parseInt(filters.page as string) || 1, 1);
     const { select, sql, params } = this.customerQuery(filters);
-    const [{ rows }, { rows: [count] }] = await Promise.all([
+    const [{ rows }, total] = await Promise.all([
       query<AffinityTop3Row>(`${select} LIMIT ${limit} OFFSET ${(page - 1) * limit}`, params),
-      query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM user_affinity_top3 ${sql}`, params),
+      this.countCached(`customers|${sql}|${JSON.stringify(params)}`, async () => {
+        const { rows: [count] } = await query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM user_affinity_top3 ${sql}`, params);
+        return Number(count?.n) || 0;
+      }),
     ]);
-    return { total: count!.n, customers: rows };
+    return { total, customers: rows };
   }
 
   /** Every service and product one customer booked, in rank order. */

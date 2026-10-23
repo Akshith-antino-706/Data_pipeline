@@ -126,7 +126,7 @@ describe('Leads page — WhatsApp / Email tabs', () => {
     const busiest = screen.getByRole('region', { name: 'Busiest department' });
     expect(within(busiest).getByText('Sales')).toBeTruthy();
     expect(busiest.textContent).toContain('1,505 chats · 100%');
-    expect(bodyText()).toContain('Oct 13-19 · PARTIAL');
+    expect(bodyText()).toContain('Oct 13-19 · so far');
     expect(screen.getByText('No department match')).toBeTruthy();
     expect(screen.getByText('1,500')).toBeTruthy();
     expect(bodyText()).toContain('2 receivers');
@@ -236,18 +236,22 @@ describe('Leads page — WhatsApp / Email tabs', () => {
 
   it('expanding a department row loads its new users and "Show more" pages with an offset', async () => {
     mockWhatsapp();
-    vi.mocked(api.getChatLeadsDepartmentUsers)
-      .mockResolvedValueOnce(as(api.getChatLeadsDepartmentUsers, { users: [{ wa_id: '971555000111', wa_name: 'Ali', first_msg: 'Hi there', first_msg_at: '2026-10-18 10:00' }], has_more: true }))
-      .mockResolvedValueOnce(as(api.getChatLeadsDepartmentUsers, { users: [{ wa_id: '971555000222' }], has_more: false }));
+    // Phase 1 (firstMsg:false) returns the list at once; phase 2 (firstMsg:true) fills in the texts.
+    vi.mocked(api.getChatLeadsDepartmentUsers).mockImplementation((_r, _f, _t, opts) => Promise.resolve(as(api.getChatLeadsDepartmentUsers,
+      opts?.offset
+        ? { users: [{ wa_id: '971555000222', ...(opts.firstMsg ? { first_msg: null } : {}) }], has_more: false }
+        : { users: [{ wa_id: '971555000111', wa_name: 'Ali', first_msg_at: '2026-10-18 10:00', ...(opts?.firstMsg ? { first_msg: 'Hi there' } : {}) }], has_more: true })));
     render(<Leads />);
     fireEvent.click(await findDept('Sales'));
+    await screen.findByText('Ali', { exact: false });
+    expect(api.getChatLeadsDepartmentUsers).toHaveBeenCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50, firstMsg: false });
     await screen.findByText('Hi there');
-    expect(api.getChatLeadsDepartmentUsers).toHaveBeenCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50 });
+    expect(api.getChatLeadsDepartmentUsers).toHaveBeenCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50, offset: 0, firstMsg: true });
     expect(bodyText()).toContain('New contacts for Sales · showing 1+');
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     await screen.findByText('971555000222');
-    expect(api.getChatLeadsDepartmentUsers).toHaveBeenLastCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50, offset: 1 });
-    expect(screen.getByText('(not available)')).toBeTruthy();
+    expect(api.getChatLeadsDepartmentUsers).toHaveBeenCalledWith('971500000001', daysAgo(49), today(), { onlyNew: true, limit: 50, offset: 1, firstMsg: false });
+    await screen.findByText('(not available)');
     expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
     noBadText();
     // collapse

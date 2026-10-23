@@ -184,7 +184,7 @@ describe('GTMService analytics/export SQL', () => {
     m.query.mockResolvedValue({ rows: [] });
     const before = Date.now() - 30 * 86_400_000;
     const r = await GTMService.getEventAnalytics();
-    const [dailySql, dailyParams] = m.query.mock.calls[0];
+    const [dailySql, dailyParams = []] = m.query.mock.calls[0];
     expect(dailySql).toContain('created_at >= $1');
     expect(dailySql).toContain("GROUP BY DATE_TRUNC('day', created_at)");
     expect(dailySql).not.toContain('GROUP BY event_name, DATE_TRUNC');

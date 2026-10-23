@@ -135,11 +135,11 @@ describe('Daily report page', () => {
     render(<DailyReport />);
     loadSummary();
     await screen.findByText('Rayna API Bookings');
-    const previewBtns = screen.getAllByTitle('Preview 50% of data for cross-checking');
+    const previewBtns = screen.getAllByTitle('Preview the newest rows for cross-checking');
     fireEvent.click(previewBtns[0]);
     await screen.findByText('Preview: Rayna Tours');
     expect(api.getReportPreview).toHaveBeenCalledWith('rayna_tours', today(), today());
-    expect(screen.getByText('2 of 4 rows (50%)')).toBeTruthy();
+    expect(screen.getByText('Newest 2 of 4 rows')).toBeTruthy();
     expect(screen.getByText('B2')).toBeTruthy();
     fireEvent.click(previewBtns[0]);
     await waitFor(() => expect(screen.queryByText('Preview: Rayna Tours')).toBeNull());
@@ -156,7 +156,7 @@ describe('Daily report page', () => {
     render(<DailyReport />);
     loadSummary();
     await screen.findByText('Rayna API Bookings');
-    fireEvent.click(screen.getAllByTitle('Preview 50% of data for cross-checking')[0]);
+    fireEvent.click(screen.getAllByTitle('Preview the newest rows for cross-checking')[0]);
     await screen.findByText('No data for the selected date range.');
   });
 

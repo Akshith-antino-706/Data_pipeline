@@ -202,14 +202,14 @@ describe('DailyReportService', () => {
     await expect(DailyReportService.getRecordCounts('2026-10-01', '2026-10-02')).rejects.toThrow('timeout');
   });
 
-  it('getPreview limits to half the rows, capped at 500', async () => {
+  it('getPreview shows the newest rows, at most 50', async () => {
     m.query.mockResolvedValueOnce({ rows: [{ cnt: '7' }], rowCount: 1 }).mockResolvedValueOnce({ rows: [{ billno: 'B1' }], rowCount: 1 });
     const out = await DailyReportService.getPreview('rayna_tours', '2026-10-01', '2026-10-02');
-    expect(sqls()[1]).toMatch(/LIMIT 4$/);
+    expect(sqls()[1]).toMatch(/LIMIT 7$/);
     expect(out).toMatchObject({ totalRows: 7, previewRows: 1 });
     m.query.mockReset().mockResolvedValueOnce({ rows: [{ cnt: '5000' }], rowCount: 1 }).mockResolvedValueOnce({ rows: [], rowCount: 0 });
     await DailyReportService.getPreview('rayna_tours', 'a', 'b');
-    expect(sqls()[1]).toMatch(/LIMIT 500$/);
+    expect(sqls()[1]).toMatch(/LIMIT 50$/);
   });
 
   it('getPreview with no data uses LIMIT 0', async () => {

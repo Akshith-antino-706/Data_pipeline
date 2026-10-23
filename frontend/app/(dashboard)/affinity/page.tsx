@@ -7,7 +7,7 @@ import {
   Users, X, ExternalLink, Search,
 } from 'lucide-react';
 import {
-  getAffinitySummary, getAffinityTopProducts, getAffinityCustomers, getContactAffinity, rebuildAffinity, downloadAffinityCSV,
+  getAffinitySummary, getAffinityStatus, getAffinityTopProducts, getAffinityCustomers, getContactAffinity, rebuildAffinity, downloadAffinityCSV,
 } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
@@ -83,9 +83,9 @@ function formatDateTime(iso: string | null | undefined) {
 function TableSkeleton() {
   return (
     <div aria-label="Loading customers" aria-busy="true" className="ui-card" style={{ padding: 12 }}>
-      {[0, 1, 2, 3, 4, 5].map(row => (
-        <div key={row} style={{ display: 'grid', gridTemplateColumns: '1.6fr repeat(5, 1fr)', gap: 14, padding: '12px 4px', borderTop: row ? '1px solid var(--line)' : 'none' }}>
-          {[0, 1, 2, 3, 4, 5].map(cell => <Skeleton key={cell} width="75%" height={12} />)}
+      {[0, 1, 2, 3, 4, 5, 6, 7].map(row => (
+        <div key={row} style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.7fr repeat(3, 1.2fr) 0.7fr 1fr 0.7fr', gap: 14, padding: '12px 4px', borderTop: row ? '1px solid var(--line)' : 'none' }}>
+          {[0, 1, 2, 3, 4, 5, 6, 7].map(cell => <Skeleton key={cell} width="75%" height={12} />)}
         </div>
       ))}
     </div>
@@ -311,16 +311,18 @@ export default function AffinityPage() {
   }, [audience, refreshKey]);
 
   // While a build runs, poll its status; reload everything once it finishes.
+  // Only the cheap status endpoint is polled (not the grouped counts); everything reloads once it finishes.
   const building = summary?.status === 'running';
   useEffect(() => {
     if (!building) return;
     const timer = setInterval(() => {
-      (getAffinitySummary(audience) as Promise<AffinitySummary>)
-        .then(d => { setSummary(d); if (d.status !== 'running') setRefreshKey(k => k + 1); })
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      (getAffinityStatus() as Promise<AffinitySummary>)
+        .then(d => { if (d.status !== 'running') setRefreshKey(k => k + 1); else setSummary(prev => ({ ...(prev || {}), ...d })); })
         .catch(() => { /* keep polling */ });
     }, 8000);
     return () => clearInterval(timer);
-  }, [building, audience]);
+  }, [building]);
 
   useEffect(() => {
     if (view !== 'product') return;
@@ -370,7 +372,8 @@ export default function AffinityPage() {
   const periodLabel = PERIOD_OPTIONS.find(p => p.value === period)?.label;
   const scopeLabel = CONTACT_TYPES.includes(businessType as ContactType) ? businessType : CONTACT_TYPES.join(' + ');
 
-  const serviceBars: BarItem[] = [{ service: null, customers: summary?.totalCustomers }, ...(summary?.topService || [])].map(sv => {
+  // Services nobody has booked are left out rather than shown as disabled rows.
+  const serviceBars: BarItem[] = [{ service: null, customers: summary?.totalCustomers }, ...(summary?.topService || []).filter(sv => !summary || (sv.customers ?? 0) > 0)].map(sv => {
     const cfg = sv.service ? (SERVICES[sv.service] ?? { label: sv.service, icon: Users, color: 'var(--ink3)' }) : { label: 'All customers', icon: Users, color: 'var(--gold)' };
     const empty = Boolean(sv.service && !sv.customers);
     return {

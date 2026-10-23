@@ -152,7 +152,7 @@ export default function DailyReport() {
       <PageHeader
         title="Reports & exports"
         breadcrumbs={[{ label: 'Insights' }, { label: 'Reports' }]}
-        description="Check that each day's data arrived — bill numbers, row counts and total sales — preview half the rows, then download."
+        description="Check that each day's data arrived — bill numbers, row counts and total sales — preview the newest rows, then download."
         actions={data ? (
           <Button variant="primary" onClick={handleDownloadAll} disabled={downloading.all || !data.totalRows}>
             {downloading.all ? <Loader2 size={16} className={s.spin} /> : <Archive size={16} />}
@@ -245,7 +245,7 @@ export default function DailyReport() {
                         <div className={s.actions}>
                           <Button size="sm" className={isOpen ? s.active : undefined} aria-pressed={isOpen}
                             onClick={() => handlePreview(key)} disabled={empty || previewLoading === key}
-                            title="Preview 50% of data for cross-checking">
+                            title="Preview the newest rows for cross-checking">
                             {previewLoading === key ? <Loader2 size={13} className={s.spin} /> : <Eye size={13} />}
                             Preview
                           </Button>
@@ -267,7 +267,7 @@ export default function DailyReport() {
               <div className={s.previewHead}>
                 <div className={s.groupTitle}>
                   <h2>Preview: {previewLabel}</h2>
-                  <Chip tone="info">{formatNum(preview.previewRows)} of {formatNum(preview.totalRows)} rows (50%)</Chip>
+                  <Chip tone="info">Newest {formatNum(preview.previewRows)} of {formatNum(preview.totalRows)} rows</Chip>
                 </div>
                 <div className={s.groupTitle}>
                   <Button size="sm" variant="primary" onClick={() => handleDownloadCSV(preview.table, previewLabel)}>

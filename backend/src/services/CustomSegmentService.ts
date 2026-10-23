@@ -462,16 +462,16 @@ export default class CustomSegmentService {
 
   // ── Get Customers ────────────────────────────────────────
 
+  /** Customer counts per (segment, version, search) — a page change never re-runs the count. */
+  private static readonly customerCounts = new Map<string, { at: number; total: number }>();
+  private static readonly COUNT_TTL_MS = 60_000;
+  static clearCustomerCounts(): void { this.customerCounts.clear(); }
+
   static async getCustomers(id: number | string, { page = 1, limit = 25, search }: { page?: number; limit?: number; search?: string } = {}) {
     const seg = await this.getById(id);
     if (!seg) return null;
 
     const conditions = seg.conditions || [];
-
-    // Count
-    const countBuild = this.buildSegmentSQL(conditions);
-    const { rows: [countRow] } = await query<{ count: number }>(countBuild.sql, countBuild.params);
-    const total = countRow!.count;
 
     // Build data query
     const { clauseItems, params, nextIdx, needsRevenueJoin, needsTravelDate, needsBookingDate } =
@@ -497,6 +497,7 @@ export default class CustomSegmentService {
       whereSQL = `WHERE (uc.name ILIKE $${pIdx} OR uc.email ILIKE $${pIdx} OR uc.mobile ILIKE $${pIdx})`;
       pIdx++;
     }
+    const whereParams = [...params];
 
     const offset = (page - 1) * limit;
     params.push(limit, offset);
@@ -542,7 +543,16 @@ export default class CustomSegmentService {
       LIMIT $${pIdx} OFFSET $${pIdx + 1}
     `;
 
-    const { rows } = await query(sql, params);
+    // The count uses the same joins and WHERE (so it honours the search), and is cached per
+    // segment version + search for a minute so paging only runs the page query.
+    const countKey = `${seg.id}|${String(seg.updated_at ?? '')}|${search ?? ''}`;
+    const hit = this.customerCounts.get(countKey);
+    const countP: Promise<number> = hit && Date.now() - hit.at < this.COUNT_TTL_MS
+      ? Promise.resolve(hit.total)
+      : query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM unified_contacts uc ${revenueJoin} ${dateJoin} ${whereSQL}`, whereParams)
+          .then(r => { const total = Number(r.rows[0]?.count) || 0; this.customerCounts.set(countKey, { at: Date.now(), total }); return total; });
+
+    const [{ rows }, total] = await Promise.all([query(sql, params), countP]);
 
     return {
       data: rows,

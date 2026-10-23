@@ -9,7 +9,7 @@ import type { QueryParams, JourneyNode, DiagnoseReport, GtmEventStat } from '../
 import type { CreateJourneyInput, JourneyFlowNode } from '../types/journeyService.js';
 import type { JourneyStatsMetaRow, JourneyNodesRow, JourneyNodesEdgesRow, JourneyNodeStatsRow, TestSendEntryRow, HtmlTemplateIdRow, ActiveEntryTimingRow, SnapshotStatusRow, CustomerIdRow, GtmNodeEventRow, NodeSentRow, EventTypeTotalRow, NodeConversionRow, JourneyIdRow, EntryIdRow, AddNodeBody, ResetEntriesBody } from '../types/u5Journeys.js';
 import { parseId, isIsoDate } from '../utils/validate.js';
-import { getAnalyticsTablePage, wantsPaging } from '../services/JourneyAnalyticsTableService.js';
+import { getAnalyticsTablePage, wantsPaging, buildAnalyticsTableQuery, ANALYTICS_TABLE_MAX_LIMIT } from '../services/JourneyAnalyticsTableService.js';
 const router = Router();
 
 // ── Journey-detail cache (Phase 0) ──
@@ -176,6 +176,38 @@ router.get('/dashboard', async (req, res, next) => {
 // OPTIONAL read-only paging: when any of ?page/limit/search/sort/dir/type is present the
 // response is one page plus `total`/`page`/`limit` (LIMIT/OFFSET + COUNT, SELECT only).
 // Without them the response is exactly the original full list, so other callers are unaffected.
+// GET /analytics/table.csv — every journey matching the filters, as one CSV built on the
+// server in batches (the page used to fetch up to 500 pages of JSON to build this).
+const CSV_STATUS: Record<string, string> = { active: 'Running', paused: 'Paused', completed: 'Finished', draft: 'Draft', archived: 'Archived' };
+router.get('/analytics/table.csv', async (req, res, next) => {
+  try {
+    const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
+    const cell = (v: unknown) => (n(v) == null ? '' : String(n(v)));
+    const pctOf = (part: unknown, whole: unknown) => { const a = n(part), b = n(whole); return a == null || !b ? '' : String(Math.round((a / b) * 1000) / 10); };
+    const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const headers = ['Journey', 'Journey ID', 'Status', 'Type', 'People entered', 'Sent', 'Delivered', "Didn't send", 'Opened', 'Opened (real people)', 'Opened %',
+      'Clicked', 'Clicked (real people)', 'Clicked % of opened', 'Reached website', 'Bounced', 'Unsubscribed', 'Website actions', 'Booked'];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="journey-performance-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.write(headers.join(',') + '\n');
+    const BATCH = ANALYTICS_TABLE_MAX_LIMIT;
+    for (let page = 1; page <= 500; page++) {
+      const b = buildAnalyticsTableQuery({ ...req.query, page, limit: BATCH });
+      const { rows } = await db.query<Record<string, unknown>>(b.rowsSql, b.rowsParams);
+      for (const r of rows) {
+        const status = String(r.journey_status ?? '');
+        res.write([
+          q(r.journey_name), cell(r.journey_id), CSV_STATUS[status] ?? status, r.journey_type === 'gtm' ? 'Always on' : 'One-time',
+          cell(r.entries), cell(r.sent), cell(r.delivered), cell(r.failed), cell(r.opened), cell(r.human_opened), pctOf(r.opened, n(r.delivered) || r.sent),
+          cell(r.clicked), cell(r.human_clicked), pctOf(r.clicked, r.opened), cell(r.landed), cell(r.bounced), cell(r.unsubscribed), cell(r.gtm_events), cell(r.booked),
+        ].join(',') + '\n');
+      }
+      if (rows.length < BATCH) break;
+    }
+    res.end();
+  } catch (err) { if (res.headersSent) res.end(); else next(err); }
+});
+
 router.get('/analytics/table', async (req, res, next) => {
   try {
     if (wantsPaging(req.query)) {

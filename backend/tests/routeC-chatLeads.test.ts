@@ -22,7 +22,7 @@ const { mockQuery, mysqlQuery, outbound, client, connect } = vi.hoisted(() => {
 vi.mock('../src/config/database.js', () => ({ default: { query: mockQuery, connect }, query: mockQuery }));
 vi.mock('../src/config/mysql.js', () => ({ mysqlQuery }));
 
-import chatLeadsRouter from '../src/routes/chatLeads.js';
+import chatLeadsRouter, { clearLeadsSummaryCache } from '../src/routes/chatLeads.js';
 
 const realFetch = globalThis.fetch;
 vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -44,6 +44,7 @@ beforeAll(async () => {
 afterAll(() => { server.close(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.clearAllMocks();
+  clearLeadsSummaryCache();
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
   mysqlQuery.mockReset();
@@ -94,6 +95,22 @@ describe('date-range validated endpoints', () => {
     expect(r.body).toMatchObject({ success: true, totalChats: 5, totalLeads: 3, newUsers: 2, oldUsers: 1 });
     expect(mysqlQuery.mock.calls[0][1]).toEqual(['2026-01-01', '2026-01-31']);
     expect(mysqlQuery.mock.calls[0][2]).toBe('chats');
+    // the three aggregates are issued together, and the answer is kept for the comparison window / next user
+    expect(mysqlQuery).toHaveBeenCalledTimes(3);
+    const again = await call('/summary?from=2026-01-01&to=2026-01-31');
+    expect(again.body).toMatchObject({ totalChats: 5, newUsers: 2 });
+    expect(mysqlQuery).toHaveBeenCalledTimes(3);
+  });
+
+  it('/mail-summary runs its two aggregates together and is cached per range', async () => {
+    mysqlQuery.mockResolvedValueOnce([{ receiver: 'a@x', department: 'Sales', emails: 4, leads: 2 }]).mockResolvedValueOnce([{ emails: 4, leads: 2 }]);
+    const r = await call('/mail-summary?from=2026-01-01&to=2026-01-31');
+    expect(r.body).toMatchObject({ success: true, totalEmails: 4, totalLeads: 2 });
+    expect(mysqlQuery).toHaveBeenCalledTimes(2);
+    await call('/mail-summary?from=2026-01-01&to=2026-01-31');
+    expect(mysqlQuery).toHaveBeenCalledTimes(2);
+    await call('/mail-summary?from=2026-02-01&to=2026-02-28');
+    expect(mysqlQuery).toHaveBeenCalledTimes(4);
   });
 
   it('/trend: unknown granularity falls back to day and is never interpolated', async () => {
@@ -229,6 +246,13 @@ describe('/department-users', () => {
   });
   // FIXED (was BUG) (src/routes/chatLeads.ts:499): parseInt('-5') || 50 keeps -5, so the SQL gets
   // LIMIT -4. Expected the limit to be clamped to at least 1.
+  it('first_msg=0 returns the list without any ChatHead call', async () => {
+    mysqlQuery.mockResolvedValue([{ wa_id: 'a', wa_name: 'A', first_at: null, is_new: 1 }]);
+    const r = await call<{ with_first_msg: boolean; users: { first_msg: string | null }[] }>('/department-users?receiver=r&from=2026-01-01&to=2026-01-02&first_msg=0');
+    expect(r.body.with_first_msg).toBe(false);
+    expect(r.body.users[0].first_msg).toBeNull();
+    expect(outbound).not.toHaveBeenCalled();
+  });
   it('clamps a negative limit', async () => {
     await call('/department-users?receiver=r&from=2026-01-01&to=2026-01-02&limit=-5');
     expect(Number(mysqlQuery.mock.calls[0][1]?.at(-2))).toBeGreaterThanOrEqual(1);

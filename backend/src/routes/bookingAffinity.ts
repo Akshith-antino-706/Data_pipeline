@@ -26,6 +26,13 @@ function parseFilters(q: QueryStrings) {
   };
 }
 
+// GET /api/v3/booking-affinity/status — build status only (cheap; what the page polls during a rebuild)
+router.get('/status', async (_req: QueryRequest, res: Response, next: NextFunction) => {
+  try {
+    res.json({ success: true, ...(await BookingAffinityService.getStatus()) });
+  } catch (err) { next(err); }
+});
+
 // GET /api/v3/booking-affinity/summary — build status + customers by #1 service / #1 product's service
 router.get('/summary', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {

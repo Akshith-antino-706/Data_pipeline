@@ -119,7 +119,7 @@ describe('DailyReportService', () => {
     expect(m.query).toHaveBeenCalledTimes(Object.keys(DailyReportService.TABLES).length);
   });
 
-  it.each([[0, 0], [7, 4], [5000, 500]])('getPreview with %i rows limits to %i', async (total, limit) => {
+  it.each([[0, 0], [7, 7], [5000, 50]])('getPreview with %i rows limits to %i', async (total, limit) => {
     m.query.mockResolvedValueOnce({ rows: [{ cnt: String(total) }] }).mockResolvedValueOnce({ rows: [] });
     const r = await DailyReportService.getPreview('chats', 'a', 'b');
     expect(m.query.mock.calls[1]![0]).toMatch(new RegExp(`ORDER BY created_at DESC LIMIT ${limit}$`));

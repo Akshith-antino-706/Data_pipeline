@@ -9,6 +9,20 @@ import { clampInt } from '../utils/validate.js';
 
 const router = Router();
 
+// Summary answers (3 aggregate scans each) are kept for two minutes per date range, so a
+// comparison window or a second user doesn't re-scan the chat history.
+const SUMMARY_TTL_MS = 2 * 60_000;
+const summaryCache = new Map<string, { at: number; body: object }>();
+export function clearLeadsSummaryCache(): void { summaryCache.clear(); }
+async function cachedSummary(key: string, compute: () => Promise<object>): Promise<object> {
+  const hit = summaryCache.get(key);
+  if (hit && Date.now() - hit.at < SUMMARY_TTL_MS) return hit.body;
+  const body = await compute();
+  summaryCache.set(key, { at: Date.now(), body });
+  if (summaryCache.size > 200) summaryCache.delete(summaryCache.keys().next().value as string);
+  return body;
+}
+
 // mysql2 returns DATE columns as JS Date objects constructed in the connection's
 // local timezone; reading back the LOCAL components (not toISOString, which
 // converts to UTC) avoids an off-by-one-day shift when that timezone isn't UTC.
@@ -312,7 +326,10 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
     if (!dates) return;
     const { from, to } = dates;
 
-    const rows = await mysqlQuery<ChatSummaryRow[]>(`
+    const body = await cachedSummary(`chat|${from}|${to}`, async () => {
+    // The three aggregates are independent — run them together.
+    const [rows, totalsRow, userStatsRow] = await Promise.all([
+      mysqlQuery<ChatSummaryRow[]>(`
       SELECT c.receiver,
              d.name AS department,
              COUNT(*) AS chats,
@@ -322,18 +339,16 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
       WHERE c.created_at >= ? AND c.created_at < DATE_ADD(?, INTERVAL 1 DAY)
       GROUP BY c.receiver, d.name
       ORDER BY chats DESC
-    `, [from, to], 'chats');
-
-    const totalsRow = await mysqlQuery<ChatTotalsRow[]>(`
+    `, [from, to], 'chats'),
+      mysqlQuery<ChatTotalsRow[]>(`
       SELECT COUNT(*) AS chats, COUNT(DISTINCT wa_id) AS leads
       FROM chats
       WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
-    `, [from, to], 'chats');
-
+    `, [from, to], 'chats'),
     // New vs old users: for each user active in the range, take their FIRST-EVER message
     // time (MIN(created_at) over all history). first message on/after `from` → NEW (this is
     // their first contact ever); earlier → OLD (returning). new + old = unique users in range.
-    const userStatsRow = await mysqlQuery<UserStatsRow[]>(`
+      mysqlQuery<UserStatsRow[]>(`
       SELECT
         SUM(CASE WHEN f.first_at >= ? THEN 1 ELSE 0 END) AS new_users,
         SUM(CASE WHEN f.first_at <  ? THEN 1 ELSE 0 END) AS old_users
@@ -347,9 +362,9 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
         )
         GROUP BY wa_id
       ) f
-    `, [from, from, from, to], 'chats');
-
-    res.json({
+    `, [from, from, from, to], 'chats'),
+    ]);
+    return {
       success: true,
       from,
       to,
@@ -364,7 +379,9 @@ router.get('/summary', async (req: QueryRequest, res: Response) => {
         chats: r.chats,
         leads: r.leads,
       })),
+    };
     });
+    res.json(body);
   } catch (err) {
     console.error('Chat leads summary error:', err);
     res.status(500).json({ error: (err as Error).message });
@@ -432,7 +449,9 @@ router.get('/mail-summary', async (req: QueryRequest, res: Response) => {
     if (!dates) return;
     const { from, to } = dates;
 
-    const rows = await mysqlQuery<MailSummaryRow[]>(`
+    const body = await cachedSummary(`mail|${from}|${to}`, async () => {
+    const [rows, totalsRow] = await Promise.all([
+      mysqlQuery<MailSummaryRow[]>(`
       SELECT t.t_to AS receiver,
              d.name AS department,
              COUNT(*) AS emails,
@@ -443,15 +462,14 @@ router.get('/mail-summary', async (req: QueryRequest, res: Response) => {
       WHERE t.created_at >= ? AND t.created_at < DATE_ADD(?, INTERVAL 1 DAY)
       GROUP BY t.t_to, d.name
       ORDER BY emails DESC
-    `, [from, to], 'primary');
-
-    const totalsRow = await mysqlQuery<MailTotalsRow[]>(`
+    `, [from, to], 'primary'),
+      mysqlQuery<MailTotalsRow[]>(`
       SELECT COUNT(*) AS emails, COUNT(DISTINCT t_from) AS leads
       FROM tickets
       WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)
-    `, [from, to], 'primary');
-
-    res.json({
+    `, [from, to], 'primary'),
+    ]);
+    return {
       success: true,
       from,
       to,
@@ -463,7 +481,9 @@ router.get('/mail-summary', async (req: QueryRequest, res: Response) => {
         emails: r.emails,
         leads: r.leads,
       })),
+    };
     });
+    res.json(body);
   } catch (err) {
     console.error('Mail leads summary error:', err);
     res.status(500).json({ error: (err as Error).message });
@@ -808,6 +828,9 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
       return res.status(400).json({ error: '"receiver", "from" and "to" are required' });
     }
     const onlyNew = String(req.query.only_new || '') === '1';
+    // first_msg=0 returns the list at once (no ChatHead call per user); the UI asks for the
+    // texts in a second request so the table never waits on ~50 HTTP calls.
+    const withFirstMsg = String(req.query.first_msg ?? '1') !== '0';
     const limit = clampInt(req.query.limit, 50, 200);
     const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
@@ -845,7 +868,7 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
     const CONC = 5;
     for (let i = 0; i < rows.length; i += CONC) {
       const batch = rows.slice(i, i + CONC);
-      const msgs = await Promise.all(batch.map(r => firstMsgText(r.wa_id)));
+      const msgs = withFirstMsg ? await Promise.all(batch.map(r => firstMsgText(r.wa_id))) : batch.map(() => null);
       batch.forEach((r, j) => users.push({
         wa_id: r.wa_id,
         wa_name: r.wa_name || null,
@@ -855,7 +878,7 @@ router.get('/department-users', async (req: QueryRequest, res: Response) => {
       }));
     }
 
-    res.json({ success: true, receiver, from, to, count: users.length, limit, offset, has_more: hasMore, users });
+    res.json({ success: true, receiver, from, to, count: users.length, limit, offset, has_more: hasMore, with_first_msg: withFirstMsg, users });
   } catch (err) {
     console.error('department-users error:', err);
     res.status(500).json({ error: (err as Error).message });

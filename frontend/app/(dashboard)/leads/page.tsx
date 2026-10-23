@@ -182,14 +182,25 @@ export default function Leads() {
     setDeptUsers([]); setDeptUsersError(null); setDeptUsersHasMore(false); setDeptUsersLoading(true);
     try {
       const { from, to } = deptSpan();
-      const res = await getChatLeadsDepartmentUsers(receiver, from, to, { onlyNew: true, limit: 50 }) as DeptUsersResponse | null;
+      // The list comes back at once (no per-user ChatHead lookups); the first-message texts follow.
+      const res = await getChatLeadsDepartmentUsers(receiver, from, to, { onlyNew: true, limit: 50, firstMsg: false }) as DeptUsersResponse | null;
       setDeptUsers(res?.users || []);
       setDeptUsersHasMore(!!res?.has_more);
+      setDeptUsersLoading(false);
+      if ((res?.users || []).length > 0) void fillFirstMessages(receiver, from, to, 0);
     } catch (e) {
       setDeptUsersError((e as Error).message || 'Failed to load users');
-    } finally {
       setDeptUsersLoading(false);
     }
+  };
+
+  // Second phase: the same page with first-message texts; merged by wa_id so the rows never jump.
+  const fillFirstMessages = async (receiver: string, from: string, to: string, offset: number) => {
+    try {
+      const res = await getChatLeadsDepartmentUsers(receiver, from, to, { onlyNew: true, limit: 50, offset, firstMsg: true }) as DeptUsersResponse | null;
+      const texts = new Map((res?.users || []).map(u => [u.wa_id, u.first_msg ?? null]));
+      setDeptUsers(prev => prev.map(u => (texts.has(u.wa_id) && u.first_msg == null ? { ...u, first_msg: texts.get(u.wa_id) ?? null, first_msg_loaded: true } : u)));
+    } catch { /* the list is already shown; texts stay "(not available)" */ }
   };
 
   const loadMoreDeptUsers = async () => {
@@ -197,9 +208,11 @@ export default function Leads() {
     setDeptUsersLoadingMore(true);
     try {
       const { from, to } = deptSpan();
-      const res = await getChatLeadsDepartmentUsers(expandedReceiver, from, to, { onlyNew: true, limit: 50, offset: deptUsers.length }) as DeptUsersResponse | null;
+      const offset = deptUsers.length;
+      const res = await getChatLeadsDepartmentUsers(expandedReceiver, from, to, { onlyNew: true, limit: 50, offset, firstMsg: false }) as DeptUsersResponse | null;
       setDeptUsers(prev => [...prev, ...(res?.users || [])]);
       setDeptUsersHasMore(!!res?.has_more);
+      if ((res?.users || []).length > 0) void fillFirstMessages(expandedReceiver, from, to, offset);
     } catch (e) {
       setDeptUsersError((e as Error).message || 'Failed to load more users');
     } finally {
@@ -577,7 +590,7 @@ export default function Leads() {
           </Card>
         )}
 
-        {deptLoading && deptPeriods.length === 0 && <TableSkeleton label="Loading department data" />}
+        {deptLoading && deptPeriods.length === 0 && <TableSkeleton label="Loading department data" cols={4 + periodCount} />}
 
         {deptPeriods.length > 0 && (
           <Card className={styles.cardPad}>
@@ -641,7 +654,7 @@ export default function Leads() {
                     <th className={styles.stickyCol}>Department</th>
                     <th>Group</th>
                     {deptPeriods.map((p, i) => (
-                      <th key={i} className={styles.r}>{p.label}<span className={styles.th2}>{p.sublabel}{p.partial ? ' · PARTIAL' : ''}</span></th>
+                      <th key={i} className={styles.r}>{p.label}<span className={styles.th2}>{p.sublabel}{p.partial ? ' · so far' : ''}</span></th>
                     ))}
                     <th className={styles.r}>Total</th>
                     {hasChangeCol && (
@@ -714,7 +727,7 @@ export default function Leads() {
                                             <span className={styles.mono} style={{ color: 'var(--ink)' }}>{u.wa_id}</span>
                                             {u.wa_name ? <span className={styles.help}> · {u.wa_name}</span> : null}
                                           </td>
-                                          <td>{u.first_msg || <span className={styles.muted}>(not available)</span>}</td>
+                                          <td>{u.first_msg || (u.first_msg_loaded ? <span className={styles.muted}>(not available)</span> : <span className={styles.muted} title="Looking up the first message…">…</span>)}</td>
                                           <td className={`${styles.num} ${styles.note}`} style={{ whiteSpace: 'nowrap' }}>{u.first_msg_at || '—'}</td>
                                         </tr>
                                       ))}

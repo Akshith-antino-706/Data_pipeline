@@ -134,6 +134,24 @@ describe('GET /dashboard', () => {
 });
 
 describe('GET /analytics/table', () => {
+  it('table.csv builds the whole export on the server in max-size batches', async () => {
+    m.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('LIMIT $') && sql.includes('journey_node_stats')) return { rows: [{ journey_id: 5, journey_name: 'Welcome, "VIP"', journey_status: 'active', journey_type: 'gtm', entries: '10', sent: '8', delivered: '7', failed: '1', opened: '3', human_opened: '2', clicked: '1', human_clicked: '1', landed: '1', bounced: '0', unsubscribed: '0', gtm_events: '2', booked: '1' }] };
+      return { rows: [] };
+    });
+    const r = await fetch(`${base}/analytics/table.csv?status=active&search=wel`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toContain('text/csv');
+    const text = await r.text();
+    const lines = text.trim().split('\n');
+    expect(lines[0]).toContain('Journey,Journey ID,Status,Type');
+    expect(lines[1]).toBe('"Welcome, ""VIP""",5,Running,Always on,10,8,7,1,3,2,42.9,1,1,33.3,1,0,0,2,1');
+    const call = m.query.mock.calls.find(([q]) => String(q).includes('LIMIT $'));
+    expect(String(call?.[0])).toContain('s.journey_status = $1');
+    expect(String(call?.[0])).toContain('ILIKE $2');
+    expect((call?.[1] as unknown[]).slice(-2)).toEqual([200, 0]);
+  });
+
   it('parameterises the status filter (injection string is a bind value)', async () => {
     const evil = "active' OR 1=1 --";
     const r = await get(`/analytics/table?status=${encodeURIComponent(evil)}`);
