@@ -1,30 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getGTMEventDetail, getSpecialOccasions, getGTMExport, getEmailUtmLog, getEmailUtmSummary } from '@/lib/api';
+import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getGTMEventDetail, getSpecialOccasions, getGTMExport } from '@/lib/api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import type { QueryParams } from '@/types/api';
-import { Button, Card, Chip, EmptyState, Input, PageHeader, Select, Skeleton, Tabs } from '@/components/ui';
+import { Button, Card, Chip, EmptyState, ErrorState, PageHeader, Skeleton, Tabs } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import s from './page.module.css';
-import { Code, Calendar, Download, Activity, Layers, Copy, Mail, MousePointer, Users, Target, ExternalLink, RefreshCw, Search } from 'lucide-react';
+import { Code, Calendar, Download, Activity, Layers, Copy, Mail } from 'lucide-react';
 
 interface GtmSnippet { head: string; body: string }
 interface TopEvent { event_name: string; count: string; unique_users: string; total_value: string }
-interface GtmAnalytics { daily: Record<string, unknown>[]; top_events?: TopEvent[] }
+interface DailyRow { day: string; event_count?: number | string | null; unique_users?: number | string | null }
+interface GtmAnalytics { daily: DailyRow[]; top_events?: TopEvent[]; range?: { from: string | null; to: string | null } }
 interface EventDetail {
   event_id?: string | number; event_label?: string; event_value?: string; event_category?: string; page_url?: string;
   device_type?: string; browser?: string; city?: string; country?: string; utm_source?: string; utm_campaign?: string; created_at: string;
 }
-interface UtmVisit {
-  id: string | number; contact_name?: string; email?: string; utm_campaign?: string; utm_source?: string; utm_medium?: string;
-  destination_url?: string; created_at: string;
-}
-interface UtmCampaignRow {
-  utm_campaign: string; utm_source?: string; utm_medium?: string; total_clicks?: number | string;
-  unique_visitors?: number | string; unique_emails?: number | string;
-}
-interface UtmSummary { byCampaign: UtmCampaignRow[]; bySource: Record<string, unknown>[] }
 interface SpecialOccasion {
   occasion_id: string | number; occasion_type: string; name?: string; is_active?: boolean; campaign_theme?: string;
   start_date: string; end_date: string; discount_code?: string; coupon_active?: boolean; discount_value?: number | string;
@@ -32,7 +24,10 @@ interface SpecialOccasion {
 }
 type Wrapped<T> = { data?: T } & T;
 
-type TabKey = 'overview' | 'emailtracking' | 'datalayer' | 'occasions' | 'snippet';
+type TabKey = 'overview' | 'datalayer' | 'occasions' | 'snippet';
+
+const n0 = (v: unknown): number => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0; };
+const errText = (e: unknown): string => (e instanceof Error && e.message) || 'Request failed';
 
 const occasionTones: Record<string, ChipTone> = { festival: 'gold', holiday: 'bad', season: 'ok', event: 'info', custom: 'warn' };
 
@@ -69,11 +64,15 @@ function LoadingSkeleton() {
 }
 
 export default function GTMIntegration() {
-  const [loading, setLoading] = useState(true);
+  // Each tab loads the first time it is opened and keeps its data (null = not loaded yet).
+  const [analytics, setAnalytics] = useState<GtmAnalytics | null>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [snippet, setSnippet] = useState<GtmSnippet | null>(null);
-  const [scripts, setScripts] = useState<Record<string, string>>({});
-  const [analytics, setAnalytics] = useState<GtmAnalytics>({ daily: [], top_events: [] });
-  const [occasions, setOccasions] = useState<SpecialOccasion[]>([]);
+  const [snippetError, setSnippetError] = useState<string | null>(null);
+  const [scripts, setScripts] = useState<Record<string, string> | null>(null);
+  const [scriptsError, setScriptsError] = useState<string | null>(null);
+  const [occasions, setOccasions] = useState<SpecialOccasion[] | null>(null);
+  const [occasionsError, setOccasionsError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [selectedScript, setSelectedScript] = useState('page_view');
   const [copied, setCopied] = useState('');
@@ -83,29 +82,42 @@ export default function GTMIntegration() {
   const [eventDetails, setEventDetails] = useState<EventDetail[]>([]);
   const [eventDetailLoading, setEventDetailLoading] = useState(false);
 
-  // Email UTM tracking state
-  const [utmVisits, setUtmVisits] = useState<UtmVisit[]>([]);
-  const [utmTotal, setUtmTotal] = useState(0);
-  const [utmPage, setUtmPage] = useState(1);
-  const [utmSummary, setUtmSummary] = useState<UtmSummary>({ byCampaign: [], bySource: [] });
-  const [utmLoading, setUtmLoading] = useState(false);
-  const [utmSearch, setUtmSearch] = useState('');
-  const [utmCampaignFilter, setUtmCampaignFilter] = useState('');
-
-  useEffect(() => { load(); loadUtmData(); }, []);
-
-  async function load() {
+  const loadAnalytics = useCallback(async () => {
     try {
-      const [snip, scr, ana, occ] = await Promise.all([
-        getGTMSnippet(), getDataLayerScripts(), getGTMAnalytics(), getSpecialOccasions()
-      ]) as [Wrapped<GtmSnippet> | null, Wrapped<Record<string, string>> | null, Wrapped<GtmAnalytics> | null, { data?: SpecialOccasion[] } | SpecialOccasion[] | null];
-      setSnippet(snip?.data || snip || null);
+      const ana = await getGTMAnalytics() as Wrapped<GtmAnalytics> | null;
+      const data = ana?.data || ana;
+      setAnalyticsError(null);
+      setAnalytics({ daily: Array.isArray(data?.daily) ? data.daily : [], top_events: Array.isArray(data?.top_events) ? data.top_events : [], range: data?.range });
+    } catch (err) { console.error(err); setAnalyticsError(errText(err)); }
+  }, []);
+  const loadScripts = useCallback(async () => {
+    try {
+      const scr = await getDataLayerScripts() as Wrapped<Record<string, string>> | null;
+      setScriptsError(null);
       setScripts(scr?.data || scr || {});
-      setAnalytics(ana?.data || ana || { daily: [], top_events: [] });
+    } catch (err) { console.error(err); setScriptsError(errText(err)); }
+  }, []);
+  const loadOccasions = useCallback(async () => {
+    try {
+      const occ = await getSpecialOccasions() as { data?: SpecialOccasion[] } | SpecialOccasion[] | null;
+      setOccasionsError(null);
       setOccasions(Array.isArray(occ) ? occ : (occ?.data || []));
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
-  }
+    } catch (err) { console.error(err); setOccasionsError(errText(err)); }
+  }, []);
+  const loadSnippet = useCallback(async () => {
+    try {
+      const snip = await getGTMSnippet() as Wrapped<GtmSnippet> | null;
+      setSnippetError(null);
+      setSnippet(snip?.data || snip || null);
+    } catch (err) { console.error(err); setSnippetError(errText(err)); }
+  }, []);
+
+  useEffect(() => { void loadAnalytics(); }, [loadAnalytics]);
+  useEffect(() => {
+    if (activeTab === 'datalayer' && scripts === null) void loadScripts();
+    if (activeTab === 'occasions' && occasions === null) void loadOccasions();
+    if (activeTab === 'snippet' && snippet === null) void loadSnippet();
+  }, [activeTab, scripts, occasions, snippet, loadScripts, loadOccasions, loadSnippet]);
 
   async function loadEventDetail(eventName: string) {
     if (selectedEvent === eventName) { setSelectedEvent(null); setEventDetails([]); return; }
@@ -116,25 +128,6 @@ export default function GTMIntegration() {
       setEventDetails(res?.data || []);
     } catch (err) { console.error(err); }
     setEventDetailLoading(false);
-  }
-
-  async function loadUtmData(page = 1, search = '', campaign = '') {
-    setUtmLoading(true);
-    try {
-      const params: QueryParams = { page, limit: 50 };
-      if (search) params.email = search;
-      if (campaign) params.utm_campaign = campaign;
-
-      const [visits, summary] = await Promise.all([
-        getEmailUtmLog(params),
-        getEmailUtmSummary(),
-      ]) as [{ data?: { rows?: UtmVisit[]; total?: number } } | null, { data?: Partial<UtmSummary> } | null];
-      setUtmVisits(visits?.data?.rows || []);
-      setUtmTotal(visits?.data?.total || 0);
-      setUtmPage(page);
-      setUtmSummary({ byCampaign: summary?.data?.byCampaign || [], bySource: summary?.data?.bySource || [] });
-    } catch (err) { console.error(err); }
-    setUtmLoading(false);
   }
 
   function copyToClipboard(text: string, key: string) {
@@ -154,15 +147,16 @@ export default function GTMIntegration() {
     } catch (err) { console.error(err); }
   }
 
-  const tabs: { id: TabKey; label: string; icon: typeof Activity; badge?: number | null }[] = [
+  const tabs: { id: TabKey; label: string; icon: typeof Activity }[] = [
     { id: 'overview',      label: 'Event Analytics',   icon: Activity },
-    { id: 'emailtracking', label: 'Email Tracking',     icon: Mail,        badge: utmTotal || null },
     { id: 'datalayer',     label: 'DataLayer Scripts',  icon: Code },
     { id: 'occasions',     label: 'Special Occasions',  icon: Calendar },
     { id: 'snippet',       label: 'GTM Container',      icon: Layers },
   ];
 
-  if (loading) return <LoadingSkeleton />;
+  if (!analytics && !analyticsError) return <LoadingSkeleton />;
+  const topEvents = analytics?.top_events ?? [];
+  const daily = analytics?.daily ?? [];
 
   const tooltipStyle: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--ink)', fontSize: 12 };
 
@@ -171,7 +165,12 @@ export default function GTMIntegration() {
       <PageHeader
         title="GTM & BigQuery"
         description="Google Tag Manager integration, dataLayer events, and BigQuery export"
-        actions={<Button variant="primary" onClick={handleExport}><Download size={16} aria-hidden /> Export to BigQuery</Button>}
+        actions={(
+          <>
+            <Link href="/utm?tab=visits" className="ui-btn ui-btn--sm"><Mail size={14} aria-hidden /> Email visits</Link>
+            <Button variant="primary" onClick={handleExport}><Download size={16} aria-hidden /> Export to BigQuery</Button>
+          </>
+        )}
       />
 
       <Tabs
@@ -183,23 +182,25 @@ export default function GTMIntegration() {
           label: (
             <span className={s.tabLabel}>
               <t.icon size={14} aria-hidden /> <span>{t.label}</span>
-              {t.badge != null && <span className={s.count}>{t.badge}</span>}
             </span>
           ),
         }))}
       />
 
       {/* ── Event Analytics ─────────────────────────────────────────────── */}
-      {activeTab === 'overview' && (
+      {activeTab === 'overview' && analyticsError && (
+        <Card><ErrorState title="Couldn't load event analytics" description={analyticsError} action={<Button size="sm" onClick={() => { setAnalyticsError(null); void loadAnalytics(); }}>Try again</Button>} /></Card>
+      )}
+      {activeTab === 'overview' && !analyticsError && (
         <div className={s.stack}>
-          {(analytics.top_events?.length ?? 0) > 0 && (
+          {topEvents.length > 0 && (
             <div className={s.kpis}>
-              {analytics.top_events?.map(e => (
+              {topEvents.map(e => (
                 <button key={e.event_name} type="button" className={s.kpiBtn} aria-pressed={selectedEvent === e.event_name} onClick={() => loadEventDetail(e.event_name)}>
                   <span className={s.kpiLabel}>{e.event_name}</span>
-                  <span className={s.kpiValue}>{(parseInt(e.count) || 0).toLocaleString()}</span>
-                  <span className={s.kpiSub}>{(parseInt(e.unique_users) || 0).toLocaleString()} unique users</span>
-                  {parseFloat(e.total_value) > 0 && <span className={s.kpiMoney}>AED {parseFloat(e.total_value).toFixed(0)}</span>}
+                  <span className={s.kpiValue}>{n0(e.count).toLocaleString()}</span>
+                  <span className={s.kpiSub}>{n0(e.unique_users).toLocaleString()} unique users</span>
+                  {n0(e.total_value) > 0 && <span className={s.kpiMoney}>AED {n0(e.total_value).toFixed(0)}</span>}
                   <span className={s.kpiHint}>Click to view details →</span>
                 </button>
               ))}
@@ -252,10 +253,10 @@ export default function GTMIntegration() {
             </Card>
           )}
 
-          <Card title="Daily Event Volume">
-            {analytics.daily?.length > 0 ? (
+          <Card title="Daily event volume" actions={<Chip tone="mute">Last 30 days</Chip>}>
+            {daily.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={analytics.daily.slice(0, 30)}>
+                <BarChart data={daily.map(d => ({ day: d.day, event_count: n0(d.event_count), unique_users: n0(d.unique_users) }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                   <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--ink3)' }} tickFormatter={(d: string) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
                   <YAxis tick={{ fontSize: 11, fill: 'var(--ink3)' }} />
@@ -269,176 +270,17 @@ export default function GTMIntegration() {
         </div>
       )}
 
-      {/* ── Email Tracking ──────────────────────────────────────────────── */}
-      {activeTab === 'emailtracking' && (
-        <div className={s.stack}>
-          <div className={s.statGrid}>
-            {[
-              { label: 'Total Clicks',     value: utmTotal,                                    icon: MousePointer },
-              { label: 'Unique Contacts',  value: new Set(utmVisits.map(v => v.email)).size,   icon: Users },
-              { label: 'Campaigns',        value: utmSummary.byCampaign.length,                icon: Target },
-              { label: 'Sources',          value: utmSummary.bySource.length,                  icon: Mail },
-            ].map(({ label, value, icon: Icon }) => (
-              <Card key={label}>
-                <div className={s.stat}>
-                  <div>
-                    <div className={s.kpiLabel}>{label}</div>
-                    <div className={s.kpiValue}>{value.toLocaleString()}</div>
-                  </div>
-                  <span className={s.statIcon} aria-hidden><Icon size={18} /></span>
-                </div>
-              </Card>
-            ))}
-          </div>
-
-          {utmSummary.byCampaign.length > 0 && (
-            <Card title="Clicks by Campaign">
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={utmSummary.byCampaign} layout="vertical" margin={{ left: 8, right: 16 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--line)" />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'var(--ink3)' }} />
-                  <YAxis type="category" dataKey="utm_campaign" width={140} tick={{ fontSize: 11, fill: 'var(--ink3)' }} />
-                  <Tooltip
-                    contentStyle={tooltipStyle}
-                    formatter={(v, n) => [v, n === 'total_clicks' ? 'Total Clicks' : 'Unique Visitors']}
-                  />
-                  <Bar dataKey="total_clicks"    fill="var(--gold)" radius={[0, 4, 4, 0]} name="total_clicks" />
-                  <Bar dataKey="unique_visitors" fill="var(--info)" radius={[0, 4, 4, 0]} name="unique_visitors" />
-                </BarChart>
-              </ResponsiveContainer>
-            </Card>
-          )}
-
-          {utmSummary.byCampaign.length > 0 && (
-            <Card className={s.flush}>
-              <div className={s.flushHead}><h2 className={s.flushTitle}>Campaign Breakdown</h2></div>
-              <div className={s.tableScroll}>
-                <table className="ui-table">
-                  <thead>
-                    <tr>
-                      {['Campaign', 'Source', 'Medium', 'Total Clicks', 'Unique Visitors', 'Unique Emails'].map(h => <th key={h}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {utmSummary.byCampaign.map((r, i) => (
-                      <tr key={i}>
-                        <td>
-                          <button type="button" className={s.linkBtn} onClick={() => { setUtmCampaignFilter(r.utm_campaign); loadUtmData(1, utmSearch, r.utm_campaign); }}>
-                            {r.utm_campaign}
-                          </button>
-                        </td>
-                        <td>{r.utm_source ? <Chip tone="info">{r.utm_source}</Chip> : '—'}</td>
-                        <td>{r.utm_medium ? <Chip tone="mute">{r.utm_medium}</Chip> : '—'}</td>
-                        <td className={s.money}>{r.total_clicks ?? '—'}</td>
-                        <td>{r.unique_visitors ?? '—'}</td>
-                        <td>{r.unique_emails ?? '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          )}
-
-          <Card>
-            <div className={s.filters}>
-              <div className="ui-field">
-                <label className="ui-label" htmlFor="utm-search">Search by Email</label>
-                <div className={s.searchWrap}>
-                  <Search size={14} className={s.searchIcon} aria-hidden />
-                  <Input id="utm-search" className={s.searchInput} value={utmSearch}
-                    onChange={e => setUtmSearch(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && loadUtmData(1, utmSearch, utmCampaignFilter)}
-                    placeholder="email@example.com" />
-                </div>
-              </div>
-              <div className="ui-field">
-                <label className="ui-label" htmlFor="utm-campaign">Filter by Campaign</label>
-                <Select id="utm-campaign" value={utmCampaignFilter} onChange={e => setUtmCampaignFilter(e.target.value)}>
-                  <option value="">All Campaigns</option>
-                  {utmSummary.byCampaign.map(c => (
-                    <option key={c.utm_campaign} value={c.utm_campaign}>{c.utm_campaign}</option>
-                  ))}
-                </Select>
-              </div>
-              <Button variant="primary" onClick={() => loadUtmData(1, utmSearch, utmCampaignFilter)}>
-                <Search size={14} aria-hidden /> Search
-              </Button>
-              <Button onClick={() => { setUtmSearch(''); setUtmCampaignFilter(''); loadUtmData(1); }}>
-                <RefreshCw size={14} aria-hidden /> Reset
-              </Button>
-            </div>
-          </Card>
-
-          <Card className={s.flush}>
-            <div className={s.flushHead}>
-              <h2 className={s.flushTitle}>
-                <Mail size={15} aria-hidden />
-                Email UTM Visits
-                <Chip tone="info">{utmTotal}</Chip>
-              </h2>
-              <Button size="sm" onClick={() => loadUtmData(utmPage, utmSearch, utmCampaignFilter)}>
-                <RefreshCw size={12} aria-hidden /> Refresh
-              </Button>
-            </div>
-
-            {utmLoading ? (
-              <div className={s.loading}>Loading...</div>
-            ) : utmVisits.length > 0 ? (
-              <>
-                <div className={s.tableScroll}>
-                  <table className="ui-table">
-                    <thead>
-                      <tr>
-                        {['Contact', 'Email', 'Campaign', 'Source / Medium', 'Destination URL', 'Visited At'].map(h => <th key={h}>{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {utmVisits.map(v => (
-                        <tr key={v.id}>
-                          <td className={`${s.strong} ${s.nowrap}`}>{v.contact_name || '—'}</td>
-                          <td className={`${s.muted} ${s.nowrap}`}>{v.email || '—'}</td>
-                          <td><Chip tone="info">{v.utm_campaign || '—'}</Chip></td>
-                          <td className={s.nowrap}>
-                            {v.utm_source || '—'}
-                            {v.utm_medium && <span className={s.muted}> / {v.utm_medium}</span>}
-                          </td>
-                          <td className={s.trunc}>
-                            {v.destination_url ? (
-                              <a href={v.destination_url} target="_blank" rel="noreferrer" className={s.link}>
-                                <ExternalLink size={10} aria-hidden />
-                                {urlPath(v.destination_url)}
-                              </a>
-                            ) : '—'}
-                          </td>
-                          <td className={`${s.nowrap} ${s.muted}`}>{new Date(v.created_at).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {utmTotal > 50 && (
-                  <div className={s.pager}>
-                    <div className={s.pagerInfo}>
-                      Showing {(utmPage - 1) * 50 + 1}–{Math.min(utmPage * 50, utmTotal)} of {utmTotal}
-                    </div>
-                    <div className={s.pagerBtns}>
-                      <Button size="sm" disabled={utmPage === 1} onClick={() => loadUtmData(utmPage - 1, utmSearch, utmCampaignFilter)}>← Prev</Button>
-                      <Button size="sm" disabled={utmPage * 50 >= utmTotal} onClick={() => loadUtmData(utmPage + 1, utmSearch, utmCampaignFilter)}>Next →</Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <EmptyState icon={<Mail size={20} />} title="No email visits yet" description="Send a test email and click a link — the UTM data will appear here." />
-            )}
-          </Card>
+      {/* ── DataLayer Scripts ───────────────────────────────────────────── */}
+      {activeTab === 'datalayer' && scriptsError && (
+        <Card><ErrorState title="Couldn't load dataLayer scripts" description={scriptsError} action={<Button size="sm" onClick={() => { setScriptsError(null); void loadScripts(); }}>Try again</Button>} /></Card>
+      )}
+      {activeTab === 'datalayer' && !scriptsError && scripts === null && (
+        <div className={s.split} aria-busy="true" aria-label="Loading dataLayer scripts">
+          <Card><div className={s.eventList}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={30} />)}</div></Card>
+          <Card><Skeleton height={220} /></Card>
         </div>
       )}
-
-      {/* ── DataLayer Scripts ───────────────────────────────────────────── */}
-      {activeTab === 'datalayer' && (
+      {activeTab === 'datalayer' && scripts !== null && (
         <div className={s.split}>
           <Card title={`Events (${Object.keys(scripts).length})`}>
             <div className={s.eventList}>
@@ -463,7 +305,15 @@ export default function GTMIntegration() {
       )}
 
       {/* ── Special Occasions ───────────────────────────────────────────── */}
-      {activeTab === 'occasions' && (
+      {activeTab === 'occasions' && occasionsError && (
+        <Card><ErrorState title="Couldn't load special occasions" description={occasionsError} action={<Button size="sm" onClick={() => { setOccasionsError(null); void loadOccasions(); }}>Try again</Button>} /></Card>
+      )}
+      {activeTab === 'occasions' && !occasionsError && occasions === null && (
+        <div className={s.occGrid} aria-busy="true" aria-label="Loading special occasions">
+          {Array.from({ length: 3 }).map((_, i) => <Card key={i}><Skeleton height={120} /></Card>)}
+        </div>
+      )}
+      {activeTab === 'occasions' && occasions !== null && (
         occasions.length > 0 ? (
           <div className={s.occGrid}>
             {occasions.map(o => (
@@ -495,6 +345,12 @@ export default function GTMIntegration() {
       )}
 
       {/* ── GTM Container Snippet ───────────────────────────────────────── */}
+      {activeTab === 'snippet' && snippetError && (
+        <Card><ErrorState title="Couldn't load the GTM container snippet" description={snippetError} action={<Button size="sm" onClick={() => { setSnippetError(null); void loadSnippet(); }}>Try again</Button>} /></Card>
+      )}
+      {activeTab === 'snippet' && !snippetError && snippet === null && (
+        <div className={s.stack} aria-busy="true" aria-label="Loading GTM snippet"><Card><Skeleton height={140} /></Card><Card><Skeleton height={100} /></Card></div>
+      )}
       {activeTab === 'snippet' && snippet && (
         <div className={s.stack}>
           <Card

@@ -180,6 +180,21 @@ describe('GTMService analytics/export SQL', () => {
     expect(m.query.mock.calls[1][1]).toEqual(["x'; DROP", '2024-01-01']);
   });
 
+  it('getEventAnalytics: no dates → last 30 days; daily is one row per day, oldest first; top events capped', async () => {
+    m.query.mockResolvedValue({ rows: [] });
+    const before = Date.now() - 30 * 86_400_000;
+    const r = await GTMService.getEventAnalytics();
+    const [dailySql, dailyParams] = m.query.mock.calls[0];
+    expect(dailySql).toContain('created_at >= $1');
+    expect(dailySql).toContain("GROUP BY DATE_TRUNC('day', created_at)");
+    expect(dailySql).not.toContain('GROUP BY event_name, DATE_TRUNC');
+    expect(dailySql).toContain('ORDER BY day ASC');
+    expect(Math.abs(Date.parse(String(dailyParams[0])) - before)).toBeLessThan(5_000);
+    expect(dailyParams[1]).toBe(100);
+    expect(m.query.mock.calls[1][0]).toContain('LIMIT 50');
+    expect(r.range.from).toBe(dailyParams[0]);
+  });
+
   it('getExportData defaults', async () => {
     m.query.mockResolvedValue({ rows: [] });
     await GTMService.getExportData();

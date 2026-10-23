@@ -16,8 +16,8 @@
  *
  * Paging (20 rows by default, 20/50 to choose):
  *   - Server side: email visits log, campaign links, personal (user) links.
- *   - Client side (small grouped lists the API returns in one go): visits by campaign,
- *     personal links by campaign, segments.
+ *   - Server side too: visits by campaign (grouped on the server, same date range as the visits list).
+ *   - Client side (small lists the API returns in one go): segments.
  */
 
 import {
@@ -61,12 +61,13 @@ interface EmailVisit {
   utm_medium?: string | null; destination_url?: string | null; created_at?: string | null;
 }
 interface EmailVisitCampaign { utm_campaign?: string | null; utm_source?: string | null; utm_medium?: string | null; total_clicks?: NumLike; unique_visitors?: NumLike; unique_emails?: NumLike }
-interface Paged<R> { rows: R[]; total: number }
+interface Paged<R> { rows: R[]; total: number; /** The server stopped counting at `total` (shown as "10,000+"). */ capped?: boolean }
 
 // ── Constants & formatting ───────────────────────────────────────────────────
 const TZ = 'Asia/Dubai';
 const PAGE_SIZES = [20, 50] as const;
 const DEFAULT_PAGE_SIZE: number = PAGE_SIZES[0];
+const CAMPAIGN_PICK_LIMIT = 50;
 const RETRY_DELAY_MS = 1500;
 const SLOW_AFTER_MS = 8000;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -248,10 +249,10 @@ function useClientPage<R>(list: R[]) {
 
 // ── Shared UI pieces ───────────────────────────────────────────────────────
 interface PagerProps {
-  page: number; limit: number; total: number; shown: number; loading?: boolean; noun: string;
+  page: number; limit: number; total: number; shown: number; loading?: boolean; noun: string; capped?: boolean;
   onPage: (p: number) => void; onLimit: (n: number) => void;
 }
-function Pager({ page, limit, total, shown, loading = false, noun, onPage, onLimit }: PagerProps) {
+function Pager({ page, limit, total, shown, loading = false, noun, capped = false, onPage, onLimit }: PagerProps) {
   const pages = Math.max(1, Math.ceil(total / limit));
   // Nothing to page through: everything fits on one page of the smallest size.
   if (total <= PAGE_SIZES[0] && page === 1) return null;
@@ -260,7 +261,7 @@ function Pager({ page, limit, total, shown, loading = false, noun, onPage, onLim
   return (
     <div className={styles.pager}>
       <span className={styles.pagerText} aria-live="polite">
-        {loading && total === 0 ? 'Loading…' : total === 0 ? `No ${noun} to show` : `Showing ${fmt(first)}–${fmt(last)} of ${fmt(total)}`}
+        {loading && total === 0 ? 'Loading…' : total === 0 ? `No ${noun} to show` : `Showing ${fmt(first)}–${fmt(last)} of ${fmt(total)}${capped ? '+' : ''}`}
       </span>
       <label className={styles.pageSize}>
         Rows
@@ -426,28 +427,38 @@ function EmailVisitsTab() {
     // Whole Dubai days: from 00:00 on the first day to the end of the last day (+04:00).
     if (applied.from) params.dateFrom = `${applied.from}T00:00:00+04:00`;
     if (applied.to) params.dateTo = `${applied.to}T23:59:59.999+04:00`;
-    const res = await getEmailUtmLog(params) as { data?: { rows?: unknown; total?: NumLike } } | null;
-    return { rows: asArray<EmailVisit>(res?.data?.rows), total: num(res?.data?.total) };
+    const res = await getEmailUtmLog(params) as { data?: { rows?: unknown; total?: NumLike; capped?: boolean } } | null;
+    return { rows: asArray<EmailVisit>(res?.data?.rows), total: num(res?.data?.total), capped: res?.data?.capped === true };
   }, [page, limit, applied]);
   const log = useLoader(fetchLog);
 
-  const fetchSummary = useCallback(async () => {
-    const res = await getEmailUtmSummary() as { data?: { byCampaign?: unknown } } | null;
-    return asArray<EmailVisitCampaign>(res?.data?.byCampaign);
-  }, []);
+  // Visits by campaign: grouped and paged on the server, over the same date range and campaign search.
+  const [sumPage, setSumPage] = useState(1);
+  const [sumLimit, setSumLimit] = useState(DEFAULT_PAGE_SIZE);
+  const fetchSummary = useCallback(async (): Promise<Paged<EmailVisitCampaign>> => {
+    const params: QueryParams = { page: sumPage, limit: sumLimit };
+    if (applied.campaign.trim()) params.q = applied.campaign.trim();
+    if (applied.from) params.dateFrom = `${applied.from}T00:00:00+04:00`;
+    if (applied.to) params.dateTo = `${applied.to}T23:59:59.999+04:00`;
+    const res = await getEmailUtmSummary(params) as { data?: { byCampaign?: unknown; total?: NumLike } } | null;
+    const rows = asArray<EmailVisitCampaign>(res?.data?.byCampaign);
+    return { rows, total: num(res?.data?.total) || rows.length };
+  }, [sumPage, sumLimit, applied]);
   const summary = useLoader(fetchSummary);
-  const byCampaign = useClientPage(summary.data ?? []);
+  const summaryRows = summary.data?.rows ?? [];
 
   const apply = (e?: FormEvent) => {
     e?.preventDefault();
     setApplied({ ...draft });
     setPage(1);
+    setSumPage(1);
   };
   const setRange = (from: string, to: string) => {
     const f = { email: '', campaign: '', from, to };
     setDraft(f);
     setApplied(f);
     setPage(1);
+    setSumPage(1);
   };
   const noSearch = !applied.email.trim() && !applied.campaign.trim();
   const isLast7 = applied.from === defaults.from && applied.to === defaults.to;
@@ -455,7 +466,6 @@ function EmailVisitsTab() {
   const rows = log.data?.rows ?? [];
   // Nothing at all for the default view → one compact line instead of an empty card.
   const bare = noSearch && (isLast7 || allDates) && !log.loading && !log.error && (log.data?.total ?? 0) === 0;
-  const summaryRows = summary.data ?? [];
 
   const visitCols: Col<EmailVisit>[] = [
     { key: 'who', label: 'Person', cell: v => (
@@ -490,7 +500,7 @@ function EmailVisitsTab() {
               <h3 className={styles.cardTitle}>Visits from emails</h3>
               <span className={styles.metaLine}>
                 {allDates ? 'All dates' : `${humanRange(applied.from, applied.to)} (Dubai time)`}
-                {!log.loading && log.data ? ` · ${fmt(log.data.total)} visit${log.data.total === 1 ? '' : 's'}` : ''}
+                {!log.loading && log.data ? ` · ${fmt(log.data.total)}${log.data.capped ? '+' : ''} visit${log.data.total === 1 ? '' : 's'}` : ''}
               </span>
             </div>
             <Button size="sm" onClick={() => void log.reload()} disabled={log.loading} aria-label="Refresh visits">
@@ -527,7 +537,7 @@ function EmailVisitsTab() {
             loading={log.loading} slow={log.slow} error={log.error} onRetry={() => void log.reload()}
             errorTitle="Couldn't load email visits" skeletonRows={Math.min(limit, rows.length || 8)}
             empty="No visits match these filters. Try a wider date range or clear the search." />
-          <Pager page={page} limit={limit} total={log.data?.total ?? 0} shown={rows.length} loading={log.loading} noun="visits"
+          <Pager page={page} limit={limit} total={log.data?.total ?? 0} capped={log.data?.capped} shown={rows.length} loading={log.loading} noun="visits"
             onPage={setPage} onLimit={n => { setLimit(n); setPage(1); }} />
         </Card>
       )}
@@ -539,16 +549,19 @@ function EmailVisitsTab() {
           <div className={styles.cardHead}>
             <div className={styles.cardTitleBlock}>
               <h3 className={styles.cardTitle}>Visits by campaign</h3>
-              <span className={styles.metaLine}>All dates</span>
+              <span className={styles.metaLine}>
+                {allDates ? 'All dates' : `${humanRange(applied.from, applied.to)} (Dubai time)`}
+                {applied.campaign.trim() ? ` · campaigns matching “${applied.campaign.trim()}”` : ''}
+              </span>
             </div>
           </div>
-          <ListTable label="Visits by campaign" testId="visits-by-campaign" cols={campaignCols} rows={byCampaign.rows}
+          <ListTable label="Visits by campaign" testId="visits-by-campaign" cols={campaignCols} rows={summaryRows}
             rowKey={r => `${r.utm_campaign ?? ''}|${r.utm_source ?? ''}|${r.utm_medium ?? ''}`}
             loading={summary.loading} slow={summary.slow} error={null} onRetry={() => void summary.reload()}
-            errorTitle="Couldn't load visits by campaign" skeletonRows={byCampaign.rows.length || 5}
+            errorTitle="Couldn't load visits by campaign" skeletonRows={Math.min(sumLimit, summaryRows.length || 5)}
             empty="No campaign visits yet." />
-          <Pager page={byCampaign.page} limit={byCampaign.limit} total={byCampaign.total} shown={byCampaign.rows.length}
-            loading={summary.loading} noun="campaigns" onPage={byCampaign.setPage} onLimit={byCampaign.setLimit} />
+          <Pager page={sumPage} limit={sumLimit} total={summary.data?.total ?? 0} shown={summaryRows.length}
+            loading={summary.loading} noun="campaigns" onPage={setSumPage} onLimit={n => { setSumLimit(n); setSumPage(1); }} />
         </Card>
       )}
     </>
@@ -694,7 +707,12 @@ function MyLinksTab() {
   // Campaigns that already have personal links — used for the list's campaign filter.
   const fetchLinkedCampaigns = useCallback(async () => asArray<UserLinkCampaign>((await getUserLinkStats() as Partial<UserLinkStatsData> | null)?.campaigns), []);
   const linked = useLoader(fetchLinkedCampaigns);
-  const fetchCampaigns = useCallback(async () => listFrom<CampaignOption>(await getCampaigns(), 'campaigns'), []);
+  // Campaign picker for "Create personal links": searched on the server (name or audience), 50 at a time,
+  // instead of the first 20 campaigns only.
+  const [campaignQInput, setCampaignQInput] = useState('');
+  const campaignQ = useDebounced(campaignQInput.trim());
+  const fetchCampaigns = useCallback(async () => listFrom<CampaignOption>(
+    await getCampaigns(campaignQ ? { search: campaignQ, limit: CAMPAIGN_PICK_LIMIT } : { limit: CAMPAIGN_PICK_LIMIT }), 'campaigns'), [campaignQ]);
   const campaigns = useLoader(fetchCampaigns);
 
   const [campaignId, setCampaignId] = useState('');
@@ -758,19 +776,21 @@ function MyLinksTab() {
   const campaignList = campaigns.data ?? [];
 
   let createTool: ReactNode;
-  if (campaigns.loading) {
+  if (campaigns.loading && !campaigns.data) {
     createTool = <Skeleton height={34} width={320} />;
   } else if (campaigns.error) {
     createTool = <ErrorLine text="Couldn't load campaigns" details={campaigns.error} onRetry={() => void campaigns.reload()} />;
-  } else if (campaignList.length === 0) {
+  } else if (campaignList.length === 0 && !campaignQ) {
     createTool = <p className={styles.note}>There are no campaigns to create personal links for yet.</p>;
   } else {
     createTool = (
       <div className={styles.createRow}>
+        <SearchBox value={campaignQInput} onChange={setCampaignQInput} placeholder="Find a campaign by name or audience" label="Find a campaign" />
         <label className={styles.filterField}>
           Create personal links for
-          <select className={`ui-input ${styles.control}`} value={genFor} onChange={e => setGenFor(e.target.value)}>
-            <option value="">Choose a campaign</option>
+          <select className={`ui-input ${styles.control}`} value={genFor} onChange={e => setGenFor(e.target.value)}
+            disabled={campaigns.loading && campaignList.length === 0}>
+            <option value="">{campaigns.loading ? 'Searching…' : campaignList.length === 0 ? 'No campaigns match' : 'Choose a campaign'}</option>
             {campaignList.map(c => (
               <option key={c.id} value={String(c.id)}>
                 {c.name || `Campaign #${c.id}`}{c.segment_label ? ` — ${c.segment_label}` : ''}{c.channel ? ` (${channelLabel(c.channel)})` : ''}

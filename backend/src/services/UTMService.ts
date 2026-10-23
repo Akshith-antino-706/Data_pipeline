@@ -242,7 +242,6 @@ class UTMService {
     const { rows } = await db.query<UtmSegmentListRow>(`
       SELECT sd.segment_name,
         (SELECT COUNT(*) FROM campaigns c WHERE c.segment_label = sd.segment_name) AS campaign_count,
-        (SELECT COUNT(*) FROM content_templates ct WHERE ct.name ILIKE '%' || sd.segment_name || '%' AND ct.status = 'approved') AS template_count,
         COUNT(DISTINCT ut.utm_id) AS utm_count,
         COALESCE(SUM(ut.clicks), 0) AS total_clicks,
         COALESCE(SUM(ut.conversions), 0) AS total_conversions,
@@ -305,16 +304,18 @@ class UTMService {
       GROUP BY ut.channel
     `, params);
 
-    const { rows: segmentSummary } = await db.query<UtmSegmentSummaryRow>(`
-      SELECT ut.segment_label, COUNT(*) AS total_links,
-        SUM(ut.clicks) AS total_clicks, SUM(ut.conversions) AS total_conversions,
-        COUNT(DISTINCT ut.campaign_id) AS campaigns_tracked
-      FROM utm_tracking ut WHERE ${where}
-      GROUP BY ut.segment_label
-      ORDER BY total_links DESC
-    `, params);
-
-    if (!paged) return { links: rows, summary, segmentSummary };
+    // The per-segment summary is only part of the legacy (unpaged) shape; the paged UI never reads it.
+    if (!paged) {
+      const { rows: segmentSummary } = await db.query<UtmSegmentSummaryRow>(`
+        SELECT ut.segment_label, COUNT(*) AS total_links,
+          SUM(ut.clicks) AS total_clicks, SUM(ut.conversions) AS total_conversions,
+          COUNT(DISTINCT ut.campaign_id) AS campaigns_tracked
+        FROM utm_tracking ut WHERE ${where}
+        GROUP BY ut.segment_label
+        ORDER BY total_links DESC
+      `, params);
+      return { links: rows, summary, segmentSummary };
+    }
 
     const { rows: countRows } = await db.query<{ total: string }>(`
       SELECT COUNT(*) AS total
@@ -324,7 +325,7 @@ class UTMService {
       WHERE ${linkWhere}
     `, linkParams);
     const total = Number(countRows[0]?.total) || 0;
-    return { links: rows, summary, segmentSummary, total, page: pageNo, limit: pageSize };
+    return { links: rows, summary, total, page: pageNo, limit: pageSize };
   }
 
   /** Record a UTM click */
@@ -501,6 +502,20 @@ class UTMService {
   /**
    * Get per-campaign user link stats (for the overview)
    */
+  /** Totals across all personal links — one SELECT, used by the website overview tile. */
+  static async getUserLinkTotals(): Promise<UserUtmTotalsRow | undefined> {
+    const { rows: [totals] } = await db.query<UserUtmTotalsRow>(`
+      SELECT
+        COUNT(*) AS total_links,
+        COUNT(*) FILTER (WHERE click_count > 0) AS total_clicked,
+        SUM(click_count) AS total_clicks,
+        COUNT(DISTINCT campaign_id) AS campaigns,
+        COUNT(DISTINCT unified_id) AS unique_users
+      FROM user_utm_links
+    `);
+    return totals;
+  }
+
   static async getUserLinkStats() {
     const { rows } = await db.query<UserUtmCampaignStatsRow>(`
       SELECT
@@ -519,16 +534,7 @@ class UTMService {
       ORDER BY total_clicks DESC
     `);
 
-    const { rows: [totals] } = await db.query<UserUtmTotalsRow>(`
-      SELECT
-        COUNT(*) AS total_links,
-        COUNT(*) FILTER (WHERE click_count > 0) AS total_clicked,
-        SUM(click_count) AS total_clicks,
-        COUNT(DISTINCT campaign_id) AS campaigns,
-        COUNT(DISTINCT unified_id) AS unique_users
-      FROM user_utm_links
-    `);
-
+    const totals = await UTMService.getUserLinkTotals();
     return { campaigns: rows, totals };
   }
 }

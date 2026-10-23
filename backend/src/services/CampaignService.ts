@@ -10,13 +10,15 @@ import type { CountRow, ListFilters, CampaignRow, CampaignInput, ContentTemplate
 export class CampaignService {
 
   /** Get all campaigns with summary */
-  static async getAll({ status, channel, page = 1, limit = 20 }: ListFilters = {}) {
+  static async getAll({ status, channel, search, page = 1, limit = 20 }: ListFilters = {}) {
     const conditions: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
 
     if (status) { conditions.push(`c.status = $${idx++}`); params.push(status); }
     if (channel) { conditions.push(`c.channel = $${idx++}`); params.push(channel); }
+    const q = typeof search === 'string' ? search.trim().slice(0, 100) : '';
+    if (q) { conditions.push(`(c.name ILIKE $${idx} OR c.segment_label ILIKE $${idx})`); idx++; params.push(`%${q.replace(/[%_\\]/g, m => `\\${m}`)}%`); }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const offset = (page - 1) * limit;

@@ -1,5 +1,8 @@
 import db from '../config/database.js';
-import type { BufferedLogRow, Id, LogId, LogSendArgs, MarkFailedArgs, MarkSentArgs, SendLogFilters, TrackingMeta, UtmLogFilters, UtmVisitArgs } from '../types/servicesSendTrack.js';
+import type { BufferedLogRow, Id, LogId, LogSendArgs, MarkFailedArgs, MarkSentArgs, SendLogFilters, TrackingMeta, UtmLogFilters, UtmSummaryFilters, UtmVisitArgs } from '../types/servicesSendTrack.js';
+
+/** Visit counts stop here; the UI shows "10,000+". */
+const UTM_COUNT_CAP = 10_000;
 
 /** Filtered send-log totals stop counting here; the UI shows "10,000+". */
 const SEND_LOG_COUNT_CAP = 10_000;
@@ -421,40 +424,40 @@ export class SendTrackService {
         LIMIT $${idx} OFFSET $${idx + 1}
       `, [...params, limit, offset]),
 
-      db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM utm_visits uv ${where}`, params),
+      // Counting stops at the cap so a huge visits log never forces a full exact count.
+      db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM (SELECT 1 FROM utm_visits uv ${where} LIMIT ${UTM_COUNT_CAP + 1}) c`, params),
     ]);
 
-    return { rows, total: parseInt(countRows[0].total), page, limit };
+    const counted = parseInt(countRows[0].total) || 0;
+    return { rows, total: Math.min(counted, UTM_COUNT_CAP), capped: counted > UTM_COUNT_CAP, page, limit };
   }
 
   /**
-   * UTM summary: clicks grouped by campaign, source, medium.
+   * UTM summary: visits grouped by campaign (+ source/medium), newest-busiest first, one page at a time.
+   * Date filters narrow the visits counted; without them the whole log is grouped (as before).
    */
-  static async getUtmSummary() {
-    const [{ rows: byCampaign }, { rows: bySource }] = await Promise.all([
-      db.query(`
-        SELECT
-          utm_campaign,
-          utm_source,
-          utm_medium,
-          COUNT(*)                        AS total_clicks,
-          COUNT(DISTINCT unified_id)      AS unique_visitors,
-          COUNT(DISTINCT email)           AS unique_emails
-        FROM utm_visits
-        WHERE utm_campaign IS NOT NULL
-        GROUP BY utm_campaign, utm_source, utm_medium
-        ORDER BY total_clicks DESC
-      `),
-      db.query(`
-        SELECT
-          utm_source,
+  static async getUtmSummary({ page = 1, limit = 20, dateFrom, dateTo, q }: UtmSummaryFilters = {}) {
+    const conditions = ['utm_campaign IS NOT NULL'];
+    const params: unknown[] = [];
+    if (dateFrom) { params.push(dateFrom); conditions.push(`created_at >= $${params.length}`); }
+    if (dateTo)   { params.push(dateTo);   conditions.push(`created_at <= $${params.length}`); }
+    if (q)        { params.push(`%${q}%`); conditions.push(`utm_campaign ILIKE $${params.length}`); }
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const pageSize = Math.max(1, Math.min(Math.trunc(Number(limit)) || 20, 100));
+    const pageNo = Math.max(1, Math.trunc(Number(page)) || 1);
+    const grouped = `SELECT utm_campaign, utm_source, utm_medium,
           COUNT(*)                   AS total_clicks,
+          COUNT(DISTINCT unified_id) AS unique_visitors,
           COUNT(DISTINCT email)      AS unique_emails
-        FROM utm_visits
-        GROUP BY utm_source
-        ORDER BY total_clicks DESC
-      `),
+        FROM utm_visits ${where}
+        GROUP BY utm_campaign, utm_source, utm_medium`;
+
+    const [{ rows: byCampaign }, { rows: countRows }] = await Promise.all([
+      db.query(`${grouped} ORDER BY total_clicks DESC, utm_campaign LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, pageSize, (pageNo - 1) * pageSize]),
+      db.query<{ total: string }>(`SELECT COUNT(*) AS total FROM (SELECT 1 FROM utm_visits ${where} GROUP BY utm_campaign, utm_source, utm_medium LIMIT ${UTM_COUNT_CAP + 1}) g`, params),
     ]);
-    return { byCampaign, bySource };
+    const counted = parseInt(countRows[0]?.total) || 0;
+    return { byCampaign, total: Math.min(counted, UTM_COUNT_CAP), capped: counted > UTM_COUNT_CAP, page: pageNo, limit: pageSize };
   }
 }

@@ -9,11 +9,12 @@ const router = Router();
 // GET /api/v2/campaigns
 router.get('/', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const { status, channel, page, limit } = req.query;
+    const { status, channel, search, page, limit } = req.query;
     const data = await CampaignService.getAll({
       status, channel,
+      ...(typeof search === 'string' && search.trim() ? { search: search.trim() } : {}),
       page: parseInt(page) || 1,
-      limit: parseInt(limit) || 20,
+      limit: Math.min(parseInt(limit) || 20, 100),
     });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }

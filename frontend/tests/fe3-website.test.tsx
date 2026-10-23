@@ -53,9 +53,9 @@ describe('Website overview', () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue(full);
     render(<WebsiteOverview />);
     await screen.findByText('1,234');
-    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(7), periodTo());
+    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(7), periodTo(), false);
     fireEvent.click(screen.getByRole('button', { name: '30 days' }));
-    await waitFor(() => expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(30), periodTo()));
+    await waitFor(() => expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(30), periodTo(), false));
     expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe('true');
   });
 

@@ -639,7 +639,11 @@ export const getEmailUtmLog = (params: QueryParams = {}) => {
   const qs = toQuery(params);
   return request(`/api/v3/test-sends/utm-log${qs ? '?' + qs : ''}`);
 };
-export const getEmailUtmSummary = () => request('/api/v3/test-sends/utm-log/summary');
+/** Visits grouped by campaign, one page at a time (`page`, `limit`, `q`, `dateFrom`, `dateTo`). */
+export const getEmailUtmSummary = (params: QueryParams = {}) => {
+  const qs = toQuery(params);
+  return request(`/api/v3/test-sends/utm-log/summary${qs ? '?' + qs : ''}`);
+};
 
 export async function downloadReportAll(from: string, to: string): Promise<void> {
   const res = await authFetch(`${BASE}/api/v3/daily-report/download-all?from=${from}&to=${to}`);
@@ -707,8 +711,12 @@ export interface OverviewWebsite {
   lastHour: OverviewSection<{ count: number }>;
   utmLinks: OverviewSection<{
     totals: { links: number; clickedLinks: number; clicks: number; campaigns: number; uniqueUsers: number };
-    campaigns: { campaignId: number; name: string | null; segment: string | null; channel: string | null; links: number; clickedLinks: number; clicks: number; lastClick: string | null }[];
+    /** Not computed any more (the per-campaign breakdown lives in the My links tab); kept optional for old payloads. */
+    campaigns?: { campaignId: number; name: string | null; segment: string | null; channel: string | null; links: number; clickedLinks: number; clicks: number; lastClick: string | null }[];
   }>;
+  /** Served from the server's one-minute cache (`stale` = a refresh is running in the background). */
+  cached?: boolean;
+  stale?: boolean;
 }
 
 function overviewQs(params: Record<string, string | number | undefined>): string {
@@ -728,5 +736,5 @@ export const getOverviewInsights = (from?: string, to?: string) =>
 export const getOverviewStatus = (opts: { only?: string } = {}) => request<OverviewStatus>(`/api/v3/overview/status${opts.only ? `?only=${encodeURIComponent(opts.only)}` : ''}`);
 export const getOverviewMessages = (params: OverviewMessagesParams = {}) =>
   request<OverviewMessages>(`/api/v3/overview/messages${overviewQs({ ...params })}`);
-export const getOverviewWebsite = (from?: string, to?: string) =>
-  request<OverviewWebsite>(`/api/v3/overview/website${overviewQs({ from, to })}`);
+export const getOverviewWebsite = (from?: string, to?: string, fresh = false) =>
+  request<OverviewWebsite>(`/api/v3/overview/website${overviewQs({ from, to, fresh: fresh ? 1 : undefined })}`);

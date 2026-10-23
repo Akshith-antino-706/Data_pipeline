@@ -86,7 +86,6 @@ export interface UtmSegmentLabelRow { segment_label: string }
 export interface UtmSegmentListRow {
   segment_name: string;
   campaign_count: string;
-  template_count: string;
   utm_count: string;
   total_clicks: string;
   total_conversions: string;

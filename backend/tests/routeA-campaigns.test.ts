@@ -46,6 +46,9 @@ describe('GET /', () => {
     cs.getAll.mockResolvedValue({});
     await call('GET', '/?page=-x&limit=abc');
     expect(cs.getAll).toHaveBeenCalledWith({ status: undefined, channel: undefined, page: 1, limit: 20 });
+    cs.getAll.mockResolvedValue({});
+    await call('GET', '/?search=%20spring%20&limit=999');
+    expect(cs.getAll).toHaveBeenLastCalledWith({ status: undefined, channel: undefined, search: 'spring', page: 1, limit: 100 });
   });
   it('500 on service error', async () => {
     cs.getAll.mockRejectedValue(new Error('x'));

@@ -243,6 +243,9 @@ describe('batch-status and send-log reads', () => {
     expect(m.st.getUtmLog).toHaveBeenLastCalledWith(expect.objectContaining({ page: 3, limit: 20 }));
     await call('GET', '/utm-log?page=99999999&limit=abc');
     expect(m.st.getUtmLog).toHaveBeenLastCalledWith(expect.objectContaining({ page: 100000, limit: 50 }));
+    m.st.getUtmSummary.mockResolvedValue({ byCampaign: [] });
+    await call('GET', '/utm-log/summary?page=2&limit=500&q=%20oct%20&dateFrom=2026-10-01');
+    expect(m.st.getUtmSummary).toHaveBeenLastCalledWith({ page: 2, limit: 100, q: 'oct', dateFrom: '2026-10-01', dateTo: undefined });
     m.st.getUtmSummary.mockRejectedValue(new Error('x'));
     expect((await call('GET', '/utm-log/summary')).status).toBe(500);
   });

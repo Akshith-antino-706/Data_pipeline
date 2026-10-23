@@ -41,7 +41,7 @@ describe('Website overview — period picker', () => {
     vi.mocked(api.getOverviewWebsite).mockResolvedValue(payload());
     render(<WebsiteOverview />);
     expect(api.getOverviewWebsite).toHaveBeenCalledTimes(1);
-    expect(api.getOverviewWebsite).toHaveBeenNthCalledWith(1, periodFrom(7), periodTo());
+    expect(api.getOverviewWebsite).toHaveBeenNthCalledWith(1, periodFrom(7), periodTo(), false);
     expect(screen.getByRole('group', { name: 'Period' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Last 7 days' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe('false');
@@ -79,7 +79,7 @@ describe('Website overview — loading states', () => {
     expect(screen.queryByText('1,525')).toBeNull();
     expect(screen.getAllByTestId('website-skeleton-panel').length).toBe(3);
     expect(screen.queryByTestId('website-skeleton-campaigns')).toBeNull();
-    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(90), periodTo());
+    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(90), periodTo(), false);
     await act(async () => { pending.resolve(payload({ eventsPerDay: { available: true, days: [{ date: '2026-08-01', events: 9000 }] } })); });
     await screen.findByText('9,000');
     expect(skeletonsShown()).toBe(false);
@@ -104,6 +104,8 @@ describe('Website overview — loading states', () => {
     await screen.findByText('/dubai');
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
     await waitFor(() => expect(skeletonsShown()).toBe(true));
+    // Refresh bypasses the server's one-minute cache; period changes use it.
+    expect(api.getOverviewWebsite).toHaveBeenLastCalledWith(periodFrom(7), periodTo(), true);
     await act(async () => { pending.resolve(payload()); });
     await screen.findByText('/dubai');
   });

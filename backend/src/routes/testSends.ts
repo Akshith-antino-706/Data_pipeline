@@ -1085,9 +1085,15 @@ router.get('/utm-log', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/utm-log/summary', async (_req, res, next) => {
+router.get('/utm-log/summary', async (req, res, next) => {
   try {
-    const summary = await SendTrackService.getUtmSummary();
+    const summary = await SendTrackService.getUtmSummary({
+      page:     clampInt(req.query.page, 1, MAX_PAGE),
+      limit:    clampInt(req.query.limit, 20, 100),
+      dateFrom: (req.query.dateFrom as string | undefined) || undefined,
+      dateTo:   (req.query.dateTo as string | undefined)   || undefined,
+      q:        typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) || undefined : undefined,
+    });
     res.json({ data: summary });
   } catch (err) { next(err); }
 });

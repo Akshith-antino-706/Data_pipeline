@@ -230,7 +230,7 @@ export default function WebsiteOverview() {
 
   // Each load gets an id so a slow response for an old period can't overwrite a newer one.
   const reqId = useRef(0);
-  const load = useCallback(async (d: Days) => {
+  const load = useCallback(async (d: Days, fresh = false) => {
     const id = ++reqId.current;
     const from = periodFrom(d);
     const to = periodTo();
@@ -241,13 +241,13 @@ export default function WebsiteOverview() {
     try {
       let res: unknown;
       try {
-        res = await getOverviewWebsite(from, to);
+        res = await getOverviewWebsite(from, to, fresh);
       } catch (e) {
         // A dropped connection (e.g. the server restarting) gets one quiet retry before an error is shown.
         if (!(e instanceof TypeError)) throw e;
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         if (id !== reqId.current) return;
-        res = await getOverviewWebsite(from, to);
+        res = await getOverviewWebsite(from, to, fresh);
       }
       if (id !== reqId.current) return;
       if (!isPayload(res)) {
@@ -268,6 +268,7 @@ export default function WebsiteOverview() {
 
   useEffect(() => { void load(days); }, [days, load]);
   const retry = () => { void load(days); };
+  const refresh = () => { void load(days, true); };
 
   const range = data?.range;
   const fromText = shortDate(range?.from ?? periodFrom(days));
@@ -312,7 +313,7 @@ export default function WebsiteOverview() {
         </div>
         {rangeText && <span className={styles.periodMeta}>{rangeText}</span>}
         <span className={styles.spacer} />
-        <Button size="sm" variant="ghost" onClick={retry} disabled={loading}>
+        <Button size="sm" variant="ghost" onClick={refresh} disabled={loading}>
           <RefreshCw size={14} /> Refresh
         </Button>
       </div>

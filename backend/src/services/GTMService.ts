@@ -337,18 +337,21 @@ window.addEventListener('scroll', function() {
     let where = '1=1';
     const params = [];
     if (eventName) { params.push(eventName); where += ` AND event_name = $${params.length}`; }
-    if (dateFrom) { params.push(dateFrom); where += ` AND created_at >= $${params.length}`; }
+    // Without any date filter the page used to scan the whole table; default to the last 30 days.
+    const from = dateFrom || (dateTo ? undefined : new Date(Date.now() - 30 * 86_400_000).toISOString());
+    if (from) { params.push(from); where += ` AND created_at >= $${params.length}`; }
     if (dateTo) { params.push(dateTo); where += ` AND created_at <= $${params.length}`; }
 
+    // One row per day (oldest first), ready to chart — not one row per event per day.
     const { rows: summary } = await db.query(`
-      SELECT event_name, COUNT(*) AS event_count,
+      SELECT DATE_TRUNC('day', created_at) AS day,
+        COUNT(*) AS event_count,
         COUNT(DISTINCT customer_id) AS unique_users,
-        SUM(event_value) AS total_value,
-        DATE_TRUNC('day', created_at) AS day
+        SUM(event_value) AS total_value
       FROM gtm_events
       WHERE ${where}
-      GROUP BY event_name, DATE_TRUNC('day', created_at)
-      ORDER BY day DESC, event_count DESC
+      GROUP BY DATE_TRUNC('day', created_at)
+      ORDER BY day ASC
       LIMIT $${params.length + 1}
     `, [...params, limit]);
 
@@ -359,9 +362,10 @@ window.addEventListener('scroll', function() {
       FROM gtm_events WHERE ${where}
       GROUP BY event_name
       ORDER BY count DESC
+      LIMIT 50
     `, params);
 
-    return { daily: summary, top_events: topEvents };
+    return { daily: summary, top_events: topEvents, range: { from: from ?? null, to: dateTo ?? null } };
   }
 
   /**

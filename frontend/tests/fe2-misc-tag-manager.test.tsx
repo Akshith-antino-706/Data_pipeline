@@ -40,19 +40,17 @@ const lastCall = (name: ApiName): Record<string, unknown> => {
   const calls = asMock(name).mock.calls;
   return (calls[calls.length - 1]?.[0] ?? {}) as Record<string, unknown>;
 };
-const visits = (n: number, total: number) => ({ data: { total, rows: Array.from({ length: n }, (_, i) => ({
-  id: i + 1, contact_name: i === 0 ? 'Ann' : undefined, email: `u${i}@x.com`, utm_campaign: 'oct', utm_source: 'email', utm_medium: i === 0 ? 'newsletter' : undefined,
-  destination_url: i === 0 ? 'https://raynatours.com/dubai?x=1' : i === 1 ? 'bad url %%' : undefined, created_at: '2026-10-01T10:00:00Z',
-})) } });
-const utmSummary = { data: { byCampaign: [{ utm_campaign: 'oct', utm_source: 'email', utm_medium: 'newsletter', total_clicks: 5, unique_visitors: 4, unique_emails: 3 }], bySource: [{ utm_source: 'email' }] } };
 
 describe('Tag manager (GTM) page', () => {
   beforeEach(() => { vi.stubGlobal('ResizeObserver', FakeResizeObserver); });
 
-  it('shows the skeleton while loading', () => {
-    asMock('getGTMSnippet').mockReturnValue(new Promise(() => {}));
+  it('shows the skeleton while the analytics load, and loads only the analytics on open', () => {
+    asMock('getGTMAnalytics').mockReturnValue(new Promise(() => {}));
     render(<TagManager />);
     expect(screen.queryByText('GTM & BigQuery')).toBeNull();
+    for (const fn of ['getGTMSnippet', 'getDataLayerScripts', 'getSpecialOccasions', 'getGTMEventDetail'] as const) {
+      expect(api[fn]).not.toHaveBeenCalled();
+    }
   });
 
   it('renders top events with typical data and opens the event detail', async () => {
@@ -80,26 +78,38 @@ describe('Tag manager (GTM) page', () => {
     await waitFor(() => expect(screen.queryByText('Safari')).toBeNull());
   });
 
-  it('empty data: shows empty placeholders on every tab', async () => {
+  it('empty data: shows empty placeholders on every tab, each loaded when first opened', async () => {
     render(<TagManager />);
     await screen.findByText('GTM events will appear here as they are captured.');
-    fireEvent.click(screen.getByText('Email Tracking'));
-    await screen.findByText('No email visits yet');
+    expect(screen.queryByText('Email Tracking')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Email visits' }).getAttribute('href')).toBe('/utm?tab=visits');
+    expect(api.getDataLayerScripts).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('DataLayer Scripts'));
+    await screen.findByText('Events (0)');
+    expect(api.getDataLayerScripts).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('Special Occasions'));
+    await screen.findByText('No special occasions');
+    fireEvent.click(screen.getByText('GTM Container'));
+    await waitFor(() => expect(api.getGTMSnippet).toHaveBeenCalledTimes(1));
+    // going back does not reload
     fireEvent.click(screen.getByText('DataLayer Scripts'));
     expect(screen.getByText('Events (0)')).toBeTruthy();
-    fireEvent.click(screen.getByText('Special Occasions'));
-    fireEvent.click(screen.getByText('GTM Container'));
+    expect(api.getDataLayerScripts).toHaveBeenCalledTimes(1);
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
-  it('API errors are caught and the page still renders', async () => {
-    asMock('getGTMSnippet').mockRejectedValue(new Error('HTTP 500'));
-    asMock('getEmailUtmLog').mockRejectedValue(new Error('HTTP 500'));
+  it('API errors are caught: the page still renders and each tab shows its own error with Try again', async () => {
+    asMock('getGTMAnalytics').mockRejectedValue(new Error('HTTP 500'));
+    asMock('getGTMSnippet').mockRejectedValue(new Error('HTTP 503'));
     render(<TagManager />);
     await screen.findByText('GTM & BigQuery');
     expect(console.error).toHaveBeenCalled();
-    fireEvent.click(screen.getByText('Email Tracking'));
-    await screen.findByText('No email visits yet');
+    await screen.findByText("Couldn't load event analytics");
+    fireEvent.click(screen.getByText('GTM Container'));
+    await screen.findByText("Couldn't load the GTM container snippet");
+    mockOk('getGTMSnippet', { data: { head: '<script>ok</script>', body: '' } });
+    fireEvent.click(screen.getByText('Try again'));
+    await screen.findByText('<script>ok</script>');
   });
 
   it('event detail error leaves an empty detail panel', async () => {
@@ -108,31 +118,6 @@ describe('Tag manager (GTM) page', () => {
     render(<TagManager />);
     fireEvent.click(await screen.findByText('view'));
     await screen.findByText('No detail rows found.');
-  });
-
-  it('email tracking: KPIs, campaign filter, search and pagination call getEmailUtmLog correctly', async () => {
-    mockOk('getEmailUtmLog', visits(3, 120));
-    mockOk('getEmailUtmSummary', utmSummary);
-    render(<TagManager />);
-    await screen.findByText('GTM & BigQuery');
-    expect(lastCall('getEmailUtmLog')).toEqual({ page: 1, limit: 50 });
-    fireEvent.click(screen.getByText('Email Tracking'));
-    await screen.findByText('Ann');
-    expect(screen.getByText('Showing 1–50 of 120')).toBeTruthy();
-    expect(screen.getByText('/dubai')).toBeTruthy();
-    expect(screen.getByText('bad url %%')).toBeTruthy();
-    fireEvent.click(screen.getByText('Next →'));
-    await waitFor(() => expect(lastCall('getEmailUtmLog')).toEqual({ page: 2, limit: 50 }));
-    await screen.findByText('Showing 51–100 of 120');
-    fireEvent.click(screen.getByRole('button', { name: 'oct' }));
-    await waitFor(() => expect(lastCall('getEmailUtmLog')).toEqual({ page: 1, limit: 50, utm_campaign: 'oct' }));
-    const input = await screen.findByPlaceholderText('email@example.com');
-    fireEvent.change(input, { target: { value: 'ann@x.com' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(lastCall('getEmailUtmLog')).toEqual({ page: 1, limit: 50, email: 'ann@x.com', utm_campaign: 'oct' }));
-    fireEvent.click(await screen.findByText('Reset'));
-    await waitFor(() => expect(lastCall('getEmailUtmLog')).toEqual({ page: 1, limit: 50 }));
-    expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
   it('datalayer copy, occasions and snippet tabs render their data', async () => {
@@ -144,18 +129,18 @@ describe('Tag manager (GTM) page', () => {
     render(<TagManager />);
     await screen.findByText('GTM & BigQuery');
     fireEvent.click(screen.getByText('DataLayer Scripts'));
-    expect(screen.getByText('Events (2)')).toBeTruthy();
+    await screen.findByText('Events (2)');
     fireEvent.click(screen.getByRole('button', { name: 'purchase' }));
     expect(screen.getByText('buy()')).toBeTruthy();
     fireEvent.click(screen.getByText('Copy'));
     expect(writeText).toHaveBeenCalledWith('buy()');
     expect(screen.getByText('Copied!')).toBeTruthy();
     fireEvent.click(screen.getByText('Special Occasions'));
-    expect(screen.getByText('Diwali')).toBeTruthy();
+    await screen.findByText('Diwali');
     expect(screen.getByText('10% off')).toBeTruthy();
     expect(screen.getByText(/IN, AE/)).toBeTruthy();
     fireEvent.click(screen.getByText('GTM Container'));
-    expect(screen.getByText('<script>head</script>')).toBeTruthy();
+    await screen.findByText('<script>head</script>');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 

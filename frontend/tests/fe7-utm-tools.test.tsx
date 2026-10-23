@@ -50,6 +50,9 @@ describe('Website & links — loading only what is open', () => {
       page: 1, limit: 20, dateFrom: `${daysBefore(to, 6)}T00:00:00+04:00`, dateTo: `${to}T23:59:59.999+04:00`,
     });
     expect(api.getEmailUtmSummary).toHaveBeenCalledTimes(1);
+    expect(api.getEmailUtmSummary).toHaveBeenCalledWith({
+      page: 1, limit: 20, dateFrom: `${daysBefore(to, 6)}T00:00:00+04:00`, dateTo: `${to}T23:59:59.999+04:00`,
+    });
     expect(api.getOverviewWebsite).toHaveBeenCalled();
     for (const fn of [api.getUTMAnalytics, api.getUserLinks, api.getUserLinkStats, api.getUTMSegments, api.getCampaigns]) {
       expect(fn).not.toHaveBeenCalled();
@@ -248,6 +251,11 @@ describe('Website & links — content', () => {
     render(<UtmPage />);
     fireEvent.click(await screen.findByRole('tab', { name: 'My links' }));
     await screen.findByText('Asha');
+    // the campaign picker is searched on the server, 50 at a time
+    await waitFor(() => expect(api.getCampaigns).toHaveBeenLastCalledWith({ limit: 50 }));
+    fireEvent.change(screen.getByLabelText('Find a campaign'), { target: { value: 'spr' } });
+    await waitFor(() => expect(api.getCampaigns).toHaveBeenLastCalledWith({ search: 'spr', limit: 50 }));
+    expect(screen.getByRole('option', { name: 'Spring — VIP (Email)' })).toBeTruthy();
     expect(screen.getByText('Showing 1–1 of 45')).toBeTruthy();
     expect(screen.queryByText('Personal links by campaign')).toBeNull();
     fireEvent.change(screen.getByLabelText('Clicked or not'), { target: { value: 'true' } });

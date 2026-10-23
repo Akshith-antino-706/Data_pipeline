@@ -117,7 +117,7 @@ export const defaultMocks: Mock[] = [
   // ── Content ──
   get('/api/v3/test-sends/send-log/summary', ok({})),
   get('/api/v3/test-sends/utm-log', ok({ rows: [], total: 0 })),
-  get('/api/v3/test-sends/utm-log/summary', ok({ byCampaign: [], bySource: [] })),
+  get('/api/v3/test-sends/utm-log/summary', ok({ byCampaign: [], total: 0, page: 1, limit: 20 })),
   get('/api/v3/test-sends/contacts', { success: true, data: [], total: 0 }),
   get('/api/v2/content/templates', { success: true, data: [], total: 0 }),
   get('/api/v3/chathead/channels', ok([])),

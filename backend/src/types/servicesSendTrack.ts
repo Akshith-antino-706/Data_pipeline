@@ -84,6 +84,15 @@ export interface UtmVisitArgs {
   destinationUrl?: string | null;
 }
 
+export interface UtmSummaryFilters {
+  page?: number;
+  limit?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  /** Part of a campaign name. */
+  q?: string;
+}
+
 export interface UtmLogFilters {
   page?: number;
   limit?: number;

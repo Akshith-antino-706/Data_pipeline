@@ -714,8 +714,18 @@ router.get('/messages', async (req: Request, res: Response) => {
 });
 
 // ── GET /website ──────────────────────────────────────────────────────────────
-router.get('/website', async (req: Request, res: Response) => {
-  const range = parseRange(req.query.from, req.query.to, 14);
+// The whole answer is cached per date range for a minute (in-process, like the Home cards), so
+// repeated opens, period switches and several users don't each run the five GTM/UTM aggregates.
+// `?fresh=1` recomputes. The "links" section only needs totals (one SELECT); the per-campaign
+// breakdown lives in the My links tab and isn't computed here.
+const WEBSITE_TTL_MS = 60_000;
+const WEBSITE_STALE_MAX_MS = 10 * 60_000;
+interface WebsiteResult { range: ReturnType<typeof parseRange>; eventsPerDay: unknown; topEvents: unknown; topPages: unknown; lastHour: unknown; utmLinks: unknown }
+const websiteCache = new Map<string, { at: number; value: WebsiteResult }>();
+const websiteInFlight = new Map<string, Promise<WebsiteResult>>();
+export function clearWebsiteCache(): void { websiteCache.clear(); }
+
+async function computeWebsite(range: ReturnType<typeof parseRange>): Promise<WebsiteResult> {
   const p = [range.from, addDays(range.to, 1)];
   const S = dubaiStart('$1'), E = dubaiStart('$2');
 
@@ -744,21 +754,41 @@ router.get('/website', async (req: Request, res: Response) => {
       return { count: num(rows[0]?.n) };
     }),
     section('utmLinks', async () => {
-      // Reuses UTMService.getUserLinkStats (read-only SELECTs over user_utm_links + campaigns). Not date-filtered.
-      const { campaigns, totals } = await UTMService.getUserLinkStats();
+      // Totals only (one read-only SELECT over user_utm_links). Not date-filtered.
+      const totals = await UTMService.getUserLinkTotals();
       return {
         totals: {
           links: num(totals?.total_links), clickedLinks: num(totals?.total_clicked), clicks: num(totals?.total_clicks),
           campaigns: num(totals?.campaigns), uniqueUsers: num(totals?.unique_users),
         },
-        campaigns: campaigns.slice(0, 20).map(c => ({
-          campaignId: num(c.campaign_id), name: str(c.campaign_name), segment: str(c.segment_label), channel: str(c.channel),
-          links: num(c.total_links), clickedLinks: num(c.clicked), clicks: num(c.total_clicks), lastClick: iso(c.last_click),
-        })),
+        campaigns: [],
       };
     }),
   ]);
-  res.json({ range, eventsPerDay, topEvents, topPages, lastHour, utmLinks });
+  return { range, eventsPerDay, topEvents, topPages, lastHour, utmLinks };
+}
+
+router.get('/website', async (req: Request, res: Response) => {
+  const range = parseRange(req.query.from, req.query.to, 14);
+  const key = `${range.from}|${range.to}`;
+  const fresh = String(req.query.fresh ?? '') === '1';
+  const hit = websiteCache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && !fresh && age < WEBSITE_TTL_MS) { res.json({ ...hit.value, cached: true }); return; }
+
+  const run = async (): Promise<WebsiteResult> => {
+    const value = await computeWebsite(range);
+    websiteCache.set(key, { at: Date.now(), value });
+    return value;
+  };
+  let inFlight = websiteInFlight.get(key);
+  if (!inFlight) {
+    inFlight = run().finally(() => websiteInFlight.delete(key));
+    websiteInFlight.set(key, inFlight);
+  }
+  // Stale-but-recent: answer at once and let the refresh finish in the background.
+  if (hit && !fresh && age < WEBSITE_STALE_MAX_MS) { inFlight.catch(() => {}); res.json({ ...hit.value, cached: true, stale: true }); return; }
+  res.json(await inFlight);
 });
 
 // Warm the slowest Home cards shortly after the server starts, so the first visitor

@@ -60,6 +60,11 @@ describe('CampaignService', () => {
     expect(data?.[0]).toContain('LIMIT $3 OFFSET $4');
     expect(data?.[1]).toEqual(['running', 'email', 5, 5]);
     expect(data?.[0]).toContain('CASE WHEN c.sent_count > 0');
+    m.query.mockClear();
+    await CampaignService.getAll({ search: ' 50%_x ', limit: 10 });
+    const searched = m.query.mock.calls.find(([s]) => s.includes('LIMIT'));
+    expect(searched?.[0]).toContain('c.name ILIKE $1 OR c.segment_label ILIKE $1');
+    expect(searched?.[1]).toEqual(['%50\\%\\_x%', 10, 0]);
   });
   it('getById null when missing; otherwise merges analytics', async () => {
     expect(await CampaignService.getById(1)).toBeNull();

@@ -146,27 +146,39 @@ describe('UTMService DB methods (mocked)', () => {
     expect(r).not.toHaveProperty('total');
   });
 
-  it('getAnalytics paged: parameterised LIMIT/OFFSET, escaped search on links + count only, SELECT only', async () => {
+  it('getAnalytics paged: parameterised LIMIT/OFFSET, escaped search on links + count only, no segment summary, SELECT only', async () => {
     m.query
       .mockResolvedValueOnce({ rows: [{ utm_id: 1 }] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ total: '41' }] });
     const r = await UTMService.getAnalytics({ segmentLabel: 'vip', page: '3', limit: '20', search: " 50%_x'; DROP " });
-    expect(m.query).toHaveBeenCalledTimes(4);
+    // links, channel summary, count — the per-segment summary is only computed for the legacy unpaged shape
+    expect(m.query).toHaveBeenCalledTimes(3);
     const [linksSql, linksParams] = m.query.mock.calls[0];
     expect(linksSql).toContain('c.name ILIKE $2');
     expect(linksSql).toContain('LIMIT $3 OFFSET $4');
     expect(linksParams).toEqual(['vip', "%50\\%\\_x'; DROP%", 20, 40]);
-    // Channel/segment summaries ignore the search and paging.
+    // The channel summary ignores the search and paging.
     expect(m.query.mock.calls[1][1]).toEqual(['vip']);
-    expect(m.query.mock.calls[2][1]).toEqual(['vip']);
-    const [countSql, countParams] = m.query.mock.calls[3];
+    const [countSql, countParams] = m.query.mock.calls[2];
     expect(countSql).toContain('COUNT(*)');
     expect(countSql).not.toContain('LIMIT');
     expect(countParams).toEqual(['vip', "%50\\%\\_x'; DROP%"]);
     for (const [sql] of m.query.mock.calls) expect(sql.trim().startsWith('SELECT')).toBe(true);
     expect(r).toMatchObject({ total: 41, page: 3, limit: 20, links: [{ utm_id: 1 }] });
+    expect(r).not.toHaveProperty('segmentSummary');
+  });
+
+  it('getSegmentsList has no per-segment template scan; getUserLinkTotals is one SELECT', async () => {
+    await UTMService.getSegmentsList();
+    expect(m.query.mock.calls[0][0]).not.toContain('content_templates');
+    m.query.mockClear();
+    m.query.mockResolvedValueOnce({ rows: [{ total_links: '5', total_clicked: '2', total_clicks: '9', campaigns: '1', unique_users: '4' }] });
+    const t = await UTMService.getUserLinkTotals();
+    expect(m.query).toHaveBeenCalledTimes(1);
+    expect(m.query.mock.calls[0][0]).toContain('FROM user_utm_links');
+    expect(m.query.mock.calls[0][0]).not.toContain('GROUP BY');
+    expect(t).toEqual({ total_links: '5', total_clicked: '2', total_clicks: '9', campaigns: '1', unique_users: '4' });
   });
 
   it('getAnalytics clamps page/limit (bad → defaults, huge → max)', async () => {

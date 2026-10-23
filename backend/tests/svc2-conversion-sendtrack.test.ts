@@ -185,8 +185,17 @@ describe('SendTrackService', () => {
     const r = await SendTrackService.getUtmLog({ utmCampaign: 'sum', page: 2, limit: 5 });
     expect(r.total).toBe(3);
     expect(m.query.mock.calls[1][1]).toEqual(['%sum%', 5, 5]);
-    const s = await SendTrackService.getUtmSummary();
+    const s = await SendTrackService.getUtmSummary({ page: 2, limit: 10, dateFrom: '2026-10-01', q: 'oct' });
     expect(s.byCampaign).toBeDefined();
+    expect(s).toMatchObject({ page: 2, limit: 10, total: 3, capped: false });
+    const grouped = m.query.mock.calls.find(([sql]) => sql.includes('GROUP BY utm_campaign') && sql.includes('OFFSET'));
+    expect(grouped?.[0]).toContain('created_at >= $1');
+    expect(grouped?.[0]).toContain('utm_campaign ILIKE $2');
+    expect(grouped?.[1]).toEqual(['2026-10-01', '%oct%', 10, 10]);
+    expect(grouped?.[0]).not.toContain('utm_source\n');
+    // the log count stops at the cap
+    const logCount = m.query.mock.calls.find(([sql]) => sql.includes('FROM utm_visits uv') && sql.includes('LIMIT 10001'));
+    expect(logCount).toBeTruthy();
     expect((await SendTrackService.getByUnifiedId(5)).length).toBe(1);
   });
   // BUG: page <= 0 (e.g. ?page=0 from the UI) yields a negative OFFSET, which Postgres rejects.

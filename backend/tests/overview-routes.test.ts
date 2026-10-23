@@ -19,9 +19,9 @@ const { mockQuery, mockQueueCounts, mockLinkStats, poolQuery } = vi.hoisted(() =
 });
 vi.mock('../src/config/database.js', () => ({ default: { query: poolQuery }, query: poolQuery }));
 vi.mock('../src/services/queue/index.js', () => ({ queueCounts: mockQueueCounts }));
-vi.mock('../src/services/UTMService.js', () => ({ default: { getUserLinkStats: mockLinkStats } }));
+vi.mock('../src/services/UTMService.js', () => ({ default: { getUserLinkTotals: mockLinkStats } }));
 
-import overviewRouter, { parseRange, resetHomeCache, resetInsightsCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_QUERY_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
+import overviewRouter, { parseRange, resetHomeCache, clearWebsiteCache, resetInsightsCache, getHomeSection, HOME_SECTIONS, HOME_SECTION_TIMEOUT_MS, HOME_QUERY_TIMEOUT_MS, HOME_CACHE_TTL_MS, HOME_FAIL_TTL_MS, HOME_STALE_MAX_MS } from '../src/routes/overview.js';
 
 type Json = Record<string, unknown>;
 let server: Server;
@@ -45,7 +45,7 @@ beforeEach(() => {
   mockLinkStats.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   mockQueueCounts.mockResolvedValue({ waiting: 1, active: 2, delayed: 0, completed: 5, failed: 1, paused: 0 });
-  mockLinkStats.mockResolvedValue({ campaigns: [], totals: undefined });
+  mockLinkStats.mockResolvedValue(undefined);
 });
 
 const get = async (p: string): Promise<{ status: number; body: Json }> => {
@@ -398,6 +398,20 @@ describe('GET /website', () => {
     expect(body.utmLinks).toEqual({ available: true, totals: { links: 0, clickedLinks: 0, clicks: 0, campaigns: 0, uniqueUsers: 0 }, campaigns: [] });
     expect(mockLinkStats).toHaveBeenCalledTimes(1);
     expect(hasNaN(body)).toBe(false);
+  });
+
+  it('caches per range for a minute, fresh=1 recomputes, and only the totals SELECT is used for links', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    await get('/website?from=2026-10-01&to=2026-10-02');
+    const n = mockQuery.mock.calls.length;
+    const { body } = await get('/website?from=2026-10-01&to=2026-10-02');
+    expect(mockQuery.mock.calls.length).toBe(n);
+    expect(body.cached).toBe(true);
+    expect(mockLinkStats).toHaveBeenCalledTimes(1);
+    await get('/website?from=2026-10-01&to=2026-10-02&fresh=1');
+    expect(mockQuery.mock.calls.length).toBeGreaterThan(n);
+    await get('/website?from=2026-10-01&to=2026-10-05');
+    expect(mockLinkStats).toHaveBeenCalledTimes(3);
   });
 
   it('UTM failure does not break GTM sections', async () => {
