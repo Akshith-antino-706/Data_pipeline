@@ -116,3 +116,12 @@
   .jstats { width: 100%; padding-left: 28px; }
   .dateCtl :global(.ui-input) { width: 140px; }
 }
+
+/* All-time journeys list: search + pager */
+.listTools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.listSearch { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink3); min-width: 260px; }
+.listSearch:focus-within { outline: 2px solid var(--gold); outline-offset: 1px; }
+.listSearchInput { flex: 1; min-width: 0; font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--ink); outline: none; }
+.listSearchClear { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer; }
+.listSearchClear:hover { background: var(--sunken); color: var(--ink); }
+.listPager { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 10px; }

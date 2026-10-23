@@ -449,3 +449,19 @@ describe('getEntries includes GTM/giveaway people', () => {
     expect(m.query.mock.calls[0][1]).toEqual([277]);
   });
 });
+
+describe('getOpsDashboard — bounded send-log reads', () => {
+  it('every email_send_log aggregate is limited to the last 7 days and is a SELECT', async () => {
+    m.query.mockReset();
+    m.query.mockResolvedValue({ rows: [] });
+    await JourneyService.getOpsDashboard().catch(() => undefined);
+    const sendLog = m.query.mock.calls.map(c => String(c[0])).filter(q => q.includes('FROM email_send_log'));
+    expect(sendLog.length).toBeGreaterThan(0);
+    for (const q of sendLog) {
+      expect(q).toMatch(/INTERVAL '(24 hours|7 days|30 days)'/);
+      expect(q).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/);
+    }
+    const perJourney = sendLog.find(q => q.includes('GROUP BY journey_id') && q.includes('sends_today'));
+    expect(perJourney).toContain("created_at >= NOW() - INTERVAL '7 days'");
+  });
+});

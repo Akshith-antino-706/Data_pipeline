@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   GitBranch, Users, Send, Clock, Mail, Eye, TrendingUp, Target,
   AlertTriangle, RefreshCw, Sparkles, Calendar,
-  ChevronRight, ChevronDown, Layers, X, Loader2,
+  ChevronRight, ChevronDown, Layers, X, Loader2, Search,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -14,12 +14,14 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button, Card, ErrorState, Input, PageHeader, Skeleton, StatusChip } from '@/components/ui';
+import { SegmentPager } from '@/components/ui/SegmentPager';
 import type { ChipTone } from '@/components/ui';
 import styles from './monitor.module.css';
 import { getJourneyOpsDashboard, getJourneyNodeBreakdown, getJourneysActiveOnDate, previewJourneyNodeEmail } from '@/lib/api';
 
 const dubaiToday = () => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
 
+const LIST_PAGE = 10;
 const PALETTE = ['var(--chart-1)', 'var(--chart-3)', 'var(--chart-2)', 'var(--chart-4)', 'var(--chart-5)', '#2E8C8C', '#B5617E', '#5A6F9C', '#8C7A3E', '#4F7D4F'];
 const n0 = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const fmtN = (v: unknown) => n0(v).toLocaleString();
@@ -84,6 +86,9 @@ export default function JourneyDashboardPage() {
   // journey list with lazily-loaded per-node breakdowns.
   const [journeyDate, setJourneyDate] = useState(''); // default = all time (no date scope)
   const [statusFilter, setStatusFilter] = useState('all'); // journey status filter
+  const [journeyQuery, setJourneyQuery] = useState('');
+  const [listPage, setListPage] = useState(1);
+  useEffect(() => { setListPage(1); }, [statusFilter, journeyQuery]);
   const [expanded, setExpanded] = useState(() => new Set<JourneyId>());
   const [nodeDetails, setNodeDetails] = useState<Record<string, NodeDetail>>({}); // all-time: journeyId → { loading, nodes, error }
   const [byDate, setByDate] = useState<ByDateState>({ loading: true, journeys: [], error: null, isToday: true });
@@ -134,7 +139,7 @@ export default function JourneyDashboardPage() {
   const load = async (isRefresh?: boolean) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const res = await getJourneyOpsDashboard() as { data: OpsDashboard };
+      const res = await getJourneyOpsDashboard(isRefresh ? { fresh: true } : {}) as { data: OpsDashboard };
       setData(res.data);
       setError(null);
     } catch (e) {
@@ -188,7 +193,13 @@ export default function JourneyDashboardPage() {
   const statusCounts = journeyList.reduce<Record<string, number>>((m, j) => { m[j.status] = (m[j.status] || 0) + 1; return m; }, {});
   const statusChips = ['all', ...Object.keys(statusCounts).sort()];
   const statusMatch = (j: OpsJourney) => statusFilter === 'all' || j.status === statusFilter;
-  const visibleJourneys = journeyList.filter(statusMatch);
+  const q = journeyQuery.trim().toLowerCase().replace(/^#/, '');
+  const queryMatch = (j: OpsJourney) => !q || String(j.journeyId) === q || (j.name || '').toLowerCase().includes(q);
+  const visibleJourneys = journeyList.filter(j => statusMatch(j) && queryMatch(j));
+  // All-time mode lists every journey: page it in the browser (the payload is already here) so
+  // the DOM stays small; the date mode shows only that day's journeys and is left as is.
+  const listPages = Math.max(1, Math.ceil(visibleJourneys.length / LIST_PAGE));
+  const pagedJourneys = visibleJourneys.slice((listPage - 1) * LIST_PAGE, listPage * LIST_PAGE);
   const openJourney = (id: JourneyId) => router.push(`/journeys/${id}`);
   const tickStyle = { fontSize: 11, fill: 'var(--ink3)' };
   const tooltipStyle = { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--ink)' };
@@ -397,7 +408,14 @@ export default function JourneyDashboardPage() {
           </div>
         </div>
 
-        {/* Status filter chips — built from whatever statuses are present */}
+        {/* Search + status filter chips — built from whatever statuses are present */}
+        <div className={styles.listTools}>
+          <div className={styles.listSearch}>
+            <Search size={13} aria-hidden="true" />
+            <input className={styles.listSearchInput} value={journeyQuery} onChange={e => setJourneyQuery(e.target.value)} placeholder="Search journey name or #id" aria-label="Search journeys" />
+            {journeyQuery && <button type="button" className={styles.listSearchClear} aria-label="Clear journey search" onClick={() => setJourneyQuery('')}><X size={12} /></button>}
+          </div>
+        </div>
         <div className={styles.filters} role="group" aria-label="Filter by status">
           {statusChips.map(s => {
             const on = statusFilter === s;
@@ -439,11 +457,11 @@ export default function JourneyDashboardPage() {
         ) : !loaded ? (
           <SectionSkeleton h={120} />
         ) : visibleJourneys.length === 0 ? (
-          <Empty text={`No ${statusFilter === 'all' ? '' : statusFilter + ' '}journeys`} />
+          <Empty text={q ? `No journey matches “${journeyQuery.trim()}”` : `No ${statusFilter === 'all' ? '' : statusFilter + ' '}journeys`} />
         ) : (
           // ── All-time mode: full journey list; per-node breakdown is fetched LAZILY on expand ──
           <div className={styles.list}>
-            {visibleJourneys.map(j => {
+            {pagedJourneys.map(j => {
               const isOpen = expanded.has(j.journeyId);
               const det = nodeDetails[j.journeyId];
               return (
@@ -473,6 +491,12 @@ export default function JourneyDashboardPage() {
                 </div>
               );
             })}
+            {listPages > 1 && (
+              <div className={styles.listPager}>
+                <span className={styles.muted}>{(listPage - 1) * LIST_PAGE + 1}–{Math.min(listPage * LIST_PAGE, visibleJourneys.length)} of {visibleJourneys.length}</span>
+                <SegmentPager page={listPage} totalPages={listPages} onPage={p => setListPage(p)} />
+              </div>
+            )}
           </div>
         )}
       </Card>

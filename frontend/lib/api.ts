@@ -194,7 +194,8 @@ export const getJourneys = (params: QueryParams = {}) => {
   const qs = toQuery(params);
   return request(`/api/v3/journeys?${qs}`);
 };
-export const getJourneyOpsDashboard = () => request('/api/v3/journeys/dashboard');
+/** `fresh` bypasses the 30-minute server cache (the Refresh button). */
+export const getJourneyOpsDashboard = (opts: { fresh?: boolean } = {}) => request(`/api/v3/journeys/dashboard${opts.fresh ? '?fresh=1' : ''}`);
 // Analytics tab — reads the precomputed journey_node_stats rollup (fast; never scans live)
 export type JourneyAnalyticsSort = 'entries' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'unsubscribed' | 'booked' | 'openRate' | 'clickRate' | 'name';
 /** Optional server-side paging for the analytics table. Omit it to get the original full list. */

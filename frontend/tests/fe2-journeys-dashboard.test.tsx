@@ -189,5 +189,31 @@ describe('Journey Operations dashboard', () => {
     await screen.findByText('12,345');
     fireEvent.click(screen.getByText('Refresh'));
     await waitFor(() => expect(api.getJourneyOpsDashboard).toHaveBeenCalledTimes(2));
+    // Refresh must bypass the 30-minute server cache
+    expect(api.getJourneyOpsDashboard).toHaveBeenLastCalledWith({ fresh: true });
+    expect(api.getJourneyOpsDashboard).toHaveBeenNthCalledWith(1, {});
+  });
+
+  it('all-time list is searchable by name or #id and paged 10 at a time', async () => {
+    const many = { ...FULL, journeys: Array.from({ length: 23 }, (_, i) => ({ ...FULL.journeys[0], journeyId: 100 + i, name: i === 5 ? 'Cruise upsell' : `Journey ${100 + i}` })) };
+    mockDash(many);
+    render(<JourneyDashboardPage />);
+    await screen.findByText('Journey 100');
+    expect(screen.getByText('1–10 of 23')).toBeTruthy();
+    expect(screen.queryByText('Journey 115')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(screen.getByText('Journey 115')).toBeTruthy();
+    expect(screen.getByText('11–20 of 23')).toBeTruthy();
+    const box = screen.getByRole('textbox', { name: 'Search journeys' });
+    fireEvent.change(box, { target: { value: 'cruise' } });
+    expect(screen.getByText('Cruise upsell')).toBeTruthy();
+    expect(screen.queryByText('Journey 100')).toBeNull();
+    fireEvent.change(box, { target: { value: '#107' } });
+    expect(screen.getByText('Journey 107')).toBeTruthy();
+    expect(screen.queryByText('Cruise upsell')).toBeNull();
+    fireEvent.change(box, { target: { value: 'zzz' } });
+    expect(screen.getByText('No journey matches “zzz”')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear journey search' }));
+    expect(screen.getByText('1–10 of 23')).toBeTruthy();
   });
 });

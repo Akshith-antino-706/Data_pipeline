@@ -3566,7 +3566,8 @@ class JourneyService {
         FROM email_send_log
         WHERE source = 'journey' AND created_at >= NOW() - INTERVAL '7 days'
       `),
-      db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM email_send_log WHERE source = 'journey' AND status = 'queued'`),
+      // Queued = waiting to go out; anything older than 7 days is a leftover, not a backlog.
+      db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM email_send_log WHERE source = 'journey' AND status = 'queued' AND created_at >= NOW() - INTERVAL '7 days'`),
       // Health: stuck entries (overdue >1h) grouped by journey
       db.query<{ journey_id: number; cnt: number; oldest: Date | null }>(`
         SELECT journey_id, COUNT(*)::int AS cnt, MIN(next_fire_at) AS oldest
@@ -3607,6 +3608,7 @@ class JourneyService {
                                         AND created_at >= NOW() - INTERVAL '7 days')::int AS delivered_7d
         FROM email_send_log
         WHERE source = 'journey' AND journey_id IS NOT NULL
+          AND created_at >= NOW() - INTERVAL '7 days'
         GROUP BY journey_id
       `),
     ]);
