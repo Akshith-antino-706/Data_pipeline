@@ -418,7 +418,7 @@ class JourneyService {
               COUNT(*) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1)::text AS sum_total,
               COUNT(*) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1 AND jf.status = 'active')::text AS sum_active,
               COALESCE(SUM(jf.total_entries) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1), 0)::text AS sum_entries,
-              COALESCE(AVG(NULLIF(jf.conversion_rate, '')::numeric) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1), 0)::text AS avg_conversion,
+              COALESCE(AVG(jf.conversion_rate) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1), 0)::text AS avg_conversion,
               (SELECT array_agg(DISTINCT c ORDER BY c) FROM journey_flows j2, LATERAL jsonb_array_elements(COALESCE(j2.nodes, '[]'::jsonb)) n,
                  LATERAL (SELECT LOWER(n->'data'->>'channel') AS c) x WHERE x.c IS NOT NULL) AS channels
             ${from}`, params)

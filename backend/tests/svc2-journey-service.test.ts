@@ -489,6 +489,10 @@ describe('getAll — server-side list filters', () => {
     expect(r.counts).toEqual({ all: 44, active: 30, scheduled: 2, paused: 1, draft: 6, completed: 5 });
     expect(r.summary).toEqual({ total: 70, active: 31, totalEntries: 12345, avgConversion: 9.4 });
     expect(r.channels).toEqual(['email', 'whatsapp']);
+    // conversion_rate is a numeric column: no NULLIF(…, '') text comparison (Postgres rejects '' as numeric)
+    const meta = sqlOf(2);
+    expect(meta).toContain('AVG(jf.conversion_rate)');
+    expect(meta).not.toContain("NULLIF(jf.conversion_rate, '')");
     const list = sqlOf(1);
     expect(list).not.toContain('jf.*');
     expect(list).toContain('AS channels');
