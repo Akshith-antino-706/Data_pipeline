@@ -24,7 +24,7 @@ vi.mock('../src/services/RaynaSyncService.js', () => ({ default: rayna }));
 vi.mock('../src/services/UnifiedContactBuilder.js', () => ({ default: builder }));
 vi.mock('../src/services/DailyBillingSync.js', () => ({ default: daily }));
 
-import raynaRouter from '../src/routes/raynaSync.js';
+import raynaRouter, { clearMappingStatsCache, MAPPING_STATS_TTL_MS } from '../src/routes/raynaSync.js';
 
 let server: Server;
 let base = '';
@@ -40,13 +40,16 @@ afterAll(() => { server.close(); });
 
 // One generic row that satisfies every aggregate the mapping-stats handler reads.
 const GENERIC_ROW = {
-  total_mapped: '8', customers_with_bookings: '4', total_customers: '10',
-  total_tours: '5', total_hotels: '1', total_visas: '1', total_flights: '0', total_packages: '0', total_others: '0',
-  mapped_tours: '3', mapped_hotels: '1', mapped_visas: '0', mapped_flights: '0', mapped_packages: '0', mapped_others: '0',
-  count: '7', c: '2', latest: null,
+  // unified_contacts pass
+  total_all: '20', total_customers: '10', customers_with_bookings: '4', with_email: '9', with_mobile: '6',
+  // per rayna_* pass
+  total: '5', mapped: '3', latest: '2026-10-20T01:00:00.000Z',
+  // chats / sync_metadata
+  count: '7', table_name: 'chats_sync', last_synced_at: '2026-10-19T03:30:00.000Z', rows_synced: 12, sync_status: 'success', error_message: null, sync_duration_ms: 800,
 };
 beforeEach(() => {
   vi.clearAllMocks();
+  clearMappingStatsCache();
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [GENERIC_ROW] });
   mysqlQuery.mockResolvedValue([]);
@@ -96,16 +99,84 @@ describe('GET /status', () => {
 });
 
 describe('GET /mapping-stats', () => {
-  interface Stats { overall: { totalCustomers: number; matchRate: string | number }; coverage: { tours: { total: number; mapped: number } }; cronJobs: { name: string; nextRun: string | null }[]; dataOverview: Record<string, number> }
+  interface Stats { overall: { totalCustomers: number; matchRate: string | number }; coverage: { tours: { total: number; mapped: number; lastDataAt: string | null } }; cronJobs: { name: string; nextRun: string | null; meta: { last_synced_at?: string } | null; sourceLatestAt?: string | null }[]; dataOverview: Record<string, number>; mysqlStatus: { table_name: string }[]; cached?: boolean; stale?: boolean }
   it('returns the aggregate payload with next-run times', async () => {
     const r = await call<Stats>('/mapping-stats');
     expect(r.status).toBe(200);
-    expect(r.body.overall).toMatchObject({ totalCustomers: 10, matchRate: '40.00' });
-    expect(r.body.coverage.tours).toEqual({ total: 5, mapped: 3 });
+    expect(r.body.overall).toMatchObject({ totalCustomers: 10, customersWithBookings: 4, matchRate: '40.00' });
+    expect(r.body.coverage.tours).toEqual({ total: 5, mapped: 3, lastDataAt: '2026-10-20T01:00:00.000Z' });
     expect(r.body.cronJobs.length).toBeGreaterThan(10);
     for (const j of r.body.cronJobs) expect(Number.isNaN(Date.parse(String(j.nextRun)))).toBe(false);
-    expect(r.body.dataOverview.users).toBe(7);
+    expect(r.body.dataOverview).toMatchObject({ users: 10, totalUsers: 20, uniqueEmails: 9, phones: 6, travelBookings: 30, chats: 7, tours: 5 });
+    // Daily billing freshness comes from the rayna_* MAX(created_at), not sync_metadata.
+    const billing = r.body.cronJobs.find(j => j.name === 'daily_billing_sync');
+    expect(billing?.meta?.last_synced_at).toBe('2026-10-20T01:00:00.000Z');
+    // Chats-related sync_metadata rows are carried as mysqlStatus.
+    expect(r.body.mysqlStatus.map(m => m.table_name)).toEqual(['chats_sync']);
     expect(mysqlQuery).toHaveBeenCalledTimes(3);
+    expect(r.body.cached).toBeUndefined();
+  });
+  it('runs one query per source table plus one each for contacts, chats and sync_metadata', async () => {
+    await call('/mapping-stats');
+    const sqls = mockQuery.mock.calls.map(c => c[0]);
+    expect(sqls.filter(q => q.includes('FROM unified_contacts')).length).toBe(1);
+    for (const t of ['rayna_tours', 'rayna_hotels', 'rayna_visas', 'rayna_flights', 'rayna_packages', 'rayna_others']) {
+      expect(sqls.filter(q => q.includes(`FROM ${t}`)).length).toBe(1);
+    }
+    expect(sqls.filter(q => q.includes('FROM chats')).length).toBe(1);
+    expect(sqls.filter(q => q.includes('FROM sync_metadata')).length).toBe(1);
+    expect(sqls.length).toBe(9);
+    for (const q of sqls) expect(/^\s*SELECT/i.test(q)).toBe(true);
+  });
+  it('serves the cached payload within the TTL and recomputes with ?fresh=1', async () => {
+    await call('/mapping-stats');
+    const n = mockQuery.mock.calls.length;
+    const second = await call<Stats>('/mapping-stats');
+    expect(second.body.cached).toBe(true);
+    expect(mockQuery.mock.calls.length).toBe(n);
+    const third = await call<Stats>('/mapping-stats?fresh=1');
+    expect(third.body.cached).toBeUndefined();
+    expect(mockQuery.mock.calls.length).toBe(n * 2);
+  });
+  it('serves a stale payload immediately and refreshes in the background after the TTL', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await call('/mapping-stats');
+      vi.setSystemTime(Date.now() + MAPPING_STATS_TTL_MS + 1000);
+      const n = mockQuery.mock.calls.length;
+      const r = await call<Stats>('/mapping-stats');
+      expect(r.body.stale).toBe(true);
+      expect(mockQuery.mock.calls.length).toBeGreaterThan(n);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('caches per business type', async () => {
+    await call('/mapping-stats?businessType=B2B');
+    const n = mockQuery.mock.calls.length;
+    await call('/mapping-stats?businessType=B2C');
+    expect(mockQuery.mock.calls.length).toBeGreaterThan(n);
+  });
+  it('a slow MySQL source is time-boxed and the page still answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mysqlQuery.mockImplementation(() => new Promise(() => {}));
+      const pending = call<Stats>('/mapping-stats');
+      await vi.advanceTimersByTimeAsync(3_500);
+      const r = await pending;
+      expect(r.status).toBe(200);
+      const chats = r.body.cronJobs.find(j => j.name === 'chats_sync');
+      expect(chats?.sourceLatestAt ?? null).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('a sync_metadata read failure only empties the job metadata', async () => {
+    mockQuery.mockImplementation(async (sql: string) => sql.includes('sync_metadata') ? Promise.reject(new Error('no table')) : { rows: [GENERIC_ROW] });
+    const r = await call<Stats>('/mapping-stats');
+    expect(r.status).toBe(200);
+    expect(r.body.mysqlStatus).toEqual([]);
+    expect(r.body.cronJobs.find(j => j.name === 'chats_sync')?.meta).toBeNull();
   });
   it('B2B filter is applied', async () => {
     await call('/mapping-stats?businessType=B2B');

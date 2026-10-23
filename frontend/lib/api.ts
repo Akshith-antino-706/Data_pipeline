@@ -339,9 +339,32 @@ export const getDepartmentMap = () => request('/api/v3/affinity/departments');
 
 // ── Data Pipeline (Rayna Sync + MySQL Sync + Mapping) ───────
 export const getRaynaSyncStatus = () => request('/api/v3/rayna-sync/status');
-export const getMappingStats = (params: QueryParams = {}) => {
-  const qs = toQuery(params);
-  return request(`/api/v3/rayna-sync/mapping-stats${qs ? `?${qs}` : ''}`);
+
+export type PipelineSource = 'tours' | 'hotels' | 'visas' | 'flights' | 'packages' | 'others';
+export interface PipelineCoverage { total: number; mapped: number; lastDataAt: string | null }
+export interface PipelineJobMeta {
+  sync_status?: string | null; error_message?: string | null; rows_synced?: number | null;
+  sync_duration_ms?: number | null; last_synced_at?: string | null;
+}
+export interface PipelineJob {
+  name: string; label: string; category?: 'ingest' | 'compute' | 'engine'; schedule: string; humanSchedule: string;
+  description?: string; meta?: PipelineJobMeta | null; nextRun?: string | null; sourceLatestAt?: string | null; sourceLabel?: string;
+}
+/** /rayna-sync/mapping-stats. Every section is optional: the page hides what the server did not report. */
+export interface MappingStats {
+  overall?: { totalMapped?: number; customersWithBookings?: number; totalCustomers?: number; matchRate?: number | string };
+  coverage?: Partial<Record<PipelineSource, PipelineCoverage>>;
+  dataOverview?: Partial<Record<string, number>>;
+  mysqlStatus?: { table_name: string; rows_synced?: number | null; sync_duration_ms?: number | null; last_synced_at?: string | null }[];
+  cronJobs?: PipelineJob[];
+  computedAt?: string;
+  cached?: boolean;
+  stale?: boolean;
+}
+/** `fresh` bypasses the server's 60s cache (the Refresh button). */
+export const getMappingStats = (params: QueryParams = {}, opts: { fresh?: boolean } = {}) => {
+  const qs = toQuery(opts.fresh ? { ...params, fresh: 1 } : params);
+  return request<MappingStats>(`/api/v3/rayna-sync/mapping-stats${qs ? `?${qs}` : ''}`);
 };
 export const triggerRaynaSync = () => request('/api/v3/rayna-sync/trigger', { method: 'POST' });
 export const triggerRaynaSyncEndpoint = (ep: string) => request(`/api/v3/rayna-sync/trigger/${ep}`, { method: 'POST' });

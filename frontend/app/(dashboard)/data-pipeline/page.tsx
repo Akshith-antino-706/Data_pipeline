@@ -1,615 +1,239 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import type { Variants } from 'framer-motion';
-import { getRaynaSyncStatus, getMappingStats, triggerRaynaSync, triggerRaynaSyncEndpoint, refreshBookingMapping } from '@/lib/api';
-import { RefreshCw, Database, ArrowRightLeft, CheckCircle2, XCircle, Clock, Loader2, Plane, Building2, Globe, MapPin, Phone, Mail, Users, MessageSquare, Info } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
+import { getMappingStats } from '@/lib/api';
+import type { MappingStats, PipelineJob, PipelineSource } from '@/lib/api';
+import { Button, Card, ErrorState, PageHeader, Skeleton, StatusChip, Table } from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
 import { useBusinessType } from '@/context/BusinessTypeContext';
+import { friendlyError } from '@/lib/friendlyError';
 import StatusCenter from './StatusCenter';
+import styles from './pipeline.module.css';
 
-type SourceKey = 'tours' | 'hotels' | 'visas' | 'flights' | 'packages' | 'others';
-interface SyncTable { table_name?: string; last_synced_at?: string }
-interface SyncStatusResponse { tables?: SyncTable[] }
-interface MysqlSyncRow { table_name: string; rows_synced?: number; sync_duration_ms?: number; last_synced_at?: string }
-interface CronMeta { sync_status?: string; error_message?: string; rows_synced?: number | null; sync_duration_ms?: number | null; last_synced_at?: string }
-interface CronJob {
-  name: string; label: string; category?: string; schedule: string; humanSchedule: string; description?: string;
-  meta?: CronMeta | null; nextRun?: string; sourceLatestAt?: string; sourceLabel?: string;
-}
-interface MappingBreakdownRow { match_type?: string; booking_source?: string; matched_bookings?: number; unique_customers?: number }
-interface MappingStatsResponse {
-  overall?: { totalMapped?: number; customersWithBookings?: number; matchRate?: number | string };
-  coverage?: Partial<Record<string, { total: number; mapped: number }>>;
-  breakdown?: MappingBreakdownRow[];
-  dataOverview?: Partial<Record<string, number>>;
-  deptBreakdown?: unknown[];
-  mysqlStatus?: MysqlSyncRow[];
-  cronJobs?: CronJob[];
-}
-interface BadgeCfg { cls?: string; bg: string; color: string; label: string; Icon: typeof Clock }
-interface SkelBlockProps { w?: number | string; h?: number | string; r?: number | string; mb?: number | string; mt?: number | string; style?: React.CSSProperties }
+const SOURCES: { key: PipelineSource; label: string }[] = [
+  { key: 'tours', label: 'Tours' }, { key: 'hotels', label: 'Hotels' }, { key: 'visas', label: 'Visas' },
+  { key: 'flights', label: 'Flights' }, { key: 'packages', label: 'Packages' }, { key: 'others', label: 'Others' },
+];
+const GROUPS: { key: NonNullable<PipelineJob['category']>; label: string; hint: string }[] = [
+  { key: 'ingest', label: 'Bringing data in', hint: 'Pulls from the booking system, phpAdmin and the billing API.' },
+  { key: 'compute', label: 'Nightly calculations', hint: 'Snapshots and precomputed figures for the dashboards.' },
+  { key: 'engine', label: 'Always running', hint: 'Loops that move journeys forward.' },
+];
 
-const SOURCE_ICONS: Record<SourceKey, typeof Clock> = { tours: MapPin, hotels: Building2, visas: Globe, flights: Plane, packages: MapPin, others: Database };
-const SOURCE_COLORS: Record<SourceKey, string> = { tours: 'var(--brand-primary)', hotels: 'var(--orange)', visas: 'var(--green)', flights: 'var(--red)', packages: 'var(--purple)', others: '#888' };
-
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
-
-function formatDate(d: string | null | undefined) {
-  if (!d) return '--';
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return '—';
   const dt = new Date(d);
-  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Dubai' }) + ' ' +
+  if (Number.isNaN(dt.getTime())) return '—';
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'Asia/Dubai' }) + ', ' +
     dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dubai' });
 }
+function fmtNum(n: number | null | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString() : '0';
+}
+function isNum(n: unknown): n is number { return typeof n === 'number' && Number.isFinite(n); }
 
-function formatNum(n: number | null | undefined) {
-  return (n || 0).toLocaleString();
+function jobResult(job: PipelineJob): { tone: ChipTone; label: string } {
+  const status = job.meta?.sync_status ?? (job.meta ? 'success' : null);
+  switch ((status ?? '').toLowerCase()) {
+    case 'success': return { tone: 'ok', label: 'Synced' };
+    case 'error': return { tone: 'bad', label: 'Failed' };
+    case 'running': return { tone: 'info', label: 'Running' };
+    case '': return { tone: 'mute', label: 'Scheduled' };
+    default: return { tone: 'warn', label: status ?? 'Scheduled' };
+  }
+}
+function lastRunText(job: PipelineJob): string | null {
+  const m = job.meta;
+  if (!m) return null;
+  const rows = isNum(m.rows_synced) ? `${fmtNum(m.rows_synced)} rows` : null;
+  const dur = isNum(m.sync_duration_ms) && m.sync_duration_ms > 0 ? `${(m.sync_duration_ms / 1000).toFixed(1)}s` : null;
+  return [rows, dur].filter(Boolean).join(' · ') || null;
 }
 
-function StatusBadge({ status = 'success' }: { status?: string }) {
-  const cfg = ({
-    success:   { cls: 'badge-green',  bg: 'rgba(34,197,94,0.12)',  color: '#16a34a', label: 'Synced',    Icon: CheckCircle2 },
-    error:     { cls: 'badge-red',    bg: 'rgba(220,38,38,0.12)',  color: '#dc2626', label: 'Failed',    Icon: XCircle },
-    scheduled: { cls: 'badge-slate',  bg: 'rgba(100,116,139,0.14)', color: '#475569', label: 'Scheduled', Icon: Clock },
-    running:   { cls: 'badge-amber',  bg: 'rgba(245,158,11,0.14)', color: '#b45309', label: 'Running',   Icon: Clock },
-  } as Record<string, BadgeCfg | undefined>)[status] || { bg: 'rgba(100,116,139,0.14)', color: '#475569', label: status, Icon: Clock };
-  const { bg, color, label, Icon } = cfg;
+type Load = { state: 'loading' } | { state: 'ok'; data: MappingStats } | { state: 'error'; message: string };
+
+export default function DataPipeline() {
+  const { businessType } = useBusinessType();
+  const [load, setLoad] = useState<Load>({ state: 'loading' });
+  const [refreshing, setRefreshing] = useState(false);
+  const [statusKey, setStatusKey] = useState(0);
+
+  const fetchStats = useCallback(async (fresh: boolean) => {
+    const params = businessType === 'All' ? {} : { businessType };
+    try {
+      const data = await getMappingStats(params, fresh ? { fresh: true } : {});
+      setLoad({ state: 'ok', data: data ?? {} });
+    } catch (err) {
+      console.error('Failed to load pipeline data:', err);
+      setLoad({ state: 'error', message: friendlyError(err instanceof Error ? err.message : String(err))?.reason ?? 'Could not load the pipeline figures.' });
+    }
+  }, [businessType]);
+
+  useEffect(() => {
+    setLoad({ state: 'loading' });
+    void fetchStats(false);
+  }, [fetchStats]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setStatusKey(k => k + 1);
+    await fetchStats(true);
+    setRefreshing(false);
+  };
+
+  const data = load.state === 'ok' ? load.data : null;
+  const ov = data?.dataOverview ?? {};
+  const overall = data?.overall ?? {};
+  const coverage = data?.coverage ?? {};
+  const jobs = data?.cronJobs ?? [];
+  const scopeLabel = businessType === 'All' ? 'All contacts' : `${businessType} contacts`;
+
+  const tiles = [
+    { key: 'contacts', label: scopeLabel, value: ov.unifiedContacts, sub: businessType !== 'All' && isNum(ov.totalUsers) ? `of ${fmtNum(ov.totalUsers)} in total` : undefined },
+    { key: 'email', label: 'With an email', value: ov.uniqueEmails },
+    { key: 'mobile', label: 'With a mobile', value: ov.phones },
+    { key: 'bookings', label: 'Bookings', value: ov.travelBookings, sub: isNum(overall.customersWithBookings) ? `${fmtNum(overall.customersWithBookings)} contacts have booked` : undefined },
+    { key: 'chats', label: 'WhatsApp chats', value: ov.chats },
+  ].filter(t => isNum(t.value));
+
+  const sourceRows = SOURCES
+    .map(s => ({ ...s, cov: coverage[s.key] }))
+    .filter((s): s is typeof s & { cov: NonNullable<typeof s.cov> } => !!s.cov && isNum(s.cov.total) && s.cov.total > 0);
+
+  const groups = GROUPS
+    .map(g => ({ ...g, jobs: jobs.filter(j => (j.category ?? 'ingest') === g.key) }))
+    .filter(g => g.jobs.length > 0);
+
+  const matchRate = Number(overall.matchRate);
+
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 10px',
-      borderRadius: 20, fontSize: 12, fontWeight: 600, background: bg, color,
-    }}>
-      <Icon size={13} /> {label}
-    </span>
-  );
-}
+    <div className={styles.page}>
+      <PageHeader
+        title="Data pipeline"
+        meta={
+          <span className={styles.headerMeta}>
+            {data?.computedAt && <span>Figures as of {fmtDate(data.computedAt)}</span>}
+            {data?.stale && <StatusChip tone="warn">Refreshing in the background</StatusChip>}
+          </span>
+        }
+        actions={
+          <Button size="sm" onClick={refresh} disabled={refreshing || load.state === 'loading'}>
+            <RefreshCw size={14} className={refreshing ? styles.spin : undefined} /> Refresh
+          </Button>
+        }
+      />
 
-// Mirrors the layout of the populated page so the user sees structural placeholders
-// (header → KPI strip → data sources → breakdown → sync cards → cron jobs → mapping)
-// while the data is being fetched, rather than a generic spinner.
-function SkelBlock({ w = '100%', h = 16, r = 6, mb = 0, mt = 0, style }: SkelBlockProps) {
-  return <div className="skeleton" style={{ width: w, height: h, borderRadius: r, marginBottom: mb, marginTop: mt, ...style }} />;
-}
+      <StatusCenter refreshKey={statusKey} />
 
-function DataPipelineSkeleton() {
-  return (
-    <div style={{ padding: '0 0 40px' }}>
-      {/* Header */}
-      <div className="card-header" style={{ marginBottom: 28 }}>
-        <div>
-          <SkelBlock w={180} h={24} mb={8} />
-          <SkelBlock w={260} h={14} />
+      {load.state === 'loading' && (
+        <div className={styles.skeletons} aria-hidden="true" data-testid="pipeline-skeleton">
+          <Skeleton height={88} />
+          <Skeleton height={220} />
+          <Skeleton height={320} />
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <SkelBlock w={100} h={36} r={8} />
-          <SkelBlock w={120} h={36} r={8} />
-        </div>
-      </div>
+      )}
 
-      {/* KPI Row (5 cards) */}
-      <div className="kpi-strip" style={{ marginBottom: 28 }}>
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '20px 18px' }}>
-            <SkelBlock w={42} h={42} r={10} />
-            <div style={{ flex: 1 }}>
-              <SkelBlock w={80} h={22} mb={6} />
-              <SkelBlock w="70%" h={12} />
-            </div>
+      {load.state === 'error' && (
+        <ErrorState
+          title="Pipeline figures unavailable"
+          description={load.message}
+          action={<Button size="sm" onClick={() => { setLoad({ state: 'loading' }); void fetchStats(true); }}>Try again</Button>}
+        />
+      )}
+
+      {data && tiles.length > 0 && (
+        <Card title="What we hold">
+          <div className={styles.tiles}>
+            {tiles.map(t => (
+              <div key={t.key} className={styles.tile}>
+                <span className={styles.tileValue}>{fmtNum(t.value)}</span>
+                <span className={styles.tileLabel}>{t.label}</span>
+                {t.sub && <span className={styles.tileSub}>{t.sub}</span>}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </Card>
+      )}
 
-      {/* Data Sources Overview (11 mini cards) */}
-      <div className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <SkelBlock w={180} h={18} mb={18} />
-        <div className="kpi-strip">
-          {Array.from({ length: 11 }).map((_, i) => (
-            <div key={i} className="card" style={{ padding: '16px 14px', textAlign: 'center' }}>
-              <SkelBlock w={20} h={20} r={4} style={{ margin: '0 auto 6px' }} />
-              <SkelBlock w={60} h={20} mb={6} style={{ margin: '0 auto 6px' }} />
-              <SkelBlock w="80%" h={11} style={{ margin: '0 auto 4px' }} />
-              <SkelBlock w="60%" h={10} style={{ margin: '0 auto' }} />
-            </div>
-          ))}
-        </div>
-      </div>
+      {data && sourceRows.length > 0 && (
+        <Card title="Bookings by product">
+          {isNum(overall.customersWithBookings) && isNum(overall.totalCustomers) && overall.totalCustomers > 0 && (
+            <p className={styles.cardSub}>
+              {fmtNum(overall.customersWithBookings)} of {fmtNum(overall.totalCustomers)} contacts have at least one booking
+              {Number.isFinite(matchRate) ? ` (${matchRate.toFixed(1)}%)` : ''}.
+            </p>
+          )}
+          <Table label="Bookings by product">
+            <thead>
+              <tr><th>Product</th><th className={styles.num}>Bookings</th><th>Linked to a contact</th><th>Last data received</th></tr>
+            </thead>
+            <tbody>
+              {sourceRows.map(s => {
+                const pct = s.cov.total > 0 ? Math.min(100, (s.cov.mapped / s.cov.total) * 100) : 0;
+                return (
+                  <tr key={s.key}>
+                    <td className={styles.strong}>{s.label}</td>
+                    <td className={styles.num}>{fmtNum(s.cov.total)}</td>
+                    <td>
+                      <div className={styles.bar} title={`${fmtNum(s.cov.mapped)} of ${fmtNum(s.cov.total)}`}>
+                        <div className={styles.barTrack}><div className={styles.barFill} style={{ width: `${pct}%` }} /></div>
+                        <span className={styles.barPct}>{pct.toFixed(1)}%</span>
+                      </div>
+                    </td>
+                    <td className={styles.muted}>{fmtDate(s.cov.lastDataAt)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </Card>
+      )}
 
-      {/* B2B vs B2C Breakdown */}
-      <div className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <SkelBlock w={200} h={18} mb={16} />
-        <div className="grid-auto">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="card" style={{ padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <SkelBlock w={60} h={18} mb={6} />
-                <SkelBlock w={100} h={11} />
-              </div>
-              <div style={{ display: 'flex', gap: 14 }}>
-                <SkelBlock w={40} h={32} />
-                <SkelBlock w={40} h={32} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Sync Status: Rayna API + Chats (2 cards) */}
-      <div className="card-grid card-grid-2" style={{ marginBottom: 28 }}>
-        {Array.from({ length: 2 }).map((_, ci) => (
-          <div key={ci} className="card" style={{ padding: 24 }}>
-            <SkelBlock w={160} h={18} mb={18} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 8, background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-                    <SkelBlock w={18} h={18} r={4} />
-                    <div style={{ flex: 1 }}>
-                      <SkelBlock w={70} h={14} mb={4} />
-                      <SkelBlock w="60%" h={11} />
-                    </div>
-                  </div>
-                  <SkelBlock w={70} h={22} r={11} />
-                </div>
+      {data && groups.length > 0 && (
+        <Card title="Scheduled jobs" actions={<span className={styles.muted}>{jobs.length} jobs · times in Dubai</span>}>
+          <Table label="Scheduled jobs">
+            <thead>
+              <tr><th>Job</th><th>Runs</th><th>Next run</th><th>Last run</th><th>Result</th><th>Last run details</th></tr>
+            </thead>
+            <tbody>
+              {groups.map(g => (
+                <GroupRows key={g.key} label={g.label} hint={g.hint} jobs={g.jobs} />
               ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Active Cron Jobs */}
-      <div className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <SkelBlock w={180} h={18} mb={18} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-          {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} style={{ padding: '14px 16px', borderRadius: 8, background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                <SkelBlock w={140} h={16} />
-                <SkelBlock w={70} h={22} r={11} />
-              </div>
-              <SkelBlock w="80%" h={11} mb={6} />
-              <SkelBlock w="60%" h={11} mb={6} />
-              <SkelBlock w="45%" h={11} />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Booking ↔ Customer Mapping */}
-      <div className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <div className="card-header" style={{ marginBottom: 20 }}>
-          <div>
-            <SkelBlock w={220} h={18} mb={6} />
-            <SkelBlock w={300} h={13} />
-          </div>
-          <SkelBlock w={140} h={36} r={8} />
-        </div>
-        <div className="card-grid card-grid-2">
-          <div>
-            <SkelBlock w={130} h={14} mb={12} />
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <SkelBlock w={80} h={13} />
-                  <SkelBlock w={100} h={12} />
-                </div>
-                <SkelBlock w="100%" h={8} r={4} />
-              </div>
-            ))}
-          </div>
-          <div>
-            <SkelBlock w={120} h={14} mb={12} />
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', marginBottom: 8, borderRadius: 8, background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
-                <SkelBlock w={140} h={14} />
-                <div style={{ textAlign: 'right' }}>
-                  <SkelBlock w={50} h={14} mb={4} />
-                  <SkelBlock w={70} h={11} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+            </tbody>
+          </Table>
+        </Card>
+      )}
     </div>
   );
 }
 
-export default function DataPipeline() {
-  const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
-  const [mappingStats, setMappingStats] = useState<MappingStatsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState<Record<string, boolean>>({});
-  const [refreshing, setRefreshing] = useState(false);
-  const { businessType } = useBusinessType();
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const btParam = businessType === 'All' ? {} : { businessType };
-      const [sync, mapping] = await Promise.all([getRaynaSyncStatus(), getMappingStats(btParam)]);
-      setSyncStatus(sync as SyncStatusResponse);
-      setMappingStats(mapping as MappingStatsResponse);
-    } catch (err) {
-      console.error('Failed to load pipeline data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { loadData(); }, [businessType]);
-
-  const handleSyncAll = async () => {
-    setSyncing({ all: true });
-    try {
-      await triggerRaynaSync();
-      await loadData();
-    } catch (err) {
-      console.error('Sync failed:', err);
-    }
-    setSyncing({});
-  };
-
-  const handleSyncOne = async (ep: string) => {
-    setSyncing({ [ep]: true });
-    try {
-      await triggerRaynaSyncEndpoint(ep);
-      await loadData();
-    } catch (err) {
-      console.error(`Sync ${ep} failed:`, err);
-    }
-    setSyncing(prev => ({ ...prev, [ep]: false }));
-  };
-
-  const handleRefreshMapping = async () => {
-    setRefreshing(true);
-    try {
-      await refreshBookingMapping();
-      await loadData();
-    } catch (err) {
-      console.error('Mapping refresh failed:', err);
-    }
-    setRefreshing(false);
-  };
-
-  if (loading) return <DataPipelineSkeleton />;
-
-  const tables = syncStatus?.tables || [];
-  const overall: NonNullable<MappingStatsResponse['overall']> = mappingStats?.overall || {};
-  const coverage: NonNullable<MappingStatsResponse['coverage']> = mappingStats?.coverage || {};
-  const breakdown = mappingStats?.breakdown || [];
-  const dataOverview: NonNullable<MappingStatsResponse['dataOverview']> = mappingStats?.dataOverview || {};
-  const deptBreakdown = mappingStats?.deptBreakdown || [];
-  const mysqlStatus = mappingStats?.mysqlStatus || [];
-  const apiCronJobs = mappingStats?.cronJobs || [];
-  // Keep the newly-added registration cron visible while a long-running backend
-  // process is still serving the older cron list. Once the backend is restarted,
-  // its tracked version wins and this fallback is not added.
-  const registrationCronFallback: CronJob = {
-    name: 'registration_data_sync',
-    label: 'Registration Data Sync',
-    category: 'ingest',
-    schedule: '30 0 * * *',
-    humanSchedule: 'Daily at 12:30 AM Dubai',
-    description: 'Syncs the last 7 days of affiliate, guest-user, and agent registrations into the registration tables.',
-    meta: null,
-  };
-  const cronJobs = apiCronJobs.some(job => job.name === registrationCronFallback.name)
-    ? apiCronJobs
-    : [registrationCronFallback, ...apiCronJobs];
-
-
+function GroupRows({ label, hint, jobs }: { label: string; hint: string; jobs: PipelineJob[] }) {
   return (
-    <motion.div initial="hidden" animate="visible" variants={staggerContainer} style={{ padding: '0 0 40px' }}>
-      {/* Header */}
-      <motion.div variants={fadeInUp} className="card-header" style={{ marginBottom: 28 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 24 }}>Data Pipeline</h2>
-          <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: 14 }}>
-            Status center, Rayna API sync, MySQL sync, and booking-customer mapping
-          </p>
-        </div>
-      </motion.div>
-
-      {/* Status center (view-only, polls every 30s) */}
-      <motion.div variants={fadeInUp}>
-        <StatusCenter />
-      </motion.div>
-
-      {/* KPI Row */}
-      <motion.div variants={fadeInUp} className="kpi-strip" style={{ marginBottom: 28 }}>
-        {[
-          { label: `Unified Contacts (${businessType})`, value: formatNum(dataOverview.unifiedContacts), color: 'var(--brand-primary)', icon: Users },
-          { label: `Travel Bookings (${businessType})`, value: formatNum(dataOverview.travelBookings), color: 'var(--green)', icon: MapPin },
-          { label: 'Chats', value: formatNum(dataOverview.chats), color: '#25D366', icon: MessageSquare },
-          { label: `Total Unified Contacts`, value: formatNum(dataOverview.totalUsers), color: 'var(--red)', icon: Database },
-        ].map(({ label, value, color, icon: Icon }) => (
-          <div key={label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '20px 18px' }}>
-            <div style={{ width: 42, height: 42, borderRadius: 10, background: `color-mix(in srgb, ${color} 10%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Icon size={20} style={{ color }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>{value}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{label}</div>
-            </div>
-          </div>
-        ))}
-      </motion.div>
-
-      {/* Data Sources Overview */}
-      <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <h3 style={{ margin: '0 0 18px', fontSize: 16 }}>Data Sources Overview</h3>
-        <div className="kpi-strip">
-          {[
-            { label: `Unified Contacts (${businessType})`, value: formatNum(dataOverview.unifiedContacts), sub: `of ${formatNum(dataOverview.totalUsers)} total`, icon: Users, color: 'var(--brand-primary)' },
-            { label: 'Emails', value: formatNum(dataOverview.uniqueEmails), sub: 'unified_contacts', icon: Mail, color: 'var(--purple)' },
-            { label: 'Mobiles', value: formatNum(dataOverview.phones), sub: 'unified_contacts', icon: Phone, color: '#25D366' },
-            { label: 'Travel Bookings', value: formatNum(dataOverview.travelBookings), sub: 'all sources', icon: MapPin, color: 'var(--green)' },
-            { label: 'Chats', value: formatNum(dataOverview.chats), sub: 'WhatsApp', icon: MessageSquare, color: '#25D366' },
-            { label: 'Tours', value: formatNum(dataOverview.tours), sub: 'from API', icon: MapPin, color: SOURCE_COLORS.tours },
-            { label: 'Hotels', value: formatNum(dataOverview.hotels), sub: 'from API', icon: Building2, color: SOURCE_COLORS.hotels },
-            { label: 'Visas', value: formatNum(dataOverview.visas), sub: 'from API', icon: Globe, color: SOURCE_COLORS.visas },
-            { label: 'Flights', value: formatNum(dataOverview.flights), sub: 'from API', icon: Plane, color: SOURCE_COLORS.flights },
-            { label: 'Packages', value: formatNum(dataOverview.packages), sub: 'from API', icon: MapPin, color: 'var(--purple)' },
-            { label: 'Others', value: formatNum(dataOverview.others), sub: 'from API', icon: Database, color: 'var(--orange)' },
-          ].map(({ label, value, sub, icon: Icon, color }) => (
-            <div key={label} className="card" style={{ padding: '16px 14px', textAlign: 'center' }}>
-              <Icon size={20} style={{ color, marginBottom: 6 }} />
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{value}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{label}</div>
-              <div style={{ fontSize: 10, color, marginTop: 2 }}>{sub}</div>
-            </div>
-          ))}
-        </div>
-      </motion.div>
-
-      {/* Sync Status: Rayna API + Chats */}
-      <motion.div variants={fadeInUp} className="card-grid card-grid-2" style={{ marginBottom: 28 }}>
-
-        {/* Rayna API Sync Status */}
-        <div className="card" style={{ padding: 24 }}>
-          <div className="card-header" style={{ marginBottom: 18 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Rayna API Sync</h3>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {['tours', 'hotels', 'visas', 'flights', 'packages', 'others'].map(ep => {
-              const t = tables.find(r => r.table_name === `rayna_${ep}`) || {} as SyncTable;
-              const Icon = SOURCE_ICONS[ep as SourceKey];
-              return (
-                <div key={ep} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '12px 14px', borderRadius: 8, background: 'var(--bg-primary)',
-                  border: '1px solid var(--border-color)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <Icon size={18} style={{ color: SOURCE_COLORS[ep as SourceKey] }} />
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 14, textTransform: 'capitalize' }}>{ep}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                        {formatNum(dataOverview[ep] || 0)} rows  |  Last: {formatDate(t.last_synced_at)}
-                      </div>
-                    </div>
-                  </div>
-                  <StatusBadge />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Chats Sync Status (MySQL → RDS) */}
-        <div className="card" style={{ padding: 24 }}>
-          <div className="card-header" style={{ marginBottom: 18 }}>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Chats Sync</h3>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {mysqlStatus.length > 0 ? mysqlStatus.map(t => (
-              <div key={t.table_name} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '12px 14px', borderRadius: 8, background: 'var(--bg-primary)',
-                border: '1px solid var(--border-color)',
-              }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>
-                    {t.table_name}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                    {formatNum(t.rows_synced)} rows | {t.sync_duration_ms ? `${(t.sync_duration_ms / 1000).toFixed(1)}s` : '--'} | Last: {formatDate(t.last_synced_at)}
-                  </div>
-                </div>
-                <StatusBadge />
-              </div>
-            )) : (
-              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
-                No chats sync data yet
-              </div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Cron Jobs — grouped by category */}
-      {(() => {
-        const CAT_META: Record<string, { label: string; hint: string }> = {
-          ingest:  { label: 'Data Ingest',       hint: 'Pull raw data from external sources into our tables.' },
-          compute: { label: 'Compute & Snapshots', hint: 'Nightly analytics and precompute jobs.' },
-          engine:  { label: 'Real-time Engines',   hint: 'Continuously running loops.' },
-        };
-        const grouped = ['ingest', 'compute', 'engine'].map(cat => ({
-          cat,
-          meta: CAT_META[cat],
-          jobs: cronJobs.filter(j => (j.category || 'ingest') === cat),
-        })).filter(g => g.jobs.length > 0);
-
-        const rowsSyncedText = (meta: CronMeta | null | undefined) => {
-          if (!meta) return null;
-          if (meta.rows_synced == null && meta.sync_duration_ms == null) return null;
-          const rows = meta.rows_synced != null ? `${formatNum(meta.rows_synced)} rows` : null;
-          const dur  = meta.sync_duration_ms != null ? `${(meta.sync_duration_ms / 1000).toFixed(1)}s` : null;
-          return [rows, dur].filter(Boolean).join(' · ');
-        };
-
+    <>
+      <tr className={styles.groupRow}><td colSpan={6}>{label}<span className={styles.groupHint}>{hint}</span></td></tr>
+      {jobs.map(job => {
+        const r = jobResult(job);
+        const err = job.meta?.sync_status === 'error' ? job.meta?.error_message : null;
+        const details = lastRunText(job);
         return (
-          <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
-            <div className="card-header" style={{ marginBottom: 8 }}>
-              <h3 style={{ margin: 0, fontSize: 16 }}>Cron Jobs</h3>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{cronJobs.length} scheduled · all times in Asia/Dubai</span>
-            </div>
-
-            {grouped.map(({ cat, meta, jobs }) => (
-              <div key={cat} style={{ marginTop: 22 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)' }}>{meta.label}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', opacity: 0.7 }}>{meta.hint}</div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
-                  {jobs.map(job => {
-                    const status = job.meta?.sync_status || (job.meta ? 'success' : 'scheduled');
-                    const hasErr = job.meta?.sync_status === 'error' && job.meta?.error_message;
-                    const rowsLine = rowsSyncedText(job.meta);
-                    return (
-                      <div key={job.name} style={{
-                        padding: 16, borderRadius: 10, background: 'var(--bg-primary)',
-                        border: '1px solid var(--border-color)',
-                        display: 'flex', flexDirection: 'column', gap: 10,
-                      }}>
-                        {/* Header row: icon + label + badge */}
-                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                            <Clock size={15} style={{ color: 'var(--brand-primary)', flexShrink: 0 }} />
-                            <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.label}</div>
-                          </div>
-                          <StatusBadge status={status} />
-                        </div>
-
-                        {/* Description */}
-                        {job.description && (
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.55, opacity: 0.9 }}>
-                            <Info size={12} style={{ marginTop: 2, flexShrink: 0, opacity: 0.6 }} />
-                            <span>{job.description}</span>
-                          </div>
-                        )}
-
-                        {/* Key/value grid: schedule, next run, last synced, source freshness */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', rowGap: 4, columnGap: 8, fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                          <span style={{ opacity: 0.7 }}>Schedule</span>
-                          <span>{job.humanSchedule} <span style={{ opacity: 0.5 }}>({job.schedule})</span></span>
-
-                          {job.nextRun && (<>
-                            <span style={{ opacity: 0.7 }}>Next run</span>
-                            <span>{formatDate(job.nextRun)}</span>
-                          </>)}
-
-                          {job.meta ? (<>
-                            <span style={{ opacity: 0.7 }}>Last synced</span>
-                            <span>{formatDate(job.meta.last_synced_at)}</span>
-                          </>) : (<>
-                            <span style={{ opacity: 0.7 }}>Last synced</span>
-                            <span style={{ opacity: 0.6, fontStyle: 'italic' }}>Not tracked in sync_metadata</span>
-                          </>)}
-
-                          {job.sourceLatestAt && (<>
-                            <span style={{ opacity: 0.7 }}>Source updated</span>
-                            <span>{formatDate(job.sourceLatestAt)} <span style={{ opacity: 0.5 }}>({job.sourceLabel || 'source'})</span></span>
-                          </>)}
-
-                          {rowsLine && (<>
-                            <span style={{ opacity: 0.7 }}>Last run</span>
-                            <span>{rowsLine}</span>
-                          </>)}
-                        </div>
-
-                        {/* Error banner if last run failed */}
-                        {hasErr && (
-                          <div style={{
-                            padding: '8px 10px', borderRadius: 6, fontSize: 11.5,
-                            background: 'rgba(220,38,38,0.08)', color: '#b91c1c',
-                            border: '1px solid rgba(220,38,38,0.2)',
-                          }}>
-                            <div style={{ fontWeight: 600, marginBottom: 2 }}>Last error</div>
-                            <div style={{ lineHeight: 1.5, wordBreak: 'break-word' }}>{job.meta!.error_message}</div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </motion.div>
+          <tr key={job.name}>
+            <td>
+              <div className={styles.strong}>{job.label}</div>
+              {job.description && <div className={styles.desc}>{job.description}</div>}
+              {err && <div className={styles.err}>{err}</div>}
+            </td>
+            <td className={styles.muted}>{job.humanSchedule}</td>
+            <td className={styles.muted}>{fmtDate(job.nextRun)}</td>
+            <td className={styles.muted}>
+              {job.meta ? fmtDate(job.meta.last_synced_at) : '—'}
+              {job.sourceLatestAt && <div>source: {fmtDate(job.sourceLatestAt)}</div>}
+            </td>
+            <td><StatusChip tone={r.tone}>{r.label}</StatusChip></td>
+            <td className={styles.muted}>{details ?? '—'}</td>
+          </tr>
         );
-      })()}
-
-      {/* Booking <-> Customer Mapping */}
-      <motion.div variants={fadeInUp} className="card" style={{ padding: 24, marginBottom: 28 }}>
-        <div className="card-header" style={{ marginBottom: 20 }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: 16 }}>Booking ↔ Customer Mapping</h3>
-            <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>
-              Matched {formatNum(overall.totalMapped)} bookings to {formatNum(overall.customersWithBookings)} customers ({overall.matchRate || 0}% of customer base)
-            </p>
-          </div>
-        </div>
-
-        {/* Coverage + Match type grid */}
-        <div className="card-grid card-grid-2" style={{ marginBottom: 20 }}>
-          {/* Coverage bars */}
-          <div>
-            <h4 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-secondary)' }}>Coverage by Source</h4>
-            {['tours', 'hotels', 'visas', 'flights', 'packages', 'others'].map(src => {
-              const c = coverage[src] || { total: 0, mapped: 0 };
-              const pct = c.total > 0 ? ((c.mapped / c.total) * 100).toFixed(1) : 0;
-              const Icon = SOURCE_ICONS[src as SourceKey];
-              return (
-                <div key={src} style={{ marginBottom: 14 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>
-                      <Icon size={14} style={{ color: SOURCE_COLORS[src as SourceKey] }} /> {src}
-                    </span>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {formatNum(c.mapped)} / {formatNum(c.total)} ({pct}%)
-                    </span>
-                  </div>
-                  <div style={{ height: 8, borderRadius: 4, background: 'var(--border-color)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${Math.min(pct as number, 100)}%`, borderRadius: 4, background: SOURCE_COLORS[src as SourceKey], transition: 'width 0.5s' }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Match type breakdown */}
-          <div>
-            <h4 style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--text-secondary)' }}>Match Method</h4>
-            {breakdown.length > 0 ? breakdown.map((b, i) => (
-              <div key={i} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '10px 14px', marginBottom: 8, borderRadius: 8, background: 'var(--bg-primary)',
-                border: '1px solid var(--border-color)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {b.match_type === 'phone' ? <Phone size={14} style={{ color: 'var(--brand-primary)' }} /> : <Mail size={14} style={{ color: 'var(--orange)' }} />}
-                  <span style={{ fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>
-                    {b.booking_source} ({b.match_type})
-                  </span>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{formatNum(b.matched_bookings)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{formatNum(b.unique_customers)} customers</div>
-                </div>
-              </div>
-            )) : (
-              <div style={{ textAlign: 'center', padding: 30, color: 'var(--text-secondary)', fontSize: 13 }}>
-                No mapping data yet. Run sync first, then refresh mapping.
-              </div>
-            )}
-          </div>
-        </div>
-      </motion.div>
-
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
-    </motion.div>
+      })}
+    </>
   );
 }

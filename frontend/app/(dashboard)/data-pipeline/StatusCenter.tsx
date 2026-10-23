@@ -20,8 +20,6 @@ const CHANNEL_LABELS: Record<OverviewQueueChannel, string> = {
   email: 'Email', whatsapp: 'WhatsApp', sms: 'SMS', rcs: 'RCS', welcome: 'Welcome', gtmJourney: 'GTM journey',
 };
 
-const NOT_AVAILABLE = 'Not available right now';
-
 function fmtDate(d: string | null | undefined): string {
   if (!d) return '--';
   const dt = new Date(d);
@@ -82,11 +80,8 @@ export function deriveHealth(s: OverviewStatus | null): Health {
   return partial ? { tone: 'warn', label: 'Partially reporting', issues: 0 } : { tone: 'ok', label: 'All systems healthy', issues: 0 };
 }
 
-function Unavailable() {
-  return <div className={styles.unavailable}>{NOT_AVAILABLE}</div>;
-}
-
-export default function StatusCenter() {
+/** `refreshKey`: bump it to re-check immediately (the page's Refresh button). */
+export default function StatusCenter({ refreshKey = 0 }: { refreshKey?: number } = {}) {
   const [status, setStatus] = useState<OverviewStatus | null>(null);
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -110,12 +105,13 @@ export default function StatusCenter() {
     void load();
     const id = setInterval(() => { void load(); }, STATUS_POLL_MS);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, refreshKey]);
 
   const sources = sourcesOf(status);
   const queues = queuesOf(status);
   const failed = failedOf(status);
   const health = deriveHealth(status);
+  const liveQueues = (queues ?? []).filter((q): q is AvailableQueue => q.available);
 
   return (
     <section className={styles.wrap} aria-label="Status center">
@@ -142,10 +138,10 @@ export default function StatusCenter() {
         <span className={styles.updated}>{checkedAt ? `Checked ${fmtDate(checkedAt.toISOString())}` : 'Not checked yet'}</span>
       </div>
 
+      {/* Sections the server could not report are left out entirely rather than shown empty. */}
+      {loaded && sources && sources.length > 0 && (
       <Card title="Data sources">
-        {!loaded ? null : !sources ? <Unavailable /> : sources.length === 0 ? (
-          <div className={styles.unavailable}>No sources tracked in sync_metadata yet</div>
-        ) : (
+        {(
           <Table label="Data sources">
             <thead>
               <tr><th>Source</th><th>Status</th><th>Last success</th><th className={styles.right}>Rows</th><th className={styles.right}>Duration</th></tr>
@@ -170,22 +166,14 @@ export default function StatusCenter() {
           </Table>
         )}
       </Card>
+      )}
 
+      {loaded && liveQueues.length > 0 && (
       <Card title="Queue health">
-        {!loaded ? null : !queues ? <Unavailable /> : queues.length === 0 ? (
-          <div className={styles.unavailable}>No queues reported</div>
-        ) : (
+        {(
           <div className={styles.queues}>
-            {queues.map(q => {
+            {liveQueues.map(q => {
               const name = CHANNEL_LABELS[q.channel] ?? q.channel;
-              if (!q.available) {
-                return (
-                  <div key={q.channel} className={styles.queue} data-testid={`queue-${q.channel}`}>
-                    <div className={styles.queueHead}><span className={styles.queueName}>{name}</span><StatusChip tone="mute">Unavailable</StatusChip></div>
-                    <div className={styles.muted}>{NOT_AVAILABLE}</div>
-                  </div>
-                );
-              }
               const t = queueTone(q);
               return (
                 <div key={q.channel} className={styles.queue} data-testid={`queue-${q.channel}`}>
@@ -204,11 +192,11 @@ export default function StatusCenter() {
           </div>
         )}
       </Card>
+      )}
 
+      {loaded && failed && failed.length > 0 && (
       <Card title="Failed sends (last 24h)" actions={<Link href="/log" className={styles.cardHeadLink}>Open message log</Link>}>
-        {!loaded ? null : !failed ? <Unavailable /> : failed.length === 0 ? (
-          <div className={styles.unavailable}>No failed sends in the last 24 hours</div>
-        ) : (
+        {(
           <Table label="Failed sends">
             <thead>
               <tr><th>Time</th><th>Channel</th><th>Recipient</th><th>Reason</th><th>Journey</th></tr>
@@ -227,6 +215,7 @@ export default function StatusCenter() {
           </Table>
         )}
       </Card>
+      )}
     </section>
   );
 }

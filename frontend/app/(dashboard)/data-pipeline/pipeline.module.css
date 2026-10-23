@@ -1,0 +1,44 @@
+/* Data pipeline page. Tokens from app/globals.css. */
+
+.page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 32px; min-width: 0; }
+.page :global(.ui-page-header) { margin-bottom: 0; }
+.headerMeta { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink3); flex-wrap: wrap; }
+.spin { animation: pipespin 1s linear infinite; }
+@keyframes pipespin { to { transform: rotate(360deg); } }
+
+/* KPI tiles — auto-fit so hidden tiles let the rest stretch. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.tile {
+  background: var(--sunken); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.tileValue { font-size: 24px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tileLabel { font-size: 13px; font-weight: 600; color: var(--ink2); }
+.tileSub { font-size: 12px; color: var(--ink3); }
+
+.cardSub { margin: -6px 0 12px; font-size: 13px; color: var(--ink2); }
+
+/* Tables */
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.muted { color: var(--ink3); font-size: 12px; white-space: nowrap; }
+.strong { font-weight: 600; color: var(--ink); }
+.cap { text-transform: capitalize; }
+.desc { font-size: 12px; color: var(--ink3); margin-top: 2px; max-width: 46ch; line-height: 1.4; }
+.err { font-size: 12px; color: var(--bad); margin-top: 4px; word-break: break-word; max-width: 46ch; }
+
+/* Linked-to-contact bar */
+.bar { display: flex; align-items: center; gap: 8px; min-width: 160px; }
+.barTrack { flex: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.barFill { height: 100%; border-radius: 3px; background: var(--gold); }
+.barPct { font-size: 12px; font-weight: 600; color: var(--ink2); font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+
+/* Job group heading rows */
+.groupRow td { background: var(--sunken); padding: 7px 12px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink3); }
+.groupHint { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 8px; }
+
+.skeletons { display: flex; flex-direction: column; gap: 8px; }
+
+@media (max-width: 640px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bar { min-width: 120px; }
+}

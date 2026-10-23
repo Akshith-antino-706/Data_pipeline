@@ -558,8 +558,11 @@ router.get('/status', async (_req: Request, res: Response) => {
   const [dataSources, queues, failedSends] = await Promise.all([
     // Same columns DailyReportService.getSyncStatus reads.
     section('dataSources', async () => {
+      // rayna_* rows are left out: the current DailyBillingSync writes the rayna_* tables directly and
+      // never updates sync_metadata, so those rows are frozen at a May-2026 error from a retired sync.
+      // The billing feed's real freshness comes from the tables themselves (/rayna-sync/mapping-stats).
       const { rows } = await db.query<CountRow>(`SELECT table_name, sync_status, last_synced_at, rows_synced, sync_duration_ms, error_message, updated_at
-        FROM sync_metadata ORDER BY table_name LIMIT 200`);
+        FROM sync_metadata WHERE table_name NOT LIKE 'rayna\\_%' ORDER BY table_name LIMIT 200`);
       return {
         sources: rows.map(r => ({
           name: String(r.table_name), status: str(r.sync_status), lastSyncedAt: iso(r.last_synced_at),

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, act, within } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, act, within, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
@@ -18,9 +18,6 @@ vi.mock('next/link', () => ({
 }));
 
 type Mapping = Awaited<ReturnType<typeof api.getMappingStats>>;
-type Sync = Awaited<ReturnType<typeof api.getRaynaSyncStatus>>;
-const mapping = (d: unknown): Mapping => d as unknown as Mapping;
-const sync = (d: unknown): Sync => d as unknown as Sync;
 type Status = Awaited<ReturnType<typeof api.getOverviewStatus>>;
 
 const STATUS_OK: Status = {
@@ -48,17 +45,29 @@ const UNAVAILABLE = { available: false, reason: 'unavailable' } as const;
 const STATUS_DOWN: Status = { dataSources: UNAVAILABLE, queues: UNAVAILABLE, failedSends: UNAVAILABLE };
 
 
-const TYPICAL = {
-  overall: { totalMapped: 500, customersWithBookings: 400, matchRate: 12.5 },
-  coverage: { tours: { total: 200, mapped: 50 }, hotels: { total: 0, mapped: 0 } },
-  breakdown: [{ match_type: 'phone', booking_source: 'tours', matched_bookings: 30, unique_customers: 20 }],
-  dataOverview: { unifiedContacts: 12345, travelBookings: 678, chats: 90, totalUsers: 20000, uniqueEmails: 11000, phones: 9000, tours: 100, hotels: 7 },
+const TYPICAL: Mapping = {
+  overall: { totalMapped: 400, customersWithBookings: 400, totalCustomers: 3200, matchRate: '12.50' },
+  coverage: {
+    tours: { total: 200, mapped: 50, lastDataAt: '2026-10-20T01:00:00Z' },
+    hotels: { total: 0, mapped: 0, lastDataAt: null },
+    visas: { total: 8, mapped: 8, lastDataAt: '2026-10-19T01:00:00Z' },
+  },
+  dataOverview: { unifiedContacts: 12345, travelBookings: 678, chats: 90, totalUsers: 20000, uniqueEmails: 11000, phones: 9000, tours: 200, hotels: 0, visas: 8 },
   mysqlStatus: [{ table_name: 'wa_chats', rows_synced: 1500, sync_duration_ms: 2500, last_synced_at: '2026-10-18T10:00:00Z' }],
-  cronJobs: [{
-    name: 'nightly_snapshot', label: 'Nightly Snapshot', category: 'compute', schedule: '0 2 * * *', humanSchedule: 'Daily at 2 AM',
-    description: 'Builds snapshots.', nextRun: '2026-10-20T02:00:00Z',
-    meta: { sync_status: 'error', error_message: 'connection timeout', rows_synced: 10, sync_duration_ms: 1200, last_synced_at: '2026-10-19T02:00:00Z' },
-  }],
+  cronJobs: [
+    {
+      name: 'nightly_snapshot', label: 'Nightly Snapshot', category: 'compute', schedule: '0 2 * * *', humanSchedule: 'Daily at 2 AM',
+      description: 'Builds snapshots.', nextRun: '2026-10-20T02:00:00Z',
+      meta: { sync_status: 'error', error_message: 'connection timeout', rows_synced: 10, sync_duration_ms: 1200, last_synced_at: '2026-10-19T02:00:00Z' },
+    },
+    {
+      name: 'chats_sync', label: 'Chats Sync', category: 'ingest', schedule: '30 3 * * *', humanSchedule: 'Daily at 3:30 AM Dubai',
+      description: 'Pulls chats.', nextRun: '2026-10-20T03:30:00Z', meta: { last_synced_at: '2026-10-19T03:30:00Z', rows_synced: 40, sync_duration_ms: 500 },
+      sourceLatestAt: '2026-10-19T03:00:00Z', sourceLabel: 'phpAdmin',
+    },
+    { name: 'journey_engine', label: 'Journey Engine', category: 'engine', schedule: '*/5 * * * *', humanSchedule: 'Every 5 minutes', meta: null, nextRun: '2026-10-20T00:05:00Z' },
+  ],
+  computedAt: '2026-10-20T00:00:00Z',
 };
 
 beforeEach(() => {
@@ -75,82 +84,117 @@ const bodyText = (): string => document.body.textContent ?? '';
 const renderPage = () => render(<BusinessTypeProvider><DataPipeline /></BusinessTypeProvider>);
 
 describe('Data Pipeline page', () => {
-  it('renders KPIs, sync status, cron jobs and mapping from typical data', async () => {
-    vi.mocked(api.getRaynaSyncStatus).mockResolvedValue(sync({ tables: [{ table_name: 'rayna_tours', last_synced_at: '2026-10-18T10:00:00Z' }] }));
-    vi.mocked(api.getMappingStats).mockResolvedValue(mapping(TYPICAL));
+  it('renders the figures, bookings by product and the job table from typical data', async () => {
+    vi.mocked(api.getMappingStats).mockResolvedValue(TYPICAL);
     renderPage();
-    await screen.findByText('Data Pipeline');
-    expect(screen.getAllByText('12,345').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Unified Contacts (B2C)').length).toBe(2);
-    expect(bodyText()).toContain('1,500 rows | 2.5s | Last:');
-    expect(screen.getByText('wa_chats')).toBeTruthy();
+    await screen.findByText('Data pipeline');
+    await screen.findByText('What we hold');
+    // Tiles
+    expect(screen.getByText('12,345')).toBeTruthy();
+    expect(screen.getByText('B2C contacts')).toBeTruthy();
+    expect(bodyText()).toContain('of 20,000 in total');
+    expect(screen.getByText('11,000')).toBeTruthy();
+    expect(screen.getByText('9,000')).toBeTruthy();
+    expect(bodyText()).toContain('400 contacts have booked');
+    // Bookings by product: hotels (0 rows) is hidden, tours and visas shown with linked %
+    expect(bodyText()).toContain('400 of 3,200 contacts have at least one booking (12.5%)');
+    expect(screen.getByText('Tours')).toBeTruthy();
+    expect(screen.getByText('Visas')).toBeTruthy();
+    expect(screen.queryByText('Hotels')).toBeNull();
+    expect(bodyText()).toContain('25.0%');
+    expect(bodyText()).toContain('100.0%');
+    // Jobs, grouped, with error text and last-run details
+    expect(screen.getByText('Scheduled jobs')).toBeTruthy();
+    expect(bodyText()).toContain('3 jobs');
+    expect(screen.getByText('Bringing data in')).toBeTruthy();
+    expect(screen.getByText('Nightly calculations')).toBeTruthy();
+    expect(screen.getByText('Always running')).toBeTruthy();
     expect(screen.getByText('Nightly Snapshot')).toBeTruthy();
     expect(screen.getByText('connection timeout')).toBeTruthy();
     expect(screen.getByText('Failed')).toBeTruthy();
     expect(bodyText()).toContain('10 rows · 1.2s');
-    // registration cron fallback is prepended when the API list lacks it
-    expect(screen.getByText('Registration Data Sync')).toBeTruthy();
-    expect(bodyText()).toContain('2 scheduled · all times in Asia/Dubai');
-    expect(bodyText()).toContain('50 / 200 (25.0%)');
-    expect(bodyText()).toContain('0 / 0 (0%)');
-    expect(bodyText()).toContain('Matched 500 bookings to 400 customers (12.5% of customer base)');
-    expect(bodyText()).toContain('tours (phone)');
-    expect(bodyText()).toContain('20 customers');
-    expect(bodyText()).not.toContain('NaN');
-    expect(bodyText()).not.toContain('undefined');
-  });
-
-  it('does not duplicate the registration cron when the API already returns it', async () => {
-    vi.mocked(api.getMappingStats).mockResolvedValue(mapping({
-      cronJobs: [{ name: 'registration_data_sync', label: 'Registration Data Sync', schedule: '30 0 * * *', humanSchedule: 'Daily', meta: { last_synced_at: '2026-10-19T00:30:00Z' } }],
-    }));
-    renderPage();
-    await screen.findByText('Data Pipeline');
-    expect(screen.getAllByText('Registration Data Sync')).toHaveLength(1);
-    expect(bodyText()).toContain('1 scheduled');
-    expect(screen.getAllByText('Synced').length).toBeGreaterThan(0);
-  });
-
-  it('renders empty states with zeros (no NaN/undefined) for empty payloads', async () => {
-    renderPage();
-    await screen.findByText('Data Pipeline');
-    expect(screen.getByText('No chats sync data yet')).toBeTruthy();
-    expect(screen.getByText('No mapping data yet. Run sync first, then refresh mapping.')).toBeTruthy();
-    expect(bodyText()).toContain('(0% of customer base)');
-    expect(bodyText()).toContain('Not tracked in sync_metadata');
+    expect(bodyText()).toContain('40 rows · 0.5s');
+    expect(screen.getByText('Synced')).toBeTruthy();
     expect(screen.getByText('Scheduled')).toBeTruthy();
+    expect(bodyText()).toContain('source:');
+    // Old sections are gone
+    expect(screen.queryByText('Chats Sync')).not.toBeNull(); // the job row, not the old card
+    expect(screen.queryByText('Match Method')).toBeNull();
+    expect(screen.queryByText('Data Sources Overview')).toBeNull();
+    expect(bodyText()).toContain('Figures as of');
     expect(bodyText()).not.toContain('NaN');
     expect(bodyText()).not.toContain('undefined');
   });
 
-  it('shows the skeleton while loading', async () => {
-    vi.mocked(api.getMappingStats).mockReturnValue(new Promise<Mapping>(() => {}));
-    const { container } = renderPage();
-    await waitFor(() => expect(api.getMappingStats).toHaveBeenCalled());
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(10);
-    expect(screen.queryByText('Data Pipeline')).toBeNull();
-  });
-
-  it('survives an API error and renders the page with empty data', async () => {
-    vi.mocked(api.getMappingStats).mockRejectedValue(new Error('HTTP 500'));
-    vi.mocked(api.getRaynaSyncStatus).mockRejectedValue(new TypeError('Failed to fetch'));
+  it('hides every section for an empty payload instead of showing zeros', async () => {
     renderPage();
-    await screen.findByText('Data Pipeline');
-    expect(console.error).toHaveBeenCalled();
-    expect(screen.getByText('No chats sync data yet')).toBeTruthy();
+    await screen.findByText('Data pipeline');
+    await waitFor(() => expect(screen.queryByTestId('pipeline-skeleton')).toBeNull());
+    expect(screen.queryByText('What we hold')).toBeNull();
+    expect(screen.queryByText('Bookings by product')).toBeNull();
+    expect(screen.queryByText('Scheduled jobs')).toBeNull();
     expect(bodyText()).not.toContain('NaN');
+    expect(bodyText()).not.toContain('undefined');
   });
 
-  it('sends the business type filter (B2C by default, none for All)', async () => {
+  it('shows a loader (with the heading) while loading', async () => {
+    vi.mocked(api.getMappingStats).mockReturnValue(new Promise<Mapping>(() => {}));
+    renderPage();
+    await waitFor(() => expect(api.getMappingStats).toHaveBeenCalled());
+    expect(screen.getByTestId('pipeline-skeleton')).toBeTruthy();
+    expect(screen.getByText('Data pipeline')).toBeTruthy();
+    expect(screen.queryByText('What we hold')).toBeNull();
+  });
+
+  it('shows an error with a retry that bypasses the server cache', async () => {
+    vi.mocked(api.getMappingStats).mockRejectedValueOnce(new Error('HTTP 500')).mockResolvedValue(TYPICAL);
+    renderPage();
+    await screen.findByText('Pipeline figures unavailable');
+    expect(console.error).toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Try again'));
+    await screen.findByText('What we hold');
+    expect(api.getMappingStats).toHaveBeenLastCalledWith({ businessType: 'B2C' }, { fresh: true });
+  });
+
+  it('shows the stale note when the server answered from an old cache', async () => {
+    vi.mocked(api.getMappingStats).mockResolvedValue({ ...TYPICAL, stale: true });
+    renderPage();
+    await screen.findByText('Refreshing in the background');
+  });
+
+  it('Refresh asks for fresh figures and re-checks the status center', async () => {
+    vi.mocked(api.getMappingStats).mockResolvedValue(TYPICAL);
+    renderPage();
+    await screen.findByText('What we hold');
+    const statusCalls = vi.mocked(api.getOverviewStatus).mock.calls.length;
+    fireEvent.click(screen.getByText('Refresh'));
+    await waitFor(() => expect(api.getMappingStats).toHaveBeenLastCalledWith({ businessType: 'B2C' }, { fresh: true }));
+    await waitFor(() => expect(vi.mocked(api.getOverviewStatus).mock.calls.length).toBe(statusCalls + 1));
+  });
+
+  it('sends the business type filter (B2C by default, none for All) and labels the tiles', async () => {
+    vi.mocked(api.getMappingStats).mockResolvedValue(TYPICAL);
     const first = renderPage();
-    await screen.findByText('Data Pipeline');
-    expect(api.getMappingStats).toHaveBeenCalledWith({ businessType: 'B2C' });
+    await screen.findByText('B2C contacts');
+    expect(api.getMappingStats).toHaveBeenCalledWith({ businessType: 'B2C' }, {});
     first.unmount();
     vi.mocked(api.getMappingStats).mockClear();
     localStorage.setItem('business-type', 'All');
     renderPage();
-    await waitFor(() => expect(api.getMappingStats).toHaveBeenCalledWith({}));
-    await waitFor(() => expect(screen.getAllByText('Unified Contacts (All)')).toHaveLength(2));
+    await waitFor(() => expect(api.getMappingStats).toHaveBeenCalledWith({}, {}));
+    await screen.findByText('All contacts');
+    expect(bodyText()).not.toContain('in total');
+  });
+
+  it('never calls the sync or rebuild endpoints', async () => {
+    vi.mocked(api.getMappingStats).mockResolvedValue(TYPICAL);
+    renderPage();
+    await screen.findByText('What we hold');
+    fireEvent.click(screen.getByText('Refresh'));
+    expect(api.getRaynaSyncStatus).not.toHaveBeenCalled();
+    expect(api.triggerRaynaSync).not.toHaveBeenCalled();
+    expect(api.triggerRaynaSyncEndpoint).not.toHaveBeenCalled();
+    expect(api.refreshBookingMapping).not.toHaveBeenCalled();
   });
 
   describe('Status center', () => {
@@ -168,7 +212,8 @@ describe('Data Pipeline page', () => {
       expect(within(email).getByText('Processing')).toBeTruthy();
       expect(email.textContent).toContain('12waiting');
       expect(within(screen.getByTestId('queue-whatsapp')).getByText('3 failed')).toBeTruthy();
-      expect(within(screen.getByTestId('queue-sms')).getByText('Not available right now')).toBeTruthy();
+      // A channel the queue backend could not report is left out rather than shown empty.
+      expect(screen.queryByTestId('queue-sms')).toBeNull();
       expect(screen.getByText('Message template is not approved')).toBeTruthy();
       expect(screen.getByText('+971500000000')).toBeTruthy();
       const logLinks = Array.from(document.querySelectorAll('a[href="/log"]'));
@@ -181,15 +226,20 @@ describe('Data Pipeline page', () => {
       vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_HEALTHY);
       renderPage();
       await waitFor(() => expect(screen.getByTestId('overall-health').textContent).toBe('All systems healthy'));
-      expect(screen.getByText('No failed sends in the last 24 hours')).toBeTruthy();
+      // Nothing failed → no "Failed sends" card at all.
+      expect(screen.queryByText('Failed sends (last 24h)')).toBeNull();
+      expect(bodyText()).toContain('Failed sends (24h) 0');
       expect(within(screen.getByTestId('queue-email')).getByText('Idle')).toBeTruthy();
     });
 
-    it('shows "Not available right now" for unavailable sections and never fakes values', async () => {
+    it('hides unavailable sections and never fakes values', async () => {
       vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_DOWN);
       renderPage();
-      await waitFor(() => expect(screen.getAllByText('Not available right now')).toHaveLength(3));
-      expect(screen.getByTestId('overall-health').textContent).toBe('Status unknown');
+      await waitFor(() => expect(screen.getByTestId('overall-health').textContent).toBe('Status unknown'));
+      expect(screen.queryByText('Not available right now')).toBeNull();
+      expect(screen.queryByText('Data sources')).toBeNull();
+      expect(screen.queryByText('Queue health')).toBeNull();
+      expect(screen.queryByText('Failed sends (last 24h)')).toBeNull();
       expect(screen.queryByTestId('queue-email')).toBeNull();
       expect(bodyText()).toContain('Failed sends (24h) --');
       expect(bodyText()).not.toContain('NaN');
@@ -199,7 +249,7 @@ describe('Data Pipeline page', () => {
       vi.mocked(api.getOverviewStatus).mockRejectedValue(new TypeError('Failed to fetch'));
       renderPage();
       await screen.findByText(/Can't reach the server/);
-      expect(screen.getAllByText('Not available right now')).toHaveLength(3);
+      expect(screen.queryByText('Queue health')).toBeNull();
       expect(bodyText()).not.toContain('NaN');
     });
 
@@ -221,16 +271,6 @@ describe('Data Pipeline page', () => {
       } finally {
         vi.useRealTimers();
       }
-    });
-
-    it('is view-only: renders no sync trigger buttons and never calls sync endpoints', async () => {
-      vi.mocked(api.getOverviewStatus).mockResolvedValue(STATUS_OK);
-      renderPage();
-      await screen.findByText('rayna_tours');
-      expect(screen.queryAllByRole('button')).toHaveLength(0);
-      expect(api.triggerRaynaSync).not.toHaveBeenCalled();
-      expect(api.triggerRaynaSyncEndpoint).not.toHaveBeenCalled();
-      expect(api.refreshBookingMapping).not.toHaveBeenCalled();
     });
   });
 });

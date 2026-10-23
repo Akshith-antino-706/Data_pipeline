@@ -315,12 +315,11 @@ export default function LogPage() {
     <div className={styles.page}>
       <PageHeader
         title="Message log"
-        breadcrumbs={[{ label: 'Logs' }, { label: 'Message log' }]}
-        description={
-          <>
+        meta={
+          <span className={styles.headerMeta}>
             <span>{headerMeta}</span>
             {!isEmail && unified.state === 'ok' && unified.days != null && <span className={styles.muted}> · last {unified.days} days</span>}
-          </>
+          </span>
         }
         actions={
           <Button size="sm" onClick={load} disabled={loading}>
@@ -329,15 +328,14 @@ export default function LogPage() {
         }
       />
 
-      <Tabs<ChannelKey>
-        label="Channel"
-        value={channel}
-        onChange={k => { setChannel(k); setSelected(null); }}
-        items={CHANNEL_TABS.map(t => ({ key: t.key, label: <span className={styles.tabLabel}><ChannelIcon channel={t.key} />{t.label}</span> }))}
-      />
-
       <div className={styles.filters}>
         <div className={styles.filterRow}>
+          <Tabs<ChannelKey>
+            label="Channel"
+            value={channel}
+            onChange={k => { setChannel(k); setSelected(null); }}
+            items={CHANNEL_TABS.map(t => ({ key: t.key, label: <span className={styles.tabLabel}><ChannelIcon channel={t.key} />{t.label}</span> }))}
+          />
           {isEmail && (
             <div className={styles.seg} role="group" aria-label="Subscription">
               {SUB_FILTERS.map(f => (
@@ -354,11 +352,6 @@ export default function LogPage() {
               </button>
             ))}
           </div>
-          {activeFilterCount > 0 && (
-            <button type="button" className={styles.clear} onClick={clearAllFilters}>
-              <X size={12} /> Clear ({activeFilterCount})
-            </button>
-          )}
         </div>
 
         <div className={styles.filterRow}>
@@ -402,10 +395,12 @@ export default function LogPage() {
               </select>
             </label>
           )}
+          {activeFilterCount > 0 && (
+            <button type="button" className={styles.clear} onClick={clearAllFilters}>
+              <X size={12} /> Clear ({activeFilterCount})
+            </button>
+          )}
         </div>
-        {!isEmail && (
-          <p className={styles.note}>Node and subscription filters are available on the Email tab only.</p>
-        )}
       </div>
 
       {loading ? (

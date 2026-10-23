@@ -320,6 +320,13 @@ describe('GET /status', () => {
     expect(body.failedSends).toEqual({ available: true, rows: [{ channel: 'sms', id: 9, recipient: '971500', reason: 'bad', time: '2026-10-19T01:00:00Z', journeyId: null }] });
   });
 
+  it('leaves the unmaintained rayna_* sync_metadata rows out of the data sources', async () => {
+    await get('/status');
+    const sql = mockQuery.mock.calls.map(c => String(c[0])).find(s => s.includes('FROM sync_metadata'));
+    expect(sql).toContain("table_name NOT LIKE 'rayna\\_%'");
+    expect(/^\s*SELECT/i.test(String(sql))).toBe(true);
+  });
+
   it('queues unavailable when Redis is down, DB sections still return', async () => {
     mockQueueCounts.mockRejectedValue(new Error('ECONNREFUSED'));
     mockQuery.mockResolvedValue({ rows: [] });
