@@ -482,6 +482,7 @@ async function processEmail(job) {
     to: recipientEmail,
     subject,
     html: trackedHtml,
+    unifiedId: d.customerId,
   });
 
   // Update send log status

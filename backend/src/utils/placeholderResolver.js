@@ -16,8 +16,13 @@
  *   - ctx.affinity      → PRODUCT_AFFINITY_1..3, SERVICE_AFFINITY_1..3 (services/affinityVars.js;
  *                         callers attach it when the template uses those keys)
  */
+import { signUnsubToken } from './unsubToken.js';
 
 const SITE = (process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '');
+
+// Host that actually serves /api/unsubscribe. Separate from SITE because the prod reverse proxy
+// gives every non-/api path to the frontend — an unsubscribe link on SITE would 404.
+const UNSUB_SITE = (process.env.PUBLIC_UNSUB_URL || 'https://promotions.raynatours.com').replace(/\/+$/, '');
 
 // Fallback header image for WhatsApp templates that REQUIRE an `img` (header media) but the
 // send has no item/contact image (e.g. a manual/no-event broadcast). Set WA_DEFAULT_IMG to a
@@ -191,9 +196,14 @@ function buildValues(ctx = {}) {
     RESUME_PAYMENT_URL:  `${SITE}/checkout`,
     RETRY_PAYMENT_URL:   orderId ? `${SITE}/payment/retry?order=${encodeURIComponent(orderId)}` : `${SITE}/checkout`,
     VIEW_BOOKING_URL:    orderId ? `${SITE}/booking/${encodeURIComponent(orderId)}` : `${SITE}/my-bookings`,
-    // Per-recipient unsubscribe. The send pipeline (injectClickTracking + server) rewrites
-    // this to a tracked /api/unsubscribe?log=<id> click. Without this it rendered blank.
-    // UNSUBSCRIBE_URL:     c.id ? `${SITE}/unsubscribe?uid=${c.id}` : `${SITE}/unsubscribe`,
+    // Per-recipient unsubscribe. 60 html templates reference {{UNSUBSCRIBE_URL}}, and while this
+    // was commented out it resolved to BLANK in every one of them — an empty href, which both
+    // breaks the opt-out and reads as non-compliant bulk mail to Gmail/Yahoo.
+    //   • UNSUB_SITE, not SITE: the route is mounted at /api/unsubscribe on the promotions host;
+    //     SITE is www.raynatours.com, which the reverse proxy sends to the frontend instead.
+    //   • Signed token, not ?uid=: a raw id is enumerable, so anyone could opt out any contact.
+    UNSUBSCRIBE_URL:     c.id ? `${UNSUB_SITE}/api/unsubscribe?t=${encodeURIComponent(signUnsubToken(c.id))}`
+                              : `${UNSUB_SITE}/api/unsubscribe`,
 
     // ── booking affinity (top booked products / business lines) ──
     // '' → undefined so Liquid's {% if PRODUCT_AFFINITY_1 %} is false for contacts without bookings.
