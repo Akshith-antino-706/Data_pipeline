@@ -136,7 +136,7 @@ export default function SegmentActivity() {
 
   const openContact = async (id: string | number) => {
     setContactLoading(true);
-    try { const res = await getUnifiedContact(id) as { data: ContactDetail }; setContactDetail(res.data); }
+    try { const res = await getUnifiedContact(id, { bookings: 500 }) as { data: ContactDetail }; setContactDetail(res.data); }
     catch { /* ignore */ }
     setContactLoading(false);
   };

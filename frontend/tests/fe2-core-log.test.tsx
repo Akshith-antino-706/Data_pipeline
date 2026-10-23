@@ -163,14 +163,48 @@ describe('Send Log page', () => {
       { id: 5, name: 'Welcome Flow', nodes: [{ id: 'n1', type: 'action', data: { label: 'Send email' } }, { id: 'n2', type: 'trigger' }, { id: 'n3', type: 'action' }] },
     ] } } as unknown as Awaited<ReturnType<typeof api.getJourneys>>);
     render(<LogPage />);
-    await screen.findByText('#5 · Welcome Flow');
-    fireEvent.change(screen.getByDisplayValue('All Journeys'), { target: { value: '5' } });
+    await screen.findByPlaceholderText('All journeys — type to search');
+    const picker = screen.getByRole('combobox', { name: 'Journey' });
+    fireEvent.change(picker, { target: { value: 'welc' } });
+    fireEvent.mouseDown(screen.getByRole('option', { name: '#5 Welcome Flow' }));
     await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '5' }));
-    expect(screen.getByRole('option', { name: 'Send email' })).toBeTruthy();
+    expect((picker as HTMLInputElement).placeholder).toBe('#5 · Welcome Flow');
+    // Node picker is searchable too: only action nodes, by label or id
+    const nodePicker = screen.getByRole('combobox', { name: 'Node' });
+    fireEvent.focus(nodePicker);
+    expect(screen.getByRole('option', { name: 'n1 Send email' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'n3' })).toBeTruthy();
-    expect(screen.queryByRole('option', { name: 'n2' })).toBeNull();
-    fireEvent.change(screen.getByDisplayValue('All Nodes'), { target: { value: 'n1' } });
+    expect(screen.queryByRole('option', { name: /n2/ })).toBeNull();
+    fireEvent.change(nodePicker, { target: { value: 'send' } });
+    expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['n1 Send email']);
+    fireEvent.keyDown(nodePicker, { key: 'Enter' });
     await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '5', nodeId: 'n1' }));
+    expect((nodePicker as HTMLInputElement).placeholder).toBe('n1 · Send email');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear node' }));
+    await waitFor(() => expect(lastParams()).not.toHaveProperty('nodeId'));
+  });
+
+  it('journey picker searches by id or name, sorts newest first, supports keyboard and clear', async () => {
+    vi.mocked(api.getJourneys).mockResolvedValue({ data: { data: [
+      { id: 3, name: 'Old flow', nodes: [] }, { id: 512, name: 'whatsapp checkout journey', nodes: [] }, { id: 497, name: '12th October - BKK Activities', nodes: [] },
+    ] } } as unknown as Awaited<ReturnType<typeof api.getJourneys>>);
+    render(<LogPage />);
+    const picker = await screen.findByRole('combobox', { name: 'Journey' });
+    fireEvent.focus(picker);
+    const names = () => screen.getAllByRole('option').map(o => o.textContent);
+    expect(names()).toEqual(['All journeys', '#512 whatsapp checkout journey', '#497 12th October - BKK Activities', '#3 Old flow']);
+    fireEvent.change(picker, { target: { value: '#49' } });
+    expect(names()).toEqual(['#497 12th October - BKK Activities']);
+    fireEvent.change(picker, { target: { value: 'zzz' } });
+    expect(screen.getByText('No journey matches “zzz”')).toBeTruthy();
+    fireEvent.change(picker, { target: { value: 'bkk' } });
+    fireEvent.keyDown(picker, { key: 'Enter' });
+    await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '497' }));
+    expect(screen.queryByRole('listbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear journey' }));
+    await waitFor(() => expect(lastParams()).not.toHaveProperty('journeyId'));
+    fireEvent.keyDown(picker, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
   });
 
   it('All tab lists unified rows and passes status, search and journey filters', async () => {
@@ -214,6 +248,29 @@ describe('Send Log page', () => {
     await screen.findByText("Couldn't load messages");
     expect(screen.getByText('HTTP 500')).toBeTruthy();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('copies name, email and subject from a row without opening the drawer', async () => {
+    sendLog(ROWS, 2);
+    unified(MSGS, 2);
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(<LogPage />);
+    await screen.findByText('Alice');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy alice@x.com' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('alice@x.com'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Alice' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Alice'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Hello' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Hello'));
+    // Rows without a value get no copy button
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    await screen.findByText('+971500000002');
+    expect(screen.getByRole('button', { name: 'Copy +971500000002' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy Bob' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Copy —' })).toBeNull();
   });
 
   it('opens a detail drawer with all fields for email and unified rows', async () => {

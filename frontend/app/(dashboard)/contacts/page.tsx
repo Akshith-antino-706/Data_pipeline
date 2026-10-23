@@ -5,10 +5,14 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { getUnifiedContacts, getUnifiedStats, getUnifiedFilters, createUnifiedContact, deleteUnifiedContact } from '@/lib/api';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { CONTACT_TYPES, CONTACT_TYPE_LABELS, SCOPE_DESCRIPTIONS } from '@/lib/contactTypes';
+
+// Audience chip per row so B2C / B2B / Affiliate is visible without opening the contact.
+const CONTACT_TYPE_TONES: Record<string, ChipTone> = { B2C: 'info', B2B: 'gold', Affiliate: 'ok' };
 import { Search, Plus, SlidersHorizontal, X, Eye, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from 'lucide-react';
 import type { FormEvent } from 'react';
 import type { QueryParams, UnifiedStats } from '@/types/api';
 import { Button, Card, Chip, ConfirmDialog, Field, Input, PageHeader, Select, Skeleton, Table, EmptyState } from '@/components/ui';
+import type { ChipTone } from '@/components/ui';
 import { ContactStatusChip } from '@/components/ui/ContactStatusChip';
 import { ContactFilterPanel, EMPTY_FILTERS, describeFilter, type ContactFilterKey, type ContactFilterState, type FilterOptions } from './ContactFilters';
 import s from './contacts.module.css';
@@ -39,7 +43,7 @@ function formatShortDate(d?: string) {
 const isUnsub = (v?: string) => (v || '').toLowerCase() === 'yes';
 
 const SORT_LABELS: Record<string, string> = {
-  name: 'Name', email: 'Email', phone: 'Phone', country: 'Country', booking_status: 'Status', product_tier: 'Tier',
+  name: 'Name', email: 'Email', phone: 'Phone', country: 'Country', contact_type: 'Type', booking_status: 'Status', product_tier: 'Tier',
   geography: 'Geo', total_bookings: 'Bookings', total_booking_revenue: 'Revenue', updated_at: 'Updated', created_at: 'Date added', last_seen_at: 'Date added',
 };
 
@@ -236,7 +240,7 @@ function UnifiedContacts() {
   const ariaSort = (...cols: string[]): 'ascending' | 'descending' | 'none' =>
     cols.includes(sortBy) ? (sortDir === 'ASC' ? 'ascending' : 'descending') : 'none';
 
-  const COLS = 10;
+  const COLS = 9;
   const from = Math.min((page - 1) * limit + 1, total);
   const to = Math.min(page * limit, total);
 
@@ -323,9 +327,8 @@ function UnifiedContacts() {
                 {sortHead('email', 'Email')}<span className={s.sortSep} aria-hidden="true">·</span>
                 {sortHead('phone', 'Phone')}
               </th>
+              <th aria-sort={ariaSort('contact_type')}>{sortHead('contact_type', 'Type')}</th>
               <th aria-sort={ariaSort('booking_status')}>{sortHead('booking_status', 'Status')}</th>
-              <th aria-sort={ariaSort('product_tier')}>{sortHead('product_tier', 'Tier')}</th>
-              <th aria-sort={ariaSort('geography')}>{sortHead('geography', 'Geo')}</th>
               <th aria-sort={ariaSort('country')}>{sortHead('country', 'Country')}</th>
               <th className={s.r} aria-sort={ariaSort('total_bookings')}>{sortHead('total_bookings', 'Bookings')}</th>
               <th className={s.r} aria-sort={ariaSort('total_booking_revenue')}>{sortHead('total_booking_revenue', 'Revenue')}</th>
@@ -363,9 +366,8 @@ function UnifiedContacts() {
                     {c.name && subline && <div className={s.help}>{subline}</div>}
                     {!c.name && c.email && phone && <div className={s.help}>{phone}</div>}
                   </td>
+                  <td>{c.contact_type ? <Chip tone={CONTACT_TYPE_TONES[c.contact_type] ?? 'mute'}>{c.contact_type}</Chip> : <span className={s.help}>—</span>}</td>
                   <td><ContactStatusChip status={c.booking_status} /></td>
-                  <td>{c.product_tier ? <Chip tone={c.product_tier === 'LUXURY' ? 'gold' : 'mute'}>{c.product_tier === 'LUXURY' ? 'Luxury' : c.product_tier}</Chip> : <span className={s.help}>—</span>}</td>
-                  <td className={s.help}>{c.geography === 'LOCAL' ? 'Local (UAE)' : c.geography === 'INTERNATIONAL' ? 'International' : (c.geography || '—')}</td>
                   <td style={{ color: 'var(--ink2)' }}>{c.country || '—'}</td>
                   <td className={`${s.r} ${s.num}`}>{totalBookings}</td>
                   <td className={`${s.r} ${s.num}`}>{parseFloat(c.total_booking_revenue) > 0 ? formatAED(c.total_booking_revenue) : <span className={s.help}>—</span>}</td>

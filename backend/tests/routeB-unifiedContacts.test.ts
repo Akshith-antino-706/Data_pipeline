@@ -9,7 +9,8 @@ const m = vi.hoisted(() => ({
   svc: {
     createContact: vi.fn(), getStats: vi.fn(), getFilterOptions: vi.fn(), getAll: vi.fn(), snapshotDailySegments: vi.fn(),
     getSegmentChanges: vi.fn(), getSegmentDailyLog: vi.fn(), getSegmentCustomers: vi.fn(), getSegmentationTree: vi.fn(),
-    recomputeSegmentation: vi.fn(), getById: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
+    recomputeSegmentation: vi.fn(), getById: vi.fn(), getBookings: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
+    BOOKING_TABLES: { tours: 'rayna_tours', packages: 'rayna_packages', hotels: 'rayna_hotels', visas: 'rayna_visas', others: 'rayna_others', flights: 'rayna_flights' },
   },
   rebuild: vi.fn(),
   reg: { isRunning: vi.fn(), run: vi.fn() },
@@ -38,7 +39,7 @@ beforeAll(async () => {
 });
 afterAll(() => { server.close(); });
 beforeEach(() => {
-  for (const f of [...Object.values(m.svc), ...Object.values(m.reg), m.rebuild, m.query, m.cached, m.invalidate]) f.mockReset();
+  for (const f of [...Object.values(m.svc), ...Object.values(m.reg), m.rebuild, m.query, m.cached, m.invalidate]) if (vi.isMockFunction(f)) f.mockReset();
   m.cached.mockImplementation((_k: string, fn: () => unknown) => Promise.resolve(fn()));
   m.invalidate.mockResolvedValue(undefined);
 });
@@ -107,7 +108,18 @@ describe('GET /:id', () => {
     m.svc.getById.mockResolvedValue(null);
     const inj = "1 OR 1=1";
     expect((await get(`/${encodeURIComponent(inj)}`)).status).toBe(404);
-    expect(m.svc.getById).toHaveBeenCalledWith(inj);
+    expect(m.svc.getById).toHaveBeenCalledWith(inj, 20);
+  });
+  it('embeds 20 bookings per type by default; ?bookings= raises it up to 500', async () => {
+    m.svc.getById.mockResolvedValue({ id: 1 });
+    await get('/1');
+    expect(m.svc.getById).toHaveBeenLastCalledWith('1', 20);
+    await get('/1?bookings=500');
+    expect(m.svc.getById).toHaveBeenLastCalledWith('1', 500);
+    await get('/1?bookings=99999');
+    expect(m.svc.getById).toHaveBeenLastCalledWith('1', 500);
+    await get('/1?bookings=abc');
+    expect(m.svc.getById).toHaveBeenLastCalledWith('1', 20);
   });
   it('static paths are not captured by /:id', async () => {
     m.svc.getFilterOptions.mockResolvedValue({});
@@ -115,6 +127,29 @@ describe('GET /:id', () => {
     expect((await get('/filters')).status).toBe(200);
     expect((await get('/segment-changes')).status).toBe(200);
     expect(m.svc.getById).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /:id/bookings', () => {
+  it('pages one booking type with clamped page/limit', async () => {
+    m.svc.getBookings.mockResolvedValue({ rows: [{ bill_no: 'B1' }], total: 45, page: 2, limit: 20, totalPages: 3 });
+    const r = await get('/42/bookings?type=tours&page=2&limit=20');
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ success: true, total: 45, page: 2, totalPages: 3, rows: [{ bill_no: 'B1' }] });
+    expect(m.svc.getBookings).toHaveBeenCalledWith('42', 'tours', 2, 20);
+  });
+  it('defaults to page 1 / 20 per page and caps limit at 100', async () => {
+    m.svc.getBookings.mockResolvedValue({ rows: [], total: 0, page: 1, limit: 20, totalPages: 1 });
+    await get('/42/bookings?type=hotels');
+    expect(m.svc.getBookings).toHaveBeenCalledWith('42', 'hotels', 1, 20);
+    await get('/42/bookings?type=hotels&limit=9999&page=-3');
+    expect(m.svc.getBookings).toHaveBeenLastCalledWith('42', 'hotels', 1, 100);
+  });
+  it('rejects an unknown or injected type without touching the service', async () => {
+    for (const bad of ['', 'users', "tours; DROP TABLE rayna_tours; --"]) {
+      expect((await get(`/42/bookings?type=${encodeURIComponent(bad)}`)).status).toBe(400);
+    }
+    expect(m.svc.getBookings).not.toHaveBeenCalled();
   });
 });
 

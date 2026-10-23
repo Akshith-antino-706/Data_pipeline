@@ -152,6 +152,42 @@ describe('Contact profile page', () => {
     expect(bodyText()).not.toMatch(/NaN|undefined|Invalid Date/);
   });
 
+  it('bookings tables page on the server: first page comes with the profile, later pages are fetched on demand', async () => {
+    const first = Array.from({ length: 20 }, (_, i) => ({ bill_no: `T${i + 1}`, service_name: `Tour ${i + 1}`, booking_date: '2026-01-01', selling_price: '10', is_cancel: '0' }));
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({
+      booking_status: 'PAST_BOOKING', total_tour_bookings: 45, bookings_per_type: 20, rayna_tours: first,
+      total_booking_revenue: 450, revenue_by_type: { tours: 450 }, cancelled_count: 2, cancelled_revenue: 20,
+    }));
+    vi.mocked(api.getContactBookings).mockResolvedValue({ rows: [{ bill_no: 'T21', service_name: 'Tour 21', booking_date: '2025-01-01', selling_price: '10', is_cancel: '0' }], total: 45, page: 2, limit: 20, totalPages: 3 });
+    render(<ContactProfile />);
+    fireEvent.click(await screen.findByRole('tab', { name: /Bookings/ }));
+    expect(screen.getByText('T1')).toBeTruthy();
+    expect(screen.getByText('1–20 of 45')).toBeTruthy();
+    expect(api.getContactBookings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    await screen.findByText('T21');
+    expect(api.getContactBookings).toHaveBeenCalledWith('42', { type: 'tours', page: 2, limit: 20 });
+    expect(screen.getByText('21–40 of 45')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Prev/ }));
+    expect(screen.getByText('T1')).toBeTruthy();
+    expect(api.getContactBookings).toHaveBeenCalledTimes(1); // page 1 is cached, never re-fetched
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('a failing bookings page shows an error with retry instead of crashing', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({
+      booking_status: 'PAST_BOOKING', total_hotel_bookings: 30, bookings_per_type: 20,
+      rayna_hotels: [{ bill_no: 'H1', service_name: 'Hotel', booking_date: '2026-01-01', selling_price: '5', is_cancel: '0' }],
+    }));
+    vi.mocked(api.getContactBookings).mockRejectedValueOnce(new Error('HTTP 500')).mockResolvedValue({ rows: [{ bill_no: 'H21' }], total: 30, page: 2, limit: 20, totalPages: 2 });
+    render(<ContactProfile />);
+    fireEvent.click(await screen.findByRole('tab', { name: /Bookings/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    await screen.findByText('HTTP 500');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('H21');
+  });
+
   it('shows "Contact not found" when the API errors', async () => {
     vi.mocked(api.getUnifiedContact).mockRejectedValue(new Error('HTTP 404'));
     render(<ContactProfile />);

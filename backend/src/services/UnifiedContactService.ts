@@ -172,7 +172,18 @@ export default class UnifiedContactService {
     };
   }
 
-  static async getById(id: string | number) {
+  /** Booking tables a contact can be linked to, keyed by the short type used in the API. */
+  static readonly BOOKING_TABLES: Record<string, string> = {
+    tours: 'rayna_tours', packages: 'rayna_packages', hotels: 'rayna_hotels',
+    visas: 'rayna_visas', others: 'rayna_others', flights: 'rayna_flights',
+  };
+
+  /**
+   * Contact profile. Booking rows are the latest `perType` per table (the profile's first page);
+   * the full lists are paged through getBookings(). Counts and revenue come from an aggregate
+   * so they are exact regardless of perType.
+   */
+  static async getById(id: string | number, perType = 20) {
     const { rows } = await pool.query<U7UnifiedContactRow>('SELECT * FROM unified_contacts WHERE id = $1', [id]);
     const contact = rows[0] || null;
     if (!contact) return null;
@@ -187,6 +198,12 @@ export default class UnifiedContactService {
         COUNT(*) FILTER (WHERE src = 'others')::int AS oth_cnt,
         COUNT(*) FILTER (WHERE src = 'flights')::int AS flt_cnt,
         COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1'), 0) AS revenue,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1' AND src = 'tours'), 0) AS tour_rev,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1' AND src = 'packages'), 0) AS pkg_rev,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1' AND src = 'hotels'), 0) AS htl_rev,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1' AND src = 'visas'), 0) AS vis_rev,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1' AND src = 'others'), 0) AS oth_rev,
+        COALESCE(SUM(selling_price) FILTER (WHERE is_cancel <> '1' AND src = 'flights'), 0) AS flt_rev,
         COUNT(*) FILTER (WHERE is_cancel = '1')::int AS cancelled_cnt,
         COALESCE(SUM(selling_price) FILTER (WHERE is_cancel = '1'), 0) AS cancelled_revenue
       FROM (
@@ -200,38 +217,16 @@ export default class UnifiedContactService {
     `, [id]);
     const stats = statsRes.rows[0];
 
-    // Fetch booking detail rows (latest 500 per type for display)
+    // Latest rows per type — the first page of each booking table on the profile.
+    const limit = Math.max(1, Math.min(perType, 500));
+    const detail = (table: string) => pool.query<U7BookingDetailRow>(`
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM ${table} WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT $2
+      `, [id, limit]);
     const [tours, packages, hotels, visas, others, flights] = await Promise.all([
-      pool.query<U7BookingDetailRow>(`
-        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
-               selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_tours WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
-      `, [id]),
-      pool.query<U7BookingDetailRow>(`
-        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
-               selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_packages WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
-      `, [id]),
-      pool.query<U7BookingDetailRow>(`
-        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
-               selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_hotels WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
-      `, [id]),
-      pool.query<U7BookingDetailRow>(`
-        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
-               selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_visas WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
-      `, [id]),
-      pool.query<U7BookingDetailRow>(`
-        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
-               selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_others WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
-      `, [id]),
-      pool.query<U7BookingDetailRow>(`
-        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
-               selling_price, is_cancel, guest_name, nationality, booking_date
-        FROM rayna_flights WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT 500
-      `, [id]),
+      detail('rayna_tours'), detail('rayna_packages'), detail('rayna_hotels'),
+      detail('rayna_visas'), detail('rayna_others'), detail('rayna_flights'),
     ]);
 
     contact.rayna_tours = tours.rows;
@@ -240,6 +235,7 @@ export default class UnifiedContactService {
     contact.rayna_visas = visas.rows;
     contact.rayna_others = others.rows;
     contact.rayna_flights = flights.rows;
+    contact.bookings_per_type = limit;
 
     // Use accurate aggregated counts (not limited by row fetch)
     contact.total_tour_bookings = stats.tour_cnt;
@@ -249,10 +245,32 @@ export default class UnifiedContactService {
     contact.total_other_bookings = stats.oth_cnt;
     contact.total_flight_bookings = stats.flt_cnt;
     contact.total_booking_revenue = parseFloat(stats.revenue) || 0;
+    contact.revenue_by_type = {
+      tours: parseFloat(stats.tour_rev) || 0, packages: parseFloat(stats.pkg_rev) || 0, hotels: parseFloat(stats.htl_rev) || 0,
+      visas: parseFloat(stats.vis_rev) || 0, others: parseFloat(stats.oth_rev) || 0, flights: parseFloat(stats.flt_rev) || 0,
+    };
     contact.cancelled_count = stats.cancelled_cnt;
     contact.cancelled_revenue = parseFloat(stats.cancelled_revenue) || 0;
 
     return contact;
+  }
+
+  /** One page of a contact's bookings of one type (tours, packages, hotels, visas, others, flights). */
+  static async getBookings(id: string | number, type: string, page = 1, limit = 20) {
+    const table = this.BOOKING_TABLES[type];
+    if (!table) throw Object.assign(new Error(`Unknown booking type: ${type}`), { status: 400 });
+    const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 20, 100));
+    const safePage = Math.max(1, Math.trunc(page) || 1);
+    const [countRes, rowsRes] = await Promise.all([
+      pool.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM ${table} WHERE unified_id = $1`, [id]),
+      pool.query<U7BookingDetailRow>(`
+        SELECT bill_serial, bill_no, bill_type, service_id, travel_date, service_name,
+               selling_price, is_cancel, guest_name, nationality, booking_date
+        FROM ${table} WHERE unified_id = $1 ORDER BY travel_date DESC NULLS LAST LIMIT $2 OFFSET $3
+      `, [id, safeLimit, (safePage - 1) * safeLimit]),
+    ]);
+    const total = parseInt(countRes.rows[0]?.total ?? '0', 10) || 0;
+    return { rows: rowsRes.rows, total, page: safePage, limit: safeLimit, totalPages: Math.max(1, Math.ceil(total / safeLimit)) };
   }
 
   static async createContact(fields: UnifiedContactFields) {

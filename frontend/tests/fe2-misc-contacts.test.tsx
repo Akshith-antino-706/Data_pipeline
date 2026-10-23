@@ -43,7 +43,7 @@ const lastContactsCall = (): Record<string, unknown> => {
   return (calls[calls.length - 1]?.[0] ?? {}) as Record<string, unknown>;
 };
 const rows = [
-  { id: 1, name: 'Ann', email: 'ann@x.com', country: 'UAE', booking_status: 'ON_TRIP', total_tour_bookings: 2, total_hotel_bookings: 1, total_booking_revenue: '100' },
+  { id: 1, name: 'Ann', email: 'ann@x.com', country: 'UAE', contact_type: 'B2B', booking_status: 'ON_TRIP', total_tour_bookings: 2, total_hotel_bookings: 1, total_booking_revenue: '100' },
   { unified_id: 'u2', email: 'noname@x.com', total_booking_revenue: '0' },
 ];
 
@@ -65,6 +65,11 @@ describe('Contacts list page (extra coverage)', () => {
     const annCells = [...screen.getByText('Ann').closest('tr')!.querySelectorAll('td')].map(td => td.textContent);
     expect(annCells).toContain('3');
     expect(annCells).toContain('On trip');
+    // Audience type is shown on the row; a row without one shows a dash, never a made-up type.
+    expect(annCells).toContain('B2B');
+    expect(screen.getByRole('columnheader', { name: /Type/ })).toBeTruthy();
+    const nonameCells = [...screen.getByText('noname@x.com').closest('tr')!.querySelectorAll('td')].map(td => td.textContent);
+    expect(nonameCells[1]).toBe('—');
     expect(screen.getByText('Prospect')).toBeTruthy();
     expect(screen.getByText('noname@x.com')).toBeTruthy();
     expect(screen.getByText(/1–2 of 2/)).toBeTruthy();

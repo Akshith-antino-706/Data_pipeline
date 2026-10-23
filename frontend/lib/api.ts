@@ -438,8 +438,15 @@ export const getUnifiedContacts = (params: QueryParams = {}) => {
   const qs = toQuery(params);
   return request(`/api/v3/unified-contacts?${qs}`);
 };
-export const getUnifiedContact = (id: Id) => request(`/api/v3/unified-contacts/${id}`);
+/** `bookings` = how many latest bookings per type to embed (server default 20; the profile pages the rest). */
+export const getUnifiedContact = (id: Id, opts: { bookings?: number } = {}) =>
+  request(`/api/v3/unified-contacts/${id}${opts.bookings ? `?${toQuery({ bookings: opts.bookings })}` : ''}`);
 export const getContactJourneys = (id: Id) => request(`/api/v3/unified-contacts/${id}/journeys`);
+export type ContactBookingType = 'tours' | 'packages' | 'hotels' | 'visas' | 'others' | 'flights';
+export interface ContactBookingsPage { rows: Record<string, string>[]; total: number; page: number; limit: number; totalPages: number }
+/** One page (20 by default) of a contact's bookings of one type; the profile loads more only when asked. */
+export const getContactBookings = (id: Id, params: { type: ContactBookingType; page?: number; limit?: number }) =>
+  request<ContactBookingsPage>(`/api/v3/unified-contacts/${id}/bookings?${toQuery({ type: params.type, page: params.page ?? 1, limit: params.limit ?? 20 })}`);
 export const getContactRecommendations = (id: Id) => request(`/api/v3/unified-contacts/${id}/recommendations`);
 export const updateUnifiedContact = (id: Id, data: JsonBody) => request(`/api/v3/unified-contacts/${id}`, {
   method: 'PATCH',

@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity } from '@/lib/api';
+import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity, getContactBookings } from '@/lib/api';
+import type { ContactBookingType } from '@/lib/api';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
 import {
   ChevronDown, ChevronUp, ExternalLink, Check, Loader2, Send, Eye, MousePointerClick,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Chip, StatusChip, Field, Input, Select, Skeleton, Table, Tabs, EmptyState } from '@/components/ui';
+import { SegmentPager } from '@/components/ui/SegmentPager';
 import type { ChipTone } from '@/components/ui';
 import { ContactStatusChip } from '@/components/ui/ContactStatusChip';
 import { ContactAvatar } from '@/components/ui/ContactAvatar';
@@ -32,6 +34,10 @@ interface ContactDetail {
   total_booking_revenue?: number | string;
   rayna_tours?: TableRow[]; rayna_packages?: TableRow[]; rayna_hotels?: TableRow[];
   rayna_visas?: TableRow[]; rayna_others?: TableRow[]; rayna_flights?: TableRow[];
+  /** How many rows per type the profile carries; longer lists are paged from the API. */
+  bookings_per_type?: number;
+  revenue_by_type?: Partial<Record<ContactBookingType, number>>;
+  cancelled_count?: number; cancelled_revenue?: number;
   total_chats: number; chat_departments?: string; first_chat_at?: string; last_chat_at?: string;
   first_msg_text?: string; last_msg_text?: string;
   first_seen_at?: string; last_seen_at?: string; created_at?: string;
@@ -187,19 +193,24 @@ export default function ContactProfile() {
     }
   };
 
-  const types = [
-    { key: 'tour', label: 'Tours', count: contact.total_tour_bookings || 0, rows: contact.rayna_tours },
-    { key: 'package', label: 'Packages', count: contact.total_package_bookings || 0, rows: contact.rayna_packages },
-    { key: 'hotel', label: 'Hotels', count: contact.total_hotel_bookings || 0, rows: contact.rayna_hotels },
-    { key: 'visa', label: 'Visas', count: contact.total_visa_bookings || 0, rows: contact.rayna_visas },
-    { key: 'other', label: 'Others', count: contact.total_other_bookings || 0, rows: contact.rayna_others },
-    { key: 'flight', label: 'Flights', count: contact.total_flight_bookings || 0, rows: contact.rayna_flights },
+  const types: { key: ContactBookingType; label: string; count: number; rows?: TableRow[] }[] = [
+    { key: 'tours', label: 'Tours', count: contact.total_tour_bookings || 0, rows: contact.rayna_tours },
+    { key: 'packages', label: 'Packages', count: contact.total_package_bookings || 0, rows: contact.rayna_packages },
+    { key: 'hotels', label: 'Hotels', count: contact.total_hotel_bookings || 0, rows: contact.rayna_hotels },
+    { key: 'visas', label: 'Visas', count: contact.total_visa_bookings || 0, rows: contact.rayna_visas },
+    { key: 'others', label: 'Others', count: contact.total_other_bookings || 0, rows: contact.rayna_others },
+    { key: 'flights', label: 'Flights', count: contact.total_flight_bookings || 0, rows: contact.rayna_flights },
   ];
   const totalBookings = types.reduce((sum, t) => sum + t.count, 0);
   const totalRevenue = Number(contact.total_booking_revenue) || 0;
   const allRows = types.flatMap(t => t.rows || []);
-  const cancelledCount = allRows.filter(r => r.is_cancel === '1').length;
-  const cancelledRevenue = allRows.filter(r => r.is_cancel === '1').reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+  // Exact figures come from the API aggregate; the row sums are a fallback for older payloads.
+  const cancelledCount = typeof contact.cancelled_count === 'number' ? contact.cancelled_count : allRows.filter(r => r.is_cancel === '1').length;
+  const cancelledRevenue = typeof contact.cancelled_revenue === 'number' ? contact.cancelled_revenue : allRows.filter(r => r.is_cancel === '1').reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+  const revenueFor = (t: typeof types[number]) => typeof contact.revenue_by_type?.[t.key] === 'number'
+    ? contact.revenue_by_type[t.key] as number
+    : (t.rows || []).filter(r => r.is_cancel !== '1').reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+  const perType = contact.bookings_per_type || 20;
   const gtmTotal = (gtmData?.summary || []).reduce((sum, e) => sum + (Number(e.count) || 0), 0);
   const gtmLast = (gtmData?.summary || []).map(e => parseDate(e.last_seen)).filter((d): d is Date => !!d).sort((a, b) => b.getTime() - a.getTime())[0];
   const phone = contact.phone || contact.mobile;
@@ -475,7 +486,7 @@ export default function ContactProfile() {
                   <h2 className={s.cardTitle}>Booking overview</h2>
                   <div className={s.typeGrid}>
                     {types.map(t => {
-                      const rev = (t.rows || []).filter(r => r.is_cancel !== '1').reduce((sum, r) => sum + (parseFloat(r.selling_price) || 0), 0);
+                      const rev = revenueFor(t);
                       const pct = totalRevenue > 0 ? (rev / totalRevenue * 100) : 0;
                       return (
                         <div key={t.key} className={s.typeCell}>
@@ -488,7 +499,8 @@ export default function ContactProfile() {
                   </div>
                 </div>
                 {types.filter(t => t.count > 0).map(t => (
-                  <CollapsibleTable key={t.key} title={`${t.label} bookings`} rows={t.rows} columns={bookingColumns} defaultOpen={types.filter(x => x.count > 0).length === 1} />
+                  <PagedBookingsTable key={t.key} contactId={id} type={t.key} title={`${t.label} bookings`} total={t.count}
+                    firstPage={t.rows || []} pageSize={perType} columns={bookingColumns} defaultOpen={types.filter(x => x.count > 0).length === 1} />
                 ))}
               </>
             )
@@ -670,6 +682,71 @@ function AIRecommendationSection({ rec }: { rec: AiRecommendation }) {
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * Booking table that pages on the server: page 1 is what the profile already carries,
+ * later pages are fetched only when the user asks for them (20 per page).
+ */
+function PagedBookingsTable({ contactId, type, title, total, firstPage, pageSize, columns, defaultOpen = false }: {
+  contactId: string; type: ContactBookingType; title: string; total: number; firstPage: TableRow[]; pageSize: number; columns: TableColumn[]; defaultOpen?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultOpen);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState<Record<number, TableRow[]>>({ 1: firstPage });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  useEffect(() => {
+    if (!expanded || pages[page]) return;
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    getContactBookings(contactId, { type, page, limit: pageSize })
+      .then(res => { if (alive) setPages(prev => ({ ...prev, [page]: (res?.rows ?? []) as TableRow[] })); })
+      .catch(err => { if (alive) setError(err instanceof Error ? err.message : 'Could not load this page'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [expanded, page, pages, contactId, type, pageSize]);
+
+  if (total === 0) return null;
+  const rows = pages[page];
+  return (
+    <div className={`${s.card} ${s.flush}`}>
+      <button type="button" className={s.collapse} onClick={() => setExpanded(e => !e)} aria-expanded={expanded}>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b>{title}</b><Chip className={s.miniChip}>{total}</Chip></span>
+        {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+      </button>
+      {expanded && (
+        <>
+          {error ? (
+            <div style={{ padding: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span className={s.help}>{error}</span>
+              <Button size="sm" onClick={() => setPages(prev => { const next = { ...prev }; delete next[page]; return next; })}>Try again</Button>
+            </div>
+          ) : !rows || loading ? (
+            <div style={{ padding: 12, display: 'grid', gap: 8 }} aria-busy="true"><Skeleton height={18} /><Skeleton height={18} /><Skeleton height={18} /></div>
+          ) : (
+            <Table label={title}>
+              <thead><tr>{columns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.bill_serial ?? r.bill_no ?? i}`}>{columns.map(c => <td key={c.key} style={{ whiteSpace: 'nowrap' }}>{c.render ? c.render(r[c.key], r) : (r[c.key] ?? '—')}</td>)}</tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '8px 12px', flexWrap: 'wrap' }}>
+              <span className={s.help}>{Math.min((page - 1) * pageSize + 1, total)}–{Math.min(page * pageSize, total)} of {total}</span>
+              <SegmentPager page={page} totalPages={totalPages} onPage={p => setPage(p)} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback, type FormEvent, type KeyboardEvent } from 'react';
-import { Mail, MessageCircle, Smartphone, RefreshCw, ChevronLeft, ChevronRight, Eye, MousePointerClick, Search, X } from 'lucide-react';
+import { Mail, MessageCircle, Smartphone, RefreshCw, ChevronLeft, ChevronRight, Eye, MousePointerClick, Search, X, Copy, Check } from 'lucide-react';
 import { getSendLog, getJourneys, getOverviewMessages } from '@/lib/api';
 import type { OverviewMessage, OverviewMessagesParams } from '@/lib/api';
 import type { SendLogRow } from '@/types/api';
 import { Button, Chip, EmptyState, ErrorState, PageHeader, Skeleton, Table, Tabs } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import styles from './log.module.css';
+import SearchPicker from './SearchPicker';
 import { friendlyError } from '@/lib/friendlyError';
 
 const friendlyText = (raw: string | null | undefined): string => {
@@ -55,6 +56,31 @@ const STATUS_META: Record<string, { label: string; tone: ChipTone }> = {
 };
 
 const fmt = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '—' : n.toLocaleString());
+
+/** Shows a copy button on row hover; copies `text` without opening the row. */
+function Copyable({ text, children, className }: { text: string | null | undefined; children: React.ReactNode; className?: string }) {
+  const [done, setDone] = useState(false);
+  if (!text) return <span className={className}>{children}</span>;
+  const copy = async (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch { /* clipboard unavailable */ }
+  };
+  return (
+    <span className={[styles.copyWrap, className ?? ''].filter(Boolean).join(' ')}>
+      {children}
+      <button
+        type="button"
+        className={done ? styles.copyBtnDone : styles.copyBtn}
+        aria-label={done ? 'Copied' : `Copy ${text}`}
+        title={done ? 'Copied' : 'Copy'}
+        onClick={copy}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void copy(e); } }}
+      >
+        {done ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </span>
+  );
+}
 
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return '—';
@@ -371,29 +397,23 @@ export default function LogPage() {
             )}
           </form>
 
-          <label className={styles.selectWrap}>
-            <span className={styles.selectLabel}>Journey</span>
-            <select className={styles.select} value={journeyId} onChange={e => setJourneyId(e.target.value)}>
-              <option value="">All Journeys</option>
-              {journeys.map(j => (
-                <option key={j.journey_id || j.id} value={j.journey_id || j.id}>
-                  #{j.journey_id || j.id} · {j.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <SearchPicker
+            items={journeys.map(j => ({ id: String(j.journey_id ?? j.id ?? ''), name: j.name ?? '' })).filter(j => j.id)}
+            value={journeyId}
+            onChange={setJourneyId}
+          />
 
           {isEmail && journeyId && (
-            <label className={styles.selectWrap}>
-              <span className={styles.selectLabel}>Node</span>
-              <select className={styles.select} value={nodeId} onChange={e => setNodeId(e.target.value)}>
-                <option value="">All Nodes</option>
-                {journeyNodes.length === 0 && <option disabled>No action nodes</option>}
-                {journeyNodes.map(n => (
-                  <option key={n.id} value={n.id}>{n.data?.label || n.id}</option>
-                ))}
-              </select>
-            </label>
+            <SearchPicker
+              label="Node"
+              noun="node"
+              allLabel={journeyNodes.length === 0 ? 'No action nodes' : 'All nodes'}
+              idPrefix=""
+              sortByIdDesc={false}
+              items={journeyNodes.map(n => ({ id: String(n.id), name: n.data?.label || String(n.id) }))}
+              value={nodeId}
+              onChange={setNodeId}
+            />
           )}
           {activeFilterCount > 0 && (
             <button type="button" className={styles.clear} onClick={clearAllFilters}>
@@ -423,12 +443,12 @@ export default function LogPage() {
                 return (
                   <tr key={row.id} className={styles.clickRow} tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
                     <td>
-                      <div className={styles.strong}>{row.uc_name || row.contact_name || '—'}</div>
-                      {row.email_unsubscribed === 'Yes' && <Chip tone="bad">Unsubscribed</Chip>}
+                      <Copyable text={row.uc_name || row.contact_name} className={styles.strong}>{row.uc_name || row.contact_name || '—'}</Copyable>
+                      {row.email_unsubscribed === 'Yes' && <div><Chip tone="bad">Unsubscribed</Chip></div>}
                     </td>
-                    <td className={styles.ellipsis}>{row.email || '—'}</td>
+                    <td className={styles.ellipsis}><Copyable text={row.email}>{row.email || '—'}</Copyable></td>
                     <td>
-                      {row.subject && <div className={styles.strong}>{row.subject}</div>}
+                      {row.subject && <div><Copyable text={row.subject} className={styles.strong}>{row.subject}</Copyable></div>}
                       <div className={styles.muted}>{row.template_label || '—'}</div>
                     </td>
                     <td><StatusPill status={row.status} /></td>
@@ -470,10 +490,10 @@ export default function LogPage() {
               return (
                 <tr key={`${row.channel}-${row.id}`} className={styles.clickRow} tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
                   <td><span className={styles.tabLabel}><ChannelIcon channel={row.channel} />{CHANNEL_LABEL[row.channel] ?? row.channel}</span></td>
-                  <td className={styles.strong}>{row.contactName || '—'}</td>
-                  <td className={styles.ellipsis}>{row.recipient || '—'}</td>
+                  <td><Copyable text={row.contactName} className={styles.strong}>{row.contactName || '—'}</Copyable></td>
+                  <td className={styles.ellipsis}><Copyable text={row.recipient}>{row.recipient || '—'}</Copyable></td>
                   <td className={styles.ellipsis}>
-                    {row.label || '—'}
+                    <Copyable text={row.label}>{row.label || '—'}</Copyable>
                     {row.error && <div className={styles.badText} title={row.error}>{friendlyError(row.error)?.reason}</div>}
                   </td>
                   <td><StatusPill status={row.status} /></td>

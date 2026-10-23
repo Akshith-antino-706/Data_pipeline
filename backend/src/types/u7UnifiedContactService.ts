@@ -43,6 +43,7 @@ export interface U7ContactListRow {
 }
 
 export interface U7ContactBookingStatsRow {
+  tour_rev: string; pkg_rev: string; htl_rev: string; vis_rev: string; oth_rev: string; flt_rev: string;
   tour_cnt: number;
   pkg_cnt: number;
   htl_cnt: number;

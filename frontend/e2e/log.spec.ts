@@ -34,8 +34,12 @@ test.describe('send log', () => {
     await page.getByRole('button', { name: 'Search' }).click();
     await expect.poll(() => api.calls.some((c) => c.includes('email=user2%40example.com'))).toBe(true);
 
-    await page.locator('select').filter({ hasText: 'All Journeys' }).selectOption('11');
+    // Journey picker is a searchable combobox: type part of the id/name, pick the match.
+    const picker = page.getByRole('combobox', { name: 'Journey' });
+    await picker.fill('11');
+    await page.getByRole('option', { name: /^#11 / }).click();
     await expect.poll(() => api.calls.some((c) => c.includes('journeyId=11'))).toBe(true);
+    await expect(picker).toHaveAttribute('placeholder', /^#11 · /);
 
     await page.getByRole('button', { name: /Clear \(\d\)/ }).click();
     await expect(page.getByText('1–20 of 45')).toBeVisible();

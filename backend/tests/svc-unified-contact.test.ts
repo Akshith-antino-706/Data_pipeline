@@ -98,3 +98,46 @@ describe('getStats revenue', () => {
     expect(revSql).not.toMatch(/COALESCE\(SUM\(selling_price\), 0\)/);
   });
 });
+
+describe('UnifiedContactService.getById / getBookings — booking paging', () => {
+  it('getById fetches only the latest N rows per type (default 20) and exact aggregate counts', async () => {
+    m.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM unified_contacts WHERE id')) return { rows: [{ id: 42, name: 'Zed' }] };
+      if (sql.includes('AS tour_cnt')) return { rows: [{ tour_cnt: 57, pkg_cnt: 0, htl_cnt: 2, vis_cnt: 0, oth_cnt: 0, flt_cnt: 0, revenue: '1234.5', tour_rev: '1000', pkg_rev: '0', htl_rev: '234.5', vis_rev: '0', oth_rev: '0', flt_rev: '0', cancelled_cnt: 1, cancelled_revenue: '50' }] };
+      return { rows: [{ bill_no: 'B1' }] };
+    });
+    const c = await UnifiedContactService.getById(42);
+    expect(c).toMatchObject({ total_tour_bookings: 57, total_hotel_bookings: 2, total_booking_revenue: 1234.5, bookings_per_type: 20, cancelled_count: 1 });
+    expect(c?.revenue_by_type).toEqual({ tours: 1000, packages: 0, hotels: 234.5, visas: 0, others: 0, flights: 0 });
+    const detailCalls = m.query.mock.calls.filter(([sql]) => sql.includes('ORDER BY travel_date DESC NULLS LAST LIMIT $2'));
+    expect(detailCalls).toHaveLength(6);
+    for (const [, params] of detailCalls) expect(params).toEqual([42, 20]);
+    expect(allSql()).not.toContain('LIMIT 500');
+  });
+
+  it('getById caps perType at 500 (the legacy popup size)', async () => {
+    m.query.mockImplementation(async (sql: string) => sql.includes('FROM unified_contacts WHERE id') ? { rows: [{ id: 1 }] } : { rows: [{}] });
+    await UnifiedContactService.getById(1, 5000);
+    const detailCalls = m.query.mock.calls.filter(([sql]) => sql.includes('LIMIT $2'));
+    for (const [, params] of detailCalls) expect(params).toEqual([1, 500]);
+  });
+
+  it('getBookings pages one table with LIMIT/OFFSET and a separate exact count', async () => {
+    m.query.mockImplementation(async (sql: string) => sql.includes('COUNT(*)') ? { rows: [{ total: '45' }] } : { rows: [{ bill_no: 'B9' }] });
+    const r = await UnifiedContactService.getBookings(42, 'hotels', 3, 20);
+    expect(r).toEqual({ rows: [{ bill_no: 'B9' }], total: 45, page: 3, limit: 20, totalPages: 3 });
+    const page = m.query.mock.calls.find(([sql]) => sql.includes('OFFSET'));
+    expect(page?.[0]).toContain('FROM rayna_hotels WHERE unified_id = $1');
+    expect(page?.[1]).toEqual([42, 20, 40]);
+    const count = m.query.mock.calls.find(([sql]) => sql.includes('COUNT(*)'));
+    expect(count?.[0]).toContain('FROM rayna_hotels');
+  });
+
+  it('getBookings refuses unknown types before any query and clamps bad paging', async () => {
+    await expect(UnifiedContactService.getBookings(42, "tours; DROP TABLE x; --")).rejects.toThrow('Unknown booking type');
+    expect(m.query).not.toHaveBeenCalled();
+    m.query.mockImplementation(async (sql: string) => sql.includes('COUNT(*)') ? { rows: [{ total: '0' }] } : { rows: [] });
+    const r = await UnifiedContactService.getBookings(42, 'tours', -5, 99999);
+    expect(r).toMatchObject({ page: 1, limit: 100, total: 0, totalPages: 1 });
+  });
+});

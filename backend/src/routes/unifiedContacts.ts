@@ -230,9 +230,26 @@ router.get('/segment-customers', async (req: QueryRequest, res: Response, next: 
   } catch (err) { next(err); }
 });
 
+// GET /:id/bookings?type=tours&page=1&limit=20 — one page of a contact's bookings of one type.
+// The profile loads only the latest 20 per type; this pages through the rest on demand.
+router.get('/:id/bookings', async (req: QueryRequest, res: Response, next: NextFunction) => {
+  try {
+    const type = String(req.query.type ?? '');
+    if (!UnifiedContactService.BOOKING_TABLES[type]) {
+      return res.status(400).json({ success: false, error: `type must be one of ${Object.keys(UnifiedContactService.BOOKING_TABLES).join(', ')}` });
+    }
+    const result = await UnifiedContactService.getBookings(
+      req.params.id, type, clampInt(req.query.page, 1, MAX_PAGE), clampInt(req.query.limit, 20, 100),
+    );
+    res.json({ success: true, ...result });
+  } catch (err) { next(err); }
+});
+
+// GET /:id?bookings=N — N latest bookings per type are embedded (default 20; the profile pages the
+// rest through /:id/bookings). Callers that still want the old long lists pass bookings=500.
 router.get('/:id', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const contact: unknown = await UnifiedContactService.getById(req.params.id);
+    const contact: unknown = await UnifiedContactService.getById(req.params.id, clampInt(req.query.bookings, 20, 500));
     if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
     res.json({ success: true, data: contact });
   } catch (err) { next(err); }
