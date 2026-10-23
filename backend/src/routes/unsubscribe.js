@@ -12,28 +12,17 @@
  * email_send_log id → which maps to the contact. We also accept a signed token (?t=).
  */
 import express from 'express';
-import crypto from 'node:crypto';
 import db from '../config/database.js';
+// Token signing/verification lives in utils so placeholderResolver can build unsubscribe links
+// without importing this router. Re-exported below: existing importers keep working.
+import { signUnsubToken, verifyUnsubToken } from '../utils/unsubToken.js';
 
 const router = express.Router();
-const SECRET = process.env.JWT_SECRET || 'rayna-unsub-secret';
 // Project logo — the frontend serves it publicly at this URL (reachable from any browser,
 // local or prod). Pinned to the public domain (not TRACKING_BASE_URL, which may be localhost).
 const LOGO_URL = process.env.UNSUB_LOGO_URL || 'https://promotions.raynatours.com/rayna-logo.webp';
 
-// Signed token (uid) — optional alternative to ?log=
-export function signUnsubToken(uid) {
-  const payload = Buffer.from(String(uid)).toString('base64url');
-  const sig = crypto.createHmac('sha256', SECRET).update(String(uid)).digest('base64url');
-  return `${payload}.${sig}`;
-}
-function verifyUnsubToken(token) {
-  if (!token || !token.includes('.')) return null;
-  const [b64, sig] = token.split('.');
-  let uid; try { uid = Buffer.from(b64, 'base64url').toString('utf8'); } catch { return null; }
-  const expected = crypto.createHmac('sha256', SECRET).update(uid).digest('base64url');
-  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)) ? uid : null;
-}
+export { signUnsubToken };
 
 // Resolve the contact from ?log= (send-log id) or ?t= (signed token). → { uid, email } | null
 async function resolveContact({ log, t }) {
