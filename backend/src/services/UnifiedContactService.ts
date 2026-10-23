@@ -337,6 +337,28 @@ export default class UnifiedContactService {
     };
   }
 
+  /**
+   * The two numbers the Home page shows (total contacts, WhatsApp conversations in 7 days) —
+   * without the DISTINCT-country, multi-source and six-table revenue passes getStats runs.
+   */
+  static async getQuickStats({ businessType }: BusinessTypeFilter = {}) {
+    const btClause = businessType ? 'WHERE contact_type = $1' : '';
+    const btParam = businessType ? [businessType] : [];
+    const convClause = businessType
+      ? 'AND EXISTS (SELECT 1 FROM unified_contacts u WHERE u.id = c.unified_id AND u.contact_type = $1)'
+      : '';
+    const [{ rows: totalRows }, { rows: convRows }] = await Promise.all([
+      pool.query<{ total_contacts: number }>(`SELECT COUNT(*)::int AS total_contacts FROM unified_contacts ${btClause}`, btParam),
+      pool.query<U7Conversations7dRow>(`
+        SELECT COUNT(*)::int AS conversations_7d
+        FROM chats c
+        WHERE c.last_msg_at >= NOW() - INTERVAL '7 days'
+        ${convClause}
+      `, btParam),
+    ]);
+    return { total_contacts: totalRows[0]?.total_contacts || 0, conversations_7d: convRows[0]?.conversations_7d || 0 };
+  }
+
   static async getStats({ businessType }: BusinessTypeFilter = {}) {
     const btClause = businessType ? 'WHERE contact_type = $1' : '';
     const btParam = businessType ? [businessType] : [];
@@ -857,30 +879,53 @@ export default class UnifiedContactService {
   /**
    * Get segment daily activity log
    */
-  static async getSegmentDailyLog({ days = 30, segment, businessType }: SegmentDailyLogFilters = {}) {
-    const cacheKey = `dashboard:activity:${days}:${segment || 'all'}:${businessType || 'all'}`;
-    return cached(cacheKey, () => this._computeSegmentDailyLog({ days, segment, businessType }), 1800);
+  /**
+   * Daily segment activity log + today's live counts. The two parts are cached separately:
+   * the log depends on days/segment, the live counts only on the audience — so changing the
+   * period or segment filter no longer re-runs the heavy contacts × bookings join.
+   * `includeLive=false` skips the live join entirely (Home only shows the log).
+   * `fresh` bypasses both caches (the Refresh button).
+   */
+  static async getSegmentDailyLog({ days = 30, segment, businessType, includeLive = true, fresh = false }: SegmentDailyLogFilters & { includeLive?: boolean; fresh?: boolean } = {}) {
+    const logKey = `dashboard:activity:logs:${days}:${segment || 'all'}`;
+    const liveKey = `dashboard:activity:live:${businessType || 'all'}`;
+    const [logs, liveToday] = await Promise.all([
+      fresh ? this._computeSegmentLogs({ days, segment }) : cached(logKey, () => this._computeSegmentLogs({ days, segment }), 1800),
+      includeLive
+        ? (fresh ? this._computeLiveToday(businessType) : cached(liveKey, () => this._computeLiveToday(businessType), 1800))
+        : Promise.resolve([] as U7SegmentCountRevenueRow[]),
+    ]);
+    return { logs, liveToday };
   }
 
+  /** Kept for callers/tests that want both parts computed live. */
   static async _computeSegmentDailyLog({ days = 30, segment, businessType }: SegmentDailyLogFilters = {}) {
+    const [logs, liveToday] = await Promise.all([this._computeSegmentLogs({ days, segment }), this._computeLiveToday(businessType)]);
+    return { logs, liveToday };
+  }
+
+  static async _computeSegmentLogs({ days = 30, segment }: { days?: number; segment?: string } = {}) {
     const conditions = ['log_date >= CURRENT_DATE - $1::int'];
     const params: (string | number)[] = [days];
-
     if (segment) {
       params.push(segment);
       conditions.push(`segment_label = $${params.length}`);
     }
-
     const { rows } = await pool.query<U7SegmentDailyLogRow>(`
       SELECT *, log_date::text AS log_date FROM segment_daily_log
       WHERE ${conditions.join(' AND ')}
       ORDER BY snapshot_time DESC NULLS LAST, segment_label
     `, params);
+    return rows;
+  }
 
-    // Live counts with revenue
+  /** Live per-status contact counts with confirmed revenue, for one audience (or all). */
+  static async _computeLiveToday(businessType?: string | null) {
+    // The audience filter applies to the revenue side too — otherwise B2B/B2C showed all-audience revenue.
     const btClause = businessType ? `AND uc.contact_type = $1` : '';
+    const btClauseInner = businessType ? `AND uc2.contact_type = $1` : '';
     const liveParams = businessType ? [businessType] : [];
-    const { rows: liveToday } = await pool.query<U7SegmentCountRevenueRow>(`
+    const { rows } = await pool.query<U7SegmentCountRevenueRow>(`
       SELECT uc.booking_status AS segment_label,
         COUNT(*)::int AS total_count,
         COALESCE(rev.revenue, 0)::numeric AS revenue
@@ -897,6 +942,7 @@ export default class UnifiedContactService {
           UNION ALL SELECT unified_id, selling_price FROM rayna_others WHERE is_cancel <> '1' AND unified_id IS NOT NULL
           UNION ALL SELECT unified_id, selling_price FROM rayna_flights WHERE is_cancel <> '1' AND unified_id IS NOT NULL
         ) r ON r.unified_id = uc2.id
+        WHERE uc2.booking_status IS NOT NULL ${btClauseInner}
         GROUP BY uc2.booking_status
       ) rev ON rev.booking_status = uc.booking_status
       WHERE uc.booking_status IS NOT NULL ${btClause}
@@ -905,8 +951,7 @@ export default class UnifiedContactService {
         WHEN 'ON_TRIP' THEN 1 WHEN 'FUTURE_TRAVEL' THEN 2
         WHEN 'PAST_BOOKING' THEN 3 WHEN 'CANCELLED' THEN 4 WHEN 'PROSPECT' THEN 5 END
     `, liveParams);
-
-    return { logs: rows, liveToday };
+    return rows;
   }
 
   /**

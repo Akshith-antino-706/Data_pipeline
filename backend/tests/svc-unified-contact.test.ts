@@ -141,3 +141,32 @@ describe('UnifiedContactService.getById / getBookings — booking paging', () =>
     expect(r).toMatchObject({ page: 1, limit: 100, total: 0, totalPages: 1 });
   });
 });
+
+describe('UnifiedContactService.getSegmentDailyLog — split caches, audience-aware revenue', () => {
+  it('caches the log by days/segment and the live counts by audience, independently', async () => {
+    m.query.mockResolvedValue({ rows: [] });
+    m.cached.mockClear();
+    await UnifiedContactService.getSegmentDailyLog({ days: 7, segment: 'ON_TRIP', businessType: 'B2B' });
+    const keys = m.cached.mock.calls.map(c => c[0]);
+    expect(keys).toEqual(['dashboard:activity:logs:7:ON_TRIP', 'dashboard:activity:live:B2B']);
+  });
+  it('includeLive=false skips the contacts × bookings join; fresh bypasses the cache', async () => {
+    m.query.mockResolvedValue({ rows: [] });
+    m.cached.mockClear();
+    const r = await UnifiedContactService.getSegmentDailyLog({ days: 7, includeLive: false, fresh: true });
+    expect(r.liveToday).toEqual([]);
+    expect(m.cached).not.toHaveBeenCalled();
+    const sqls = m.query.mock.calls.map(c => String(c[0]));
+    expect(sqls.some(q => q.includes('FROM segment_daily_log'))).toBe(true);
+    expect(sqls.some(q => q.includes('rayna_tours'))).toBe(false);
+  });
+  it('the live revenue subquery honours the audience filter (B2B revenue is B2B only)', async () => {
+    m.query.mockResolvedValue({ rows: [] });
+    await UnifiedContactService._computeLiveToday('B2B');
+    const [sql, params] = m.query.mock.calls.at(-1)!;
+    expect(String(sql)).toContain('AND uc2.contact_type = $1');
+    expect(String(sql)).toContain('AND uc.contact_type = $1');
+    expect(params).toEqual(['B2B']);
+    expect(/^\s*SELECT/i.test(String(sql))).toBe(true);
+  });
+});

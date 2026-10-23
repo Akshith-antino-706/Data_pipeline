@@ -50,12 +50,14 @@ router.post('/registration-sync', async (req, res, next) => {
 router.get('/stats', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
     const businessType = parseBusinessType(req.query.businessType);
-    const compute = () => UnifiedContactService.getStats({ businessType });
+    // ?quick=1: only total_contacts + conversations_7d (Home); everything else gets the full stats.
+    const quick = req.query.quick === '1';
+    const compute = () => (quick ? UnifiedContactService.getQuickStats({ businessType }) : UnifiedContactService.getStats({ businessType }));
     // getStats scans unified_contacts, the booking tables and chats on every call. The
     // dashboard passes ?cached=1 to read a 10-min cached copy instead; every other caller
     // (e.g. the Contacts page) still gets live numbers exactly as before.
     const data: unknown = req.query.cached === '1'
-      ? await cached(`contacts:stats:${businessType || 'all'}`, compute, 600)
+      ? await cached(`contacts:stats:${quick ? 'quick:' : ''}${businessType || 'all'}`, compute, 600)
       : await compute();
     res.json({ success: true, data });
   } catch (err) { next(err); }
@@ -85,8 +87,10 @@ router.get('/sources-breakdown', async (req: QueryRequest, res: Response, next: 
       const conds: string[] = [];
       // Filter by the Dubai calendar day the contact was added (created_at). from/to are
       // inclusive; either bound may be omitted for open-ended ranges.
-      if (from) { params.push(from); conds.push(`(created_at AT TIME ZONE 'Asia/Dubai')::date >= $${params.length}::date`); }
-      if (to)   { params.push(to);   conds.push(`(created_at AT TIME ZONE 'Asia/Dubai')::date <= $${params.length}::date`); }
+      // Compare created_at against Dubai-day boundaries (not a per-row cast) so an index on
+      // created_at can be used. Same semantics: from/to are inclusive Dubai calendar days.
+      if (from) { params.push(from); conds.push(`created_at >= ($${params.length}::date::timestamp AT TIME ZONE 'Asia/Dubai')`); }
+      if (to)   { params.push(to);   conds.push(`created_at < (($${params.length}::date + 1)::timestamp AT TIME ZONE 'Asia/Dubai')`); }
       const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
       const { rows } = await db.query<SourceCountRow>(`
         SELECT COALESCE(NULLIF(TRIM(sources), ''), '(unknown)') AS source, COUNT(*)::int AS count
@@ -155,7 +159,9 @@ router.get('/segment-activity', async (req: QueryRequest, res: Response, next: N
     const days = parseInt(req.query.days) || 30;
     const segment = req.query.segment || undefined;
     const businessType = parseBusinessType(req.query.businessType);
-    const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType });
+    const includeLive = !(req.query.includeLive === '0' || req.query.includeLive === 'false');
+    const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
+    const data = await UnifiedContactService.getSegmentDailyLog({ days, segment, businessType, includeLive, fresh });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });

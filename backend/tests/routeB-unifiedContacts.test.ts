@@ -229,10 +229,12 @@ describe('GET /sources-breakdown', () => {
 });
 
 describe('segment activity / customers', () => {
-  it('segment-activity defaults days 30', async () => {
+  it('segment-activity defaults days 30, live counts on, cache on', async () => {
     m.svc.getSegmentDailyLog.mockResolvedValue({ logs: [] });
     await get('/segment-activity?days=abc');
-    expect(lastArg(m.svc.getSegmentDailyLog)).toMatchObject({ days: 30 });
+    expect(lastArg(m.svc.getSegmentDailyLog)).toMatchObject({ days: 30, includeLive: true, fresh: false });
+    await get('/segment-activity?days=7&includeLive=0&fresh=1');
+    expect(lastArg(m.svc.getSegmentDailyLog)).toMatchObject({ days: 7, includeLive: false, fresh: true });
   });
   it('segment-customers defaults page 1 / limit 25, huge limit clamped to 500', async () => {
     m.svc.getSegmentCustomers.mockResolvedValue({ data: [] });

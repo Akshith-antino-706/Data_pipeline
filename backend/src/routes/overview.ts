@@ -554,10 +554,20 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([p, t]).finally(() => { if (timer) clearTimeout(timer); });
 }
 
-router.get('/status', async (_req: Request, res: Response) => {
+const STATUS_SECTIONS = ['dataSources', 'queues', 'failedSends'] as const;
+type StatusSection = typeof STATUS_SECTIONS[number];
+const STATUS_SKIPPED = { available: false as const, reason: 'skipped' };
+
+// ?only=failedSends (comma list) computes just those sections; the others come back as
+// { available: false, reason: 'skipped' } so a caller like Home doesn't pay for queue counts
+// and sync_metadata it never shows.
+router.get('/status', async (req: Request, res: Response) => {
+  const onlyQ = typeof req.query.only === 'string' ? req.query.only.split(',').map(x => x.trim()) : [];
+  const only = new Set<StatusSection>(onlyQ.filter((x): x is StatusSection => (STATUS_SECTIONS as readonly string[]).includes(x)));
+  const want = (name: StatusSection) => only.size === 0 || only.has(name);
   const [dataSources, queues, failedSends] = await Promise.all([
     // Same columns DailyReportService.getSyncStatus reads.
-    section('dataSources', async () => {
+    !want('dataSources') ? Promise.resolve(STATUS_SKIPPED) : section('dataSources', async () => {
       // rayna_* rows are left out: the current DailyBillingSync writes the rayna_* tables directly and
       // never updates sync_metadata, so those rows are frozen at a May-2026 error from a retired sync.
       // The billing feed's real freshness comes from the tables themselves (/rayna-sync/mapping-stats).
@@ -571,7 +581,7 @@ router.get('/status', async (_req: Request, res: Response) => {
       };
     }),
 
-    section('queues', async () => {
+    !want('queues') ? Promise.resolve(STATUS_SKIPPED) : section('queues', async () => {
       // queueCounts → BullMQ getJobCounts (read-only). Each channel independent.
       const results = await Promise.all(QUEUE_CHANNELS.map(async ch => {
         try {
@@ -589,7 +599,7 @@ router.get('/status', async (_req: Request, res: Response) => {
       return { queues: results };
     }),
 
-    section('failedSends', async () => {
+    !want('failedSends') ? Promise.resolve(STATUS_SKIPPED) : section('failedSends', async () => {
       const { rows } = await db.query<CountRow>(`SELECT * FROM (
         (SELECT 'email' AS channel, id, email AS recipient, error_message AS reason, COALESCE(sent_at, created_at) AS ts, journey_id
            FROM email_send_log WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours'

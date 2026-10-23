@@ -8,8 +8,9 @@ import SegmentActivity from '@/app/(dashboard)/segment-activity/page';
 
 vi.mock('@/lib/api');
 
+const nav = vi.hoisted(() => ({ push: vi.fn<(href: string) => void>() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: () => {}, replace: () => {}, back: () => {}, prefetch: () => {}, refresh: () => {} }),
+  useRouter: () => ({ push: nav.push, replace: nav.push, back: () => {}, prefetch: () => {}, refresh: () => {} }),
   useParams: () => ({}),
   usePathname: () => '/segment-activity',
   useSearchParams: () => new URLSearchParams(),
@@ -43,6 +44,7 @@ beforeEach(() => {
     if (vi.isMockFunction(fn)) fn.mockResolvedValue({});
   }
   localStorage.clear();
+  nav.push.mockReset();
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no network'))));
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -106,13 +108,12 @@ describe('Segment activity page', () => {
     await waitFor(() => expect(api.getSegmentActivity).toHaveBeenLastCalledWith({ days: 30, businessType: 'B2C', segment: 'CANCELLED' }));
   });
 
-  it('Download CSV / Export call downloadSegmentActivity with current filters', async () => {
+  it('Download CSV calls downloadSegmentActivity with current filters (single button, no duplicate Export)', async () => {
     renderPage();
     await screen.findByText('Daily log');
     fireEvent.click(screen.getByText('Download CSV'));
     expect(api.downloadSegmentActivity).toHaveBeenCalledWith({ days: 2, segment: '', businessType: 'B2C' });
-    fireEvent.click(screen.getByText('Export'));
-    expect(api.downloadSegmentActivity).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Export')).toBeNull();
   });
 
   it('Snapshot Now snapshots, reloads and refetches changes', async () => {
@@ -141,13 +142,33 @@ describe('Segment activity page', () => {
     fireEvent.click(screen.getByText('Refresh'));
     await screen.findByText(/No daily logs yet/);
     expect(screen.getByText('ODD_SEG')).toBeTruthy();
+    // Refresh must bypass the 30-minute server cache
+    expect(api.getSegmentActivity).toHaveBeenLastCalledWith(expect.objectContaining({ fresh: 1 }));
   });
 
-  it('clicking a live segment requests its customers', async () => {
+  it('clicking a live segment opens its contacts page instead of firing a hidden query', async () => {
     vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
     renderPage();
     fireEvent.click(await screen.findByText('ODD_SEG'));
-    await waitFor(() => expect(api.getSegmentCustomers).toHaveBeenCalledWith({ bookingStatus: 'ODD_SEG', businessType: 'B2C', page: 1, limit: 25 }));
+    expect(nav.push).toHaveBeenCalledWith('/segmentation/odd-seg');
+    expect(api.getSegmentCustomers).not.toHaveBeenCalled();
+    expect(api.getUnifiedContact).not.toHaveBeenCalled();
+  });
+
+  it('clicking a daily-log row opens that segment too', async () => {
+    vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
+    renderPage();
+    await screen.findByText('+30');
+    fireEvent.click(screen.getByText('+30'));
+    expect(nav.push).toHaveBeenCalledWith('/segmentation/on-trip');
+  });
+
+  it('the segment filter lists every shared status, including the enquiry ones', async () => {
+    renderPage();
+    const sel = await screen.findByLabelText('Segment');
+    const labels = Array.from(sel.querySelectorAll('option')).map(o => o.textContent);
+    expect(labels).toContain('Active Enquiry');
+    expect(labels).toContain('Past Enquiry');
   });
 
   // BUG: segment-activity/page.tsx:111 fmtAED calls (n || 0).toLocaleString(...) directly;
@@ -162,14 +183,4 @@ describe('Segment activity page', () => {
     await screen.findByText('AED 12,346', {}, { timeout: 300 });
   });
 
-  // BUG: segment-activity/page.tsx:174 openDetail fetches segment customers, but the
-  // panel that renders them (page.tsx:447-531) is commented out, so clicking a segment
-  // (as the header text instructs) shows nothing.
-  it.fails('clicking a segment shows its customers', async () => {
-    vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
-    vi.mocked(api.getSegmentCustomers).mockResolvedValue({ data: [{ id: 1, name: 'Carl' }], total: 1, totalPages: 1 });
-    renderPage();
-    fireEvent.click(await screen.findByText('ODD_SEG'));
-    await screen.findByText('Carl', {}, { timeout: 300 });
-  });
 });
