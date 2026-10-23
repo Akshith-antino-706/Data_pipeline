@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eye, Loader2, Search } from 'lucide-react';
+import { Eye, Search } from 'lucide-react';
 import { getCustomSegmentById, getCustomSegmentCustomers, getUnifiedContact } from '@/lib/api';
-import { PageHeader, Chip, Button, Input, Table, EmptyState } from '@/components/ui';
+import { PageHeader, Chip, Button, Input, Table, EmptyState, Skeleton } from '@/components/ui';
 import { SegmentStat } from '@/components/ui/SegmentStat';
 import { SegmentPager } from '@/components/ui/SegmentPager';
 import { SegmentContactModal, type SegmentContactView } from '@/components/ui/SegmentContactModal';
-import { segmentStatusMeta } from '@/components/ui/SegmentStatus';
+import { segmentStatusMeta, tierLabel, geoLabel } from '@/components/ui/SegmentStatus';
 import s from '@/components/ui/Segment.module.css';
 import type { QueryParams } from '@/types/api';
 
@@ -73,7 +73,19 @@ export default function CustomSegmentDetailPage() {
   const closeUserDetail = useCallback(() => { setUserDetail(null); setUserDetailLoading(false); }, []);
 
   if (segLoading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}><Loader2 size={24} className="spin" aria-label="Loading segment" /></div>;
+    return (
+      <div className={s.page} aria-busy="true" aria-label="Loading segment">
+        <div className={s.skelRows}>
+          <Skeleton width="min(220px, 40%)" height={12} />
+          <Skeleton width="min(420px, 60%)" height={28} />
+          <Skeleton width="min(520px, 80%)" height={14} />
+        </div>
+        <section className={s.card} aria-hidden="true"><Skeleton width={60} height={12} /><div className={s.row}><Skeleton width={140} height={26} radius={999} /><Skeleton width={200} height={26} radius={999} /></div></section>
+        <div className={s.stats} aria-hidden="true">{[0, 1, 2].map(i => <div key={i} className={s.stat}><Skeleton width={90} height={12} /><Skeleton width={110} height={24} /></div>)}</div>
+        <Skeleton width="min(420px, 100%)" height={36} radius={8} />
+        <CustomersTableSkeleton />
+      </div>
+    );
   }
 
   if (!segment) {
@@ -110,7 +122,9 @@ export default function CustomSegmentDetailPage() {
         </section>
       )}
 
-      {customers && !loading && (
+      {loading && !customers ? (
+        <div className={s.stats} aria-hidden="true">{[0, 1, 2].map(i => <div key={i} className={s.stat}><Skeleton width={90} height={12} /><Skeleton width={110} height={24} /></div>)}</div>
+      ) : customers && (
         <div className={s.stats}>
           <SegmentStat label="Total Customers" value={fmt(customers.total)} />
           <SegmentStat label="Conditions" value={segment.conditions?.length || 0} />
@@ -133,7 +147,7 @@ export default function CustomSegmentDetailPage() {
       </div>
 
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Loader2 size={24} className="spin" aria-label="Loading customers" /></div>
+        <CustomersTableSkeleton />
       ) : rows.length > 0 ? (
         <>
           <Table label="Customers" style={{ minWidth: 820 }}>
@@ -147,13 +161,13 @@ export default function CustomSegmentDetailPage() {
                   <tr key={c.id}>
                     <td>
                       <span style={{ fontWeight: 600 }}>{c.name || 'Unknown'}</span>
-                      {c.is_indian && <> <Chip tone="warn">INDIAN</Chip></>}
+                      {c.is_indian && <> <Chip tone="warn">Indian</Chip></>}
                     </td>
                     <td className={s.note}>{c.email || '—'}</td>
                     <td className={s.note}>{c.mobile || '—'}</td>
                     <td>{st ? <Chip tone={st.tone}>{st.label}</Chip> : '—'}</td>
-                    <td>{c.product_tier ? <Chip tone={c.product_tier === 'LUXURY' ? 'gold' : 'mute'}>{c.product_tier}</Chip> : '—'}</td>
-                    <td>{c.geography ? <Chip tone="info">{c.geography}</Chip> : '—'}</td>
+                    <td>{c.product_tier ? <Chip tone={c.product_tier === 'LUXURY' ? 'gold' : 'mute'}>{tierLabel(c.product_tier)}</Chip> : '—'}</td>
+                    <td>{c.geography ? <Chip tone="info">{geoLabel(c.geography)}</Chip> : '—'}</td>
                     <td className={s.help}>{c.country ? `${c.country}${c.city ? ` · ${c.city}` : ''}` : '—'}</td>
                     <td className={s.r}>
                       <Button variant="ghost" size="sm" icon title="View user details" aria-label={`View ${c.name || 'contact'} details`} onClick={() => openUserDetail(c.id)}><Eye size={14} /></Button>
@@ -170,6 +184,21 @@ export default function CustomSegmentDetailPage() {
       )}
 
       <SegmentContactModal contact={userDetail} loading={userDetailLoading} onClose={closeUserDetail} />
+    </div>
+  );
+}
+
+/** Rows shaped like the customers table (8 columns), used while the segment or a page loads. */
+function CustomersTableSkeleton() {
+  return (
+    <div className={s.tableSkel} aria-label="Loading customers" aria-busy="true">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className={s.tableSkelRow}>
+          <Skeleton width="18%" height={14} /><Skeleton width="24%" height={14} /><Skeleton width="12%" height={14} />
+          <Skeleton width={78} height={22} radius={999} /><Skeleton width={70} height={22} radius={999} /><Skeleton width={96} height={22} radius={999} />
+          <Skeleton width="10%" height={14} />
+        </div>
+      ))}
     </div>
   );
 }

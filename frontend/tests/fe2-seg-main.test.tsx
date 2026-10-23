@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
@@ -96,7 +96,7 @@ describe('Segmentation overview page', () => {
     expect(screen.getByTitle('Set to Draft')).toBeTruthy();
     expect(screen.getByTitle('Activate')).toBeTruthy();
     expect(screen.getByLabelText('Edit My Custom')).toBeTruthy();
-    expect(api.getCustomSegments).toHaveBeenCalledWith({ page: 1, limit: 20 });
+    expect(api.getCustomSegments).toHaveBeenCalledWith({ page: 1, limit: 10 });
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
@@ -131,21 +131,26 @@ describe('Segmentation overview page', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       withData();
-      vi.mocked(api.getCustomSegments).mockResolvedValue({ ...customSegs, total: 45, totalPages: 3, counts: { all: 45, active: 40, draft: 5 } } as unknown as CustomRes);
+      vi.mocked(api.getCustomSegments).mockResolvedValue({ ...customSegs, total: 45, limit: 10, totalPages: 5, counts: { all: 45, active: 40, draft: 5 } } as unknown as CustomRes);
       renderPage();
       await screen.findByText('My Custom');
-      expect(screen.getByText('1–20 of 45')).toBeTruthy();
+      expect(screen.getByText('1–10 of 45')).toBeTruthy();
       fireEvent.click(screen.getByText('Draft (5)'));
-      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 20, status: 'draft' }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 10, status: 'draft' }));
       fireEvent.change(screen.getByLabelText('Search custom segments'), { target: { value: 'wall' } });
-      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 20, status: 'draft', q: 'wall' }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 10, status: 'draft', q: 'wall' }));
       fireEvent.click(screen.getByRole('button', { name: /Next/ }));
-      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 2, limit: 20, status: 'draft', q: 'wall' }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 2, limit: 10, status: 'draft', q: 'wall' }));
+      // rows-per-page: 10 / 20 / 50, default 10; changing it goes back to page 1
+      const sizes = screen.getByRole('group', { name: 'Rows per page' });
+      expect(within(sizes).getByRole('button', { name: '10' }).getAttribute('aria-pressed')).toBe('true');
+      fireEvent.click(within(sizes).getByRole('button', { name: '50' }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 50, status: 'draft', q: 'wall' }));
       vi.mocked(api.getCustomSegments).mockResolvedValue({ data: [], total: 0, page: 1, limit: 20, totalPages: 1, counts: { all: 45, active: 40, draft: 5 } } as unknown as CustomRes);
       fireEvent.change(screen.getByLabelText('Search custom segments'), { target: { value: 'zzz' } });
       await screen.findByText('No segments match “zzz”');
       fireEvent.click(screen.getByRole('button', { name: 'Clear segment search' }));
-      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 20, status: 'draft' }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 50, status: 'draft' }));
     } finally {
       vi.useRealTimers();
     }

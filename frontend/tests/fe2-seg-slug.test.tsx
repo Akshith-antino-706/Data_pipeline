@@ -58,7 +58,7 @@ describe('Segment slug detail page', () => {
     expect(screen.getByText('Local')).toBeTruthy();
     expect(screen.getByText('60 customers')).toBeTruthy();
     expect(screen.getByText('Unknown')).toBeTruthy();
-    expect(screen.getByText('INDIAN')).toBeTruthy();
+    expect(screen.getByText('Indian')).toBeTruthy();
     expect(screen.getByText('1 / 3')).toBeTruthy();
     expect(screen.getByText('Page 1 of 3')).toBeTruthy();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
@@ -67,10 +67,13 @@ describe('Segment slug detail page', () => {
     }));
   });
 
-  it('loading state', () => {
+  it('loading state shows table-row skeletons, not a spinner or "Loading..." text', () => {
     vi.mocked(api.getSegmentCustomers).mockReturnValue(new Promise(() => {}));
-    renderPage();
-    expect(screen.getByText('Loading...')).toBeTruthy();
+    const { container } = renderPage();
+    expect(screen.getByLabelText('Loading customers')).toBeTruthy();
+    expect(container.querySelectorAll('.ui-skel').length).toBeGreaterThan(10);
+    expect(container.querySelector('.spin')).toBeNull();
+    expect(screen.queryByText('Loading...')).toBeNull();
   });
 
   it('empty data shows "No customers found"', async () => {

@@ -73,10 +73,13 @@ describe('Custom segment detail page', () => {
     expect(api.getCustomSegmentCustomers).toHaveBeenCalledWith('7', { page: 1, limit: 25 });
   });
 
-  it('loading state shows spinner only', () => {
+  it('loading state shows a layout-shaped skeleton (header, rules, stats, table rows), not a spinner', () => {
     vi.mocked(api.getCustomSegmentById).mockReturnValue(new Promise(() => {}));
     const { container } = renderPage();
-    expect(container.querySelector('.spin')).toBeTruthy();
+    expect(screen.getByLabelText('Loading segment')).toBeTruthy();
+    expect(screen.getByLabelText('Loading customers')).toBeTruthy();
+    expect(container.querySelector('.spin')).toBeNull();
+    expect(container.querySelectorAll('.ui-skel').length).toBeGreaterThan(10);
     expect(screen.queryByText('Segment not found')).toBeNull();
   });
 

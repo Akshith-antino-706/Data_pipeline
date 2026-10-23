@@ -118,3 +118,8 @@
 .badIcon { color: var(--bad); }
 .spin { animation: segspin 1s linear infinite; }
 @keyframes segspin { to { transform: rotate(360deg); } }
+.pageSize { display: inline-flex; align-items: center; gap: 6px; }
+.pageSize .pill { height: 28px; padding: 0 10px; font-size: 12px; }
+.tableSkel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px 12px; }
+.tableSkelRow { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.tableSkelRow:last-child { border-bottom: 0; }

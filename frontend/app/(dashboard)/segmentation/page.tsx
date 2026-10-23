@@ -57,7 +57,8 @@ const BOOKING_TYPES = [
 ];
 
 const GENERAL = '__general__';
-const CUSTOM_PAGE = 20;
+const CUSTOM_PAGE_SIZES = [10, 20, 50] as const;
+const CUSTOM_PAGE_DEFAULT = 10;
 const plural = (n: number, word: string) => `${n} ${word}${n !== 1 ? 's' : ''}`;
 type CustomStatusFilter = 'all' | 'active' | 'draft';
 
@@ -83,6 +84,7 @@ export default function CustomerSegmentation() {
   const [customQ, setCustomQ] = useState('');
   const [customStatus, setCustomStatus] = useState<CustomStatusFilter>('all');
   const [customPage, setCustomPage] = useState(1);
+  const [customLimit, setCustomLimit] = useState<number>(CUSTOM_PAGE_DEFAULT);
   const [customTotal, setCustomTotal] = useState(0);
   const [customPages, setCustomPages] = useState(1);
   const [customCounts, setCustomCounts] = useState<{ all: number; active: number; draft: number } | null>(null);
@@ -128,12 +130,12 @@ export default function CustomerSegmentation() {
   useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => { const t = setTimeout(() => setCustomQ(customQuery.trim()), 250); return () => clearTimeout(t); }, [customQuery]);
-  useEffect(() => { setCustomPage(1); }, [customQ, customStatus]);
+  useEffect(() => { setCustomPage(1); }, [customQ, customStatus, customLimit]);
 
   const loadCustomSegments = useCallback(async () => {
     setCustomLoading(true);
     try {
-      const params: Record<string, string | number> = { page: customPage, limit: CUSTOM_PAGE };
+      const params: Record<string, string | number> = { page: customPage, limit: customLimit };
       if (customStatus !== 'all') params.status = customStatus;
       if (customQ) params.q = customQ;
       const res = await getCustomSegments(params) as { data?: CustomSegment[]; total?: number; totalPages?: number; counts?: { all: number; active: number; draft: number } };
@@ -148,7 +150,7 @@ export default function CustomerSegmentation() {
     }
     setCustomLoaded(true);
     setCustomLoading(false);
-  }, [customPage, customStatus, customQ]);
+  }, [customPage, customStatus, customQ, customLimit]);
 
   useEffect(() => { loadCustomSegments(); }, [loadCustomSegments]);
 
@@ -430,9 +432,15 @@ export default function CustomerSegmentation() {
                 </Table>
               </div>
             )}
-            {customPages > 1 && (
+            {customTotal > CUSTOM_PAGE_SIZES[0] && (
               <div className={s.pagerRow}>
-                <span className={s.help}>{Math.min((customPage - 1) * CUSTOM_PAGE + 1, customTotal)}–{Math.min(customPage * CUSTOM_PAGE, customTotal)} of {customTotal.toLocaleString()}</span>
+                <span className={s.help}>{Math.min((customPage - 1) * customLimit + 1, customTotal)}–{Math.min(customPage * customLimit, customTotal)} of {customTotal.toLocaleString()}</span>
+                <div className={s.pageSize} role="group" aria-label="Rows per page">
+                  <span className={s.help}>Rows</span>
+                  {CUSTOM_PAGE_SIZES.map(n => (
+                    <button key={n} type="button" className={s.pill} aria-pressed={customLimit === n} onClick={() => setCustomLimit(n)}>{n}</button>
+                  ))}
+                </div>
                 <SegmentPager page={customPage} totalPages={customPages} onPage={p => setCustomPage(p)} />
               </div>
             )}

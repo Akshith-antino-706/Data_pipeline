@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import { Eye, Loader2, Search } from 'lucide-react';
+import { Eye, Search } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { getSegmentCustomers, getUnifiedContact } from '@/lib/api';
 import { slugToCombo } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
-import { PageHeader, Chip, Button, Input, Table, EmptyState } from '@/components/ui';
+import { PageHeader, Chip, Button, Input, Table, EmptyState, Skeleton } from '@/components/ui';
 import { SegmentStat } from '@/components/ui/SegmentStat';
 import { SegmentPager } from '@/components/ui/SegmentPager';
 import { SegmentContactModal, fmtAED, type SegmentContactView } from '@/components/ui/SegmentContactModal';
@@ -99,9 +99,12 @@ export default function SegmentDetailPage() {
             {combo.geography && <Chip tone="info">{geoLabel(combo.geography)}</Chip>}
           </span>
         }
-        description={loading ? 'Loading...' : `${fmt(customers?.total || 0)} customers`}
+        description={loading && !customers ? <Skeleton width={120} height={14} /> : `${fmt(customers?.total || 0)} customers`}
       />
 
+      {loading && !customers && (
+        <div className={s.stats} aria-hidden="true">{[0, 1, 2].map(i => <div key={i} className={s.stat}><Skeleton width={90} height={12} /><Skeleton width={110} height={24} /></div>)}</div>
+      )}
       {customers && !loading && (
         <div className={s.stats}>
           <SegmentStat label="Total Customers" value={fmt(customers.total)} />
@@ -141,7 +144,13 @@ export default function SegmentDetailPage() {
       </div>
 
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Loader2 size={24} className="spin" aria-label="Loading customers" /></div>
+        <div className={s.tableSkel} aria-label="Loading customers" aria-busy="true">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className={s.tableSkelRow}>
+              <Skeleton width="20%" height={14} /><Skeleton width="26%" height={14} /><Skeleton width="14%" height={14} /><Skeleton width="18%" height={14} /><Skeleton width="10%" height={14} />
+            </div>
+          ))}
+        </div>
       ) : rows.length > 0 ? (
         <>
           <Table label="Customers" style={{ minWidth: 760 }}>
@@ -153,7 +162,7 @@ export default function SegmentDetailPage() {
                 <tr key={c.id}>
                   <td>
                     <span style={{ fontWeight: 600 }}>{c.name || 'Unknown'}</span>
-                    {c.is_indian && <> <Chip tone="warn">INDIAN</Chip></>}
+                    {c.is_indian && <> <Chip tone="warn">Indian</Chip></>}
                   </td>
                   <td className={s.note}>{c.email || '—'}</td>
                   <td className={s.note}>{c.phone || '—'}</td>
