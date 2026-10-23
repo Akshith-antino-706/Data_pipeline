@@ -58,6 +58,13 @@ describe('GET /templates', () => {
     expect(r.body).toEqual({ success: true, templates: [], total: 0 });
     expect(m.cs.getAll).toHaveBeenCalledWith({ channel: 'email', status: 'draft', search: 'x', page: 2, limit: 20 });
   });
+  it('fields=light is forwarded (anything else is ignored) and limit is capped at 200', async () => {
+    m.cs.getAll.mockResolvedValue({});
+    await call('GET', '/templates?fields=light&channel=sms&limit=5000');
+    expect(m.cs.getAll).toHaveBeenCalledWith({ channel: 'sms', status: undefined, search: undefined, page: 1, limit: 200, fields: 'light' });
+    await call('GET', '/templates?fields=everything');
+    expect(m.cs.getAll).toHaveBeenLastCalledWith(expect.not.objectContaining({ fields: expect.anything() }));
+  });
   it('passes an injection search string through unchanged (service must bind it)', async () => {
     m.cs.getAll.mockResolvedValue({});
     await call('GET', `/templates?search=${encodeURIComponent("%' OR 1=1--")}`);

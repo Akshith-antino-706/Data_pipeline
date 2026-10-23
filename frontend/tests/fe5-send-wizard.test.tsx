@@ -83,11 +83,35 @@ describe('Send a message wizard', () => {
     expect(await screen.findByText('Dubai trip reminder')).toBeTruthy();
     expect(screen.queryByText('Draft one')).toBeNull();
     expect(screen.queryByText('WA one')).toBeNull();
-    expect(api.getTemplates).toHaveBeenCalledWith({ status: 'approved', channel: 'email', limit: 200 });
+    expect(api.getTemplates).toHaveBeenCalledWith({ status: 'approved', channel: 'email', fields: 'light', limit: 25, page: 1 });
     expect(next().disabled).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: /Dubai trip reminder/ }));
     expect(next().disabled).toBe(false);
     noJunk();
+  });
+
+  it('templates are searched and paged on the server (25 at a time, light rows)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getTemplates).mockResolvedValue({ ...TEMPLATES, total: 30 });
+      render(<SendWizardPage />);
+      fireEvent.click(await screen.findByRole('radio', { name: /Upcoming trip B2C/ }));
+      fireEvent.click(next());
+      await screen.findByText('Dubai trip reminder');
+      expect(text()).toContain('Showing 1 of 30'); // 1 approved email row shown, 30 on the server
+      vi.mocked(api.getTemplates).mockResolvedValueOnce({ success: true, data: [{ id: 40, name: 'Page two template', channel: 'email', status: 'approved', subject: 's' }], total: 30 });
+      fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+      await screen.findByText('Page two template');
+      expect(api.getTemplates).toHaveBeenLastCalledWith({ status: 'approved', channel: 'email', fields: 'light', limit: 25, page: 2 });
+      expect(screen.getByText('Dubai trip reminder')).toBeTruthy(); // earlier page kept
+      vi.mocked(api.getTemplates).mockResolvedValue({ success: true, data: [], total: 0 });
+      fireEvent.change(screen.getByRole('textbox', { name: 'Search templates' }), { target: { value: 'zzz' } });
+      await waitFor(() => expect(api.getTemplates).toHaveBeenLastCalledWith({ status: 'approved', channel: 'email', fields: 'light', limit: 25, page: 1, search: 'zzz' }));
+      expect(await screen.findByText('No approved template matches “zzz”')).toBeTruthy();
+      noJunk();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('previews via the server and sends a test only to me', async () => {

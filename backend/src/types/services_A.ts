@@ -48,6 +48,8 @@ export interface ListFilters {
   search?: string;
   page?: number;
   limit?: number;
+  /** 'light' = picker columns only (no body / body_plain / external fields). */
+  fields?: string;
 }
 
 export interface ContentTemplateRow {

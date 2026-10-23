@@ -5,7 +5,7 @@ export class ContentService {
 
   /** Get all templates with pagination & filters.
    *  `search` matches ILIKE against name OR subject (case-insensitive substring). */
-  static async getAll({ channel, status, search, page = 1, limit = 20 }: ListFilters = {}) {
+  static async getAll({ channel, status, search, page = 1, limit = 20, fields }: ListFilters = {}) {
     const conditions: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
@@ -25,10 +25,11 @@ export class ContentService {
     // 10 KB+ per row) is omitted. Both are only needed by the editor, which loads
     // the full row via getById(). Including them here produced ~200-500 KB list
     // responses that the production CDN truncated, causing ERR_CONTENT_LENGTH_MISMATCH.
-    const [countRes, dataRes] = await Promise.all([
-      query<CountRow>(`SELECT COUNT(*) AS total FROM content_templates ${where}`, params),
-      query(
-        `SELECT id, name, channel, status, subject, LEFT(body, 2000) AS body, body_plain,
+    // fields=light: what a picker needs (name, subject, variables…) and nothing heavy — used by
+    // the journey editor and the send wizard, which search the server instead of loading 200 bodies.
+    const cols = fields === 'light'
+      ? `id, name, channel, status, subject, wa_template_name, variables, segment_label, external_status, approved_at, created_at, updated_at`
+      : `id, name, channel, status, subject, LEFT(body, 2000) AS body, body_plain,
                 media_url, cta_url, cta_text, wa_template_name, wa_namespace, variables,
                 ai_generated, ai_prompt, ai_model, version, parent_id,
                 approved_by, approved_at, created_at, updated_at, created_by,
@@ -37,7 +38,11 @@ export class ContentService {
                 external_category, external_language,
                 external_submitted_at, external_approved_at,
                 external_rejected_at, external_rejection_reason,
-                external_last_checked_at
+                external_last_checked_at`;
+    const [countRes, dataRes] = await Promise.all([
+      query<CountRow>(`SELECT COUNT(*) AS total FROM content_templates ${where}`, params),
+      query(
+        `SELECT ${cols}
            FROM content_templates ${where}
           ORDER BY updated_at DESC
           LIMIT $${idx} OFFSET $${idx + 1}`,

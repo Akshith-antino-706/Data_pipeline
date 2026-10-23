@@ -130,11 +130,12 @@ async function renderDayTemplatePreview(day: number) {
 // GET /api/v2/content/templates — list all 7 day-templates
 router.get('/templates', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const { channel, status, search, page, limit } = req.query;
+    const { channel, status, search, page, limit, fields } = req.query;
     const data = await ContentService.getAll({
       channel, status, search,
       page: parseInt(page) || 1,
-      limit: parseInt(limit) || 20,
+      limit: Math.min(parseInt(limit) || 20, 200),
+      ...(fields === 'light' ? { fields: 'light' } : {}),
     });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }

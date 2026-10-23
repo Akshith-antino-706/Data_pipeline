@@ -42,3 +42,9 @@
   .frame { height: 420px; }
   .footer > * { width: 100%; }
 }
+
+.tplSearch { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink3); max-width: 420px; }
+.tplSearch:focus-within { outline: 2px solid var(--gold); outline-offset: 1px; }
+.tplSearchInput { flex: 1; min-width: 0; font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--ink); outline: none; }
+.tplSearchClear { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer; }
+.tplMore { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; }

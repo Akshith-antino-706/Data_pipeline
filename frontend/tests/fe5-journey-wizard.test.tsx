@@ -348,6 +348,27 @@ describe('Create journey wizard', () => {
     expect(api.createJourney).not.toHaveBeenCalled();
   });
 
+  it('template picker loads light rows per channel and searches the server when you type', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getTemplates).mockResolvedValue({ data: [{ id: 11, name: 'Welcome tpl', subject: 'Hi there', channel: 'email' }] });
+      await goToSteps();
+      fireEvent.click(btn(/Add first node/));
+      await waitFor(() => expect(api.getTemplates).toHaveBeenCalledWith({ fields: 'light', channel: 'email', limit: 50 }));
+      expect(api.getTemplates).toHaveBeenCalledWith({ fields: 'light', channel: 'sms', limit: 50 });
+      fireEvent.click(await screen.findByRole('button', { name: /Select email template/ }));
+      vi.mocked(api.getTemplates).mockResolvedValueOnce({ data: [{ id: 77, name: 'Older archived promo', subject: 'Deal', channel: 'email' }] });
+      fireEvent.change(screen.getByPlaceholderText('Search templates…'), { target: { value: 'archived' } });
+      await waitFor(() => expect(api.getTemplates).toHaveBeenLastCalledWith({ fields: 'light', channel: 'email', search: 'archived', limit: 50 }));
+      fireEvent.mouseDown(await screen.findByText('Older archived promo'));
+      // A template found only by searching keeps its name once picked
+      expect(screen.getByRole('button', { name: /Older archived promo/ })).toBeTruthy();
+      expect(nameInput().value).toBe('Email: Older archived promo');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('default names follow the choices for every type and channel', async () => {
     vi.mocked(api.getTemplates).mockResolvedValue({ data: [
       { id: 11, name: 'Welcome tpl', subject: 'Hi there', channel: 'email' },

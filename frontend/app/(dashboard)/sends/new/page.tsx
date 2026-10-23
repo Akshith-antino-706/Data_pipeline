@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Check } from 'lucide-react';
+import { Check, Search, X } from 'lucide-react';
 import { getSegments, getTemplates, previewTemplate, sendTemplate } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Button, buttonClass } from '@/components/ui/Button';
@@ -41,6 +41,7 @@ interface TemplateOption {
 interface Preview { html: string; subject: string }
 
 const STEPS = ['Audience', 'Message', 'Preview & test', 'Check & send'] as const;
+const TPL_PAGE = 25;
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : 'Request failed');
 const str = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '');
@@ -104,14 +105,34 @@ export default function SendWizardPage() {
       .then(rows => setSegments(toSegments(rows)))
       .catch((e: unknown) => setSegErr(errText(e)));
   }, []);
+  // Templates are searched and paged on the server (light rows, 25 at a time) instead of
+  // loading 200 full bodies into 200 radio buttons.
+  const [tplQuery, setTplQuery] = useState('');
+  const [tplQ, setTplQ] = useState('');
+  const [tplTotal, setTplTotal] = useState(0);
+  const [tplPage, setTplPage] = useState(1);
+  const [tplMoreLoading, setTplMoreLoading] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setTplQ(tplQuery.trim()), 250); return () => clearTimeout(t); }, [tplQuery]);
+  const tplParams = useCallback((page: number) => ({
+    status: 'approved', channel: 'email', fields: 'light', limit: TPL_PAGE, page, ...(tplQ ? { search: tplQ } : {}),
+  }), [tplQ]);
   const loadTemplates = useCallback(() => {
-    setTplErr(null); setTemplates(null);
-    getTemplates({ status: 'approved', channel: 'email', limit: 200 })
-      .then(res => setTemplates(toTemplates(res)))
+    setTplErr(null); setTemplates(null); setTplPage(1);
+    getTemplates(tplParams(1))
+      .then(res => { setTemplates(toTemplates(res)); setTplTotal(toCount((res as { total?: unknown })?.total) ?? 0); })
       .catch((e: unknown) => setTplErr(errText(e)));
-  }, []);
+  }, [tplParams]);
+  const loadMoreTemplates = () => {
+    const next = tplPage + 1;
+    setTplMoreLoading(true);
+    getTemplates(tplParams(next))
+      .then(res => { setTemplates(prev => [...(prev ?? []), ...toTemplates(res)]); setTplPage(next); })
+      .catch((e: unknown) => setTplErr(errText(e)))
+      .finally(() => setTplMoreLoading(false));
+  };
 
-  useEffect(() => { loadSegments(); loadTemplates(); }, [loadSegments, loadTemplates]);
+  useEffect(() => { loadSegments(); }, [loadSegments]);
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
   const segment = segments?.find(s => s.id === segmentId) ?? null;
   const template = templates?.find(t => t.id === templateId) ?? null;
@@ -216,13 +237,20 @@ export default function SendWizardPage() {
             <Card>
               <h2 className={styles.h2}>What do you want to send?</h2>
               <p className={styles.note}>Email only. Only approved templates are listed.</p>
+              <div className={styles.tplSearch}>
+                <Search size={14} aria-hidden="true" />
+                <input className={styles.tplSearchInput} value={tplQuery} onChange={e => setTplQuery(e.target.value)} placeholder="Search templates by name or subject" aria-label="Search templates" />
+                {tplQuery && <button type="button" className={styles.tplSearchClear} aria-label="Clear template search" onClick={() => setTplQuery('')}><X size={12} /></button>}
+              </div>
               <div style={{ marginTop: 12 }}>
                 {tplErr ? (
                   <ErrorState title="Couldn't load templates" details={tplErr} action={<Button onClick={loadTemplates}>Try again</Button>} />
                 ) : templates === null ? (
-                  <div aria-label="Loading templates"><Skeleton height={56} /></div>
+                  <div aria-label="Loading templates" className={styles.opts}>{[0, 1, 2, 3, 4, 5].map(i => <Skeleton key={i} height={74} radius={10} />)}</div>
                 ) : templates.length === 0 ? (
-                  <EmptyState title="No approved email templates" description="Approve a template first." action={<Link href="/content" className={buttonClass('secondary')}>Go to Templates</Link>} />
+                  tplQ
+                    ? <EmptyState title={`No approved template matches “${tplQ}”`} description="Try another name or subject." />
+                    : <EmptyState title="No approved email templates" description="Approve a template first." action={<Link href="/content" className={buttonClass('secondary')}>Go to Templates</Link>} />
                 ) : (
                   <div className={styles.opts} role="radiogroup" aria-label="Template">
                     {templates.map(t => (
@@ -239,6 +267,12 @@ export default function SendWizardPage() {
                         <span><Chip tone="ok">Approved{fmtDate(t.updatedAt) ? ` · ${fmtDate(t.updatedAt)}` : ''}</Chip></span>
                       </button>
                     ))}
+                  </div>
+                )}
+                {templates !== null && templates.length > 0 && tplTotal > templates.length && (
+                  <div className={styles.tplMore}>
+                    <span className={styles.note}>Showing {templates.length} of {fmt(tplTotal)}</span>
+                    <Button size="sm" onClick={loadMoreTemplates} disabled={tplMoreLoading}>{tplMoreLoading ? 'Loading…' : 'Show more'}</Button>
                   </div>
                 )}
               </div>

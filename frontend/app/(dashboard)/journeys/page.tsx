@@ -9,7 +9,7 @@ import {
   getJourneys, getJourney, enrollJourney,
   processJourney, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  getTemplates, getSegmentationTree, getSegmentCustomers,
+  getTemplates, getTemplate, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
@@ -284,14 +284,38 @@ function SearchableSegmentSelect({ segments, value, onChange, loading }: Searcha
 // sms → "name") and emits a numeric id (or null) via onChange to preserve the
 // existing parseInt-based state shape.
 interface TemplateOption { id: number | string; name?: string; subject?: string; wa_template_name?: string }
-interface SearchableTemplateSelectProps { templates: TemplateOption[]; value: number | string | null | undefined; onChange: (v: number | null) => void; channel?: string; placeholder?: string; error?: boolean | string | null }
-function SearchableTemplateSelect({ templates, value, onChange, channel = 'email', placeholder, error }: SearchableTemplateSelectProps) {
+interface SearchableTemplateSelectProps { templates: TemplateOption[]; value: number | string | null | undefined; onChange: (v: number | null) => void; channel?: string; placeholder?: string; error?: boolean | string | null; /** Called with a template chosen from a server search so the page can learn it. */ onPicked?: (t: TemplateOption, channel: string) => void }
+const TEMPLATE_SEARCH_LIMIT = 50;
+/** Server search for the picker: light rows only (no bodies), newest first. */
+async function searchTemplatesLight(channel: string, q: string): Promise<TemplateOption[]> {
+  const res = await getTemplates({ fields: 'light', channel, search: q, limit: TEMPLATE_SEARCH_LIMIT }) as ApiData<TemplateOption[]>;
+  return res?.data || [];
+}
+function SearchableTemplateSelect({ templates, value, onChange, channel = 'email', placeholder, error, onPicked }: SearchableTemplateSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Typing searches the server (the local list is only the newest 50 per channel); results are
+  // remembered so a picked template still shows its name after the search is cleared.
+  const [remote, setRemote] = useState<TemplateOption[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [seen, setSeen] = useState<Record<string, TemplateOption>>({});
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setRemote(null); setSearching(false); return; }
+    let alive = true;
+    setSearching(true);
+    const t = setTimeout(() => {
+      searchTemplatesLight(channel, q)
+        .then(rows => { if (!alive) return; setRemote(rows); setSeen(prev => { const next = { ...prev }; rows.forEach(r => { next[String(r.id)] = r; }); return next; }); })
+        .catch(() => { if (alive) setRemote([]); })
+        .finally(() => { if (alive) setSearching(false); });
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [query, channel]);
 
   useEffect(() => {
     if (!open) return;
@@ -314,18 +338,25 @@ function SearchableTemplateSelect({ templates, value, onChange, channel = 'email
     return channel === 'email' ? `${t.name} — ${s}` : `${t.name} (${s})`;
   };
 
-  const selected = value != null ? templates.find(t => String(t.id) === String(value)) : null;
+  const selected = value != null
+    ? (templates.find(t => String(t.id) === String(value)) ?? seen[String(value)] ?? { id: value, name: `Template #${value}` })
+    : null;
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {
     if (!q) return templates;
+    if (remote) return remote;
+    // While the server search is in flight, show local matches so the list doesn't blank.
     return templates.filter(t => {
       const hay = `${t.name || ''} ${secondaryFor(t) || ''}`.toLowerCase();
       return hay.includes(q) || String(t.id).includes(q);
     });
-  }, [templates, q, channel]);
+  }, [templates, q, remote, channel]);
 
-  const pick = (t: TemplateOption | null) => { onChange(t ? Number(t.id) : null); setOpen(false); setQuery(''); };
+  const pick = (t: TemplateOption | null) => {
+    if (t) { setSeen(prev => ({ ...prev, [String(t.id)]: t })); if (!templates.some(x => String(x.id) === String(t.id))) onPicked?.(t, channel); }
+    onChange(t ? Number(t.id) : null); setOpen(false); setQuery('');
+  };
   const clear = (e: React.MouseEvent) => { e.stopPropagation(); onChange(null); };
 
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -398,13 +429,13 @@ function SearchableTemplateSelect({ templates, value, onChange, channel = 'email
           <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 && (
               <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
-                {templates.length === 0 ? `No ${channel} templates found` : `No templates match “${query}”`}
+                {searching ? 'Searching…' : templates.length === 0 && !q ? `No ${channel} templates found` : `No templates match “${query}”`}
               </div>
             )}
             {filtered.map((t, i) => row(t, i))}
           </div>
           <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>{filtered.length} of {templates.length}</span>
+            <span>{q ? (searching ? 'Searching the server…' : `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`) : `Newest ${templates.length} · type to search all`}</span>
             <span>↑↓ navigate · ↵ select · esc close</span>
           </div>
         </div>
@@ -680,6 +711,20 @@ export default function Journeys() {
   const [editNodeId, setEditNodeId] = useState<string | null>(null);
   const [allTemplates, setAllTemplates] = useState<Record<string, ContentTemplate[]>>({ email: [], whatsapp: [], sms: [] });
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  // A template chosen through the picker's server search joins the known list for that channel,
+  // so step names, variables and previews work for it exactly like for the newest 50.
+  const addKnownTemplate = useCallback((t: TemplateOption, channel: string) => {
+    setAllTemplates(prev => {
+      const list = prev[channel] || [];
+      if (list.some(x => String(x.id) === String(t.id))) return prev;
+      return { ...prev, [channel]: [t as ContentTemplate, ...list] };
+    });
+  }, []);
+  const TemplateSelectWithCache = useMemo(() => {
+    const C = (props: SearchableTemplateSelectProps) => <SearchableTemplateSelect {...props} onPicked={addKnownTemplate} />;
+    C.displayName = 'TemplateSelectWithCache';
+    return C;
+  }, [addKnownTemplate]);
   const [trackFilter] = useState('all');
   const [previewTemplate, setPreviewTemplate] = useState<PreviewTemplateState | null>(null); // { name, subject, body_html, channel }
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -1040,12 +1085,36 @@ export default function Journeys() {
   // Always parses from body HTML (the ground truth) — the variables DB column can be stale.
   // Placeholders auto-filled from the triggering GTM event — never shown as inputs.
   const GTM_AUTO_VARS = new Set(['event_id', 'raw_payload', 'event_name', 'event_time', 'page_url', 'item_name', 'customer_name', 'cta_url']);
+  // Variables for a template: the picker rows no longer carry bodies, so they come from the
+  // `variables` column when the template declares them, otherwise from a one-off fetch of the
+  // full template (cached per id) — never from a truncated list body.
+  const [tplVarsById, setTplVarsById] = useState<Record<string, string[]>>({});
+  const varsFromBody = (body: string | undefined) => [...new Set([...(body || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
+  const ensureTemplateVars = useCallback((templateId: TplId | null | undefined) => {
+    if (!templateId) return;
+    const key = String(templateId);
+    setTplVarsById(prev => {
+      if (prev[key]) return prev;
+      (getTemplate(templateId) as Promise<ApiData<ContentTemplate>>)
+        .then(res => {
+          const t = res?.data;
+          const declared = Array.isArray(t?.variables) ? (t!.variables as unknown[]).filter((v): v is string => typeof v === 'string') : [];
+          setTplVarsById(p => ({ ...p, [key]: declared.length ? declared : varsFromBody(t?.body) }));
+        })
+        .catch(() => setTplVarsById(p => ({ ...p, [key]: [] })));
+      return prev;
+    });
+  }, []);
+  useEffect(() => { ensureTemplateVars(nodeForm.emailTemplateId); }, [nodeForm.emailTemplateId, ensureTemplateVars]);
+  useEffect(() => { ensureTemplateVars(nodeForm.smsTemplateId); }, [nodeForm.smsTemplateId, ensureTemplateVars]);
+  useEffect(() => { ensureTemplateVars(nodeForm.restTemplateId); }, [nodeForm.restTemplateId, ensureTemplateVars]);
+
   const getTemplateCustomVars = (templateId: TplId | undefined, channel: string) => {
     if (!templateId) return [];
     const list = allTemplates[channel] || [];
     const tpl = list.find(t => String(t.id) === String(templateId));
-    if (!tpl) return [];
-    const vars = [...new Set([...(tpl.body || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
+    const declared = Array.isArray(tpl?.variables) ? (tpl!.variables as unknown[]).filter((v): v is string => typeof v === 'string') : [];
+    const vars = declared.length ? declared : (tplVarsById[String(templateId)] ?? varsFromBody(tpl?.body));
     // GTM event template (e.g. welcome_gtm_event) → all fields come from the event,
     // so show NO manual input boxes.
     if (vars.some(v => ['event_id', 'raw_payload', 'event_name', 'event_time'].includes(v))) return [];
@@ -1055,15 +1124,14 @@ export default function Journeys() {
   const loadTemplates = async () => {
     if (templatesLoaded) return;
     try {
-      const res = await getTemplates({ limit: 200 }) as ApiData<ContentTemplate[]>;
-      const all = res.data || [];
-      // WhatsApp templates are loaded PER-CHANNEL on demand by <WhatsAppTemplatePicker>
-      // (ChatHead templates need a channel), so we don't eagerly fetch them all here.
-      setAllTemplates({
-        email:     all.filter(t => t.channel === 'email'),
-        whatsapp:  [],
-        sms:       all.filter(t => t.channel === 'sms'),
-      });
+      // Newest 50 per channel, light rows (no bodies — ~2 KB each); the picker searches the
+      // server for anything older. WhatsApp templates are loaded PER-CHANNEL on demand by
+      // <WhatsAppTemplatePicker> (ChatHead templates need a channel).
+      const [email, sms] = await Promise.all([
+        getTemplates({ fields: 'light', channel: 'email', limit: TEMPLATE_SEARCH_LIMIT }) as Promise<ApiData<ContentTemplate[]>>,
+        getTemplates({ fields: 'light', channel: 'sms', limit: TEMPLATE_SEARCH_LIMIT }) as Promise<ApiData<ContentTemplate[]>>,
+      ]);
+      setAllTemplates({ email: email.data || [], whatsapp: [], sms: sms.data || [] });
       setTemplatesLoaded(true);
     } catch { /* ignore */ }
   };
@@ -3206,6 +3274,7 @@ export default function Journeys() {
                         </label>
                         <SearchableTemplateSelect
                           templates={allTemplates.email}
+                          onPicked={addKnownTemplate}
                           channel="email"
                           value={nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.emailTemplateId}
                           error={nodeForm.channel === 'email' && !nodeForm.emailTemplateId}
@@ -3291,6 +3360,7 @@ export default function Journeys() {
                         </label>
                         <SearchableTemplateSelect
                           templates={allTemplates.sms}
+                          onPicked={addKnownTemplate}
                           channel="sms"
                           value={nodeForm.channel === 'whatsapp' ? nodeForm.restTemplateId : nodeForm.smsTemplateId}
                           onChange={val => setNodeForm(f => nodeForm.channel === 'whatsapp' ? { ...f, restTemplateId: val, templateVariables: {} } : { ...f, smsTemplateId: val, templateVariables: {} })}
@@ -3657,7 +3727,7 @@ export default function Journeys() {
               dynamicSections={DYNAMIC_SECTIONS}
               getCustomVars={getTemplateCustomVars}
               onNeedTemplates={loadTemplates}
-              TemplateSelect={SearchableTemplateSelect}
+              TemplateSelect={TemplateSelectWithCache}
               onPreview={n => {
                 const templateId = n.emailTemplateId || n.whatsappTemplateId || n.smsTemplateId;
                 if (!templateId) return;
