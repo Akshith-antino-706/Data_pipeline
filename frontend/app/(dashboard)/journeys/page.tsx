@@ -20,6 +20,7 @@ import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
 import JourneyList, { useJourneyListState } from './JourneyList';
 import JourneyWizard from './JourneyWizard';
+import { ScheduledStartCountdown, useLiveNow } from './LiveClocks';
 import NodeEditor from './NodeEditor';
 import { JourneyDetailOverview, JourneyDetailSkeleton, isDetailSection } from './JourneyDetail';
 import type { DetailSection } from './JourneyDetail';
@@ -693,7 +694,7 @@ export default function Journeys() {
   // (analytics, activity, settings…). Kept in the URL as ?tab=<name>.
   const [detailSection, setDetailSection] = useState<DetailSection>('flow');
   const [queueStats, setQueueStats] = useState<Record<string, QueueCounts> | null>(null); // BullMQ live counts
-  const [now, setNow] = useState(Date.now()); // ticks every second for wait-node countdown
+  // "now" for wait-node countdowns — ticks only while an active journey is open (and the tab is visible)
   const [timeline, setTimeline] = useState<TimelineItem[] | null>(null); // per-node predicted trigger times
 
   // Tracks the real live node (most entries are currently on) — set on journey open/start/process
@@ -713,6 +714,7 @@ export default function Journeys() {
     const t = setInterval(async () => {
       const id = selectedRef.current;
       if (!id) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return; // nobody is looking
       try {
         // Refetch detail (node status + where entries sit) AND campaign-analytics
         // (per-node sent/opens/WhatsApp counts) so the whole node card reflects live
@@ -740,11 +742,7 @@ export default function Journeys() {
     prevStatusRef.current = cur;
   }, [detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tick every second so wait-node countdown timers stay live
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useLiveNow(detail?.status === 'active');
 
   // ── Create journey form state ─────────────────────────────────
   const [createForm, setCreateForm] = useState<CreateForm>({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
@@ -760,20 +758,6 @@ export default function Journeys() {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => { setIsMounted(true); }, []);
 
-  // ── Dubai live clock (for scheduled-start input) ─────────────
-  const [dubaiClock, setDubaiClock] = useState('');
-  useEffect(() => {
-    const tick = () => {
-      const s = new Date().toLocaleString('en-GB', {
-        timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-        day: '2-digit', month: 'short', year: 'numeric',
-      });
-      setDubaiClock(s);
-    };
-    tick();
-    const t = setInterval(tick, 1000);
-    return () => clearInterval(t);
-  }, []);
 
   // Convert sendHour (null | integer legacy | "HH:MM" string) to time input value
   const sendHourToTime = (v: number | string | null | undefined) => {
@@ -793,51 +777,23 @@ export default function Journeys() {
     return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
   };
 
-  // ── Scheduled-start countdown ────────────────────────────────
-  const [schedCountdown, setSchedCountdown] = useState<{ days: number; hours: number; mins: number; secs: number } | null>(null); // null | { days, hours, mins, secs }
-  const schedCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    clearInterval(schedCountdownRef.current!);
-    const iso = detail?.scheduled_start_at;
-    if (!iso || detail?.status !== 'draft') { setSchedCountdown(null); return; }
-    const target = new Date(iso) as Date & number;
-
-    const fireAutoStart = () => {
-      const id = selectedRef.current;
-      if (!id) return;
-      setStarting(true);
-      (startJourney(id) as Promise<ApiData<{ enrolled?: number }>>)
-        .then(async (res) => {
-          hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
-          const d = await getJourney(id) as ApiData<JourneyDetail>;
-          setDetail(d.data!);
-          loadData();
-        })
-        .catch((err: Error) => hotToast.error(err.message || 'Auto-start failed'))
-        .finally(() => setStarting(false));
-    };
-
-    const tick = () => {
-      const diff = target - Date.now();
-      if (diff <= 0) {
-        clearInterval(schedCountdownRef.current!);
-        setSchedCountdown(null);
-        fireAutoStart();
-        return;
-      }
-      const total = Math.floor(diff / 1000);
-      setSchedCountdown({
-        days:  Math.floor(total / 86400),
-        hours: Math.floor((total % 86400) / 3600),
-        mins:  Math.floor((total % 3600) / 60),
-        secs:  total % 60,
-      });
-    };
-    tick();
-    schedCountdownRef.current = setInterval(tick, 1000);
-    return () => clearInterval(schedCountdownRef.current!);
-  }, [detail?.scheduled_start_at, detail?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Scheduled-start auto-start (the countdown itself lives in <ScheduledStartCountdown>) ──
+  // loadData is declared further down; a ref keeps this callback stable without a forward reference.
+  const loadDataRef = useRef<() => void>(() => {});
+  const fireAutoStart = useCallback(() => {
+    const id = selectedRef.current;
+    if (!id) return;
+    setStarting(true);
+    (startJourney(id) as Promise<ApiData<{ enrolled?: number }>>)
+      .then(async (res) => {
+        hotToast.success(`Journey started! ${res.data?.enrolled || 0} users activated`);
+        const d = await getJourney(id) as ApiData<JourneyDetail>;
+        setDetail(d.data!);
+        loadDataRef.current();
+      })
+      .catch((err: Error) => hotToast.error(err.message || 'Auto-start failed'))
+      .finally(() => setStarting(false));
+  }, []);
 
   // ── Toast helper ──────────────────────────────────────────────
   // sticky = stays until something replaces it (used while a journey's audience builds,
@@ -862,6 +818,7 @@ export default function Journeys() {
     } catch (err) { console.error(err); setLoadError((err as Error)?.message || 'Request failed'); }
     setLoading(false);
   }, []);
+  useEffect(() => { loadDataRef.current = () => { void loadData(); }; }, [loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -915,20 +872,14 @@ export default function Journeys() {
   }, []);
 
   // ── Journey Actions ───────────────────────────────────────────
-  // Fetch active entries and find which node most entries are currently on
-  const refreshLiveNode = useCallback(async (id: number, journeyNodes: JourneyNode[]) => {
-    try {
-      const res = await getJourneyEntries(id, { status: 'active', limit: 200 }) as ApiData<JourneyEntry[]>;
-      const entries = res.data || [];
-      if (entries.length === 0) { setLiveNodeId(null); return; }
-      // Tally current_node_id occurrences
-      const tally: Record<string, number> = {};
-      entries.forEach(e => { if (e.current_node_id) tally[e.current_node_id] = (tally[e.current_node_id] || 0) + 1; });
-      // Pick node with highest count; break ties by node order in journey
-      const nodeOrder = (journeyNodes || []).reduce((m: Record<string, number>, n, i) => { m[n.id] = i; return m; }, {});
-      const winner = Object.entries(tally).sort((a, b) => b[1] - a[1] || (nodeOrder[a[0]] ?? 999) - (nodeOrder[b[0]] ?? 999))[0];
-      setLiveNodeId(winner ? winner[0] : null);
-    } catch { setLiveNodeId(null); }
+  // Which node most active people are on — read from the detail's node_stats (no extra request).
+  const refreshLiveNode = useCallback((d: JourneyDetail | undefined, journeyNodes: JourneyNode[]) => {
+    const stats = d?.node_stats || {};
+    const tally = Object.entries(stats).map(([nodeId, st]) => [nodeId, Number(st?.active) || 0] as const).filter(([, n]) => n > 0);
+    if (tally.length === 0) { setLiveNodeId(null); return; }
+    const nodeOrder = (journeyNodes || []).reduce((m: Record<string, number>, n, i) => { m[n.id] = i; return m; }, {});
+    const winner = [...tally].sort((a, b) => b[1] - a[1] || (nodeOrder[a[0]] ?? 999) - (nodeOrder[b[0]] ?? 999))[0];
+    setLiveNodeId(winner ? winner[0] : null);
   }, []);
 
   const [nodeAnalyticsLoaded, setNodeAnalyticsLoaded]   = useState(false);
@@ -1018,7 +969,7 @@ export default function Journeys() {
       if (!isCurrent()) return;
       setDetail(d.data!);
       loadTemplates();
-      if (d.data?.status === 'active') refreshLiveNode(id, d.data?.nodes || []);
+      if (d.data?.status === 'active') refreshLiveNode(d.data, d.data?.nodes || []);
     } catch (err) {
       if (isCurrent()) {
         selectedRef.current = null;
@@ -1387,7 +1338,7 @@ export default function Journeys() {
       showToast(`Processed: ${res.data?.processed || 0} entries advanced`, 'success');
       const [d] = await Promise.all([getJourney(selected!) as Promise<ApiData<JourneyDetail>>, refreshQueueStats()]);
       setDetail(d.data!);
-      if (d.data?.status === 'active') refreshLiveNode(selected!, d.data?.nodes || []);
+      if (d.data?.status === 'active') refreshLiveNode(d.data, d.data?.nodes || []);
     } catch (err) { showToast((err as Error).message, 'error'); }
     setProcessing(false);
   };
@@ -2712,41 +2663,8 @@ export default function Journeys() {
             </>)}
             advancedSlot={(<>
         {/* ── Scheduled Start Countdown ────────────────────────── */}
-        {schedCountdown && detail?.scheduled_start_at && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-            padding: '14px 20px', marginBottom: 20, borderRadius: 12,
-            background: 'linear-gradient(135deg, rgba(255,153,51,0.08) 0%, rgba(234,179,8,0.08) 100%)',
-            border: '1px solid rgba(255,153,51,0.35)',
-          }}>
-            <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 0 }}>
-              <Clock size={16} color="var(--orange)" />
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--orange)' }}>Auto-starts in</span>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                ({new Date(detail.scheduled_start_at).toLocaleString('en-AE', { timeZone: 'Asia/Dubai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })} Dubai)
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              {[
-                { v: schedCountdown.days,  l: 'D' },
-                { v: schedCountdown.hours, l: 'H' },
-                { v: schedCountdown.mins,  l: 'M' },
-                { v: schedCountdown.secs,  l: 'S' },
-              ].map(({ v, l }) => (
-                <div key={l} style={{ textAlign: 'center', minWidth: 44 }}>
-                  <div style={{
-                    fontSize: 22, fontWeight: 800, color: 'var(--orange)',
-                    background: 'var(--orange-dim)', borderRadius: 8,
-                    padding: '4px 8px', lineHeight: 1, border: '1px solid rgba(255,153,51,0.3)',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}>
-                    {String(v).padStart(2, '0')}
-                  </div>
-                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', marginTop: 3, letterSpacing: '0.5px' }}>{l}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {detail?.status === 'draft' && detail.scheduled_start_at && (
+          <ScheduledStartCountdown at={detail.scheduled_start_at} onDue={fireAutoStart} />
         )}
 
         {/* ── AI flow assist results ────────────────────────────── */}
@@ -3679,7 +3597,6 @@ export default function Journeys() {
           creating={creating}
           onCreate={handleCreate}
           onClose={resetCreate}
-          dubaiClock={dubaiClock}
           minScheduledStart={dubaiNowForInput(10)}
           onScheduledStartChange={val => {
             if (val) {

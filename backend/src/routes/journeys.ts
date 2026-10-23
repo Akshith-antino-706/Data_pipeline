@@ -22,8 +22,9 @@ const JOURNEY_DETAIL_TTL_FAST = 30;   // seconds — journey-detail responses se
 const JOURNEY_DETAIL_TTL_LIVE = 10;   // seconds — continuous (GTM) journeys are always-on and event-driven (entries enter + send in real time); their getById is cheap, so a very short window keeps the detail page near-real-time.
 const detailKey   = (id: number | string) => `journey:detail:${id}`;
 const timelineKey = (id: number | string) => `journey:timeline:${id}`;
+const campaignKey = (id: number | string) => `journey:campaign-analytics:${id}`;
 function invalidateJourney(id: number | string) {
-  return cacheDel(detailKey(id), timelineKey(id)).catch(() => {});
+  return cacheDel(detailKey(id), timelineKey(id), campaignKey(id)).catch(() => {});
 }
 
 // Invalidate the cached detail/timeline after any successful write to /:id*
@@ -659,10 +660,16 @@ router.get('/:id/analytics', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Get campaign analytics inside journey (sent, delivered, read, click, bounce per node)
+// Get campaign analytics inside journey (sent, delivered, read, click, bounce per node).
+// The detail page polls this every 10-30 s and, when the rollup is missing, the service falls
+// back to live email_send_log scans — so it is cached for 30 s like the fast detail path and
+// invalidated on any /:id mutation. ?fresh=1 bypasses.
 router.get('/:id/campaign-analytics', async (req, res, next) => {
   try {
-    const data = await JourneyService.getJourneyCampaignAnalytics(parseInt(req.params.id));
+    const id = parseInt(req.params.id);
+    const data = req.query.fresh
+      ? await JourneyService.getJourneyCampaignAnalytics(id)
+      : await cached(campaignKey(id), () => JourneyService.getJourneyCampaignAnalytics(id), JOURNEY_DETAIL_TTL_FAST);
     res.json({ data });
   } catch (err) { next(err); }
 });

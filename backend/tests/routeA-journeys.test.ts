@@ -264,7 +264,7 @@ describe('mutations', () => {
     const r = await send('PUT', '/12', { name: 'x' });
     expect(r.status).toBe(200);
     expect(m.js.update).toHaveBeenCalledWith(12, { name: 'x' });
-    await vi.waitFor(() => expect(m.cacheDel).toHaveBeenCalledWith('journey:detail:12', 'journey:timeline:12'));
+    await vi.waitFor(() => expect(m.cacheDel).toHaveBeenCalledWith('journey:detail:12', 'journey:timeline:12', 'journey:campaign-analytics:12'));
   });
   it('a failed mutation does not invalidate the cache', async () => {
     m.js.delete.mockRejectedValue(new Error('nope'));
@@ -376,6 +376,19 @@ describe('node endpoints that read the flow', () => {
     const r = await send('POST', '/1/nodes/n1/retry-blocked');
     expect(r.body.data).toEqual({ retried: 0 });
     expect(m.query).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GET /:id/campaign-analytics', () => {
+  it('is cached for 30 s under the journey key and bypassed with ?fresh=1', async () => {
+    m.js.getJourneyCampaignAnalytics.mockResolvedValue({ nodes: [] });
+    const r = await get('/7/campaign-analytics');
+    expect(r.body).toEqual({ data: { nodes: [] } });
+    expect(m.cached).toHaveBeenCalledWith('journey:campaign-analytics:7', expect.any(Function), 30);
+    m.cached.mockClear();
+    await get('/7/campaign-analytics?fresh=1');
+    expect(m.cached).not.toHaveBeenCalled();
+    expect(m.js.getJourneyCampaignAnalytics).toHaveBeenCalledTimes(2);
   });
 });
 

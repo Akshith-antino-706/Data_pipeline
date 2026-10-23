@@ -1,5 +1,7 @@
 'use client';
 
+import { DubaiClock } from './LiveClocks';
+
 import { useEffect, useId, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { Button, Chip, ConfirmDialog, Field, Input, Toggle } from '@/components/ui';
 import type { CreateForm, NodeForm } from '@/types/f1Journeys';
@@ -21,7 +23,6 @@ export interface JourneyWizardProps {
   onCreate: () => void;
   /** Called once the user has really left (after the unsaved-changes confirm, if any). */
   onClose: () => void;
-  dubaiClock: string;
   minScheduledStart: string;
   onScheduledStartChange: (value: string) => void;
   segmentPicker: ReactNode;
@@ -100,7 +101,7 @@ export const formatStart = (v: string): string => (v ? formatDubaiStart(v) : 'Ab
 export default function JourneyWizard(props: JourneyWizardProps) {
   const {
     form, setForm, nodes, nodeEditorOpen, segments, segmentsLoading, creating, onCreate, onClose,
-    dubaiClock, minScheduledStart, onScheduledStartChange,
+    minScheduledStart, onScheduledStartChange,
     segmentPicker, triggerEventPicker, recommendationPicker, emailSenderPicker, nodesEditor,
   } = props;
   const [step, setStep] = useState(0);
@@ -410,7 +411,7 @@ export default function JourneyWizard(props: JourneyWizardProps) {
               <div className="ui-field">
                 <div className={styles.row}>
                   <label className="ui-label" htmlFor={`${uid}-start`}>Start date and time</label>
-                  <Chip tone="gold">Dubai: {dubaiClock}</Chip>
+                  <Chip tone="gold">Dubai: <DubaiClock /></Chip>
                 </div>
                 <Input id={`${uid}-start`} type="datetime-local" value={form.scheduledStartAt} min={minScheduledStart}
                   onChange={e => onScheduledStartChange(e.target.value)} />

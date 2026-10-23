@@ -405,7 +405,9 @@ describe('Journey detail', () => {
 
   it('the Overview uses no jargon (node, trigger, snapshot, fire time, entries) and no ISO dates', async () => {
     await openDetail();
-    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenCalled());
+    await screen.findByText('Where people drop off');
+    // Opening a journey no longer pulls 200 entries just to find the busiest step (it reads node_stats).
+    expect(api.getJourneyEntries).not.toHaveBeenCalled();
     expect(bodyText()).not.toMatch(/\bnodes?\b|trigger|snapshot|fire time|next fire|\bentr(y|ies)\b/i);
     expect(bodyText()).not.toMatch(ISO);
     expect(bodyText()).not.toMatch(/NaN|undefined/);
