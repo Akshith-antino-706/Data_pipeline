@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useBusinessType } from '@/context/BusinessTypeContext';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
   getJourneys, getJourney, enrollJourney,
   processJourney, aiFlowSuggest, getJourneyAnalytics,
@@ -37,7 +36,6 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import hotToast from 'react-hot-toast';
-import type { Variants } from 'framer-motion';
 import type { LucideIcon } from 'lucide-react';
 import type {
   NodeForm, JourneyNode, JourneyEdge, ContentTemplate, JourneySummary, JourneyDetail, CampaignData, CampaignRow,
@@ -634,8 +632,6 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string }
   completed: { color: 'var(--purple)', bg: 'var(--purple-dim)', label: 'Completed' }
 };
 
-const fadeInUp: Variants = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } } };
-const staggerContainer: Variants = { hidden: {}, visible: { transition: { staggerChildren: 0.08 } } };
 
 // ── Utility ────────────────────────────────────────────────────
 const fmt = (n: unknown) => Number(n || 0).toLocaleString();
@@ -1746,7 +1742,7 @@ export default function Journeys() {
     ].filter(d => d.value > 0);
 
     return (
-      <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
+      <div>
         <style>{`
           @keyframes simPulse {
             0%, 100% { box-shadow: 0 0 0 3px rgba(0,0,0,0.12), 0 6px 20px rgba(0,0,0,0.15); }
@@ -1758,7 +1754,7 @@ export default function Journeys() {
           }
         `}</style>
         {/* ── Header, KPIs, steps, queue, contacts (JourneyDetail.tsx) ── */}
-        <motion.div variants={fadeInUp}>
+        <div>
           <JourneyDetailOverview
             journeyId={selected}
             detail={detail}
@@ -3200,9 +3196,9 @@ export default function Journeys() {
 
             </>)}
           />
-        </motion.div>
+        </div>
 
-        <motion.div variants={fadeInUp}>
+        <div>
         {/* ── Create / Add Node Modal ──────────────────────────── */}
         {showNodeModal && (
           <div className="modal-overlay" onClick={() => setShowNodeModal(false)}>
@@ -3592,14 +3588,11 @@ export default function Journeys() {
         {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
 
         {/* ── Template Preview Modal (inside detail view) ───── */}
-        <AnimatePresence>
-          {previewTemplate && (
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        {previewTemplate && (
+            <div
               onClick={() => setPreviewTemplate(null)}
               style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              <div
                 onClick={e => e.stopPropagation()}
                 style={{ background: 'var(--card)', borderRadius: 16, width: 680, maxWidth: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
                 {/* Header */}
@@ -3662,13 +3655,12 @@ export default function Journeys() {
                     </div>
                   )}
                 </div>
-              </motion.div>
-            </motion.div>
+              </div>
+            </div>
           )}
-        </AnimatePresence>
 
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
     );
   }
 

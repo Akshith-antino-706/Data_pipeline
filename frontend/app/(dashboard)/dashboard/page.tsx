@@ -11,7 +11,7 @@ import { useBusinessType } from '@/context/BusinessTypeContext';
 import HomeOverview from './HomeOverview';
 import ContactSourcesCard from './ContactSourcesCard';
 import homeStyles from './home.module.css';
-import { Skeleton } from '@/components/ui';
+import { Skeleton, buttonClass } from '@/components/ui';
 import { segmentStatusMeta } from '@/components/ui/SegmentStatus';
 
 // Recharts is only needed for the Segment Distribution chart — load it on the client after
@@ -292,7 +292,7 @@ export default function Dashboard() {
         <div className="card mb-24">
           <div className="card-header">
             <h3>Segment Distribution</h3>
-            <Link href="/segmentation" className="btn btn-sm btn-ghost">View Details</Link>
+            <Link href="/segmentation" className={buttonClass('ghost', 'sm')}>View Details</Link>
           </div>
           {treeLoading ? (
             <ChartSkeleton />
@@ -336,7 +336,7 @@ export default function Dashboard() {
         <div className="card mb-24">
           <div className="card-header">
             <h3>Last 7 Days Activity</h3>
-            <Link href="/segment-activity" className="btn btn-sm btn-ghost">View All</Link>
+            <Link href="/segment-activity" className={buttonClass('ghost', 'sm')}>View All</Link>
           </div>
           {activityLoading ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, padding: '0 4px' }}>
@@ -392,7 +392,7 @@ export default function Dashboard() {
                 title="Range end — contacts added on/before this day (Dubai time). Future dates disabled."
                 style={{ width: 148, flexShrink: 0, padding: '7px 10px', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, fontSize: 13, background: 'var(--surface)', color: 'var(--text-primary)' }}
               />
-              {(sourceFrom || sourceTo) && <button onClick={() => { setSourceFrom(''); setSourceTo(''); }} className="btn btn-sm btn-ghost" style={{ flexShrink: 0 }}>Clear</button>}
+              {(sourceFrom || sourceTo) && <button type="button" onClick={() => { setSourceFrom(''); setSourceTo(''); }} className={buttonClass('ghost', 'sm')} style={{ flexShrink: 0 }}>Clear</button>}
             </div>
           </div>
 

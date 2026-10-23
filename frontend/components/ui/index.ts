@@ -18,3 +18,5 @@ export { ConfirmDialog } from './ConfirmDialog';
 export type { ConfirmDialogProps } from './ConfirmDialog';
 export { PageHeader } from './PageHeader';
 export type { PageHeaderProps, Crumb } from './PageHeader';
+export { default as SearchPicker } from './SearchPicker';
+export type { PickerItem } from './SearchPicker';
