@@ -19,6 +19,7 @@ import {
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
 import JourneyList, { useJourneyListState } from './JourneyList';
+import type { JourneyListMeta } from './JourneyList';
 import JourneyWizard from './JourneyWizard';
 import { ScheduledStartCountdown, useLiveNow } from './LiveClocks';
 import NodeEditor from './NodeEditor';
@@ -45,6 +46,7 @@ import type {
 
 // ── Constants ──────────────────────────────────────────────────
 const JOURNEYS_PATH = '/journeys';
+const LIST_PAGE_SIZE = 24;
 const CREATE_JOURNEY_PATH = '/journeys/new';
 /** URL of one journey's detail view. */
 const journeyPath = (id: number): string => `${JOURNEYS_PATH}/${id}`;
@@ -671,7 +673,7 @@ interface RenderSlot { gc: string; badge: string | null; accent?: string; center
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════
 export default function Journeys() {
-  const { businessType } = useBusinessType();
+  const { businessType, ready: businessTypeReady } = useBusinessType();
   const searchParams = useSearchParams();
   const router = useRouter();
   const rawPathname = usePathname();
@@ -681,6 +683,8 @@ export default function Journeys() {
 
   // ── State ─────────────────────────────────────────────────────
   const [journeys, setJourneys] = useState<JourneySummary[]>([]);
+  const [listMeta, setListMeta] = useState<JourneyListMeta | null>(null);
+  const [listBusy, setListBusy] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
   const [detail, setDetail] = useState<JourneyDetail | null>(null);
   const [analytics, setAnalytics] = useState<JourneyAnalytics | null>(null);
@@ -852,20 +856,40 @@ export default function Journeys() {
   };
 
   // ── Data Loading ──────────────────────────────────────────────
+  // One page of journeys, filtered / sorted / counted on the server. The search box is
+  // debounced so typing doesn't fire a request per keystroke.
+  const [listQ, setListQ] = useState('');
+  useEffect(() => { const t = setTimeout(() => setListQ(listState.searchQuery.trim()), 300); return () => clearTimeout(t); }, [listState.searchQuery]);
+  const listParams = useMemo(() => {
+    const p: Record<string, string | number> = { light: 1, counts: 1, page: listState.page, limit: LIST_PAGE_SIZE, tab: listState.statusFilter, sort: listState.sort };
+    if (listQ) p.q = listQ;
+    if (listState.typeFilter !== 'any') p.type = listState.typeFilter;
+    if (listState.channelFilter !== 'any') p.channel = listState.channelFilter;
+    if (businessType !== 'All') p.businessType = businessType;
+    return p;
+  }, [listState.page, listState.statusFilter, listState.sort, listState.typeFilter, listState.channelFilter, listQ, businessType]);
+  const listParamsRef = useRef(listParams);
+  useEffect(() => { listParamsRef.current = listParams; }, [listParams]);
   const loadData = useCallback(async () => {
-    setLoading(true);
+    setListBusy(true);
     try {
-      // Load all journeys (backend default page size is 20) so client-side search /
-      // status filter / pagination below work across the full list, not just page 1.
-      const j = await getJourneys({ limit: 1000 }) as ApiData<JourneySummary[]>;
+      const j = await getJourneys(listParamsRef.current) as ApiData<JourneySummary[]> & Partial<JourneyListMeta> & { channels?: string[] };
       setJourneys(j.data || []);
+      setListMeta({
+        total: typeof j.total === 'number' ? j.total : (j.data || []).length,
+        counts: j.counts ?? {},
+        summary: j.summary ?? { total: 0, active: 0, totalEntries: 0, avgConversion: 0 },
+        channels: j.channels ?? [],
+      });
       setLoadError(null);
     } catch (err) { console.error(err); setLoadError((err as Error)?.message || 'Request failed'); }
     setLoading(false);
+    setListBusy(false);
   }, []);
   useEffect(() => { loadDataRef.current = () => { void loadData(); }; }, [loadData]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // Wait for the saved audience to hydrate so the first request already carries it (one fetch, not two).
+  useEffect(() => { if (businessTypeReady) void loadData(); }, [loadData, listParams, businessTypeReady]);
 
   // ── Background audience build (create) ────────────────────────
   // create() returns as soon as the journey row is committed; the segment snapshot
@@ -1595,7 +1619,9 @@ export default function Journeys() {
   const listView = (
     <JourneyList
       journeys={journeys}
+      meta={listMeta}
       loading={loading}
+      busy={listBusy && listMeta !== null}
       error={loadError}
       businessType={businessType}
       state={listState}

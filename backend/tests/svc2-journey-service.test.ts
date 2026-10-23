@@ -465,3 +465,50 @@ describe('getOpsDashboard — bounded send-log reads', () => {
     expect(perJourney).toContain("created_at >= NOW() - INTERVAL '7 days'");
   });
 });
+
+describe('getAll — server-side list filters', () => {
+  const sqlOf = (i: number) => String(m.query.mock.calls[i][0]);
+  it('plain call (no page options) keeps the original SELECT jf.* shape and two queries', async () => {
+    m.query.mockReset();
+    m.query.mockImplementation(async (sql: string) => ({ rows: sql.includes('COUNT(*)') ? [{ count: '3' }] : [] }));
+    const r = await JourneyService.getAll({ status: 'active', page: 2, limit: 20 });
+    expect(r).toEqual({ data: [], total: 3, page: 2, limit: 20 });
+    expect(m.query).toHaveBeenCalledTimes(2);
+    expect(sqlOf(1)).toContain('SELECT jf.*');
+    expect(sqlOf(1)).toContain('ORDER BY jf.updated_at DESC');
+    expect(m.query.mock.calls[1][1]).toEqual(['active', 20, 20]);
+  });
+  it('light + counts: list columns with channels derived in SQL, tab/scheduled filters, search, sort, audience — all parameterised', async () => {
+    m.query.mockReset();
+    m.query.mockImplementation(async (sql: string) => ({ rows: sql.includes('COUNT(*)') && !sql.includes('tab_all') ? [{ count: '44' }]
+      : sql.includes('tab_all') ? [{ tab_all: '44', tab_active: '30', tab_scheduled: '2', tab_paused: '1', tab_draft: '6', tab_completed: '5', sum_total: '70', sum_active: '31', sum_entries: '12345', avg_conversion: '9.4', channels: ['email', 'whatsapp'] }]
+      : [{ journey_id: 1 }] }));
+    const evil = "x' OR 1=1 --";
+    const r = await JourneyService.getAll({ q: evil, tab: 'scheduled', type: 'always', channel: 'WhatsApp', businessType: 'B2B', sort: 'joined', light: true, counts: true, page: 1, limit: 24 });
+    expect(r.total).toBe(44);
+    expect(r.counts).toEqual({ all: 44, active: 30, scheduled: 2, paused: 1, draft: 6, completed: 5 });
+    expect(r.summary).toEqual({ total: 70, active: 31, totalEntries: 12345, avgConversion: 9.4 });
+    expect(r.channels).toEqual(['email', 'whatsapp']);
+    const list = sqlOf(1);
+    expect(list).not.toContain('jf.*');
+    expect(list).toContain('AS channels');
+    expect(list).toContain("jf.scheduled_start_at > NOW()");
+    expect(list).toContain("jf.journey_type IN ('gtm', 'continuous')");
+    expect(list).toContain("LOWER(n->'data'->>'channel') = $3");
+    expect(list).toContain("LIKE '%B2B%'");
+    expect(list).toContain('jf.total_entries DESC NULLS LAST');
+    expect(list).not.toContain(evil);
+    expect(m.query.mock.calls[1][1]).toEqual([`%${evil}%`, evil, 'whatsapp', 24, 0]);
+    for (const [sql] of m.query.mock.calls) expect(/^\s*SELECT/i.test(String(sql))).toBe(true);
+  });
+  it('B2C excludes B2B and Affiliate journeys; draft tab excludes scheduled drafts; unknown tab/sort are ignored', async () => {
+    m.query.mockReset();
+    m.query.mockImplementation(async (sql: string) => ({ rows: sql.includes('COUNT(*)') ? [{ count: '0' }] : [] }));
+    await JourneyService.getAll({ businessType: 'B2C', tab: 'draft', sort: 'evil; DROP', light: true });
+    const list = sqlOf(1);
+    expect(list).toContain("NOT (UPPER(jf.name) LIKE '%B2B%'");
+    expect(list).toContain("jf.scheduled_start_at IS NULL OR jf.scheduled_start_at <= NOW()");
+    expect(list).toContain('ORDER BY jf.updated_at DESC');
+    expect(list).not.toContain('DROP');
+  });
+});

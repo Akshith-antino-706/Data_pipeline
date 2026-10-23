@@ -45,9 +45,21 @@ export function useJourneyListState(): JourneyListState {
   };
 }
 
+/** What the server returns alongside one page of journeys (filters/tabs/paging run there now). */
+export interface JourneyListMeta {
+  total: number;
+  counts: Partial<Record<JourneyStatusTab, number>>;
+  summary: { total: number; active: number; totalEntries: number; avgConversion: number };
+  channels: string[];
+}
+
 export interface JourneyListProps {
+  /** The current page of journeys, already filtered/sorted on the server. */
   journeys: JourneySummary[];
+  meta: JourneyListMeta | null;
   loading: boolean;
+  /** A page/filter change is in flight while a previous page is still shown. */
+  busy?: boolean;
   error: string | null;
   businessType: string;
   state: JourneyListState;
@@ -98,12 +110,6 @@ const journeyChannels = (nodes: JourneyNode[] | null | undefined): string[] => {
 const isScheduled = (j: JourneySummary) =>
   j.status === 'draft' && !!j.scheduled_start_at && dateMs(j.scheduled_start_at) > Date.now();
 const isAlwaysOn = (j: JourneySummary) => j.journey_type === 'gtm' || j.journey_type === 'continuous';
-const matchesTab = (j: JourneySummary, tab: JourneyStatusTab) => {
-  if (tab === 'all') return true;
-  if (tab === 'scheduled') return isScheduled(j);
-  if (tab === 'draft') return j.status === 'draft' && !isScheduled(j);
-  return j.status === tab;
-};
 const statusView = (j: JourneySummary): { label: string; tone: ChipTone } => {
   if (isScheduled(j)) return { label: 'Scheduled', tone: 'info' };
   switch (j.status) {
@@ -115,22 +121,12 @@ const statusView = (j: JourneySummary): { label: string; tone: ChipTone } => {
   }
 };
 // Classify by name OR segment containing the scope word (substring, so "All B2B users" counts).
-const matchesBusiness = (j: JourneySummary, businessType: string) => {
-  if (businessType === 'All') return true;
-  const name = (j.name || '').toUpperCase();
-  const seg = (j.segment_name || '').toUpperCase();
-  const isB2B = name.includes('B2B') || seg.includes('B2B');
-  const isAffiliate = name.includes('AFFILIATE') || seg.includes('AFFILIATE');
-  if (businessType === 'B2B') return isB2B;
-  if (businessType === 'Affiliate') return isAffiliate;
-  return !isB2B && !isAffiliate;
-};
 
 const muted = { color: 'var(--ink3)', fontSize: 12 } as const;
 
 // ══════════════════════════════════════════════════════════════════
 export default function JourneyList({
-  journeys, loading, error, businessType, state, onRefresh, onOpen, children,
+  journeys, meta, loading, busy = false, error, businessType, state, onRefresh, onOpen, children,
 }: JourneyListProps) {
   const {
     searchQuery, setSearchQuery, statusFilter, setStatusFilter, viewMode, setViewMode,
@@ -139,53 +135,20 @@ export default function JourneyList({
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name?: string } | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  // Everything except the status tab — the tab counts follow these filters.
-  const baseFiltered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return journeys.filter(j => {
-      if (!matchesBusiness(j, businessType)) return false;
-      if (typeFilter === 'always' && !isAlwaysOn(j)) return false;
-      if (typeFilter === 'once' && isAlwaysOn(j)) return false;
-      if (channelFilter !== 'any' && !journeyChannels(j.nodes).includes(channelFilter)) return false;
-      if (q && !(j.name?.toLowerCase().includes(q) || j.segment_name?.toLowerCase().includes(q))) return false;
-      return true;
-    });
-  }, [journeys, businessType, typeFilter, channelFilter, searchQuery]);
-
+  // Filtering, tab counts, sorting and paging all happen on the server: `journeys` is the page.
+  const total = meta?.total ?? journeys.length;
   const tabCounts = useMemo(() => {
     const c = {} as Record<JourneyStatusTab, number>;
-    STATUS_TABS.forEach(t => { c[t.key] = baseFiltered.filter(j => matchesTab(j, t.key)).length; });
+    STATUS_TABS.forEach(t => { c[t.key] = meta?.counts?.[t.key] ?? 0; });
     return c;
-  }, [baseFiltered]);
-
-  const filtered = useMemo(() => {
-    const rows = baseFiltered.filter(j => matchesTab(j, statusFilter));
-    const sorted = [...rows];
-    if (sort === 'recent') sorted.sort((a, b) => dateMs(b.updated_at ?? b.created_at) - dateMs(a.updated_at ?? a.created_at));
-    else if (sort === 'joined') sorted.sort((a, b) => num(b.total_entries) - num(a.total_entries));
-    else if (sort === 'conversions') sorted.sort((a, b) => num(b.total_conversions) - num(a.total_conversions));
-    else sorted.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    return sorted;
-  }, [baseFiltered, statusFilter, sort]);
-
-  const channelOptions = useMemo(() => {
-    const set = new Set<string>();
-    journeys.forEach(j => journeyChannels(j.nodes).forEach(c => set.add(c)));
-    return [...set].sort();
-  }, [journeys]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  }, [meta]);
+  const channelOptions = meta?.channels ?? [];
+  const pageCount = Math.max(1, Math.ceil(total / PER_PAGE));
   // Reset to page 1 whenever the filters change; clamp if the list shrank (e.g. after a delete).
-  useEffect(() => { setPage(1); }, [statusFilter, searchQuery, businessType, viewMode, sort, typeFilter, channelFilter, setPage]);
-  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount, setPage]);
-  const paged = useMemo(() => filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filtered, page]);
-
-  const summary = useMemo(() => ({
-    total: journeys.length,
-    active: journeys.filter(j => j.status === 'active').length,
-    totalEntries: journeys.reduce((s, j) => s + (j.total_entries || 0), 0),
-    avgConversion: journeys.length > 0 ? journeys.reduce((s, j) => s + num(j.conversion_rate), 0) / journeys.length : 0,
-  }), [journeys]);
+  useEffect(() => { setPage(1); }, [statusFilter, searchQuery, businessType, sort, typeFilter, channelFilter, setPage]);
+  useEffect(() => { if (meta && page > pageCount) setPage(pageCount); }, [meta, page, pageCount, setPage]);
+  const paged = journeys;
+  const summary = meta?.summary ?? { total: 0, active: 0, totalEntries: 0, avgConversion: 0 };
 
   const clearFilters = () => {
     setSearchQuery(''); setStatusFilter('all'); setTypeFilter('any'); setChannelFilter('any');
@@ -222,7 +185,7 @@ export default function JourneyList({
   };
 
   const channelChips = (j: JourneySummary) => {
-    const ch = journeyChannels(j.nodes);
+    const ch = j.channels ?? journeyChannels(j.nodes);
     if (ch.length === 0) return <span style={muted}>—</span>;
     return (
       <div className={styles.chipRow}>
@@ -334,7 +297,7 @@ export default function JourneyList({
         <span className="ui-help">Showing</span>
         <Chip tone="gold">Audience: {businessType}</Chip>
         <Chip>Status: {STATUS_TABS.find(t => t.key === statusFilter)?.label}</Chip>
-        {searchQuery && <span className="ui-help">{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>}
+        {searchQuery && meta && <span className="ui-help">{total} result{total !== 1 ? 's' : ''}</span>}
       </div>
 
       {/* ── Body ─────────────────────────────────────────────── */}
@@ -345,8 +308,8 @@ export default function JourneyList({
           details={error}
           action={<Button variant="primary" size="sm" onClick={() => { void onRefresh(); }}>Try again</Button>}
         />
-      ) : filtered.length === 0 ? (
-        journeys.length === 0 ? (
+      ) : paged.length === 0 ? (
+        (meta ? meta.summary.total === 0 : journeys.length === 0) ? (
           <EmptyState
             icon={<GitBranch size={22} />}
             title="Create your first journey"
@@ -362,7 +325,7 @@ export default function JourneyList({
           />
         )
       ) : viewMode === 'cards' ? (
-        <div className={styles.grid}>
+        <div className={styles.grid} aria-busy={busy || undefined} style={busy ? { opacity: 0.6 } : undefined}>
           {paged.map(j => {
             const st = statusView(j);
             const conv = num(j.conversion_rate);
@@ -399,7 +362,7 @@ export default function JourneyList({
           })}
         </div>
       ) : (
-        <Table label="Journeys">
+        <Table label="Journeys" aria-busy={busy || undefined} style={busy ? { opacity: 0.6 } : undefined}>
           <thead>
             <tr>
               <th>Journey</th>
@@ -447,10 +410,10 @@ export default function JourneyList({
       )}
 
       {/* ── Pagination ───────────────────────────────────────── */}
-      {!error && filtered.length > PER_PAGE && (
+      {!error && total > PER_PAGE && (
         <div className={styles.pager}>
           <span style={{ fontSize: 13, color: 'var(--ink2)' }}>
-            Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} journeys
+            Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, total)} of {total} journeys
           </span>
           <nav aria-label="Pagination" className={styles.pagerNav}>
             <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</Button>

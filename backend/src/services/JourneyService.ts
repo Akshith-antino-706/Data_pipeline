@@ -317,43 +317,126 @@ class JourneyService {
 
   // ── CRUD ──────────────────────────────────────────────────
 
-  static async getAll({ status, audience, page = 1, limit = 20 }: { status?: string; audience?: string; page?: number; limit?: number } = {}) {
-    const offset = (page - 1) * limit;
-    let where = '1=1';
-    const params = [];
+  /**
+   * Journey list. Besides the original status/audience/page/limit, the Journeys page passes:
+   *   q          name / segment name contains, or exact #id
+   *   tab        all | active | scheduled | paused | draft | completed  (scheduled = draft with a future start)
+   *   type       any | always (gtm / continuous) | once
+   *   channel    any | email | whatsapp | sms | rcs … (a node with that channel exists)
+   *   businessType All | B2C | B2B | Affiliate (same name/segment rule the page used client-side)
+   *   sort       recent | joined | conversions | name
+   *   light      list columns only — no nodes/edges JSON; `channels` is derived in SQL
+   *   counts     also return per-tab counts, a summary and the channel options (one extra pass)
+   * Everything is parameterised; nothing from the query string is interpolated.
+   */
+  static async getAll({ status, audience, page = 1, limit = 20, q, tab, type, channel, businessType, sort, light = false, counts = false }: {
+    status?: string; audience?: string; page?: number; limit?: number; q?: string; tab?: string; type?: string; channel?: string;
+    businessType?: string; sort?: string; light?: boolean; counts?: boolean;
+  } = {}) {
+    const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 20, 1000));
+    const safePage = Math.max(1, Math.trunc(page) || 1);
+    const offset = (safePage - 1) * safeLimit;
+    const params: unknown[] = [];
+    const base: string[] = ['1=1'];
 
-    if (status) {
-      params.push(status);
-      where += ` AND jf.status = $${params.length}`;
-    }
-    if (audience) {
-      params.push(audience);
-      where += ` AND jf.audience = $${params.length}`;
-    }
+    if (status) { params.push(status); base.push(`jf.status = $${params.length}`); }
+    if (audience) { params.push(audience); base.push(`jf.audience = $${params.length}`); }
     // A journey whose audience is still being built in the background (snapshot_count = -1)
     // is not listed yet — it appears once the snapshot lands. A FAILED build (-2) stays
     // visible so it can be fixed or deleted.
-    where += ' AND jf.snapshot_count IS DISTINCT FROM -1';
+    base.push('jf.snapshot_count IS DISTINCT FROM -1');
 
-    const { rows: [{ count }] } = await db.query<{ count: string }>(
-      `SELECT COUNT(*) FROM journey_flows jf WHERE ${where}`, params
-    );
+    const search = (q ?? '').trim().replace(/^#/, '').slice(0, 100);
+    if (search) {
+      params.push(`%${search}%`, search);
+      base.push(`(jf.name ILIKE $${params.length - 1} OR COALESCE(sd.segment_name, cs.name, '') ILIKE $${params.length - 1} OR jf.journey_id::text = $${params.length})`);
+    }
+    if (type === 'always') base.push(`jf.journey_type IN ('gtm', 'continuous')`);
+    else if (type === 'once') base.push(`(jf.journey_type IS NULL OR jf.journey_type NOT IN ('gtm', 'continuous'))`);
+    if (channel && channel !== 'any') {
+      params.push(channel.toLowerCase());
+      base.push(`EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(jf.nodes, '[]'::jsonb)) n WHERE LOWER(n->'data'->>'channel') = $${params.length})`);
+    }
+    const segName = `UPPER(COALESCE(sd.segment_name, cs.name, ''))`;
+    const isB2B = `(UPPER(jf.name) LIKE '%B2B%' OR ${segName} LIKE '%B2B%')`;
+    const isAffiliate = `(UPPER(jf.name) LIKE '%AFFILIATE%' OR ${segName} LIKE '%AFFILIATE%')`;
+    if (businessType === 'B2B') base.push(isB2B);
+    else if (businessType === 'Affiliate') base.push(isAffiliate);
+    else if (businessType === 'B2C') base.push(`NOT ${isB2B} AND NOT ${isAffiliate}`);
 
-    const { rows } = await db.query<U1JourneyListRow>(`
-      SELECT jf.*,
-        COALESCE(sd.segment_name, cs.name) AS segment_name, sd.segment_number, sd.priority,
-        fs.stage_name, fs.stage_color,
-        COALESCE(jsonb_array_length(jf.nodes), 0) AS node_count
-      FROM journey_flows jf
+    const TAB_SQL: Record<string, string> = {
+      active: `jf.status = 'active'`, paused: `jf.status = 'paused'`, completed: `jf.status = 'completed'`,
+      scheduled: `(jf.status = 'draft' AND jf.scheduled_start_at > NOW())`,
+      draft: `(jf.status = 'draft' AND (jf.scheduled_start_at IS NULL OR jf.scheduled_start_at <= NOW()))`,
+    };
+    const tabSql = tab && TAB_SQL[tab] ? TAB_SQL[tab] : null;
+    const whereBase = base.join(' AND ');
+    const where = tabSql ? `${whereBase} AND ${tabSql}` : whereBase;
+
+    const SORT_SQL: Record<string, string> = {
+      recent: 'COALESCE(jf.updated_at, jf.created_at) DESC NULLS LAST',
+      joined: 'jf.total_entries DESC NULLS LAST, jf.updated_at DESC',
+      conversions: 'jf.total_conversions DESC NULLS LAST, jf.updated_at DESC',
+      name: 'jf.name ASC',
+    };
+    const orderBy = sort && SORT_SQL[sort] ? SORT_SQL[sort] : 'jf.updated_at DESC';
+
+    const from = `FROM journey_flows jf
       LEFT JOIN segment_definitions sd ON sd.segment_id = jf.segment_id
       LEFT JOIN funnel_stages fs ON fs.stage_id = sd.stage_id
-      LEFT JOIN custom_segments cs ON cs.id = jf.custom_segment_id
-      WHERE ${where}
-      ORDER BY jf.updated_at DESC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-    `, [...params, limit, offset]);
+      LEFT JOIN custom_segments cs ON cs.id = jf.custom_segment_id`;
 
-    return { data: rows, total: parseInt(count), page, limit };
+    const channelsSql = `ARRAY(SELECT DISTINCT LOWER(n->'data'->>'channel') FROM jsonb_array_elements(COALESCE(jf.nodes, '[]'::jsonb)) n WHERE n->'data'->>'channel' IS NOT NULL)`;
+    const columns = light
+      ? `jf.journey_id, jf.name, jf.description, jf.status, jf.audience, jf.journey_type, jf.trigger_event, jf.trigger_source,
+         jf.scheduled_start_at, jf.snapshot_count, jf.test_mode, jf.total_entries, jf.total_conversions, jf.total_exits,
+         jf.conversion_rate, jf.created_at, jf.updated_at, jf.segment_id, jf.custom_segment_id,
+         ${channelsSql} AS channels`
+      : 'jf.*';
+
+    const [countRes, rowsRes, metaRes] = await Promise.all([
+      db.query<{ count: string }>(`SELECT COUNT(*) ${from} WHERE ${where}`, params),
+      db.query<U1JourneyListRow>(`
+        SELECT ${columns},
+          COALESCE(sd.segment_name, cs.name) AS segment_name, sd.segment_number, sd.priority,
+          fs.stage_name, fs.stage_color,
+          COALESCE(jsonb_array_length(jf.nodes), 0) AS node_count
+        ${from}
+        WHERE ${where}
+        ORDER BY ${orderBy}
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `, [...params, safeLimit, offset]),
+      counts
+        ? db.query<Record<string, string | null>>(`
+            SELECT
+              COUNT(*) FILTER (WHERE ${whereBase})::text AS tab_all,
+              COUNT(*) FILTER (WHERE ${whereBase} AND ${TAB_SQL.active})::text AS tab_active,
+              COUNT(*) FILTER (WHERE ${whereBase} AND ${TAB_SQL.scheduled})::text AS tab_scheduled,
+              COUNT(*) FILTER (WHERE ${whereBase} AND ${TAB_SQL.paused})::text AS tab_paused,
+              COUNT(*) FILTER (WHERE ${whereBase} AND ${TAB_SQL.draft})::text AS tab_draft,
+              COUNT(*) FILTER (WHERE ${whereBase} AND ${TAB_SQL.completed})::text AS tab_completed,
+              COUNT(*) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1)::text AS sum_total,
+              COUNT(*) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1 AND jf.status = 'active')::text AS sum_active,
+              COALESCE(SUM(jf.total_entries) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1), 0)::text AS sum_entries,
+              COALESCE(AVG(NULLIF(jf.conversion_rate, '')::numeric) FILTER (WHERE jf.snapshot_count IS DISTINCT FROM -1), 0)::text AS avg_conversion,
+              (SELECT array_agg(DISTINCT c ORDER BY c) FROM journey_flows j2, LATERAL jsonb_array_elements(COALESCE(j2.nodes, '[]'::jsonb)) n,
+                 LATERAL (SELECT LOWER(n->'data'->>'channel') AS c) x WHERE x.c IS NOT NULL) AS channels
+            ${from}`, params)
+        : Promise.resolve(null),
+    ]);
+
+    const result: {
+      data: U1JourneyListRow[]; total: number; page: number; limit: number;
+      counts?: Record<string, number>; summary?: { total: number; active: number; totalEntries: number; avgConversion: number }; channels?: string[];
+    } = { data: rowsRes.rows, total: parseInt(countRes.rows[0]?.count ?? '0', 10) || 0, page: safePage, limit: safeLimit };
+    if (metaRes) {
+      const m = metaRes.rows[0] ?? {};
+      const n = (v: unknown) => { const x = parseFloat(String(v ?? '0')); return Number.isFinite(x) ? x : 0; };
+      result.counts = { all: n(m.tab_all), active: n(m.tab_active), scheduled: n(m.tab_scheduled), paused: n(m.tab_paused), draft: n(m.tab_draft), completed: n(m.tab_completed) };
+      result.summary = { total: n(m.sum_total), active: n(m.sum_active), totalEntries: n(m.sum_entries), avgConversion: n(m.avg_conversion) };
+      result.channels = Array.isArray(m.channels) ? (m.channels as unknown as string[]).filter((c): c is string => typeof c === 'string') : [];
+    }
+    return result;
   }
 
   static async getById(journeyId: JourneyId, { fresh = false } = {}) {

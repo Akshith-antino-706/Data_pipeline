@@ -57,14 +57,45 @@ const LIST = [
   J(3, 'Old Draft', 'draft', { conversion_rate: 'abc', total_entries: null }),
   J(4, 'Paused One', 'paused'),
 ];
-const mockList = (data: unknown[]) => vi.mocked(api.getJourneys).mockResolvedValue({ data });
+// The list is filtered, sorted, counted and paged on the server now. This tiny in-test server
+// applies the same rules so the behaviour tests still prove the whole flow (params → rows).
+type Row = ReturnType<typeof J> & { journey_type?: string; scheduled_start_at?: string; nodes?: { data?: { channel?: string } }[] };
+const numOf = (v: unknown) => { const n = parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0; };
+const isSched = (j: Row) => j.status === 'draft' && !!j.scheduled_start_at && new Date(j.scheduled_start_at).getTime() > Date.now();
+const tabOf = (j: Row, tab: string) => tab === 'all' ? true : tab === 'scheduled' ? isSched(j) : tab === 'draft' ? j.status === 'draft' && !isSched(j) : j.status === tab;
+const bizOf = (j: Row, bt?: string) => {
+  if (!bt || bt === 'All') return true;
+  const hay = `${j.name} ${j.segment_name ?? ''}`.toUpperCase();
+  const b2b = hay.includes('B2B'), aff = hay.includes('AFFILIATE');
+  return bt === 'B2B' ? b2b : bt === 'Affiliate' ? aff : !b2b && !aff;
+};
+const chansOf = (j: Row) => [...new Set((j.nodes ?? []).map(n => (n.data?.channel ?? '').toLowerCase()).filter(Boolean))];
+const fakeServer = (rows: Row[]) => (p: Record<string, unknown> = {}) => {
+  const q = String(p.q ?? '').toLowerCase().replace(/^#/, '');
+  const base = rows.filter(j => bizOf(j, p.businessType as string | undefined))
+    .filter(j => p.type === 'always' ? ['gtm', 'continuous'].includes(j.journey_type ?? '') : p.type === 'once' ? !['gtm', 'continuous'].includes(j.journey_type ?? '') : true)
+    .filter(j => !p.channel || chansOf(j).includes(String(p.channel)))
+    .filter(j => !q || j.name.toLowerCase().includes(q) || (j.segment_name ?? '').toLowerCase().includes(q) || String(j.journey_id) === q);
+  const tab = String(p.tab ?? 'all');
+  const list = base.filter(j => tabOf(j, tab));
+  const sort = String(p.sort ?? 'recent');
+  if (sort === 'name') list.sort((a, b) => a.name.localeCompare(b.name));
+  else if (sort === 'joined') list.sort((a, b) => numOf(b.total_entries) - numOf(a.total_entries));
+  const limit = Number(p.limit ?? 24), page = Number(p.page ?? 1);
+  const counts = Object.fromEntries(['all', 'active', 'scheduled', 'paused', 'draft', 'completed'].map(t => [t, base.filter(j => tabOf(j, t)).length]));
+  const summary = { total: rows.length, active: rows.filter(j => j.status === 'active').length, totalEntries: rows.reduce((s, j) => s + numOf(j.total_entries), 0), avgConversion: rows.length ? rows.reduce((s, j) => s + numOf(j.conversion_rate), 0) / rows.length : 0 };
+  const channels = [...new Set(rows.flatMap(chansOf))].sort();
+  return Promise.resolve({ data: list.slice((page - 1) * limit, page * limit).map(j => ({ ...j, channels: chansOf(j), nodes: undefined })), total: list.length, page, limit, counts, summary, channels });
+};
+const mockList = (data: unknown[]) => vi.mocked(api.getJourneys).mockImplementation(fakeServer(data as Row[]) as unknown as typeof api.getJourneys);
 
 describe('Journeys list page', () => {
   it('renders KPIs and active journeys by default', async () => {
     mockList(LIST);
     renderPage();
     await screen.findByText('Welcome Series');
-    expect(api.getJourneys).toHaveBeenCalledWith({ limit: 1000 });
+    // One light, counted page per request — never the whole list
+    expect(api.getJourneys).toHaveBeenCalledWith({ light: 1, counts: 1, page: 1, limit: 24, tab: 'active', sort: 'recent' });
     expect(screen.getByText('B2B Onboarding')).toBeTruthy();
     expect(screen.queryByText('Old Draft')).toBeNull(); // default filter = active
     expect(screen.getByText('700')).toBeTruthy(); // total entries 100+200+0(null)+400
@@ -99,7 +130,8 @@ describe('Journeys list page', () => {
     expect(screen.getByRole('tab', { name: 'Running 2' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Drafts 1' })).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText('Search by name or segment'), { target: { value: 'b2b' } });
-    expect(screen.getByRole('tab', { name: 'All 1' })).toBeTruthy();
+    await waitFor(() => expect(api.getJourneys).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'b2b', page: 1 })));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'All 1' })).toBeTruthy());
   });
 
   it('a draft with a future start shows under Scheduled, not Drafts', async () => {
@@ -107,10 +139,12 @@ describe('Journeys list page', () => {
     renderPage();
     await screen.findByText('Welcome Series');
     fireEvent.click(screen.getByRole('tab', { name: /^Scheduled/ }));
-    expect(screen.getByText('Future Launch')).toBeTruthy();
+    await screen.findByText('Future Launch');
     expect(screen.queryByText('Old Draft')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: /^Drafts/ }));
+    await screen.findByText('Old Draft');
     expect(screen.queryByText('Future Launch')).toBeNull();
+    expect(api.getJourneys).toHaveBeenLastCalledWith(expect.objectContaining({ tab: 'draft' }));
   });
 
   it('sorts by name and by most joined', async () => {
@@ -118,12 +152,14 @@ describe('Journeys list page', () => {
     renderPage();
     await screen.findByText('Welcome Series');
     fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
+    await screen.findByText('Old Draft');
     const want = ['Welcome Series', 'B2B Onboarding', 'Old Draft', 'Paused One'];
     const names = () => Array.from(document.querySelectorAll('button')).map(b => b.textContent ?? '').filter(t => want.includes(t));
     fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'name' } });
-    expect(names()).toEqual(['B2B Onboarding', 'Old Draft', 'Paused One', 'Welcome Series']);
+    await waitFor(() => expect(names()).toEqual(['B2B Onboarding', 'Old Draft', 'Paused One', 'Welcome Series']));
+    expect(api.getJourneys).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'name' }));
     fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'joined' } });
-    expect(names()).toEqual(['Paused One', 'B2B Onboarding', 'Welcome Series', 'Old Draft']);
+    await waitFor(() => expect(names()).toEqual(['Paused One', 'B2B Onboarding', 'Welcome Series', 'Old Draft']));
   });
 
   it('type filter uses journey_type', async () => {
@@ -131,8 +167,9 @@ describe('Journeys list page', () => {
     renderPage();
     await screen.findByText('Fixed One');
     fireEvent.change(screen.getByLabelText('Journey type'), { target: { value: 'always' } });
+    await waitFor(() => expect(screen.queryByText('Fixed One')).toBeNull());
     expect(screen.getByText('Live One')).toBeTruthy();
-    expect(screen.queryByText('Fixed One')).toBeNull();
+    expect(api.getJourneys).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'always' }));
   });
 
   it('shows skeleton KPIs while loading', () => {
@@ -148,18 +185,18 @@ describe('Journeys list page', () => {
     renderPage();
     await screen.findByText('Welcome Series');
     fireEvent.click(screen.getByRole('tab', { name: /^Drafts/ }));
-    expect(screen.getByText('Old Draft')).toBeTruthy();
+    await screen.findByText('Old Draft');
     expect(screen.queryByText('Welcome Series')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
-    expect(screen.getByText('Paused One')).toBeTruthy();
+    await screen.findByText('Paused One');
     fireEvent.change(screen.getByPlaceholderText('Search by name or segment'), { target: { value: 'b2b users' } });
+    await waitFor(() => expect(screen.queryByText('Welcome Series')).toBeNull());
     expect(screen.getByText('B2B Onboarding')).toBeTruthy();
-    expect(screen.queryByText('Welcome Series')).toBeNull();
     expect(screen.getByText('1 result')).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText('Search by name or segment'), { target: { value: 'zzz' } });
-    expect(screen.getByText('No journeys match your filters')).toBeTruthy();
+    await screen.findByText('No journeys match your filters');
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    expect(screen.getByText('Old Draft')).toBeTruthy();
+    await screen.findByText('Old Draft');
   });
 
   it('business type B2B only shows B2B journeys', async () => {
@@ -168,6 +205,7 @@ describe('Journeys list page', () => {
     renderPage();
     await screen.findByText('B2B Onboarding');
     expect(screen.queryByText('Welcome Series')).toBeNull();
+    expect(api.getJourneys).toHaveBeenLastCalledWith(expect.objectContaining({ businessType: 'B2B' }));
   });
 
   it('list view renders a table with segment and conversion', async () => {
@@ -175,6 +213,7 @@ describe('Journeys list page', () => {
     renderPage();
     await screen.findByText('Welcome Series');
     fireEvent.click(screen.getByRole('tab', { name: /^All/ }));
+    await screen.findByText('Old Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Table view' }));
     const table = await screen.findByRole('table');
     expect(within(table).getByText('Seg 1')).toBeTruthy();
@@ -201,11 +240,12 @@ describe('Journeys list page', () => {
     expect(bodyText()).toContain('Showing 1–24 of 30 journeys');
     expect(screen.queryByText('Journey 25')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByText('Journey 25')).toBeTruthy();
+    await screen.findByText('Journey 25');
+    expect(api.getJourneys).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, limit: 24 }));
     expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page');
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
-    expect(screen.getByText('Journey 1')).toBeTruthy();
+    await screen.findByText('Journey 1');
   });
 
   it('delete confirmation calls deleteJourney with the id and reloads', async () => {

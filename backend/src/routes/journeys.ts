@@ -42,8 +42,19 @@ router.use('/:id', (req, _res, next) => {
 // List journeys (supports ?audience=indian|rest|all)
 router.get('/', async (req, res, next) => {
   try {
-    const { status, audience, page, limit } = req.query as QueryParams;
-    const data = await JourneyService.getAll({ status, audience, page: parseInt(page as string) || 1, limit: parseInt(limit as string) || 20 });
+    const { status, audience, page, limit, q, tab, type, channel, businessType, sort, light, counts } = req.query as QueryParams;
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    const opts: Parameters<typeof JourneyService.getAll>[0] = { status, audience, page: parseInt(page as string) || 1, limit: parseInt(limit as string) || 20 };
+    // List-page options are only attached when sent, so the original callers see no change.
+    if (str(q)) opts.q = str(q);
+    if (str(tab)) opts.tab = str(tab);
+    if (str(type)) opts.type = str(type);
+    if (str(channel)) opts.channel = str(channel);
+    if (str(businessType)) opts.businessType = str(businessType);
+    if (str(sort)) opts.sort = str(sort);
+    if (light === '1' || light === 'true') opts.light = true;
+    if (counts === '1' || counts === 'true') opts.counts = true;
+    const data = await JourneyService.getAll(opts);
     res.json(data);
   } catch (err) { next(err); }
 });

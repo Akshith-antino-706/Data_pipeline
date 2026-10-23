@@ -93,6 +93,8 @@ export interface JourneySummary {
   total_conversions?: number;
   conversion_rate: string;
   nodes?: JourneyNode[];
+  /** Channels used by the journey's steps (light list rows carry this instead of `nodes`). */
+  channels?: string[];
   created_at?: string;
   updated_at?: string;
   snapshot_count?: NumLike;

@@ -92,6 +92,16 @@ describe('GET /', () => {
     expect(r.status).toBe(500);
     expect(r.body.error).toBe('boom');
   });
+  it('forwards the list-page options (search, tab, type, channel, audience, sort, light, counts) only when sent', async () => {
+    m.js.getAll.mockResolvedValue({ data: [] });
+    await get('/?q=%23328&tab=scheduled&type=always&channel=whatsapp&businessType=B2B&sort=joined&light=1&counts=1&limit=24');
+    expect(m.js.getAll).toHaveBeenCalledWith({
+      status: undefined, audience: undefined, page: 1, limit: 24,
+      q: '#328', tab: 'scheduled', type: 'always', channel: 'whatsapp', businessType: 'B2B', sort: 'joined', light: true, counts: true,
+    });
+    await get('/?q=%20%20&light=0');
+    expect(m.js.getAll).toHaveBeenLastCalledWith({ status: undefined, audience: undefined, page: 1, limit: 20 });
+  });
 });
 
 describe('GET /queue-counts', () => {

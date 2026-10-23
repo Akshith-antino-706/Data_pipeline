@@ -92,7 +92,12 @@ export const defaultMocks: Mock[] = [
   get('/api/v3/booking-affinity/customers', { total: 1, customers: [{ unified_id: 101, name: 'Aisha Khan', email: 'aisha@example.com', country: 'UAE', contact_type: 'B2C', is_bulk: false, bookings: 3, bookings_all: 3, last_booking_date: '2026-09-01', affinity_score: 8.5, service_1: 'tours' }] }),
 
   // ── Journeys ──
-  get('/api/v3/journeys', { success: true, data: journeys, total: journeys.length }),
+  get('/api/v3/journeys', {
+    success: true, data: journeys, total: journeys.length, page: 1, limit: 24,
+    counts: { all: journeys.length, active: journeys.filter(j => j.status === 'active').length, scheduled: 0, paused: 0, draft: journeys.filter(j => j.status === 'draft').length, completed: 0 },
+    summary: { total: journeys.length, active: journeys.filter(j => j.status === 'active').length, totalEntries: 0, avgConversion: 0 },
+    channels: ['email'],
+  }),
   get('/api/v3/journeys/dashboard', ok({
     generatedAt: '2026-10-19T06:00:00.000Z',
     kpis: { activeJourneys: 1, activeEntries: 200, sendsToday: 35, sendsTomorrow: 40, queuedNow: 3, openRate7d: 41.5, conversions7d: 4 },
