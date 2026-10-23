@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
@@ -136,20 +136,70 @@ describe('Contact profile page', () => {
     for (const chip of chips) expect(chip.classList.contains('ui-chip--info')).toBe(true);
   });
 
-  it('activity timeline merges bookings, GTM events and journey emails, newest first', async () => {
-    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({
-      booking_status: 'PAST_BOOKING', total_tour_bookings: 1,
-      rayna_tours: [{ bill_no: 'B1', service_name: 'Desert safari', booking_date: '01/03/2025', selling_price: '640', is_cancel: '0' }],
-    }));
-    vi.mocked(api.getContactGTMEvents).mockResolvedValue({ summary: [{ event_name: 'page_view', count: 1, total_value: '0' }], events: [{ event_name: 'page_view', page_url: 'https://x.com/dubai', created_at: '2026-05-02T10:00:00Z' }] });
-    vi.mocked(api.getContactJourneys).mockResolvedValue({ data: [{ journey_id: 7, name: 'Welcome', journey_status: 'active', entry_status: 'active', nodes: [{ node_id: 'n1', subject: 'Hi', delivered: true, sent_at: '2025-06-01T09:00:00Z' }] }] });
+  it('activity timeline is one server page, newest first, with only the kinds that exist as filters', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'PAST_BOOKING' }));
+    vi.mocked(api.getContactActivity).mockResolvedValue({
+      items: [
+        { kind: 'website', at: '2026-05-02T10:00:00Z', dateOnly: false, title: 'Page view · /dubai' },
+        { kind: 'message', at: '2025-06-01T09:00:00Z', dateOnly: false, title: 'Sent email “Hi”', sub: 'Welcome' },
+        { kind: 'booking', at: '2025-03-01T00:00:00Z', dateOnly: true, title: 'Booked Desert safari — AED 640', sub: 'Tour · Bill B1' },
+      ],
+      total: 64, page: 1, limit: 30, totalPages: 3, kinds: { website: 1, message: 60, booking: 3 },
+    });
     render(<ContactProfile />);
     const web = await screen.findByText('Page view · /dubai');
     const mail = screen.getByText('Sent email “Hi”');
     const booking = screen.getByText('Booked Desert safari — AED 640');
     expect(web.compareDocumentPosition(mail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(mail.compareDocumentPosition(booking) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(api.getContactActivity).toHaveBeenCalledWith('42', { page: 1, limit: 30, kind: 'all' });
+    // Only kinds with data get a filter pill; chats/profile are absent
+    const pills = screen.getByRole('group', { name: 'Show' });
+    expect(within(pills).getByRole('button', { name: 'Website' })).toBeTruthy();
+    expect(within(pills).queryByRole('button', { name: 'Chats' })).toBeNull();
+    expect(screen.getByText('1–30 of 64')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    await waitFor(() => expect(api.getContactActivity).toHaveBeenLastCalledWith('42', { page: 2, limit: 30, kind: 'all' }));
+    fireEvent.click(within(pills).getByRole('button', { name: 'Messages' }));
+    await waitFor(() => expect(api.getContactActivity).toHaveBeenLastCalledWith('42', { page: 1, limit: 30, kind: 'message' }));
     expect(bodyText()).not.toMatch(/NaN|undefined|Invalid Date/);
+  });
+
+  it('activity error shows a retry and never crashes the page', async () => {
+    vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'PROSPECT' }));
+    vi.mocked(api.getContactActivity).mockRejectedValueOnce(new Error('HTTP 500')).mockResolvedValue({ items: [], total: 0, page: 1, limit: 30, totalPages: 1, kinds: {} });
+    render(<ContactProfile />);
+    await screen.findByText('HTTP 500');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByText('No activity recorded for this contact yet.');
+  });
+
+  it('journeys card pages 10 at a time and searches / filters on the server', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getUnifiedContact).mockResolvedValue(contact({ booking_status: 'PROSPECT' }));
+      const row = (id: number, name: string) => ({ journey_id: id, name, journey_status: 'active', entry_status: 'completed', nodes: [] });
+      vi.mocked(api.getContactJourneys).mockResolvedValue({ data: [row(512, '22nd October - Dubai'), row(509, '16th October - Cruise')], total: 44, page: 1, limit: 10, totalPages: 5 });
+      render(<ContactProfile />);
+      await screen.findByText('22nd October - Dubai');
+      expect(screen.getByText('44 enrolled')).toBeTruthy();
+      expect(api.getContactJourneys).toHaveBeenCalledWith('42', { page: 1, limit: 10, q: '', engagement: '' });
+      expect(screen.getByText('Page 1 of 5')).toBeTruthy();
+      fireEvent.click(screen.getAllByRole('button', { name: /Next/ })[0]);
+      await waitFor(() => expect(api.getContactJourneys).toHaveBeenLastCalledWith('42', { page: 2, limit: 10, q: '', engagement: '' }));
+      // search is debounced and resets to page 1
+      vi.mocked(api.getContactJourneys).mockResolvedValue({ data: [row(509, '16th October - Cruise')], total: 1, page: 1, limit: 10, totalPages: 1 });
+      fireEvent.change(screen.getByRole('textbox', { name: 'Search journeys' }), { target: { value: 'cruise' } });
+      await waitFor(() => expect(api.getContactJourneys).toHaveBeenLastCalledWith('42', { page: 1, limit: 10, q: 'cruise', engagement: '' }));
+      await screen.findByText('1 match');
+      fireEvent.click(screen.getByRole('button', { name: 'Opened' }));
+      await waitFor(() => expect(api.getContactJourneys).toHaveBeenLastCalledWith('42', { page: 1, limit: 10, q: 'cruise', engagement: 'opened' }));
+      vi.mocked(api.getContactJourneys).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, totalPages: 1 });
+      fireEvent.click(screen.getByRole('button', { name: 'Failed' }));
+      await screen.findByText('No journeys match these filters');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('bookings tables page on the server: first page comes with the profile, later pages are fetched on demand', async () => {

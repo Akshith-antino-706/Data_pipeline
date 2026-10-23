@@ -634,8 +634,10 @@ router.post('/:id/process', async (req, res, next) => {
 // Get journey entries (real flow data)
 router.get('/:id/entries', async (req, res, next) => {
   try {
-    const { page, limit, status } = req.query as QueryParams;
-    const data = await JourneyService.getEntries(parseInt(req.params.id), { page: parseInt(page as string) || 1, limit: parseInt(limit as string) || 50, status });
+    const { page, limit, status, q } = req.query as QueryParams;
+    const data = await JourneyService.getEntries(parseInt(req.params.id), {
+      page: parseInt(page as string) || 1, limit: parseInt(limit as string) || 50, status, ...(typeof q === 'string' && q.trim() ? { q: q.trim() } : {}),
+    });
     res.json(data);
   } catch (err) { next(err); }
 });

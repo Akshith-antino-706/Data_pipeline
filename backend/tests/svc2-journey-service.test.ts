@@ -426,4 +426,26 @@ describe('getEntries includes GTM/giveaway people', () => {
     }
     expect(m.query.mock.calls[0][1]).toEqual([277, 'converted']);
   });
+
+  it('q searches name, email and phone with a parameterised ILIKE in both the count and the page', async () => {
+    m.query.mockReset();
+    m.query.mockImplementation((sql: string) => Promise.resolve({ rows: String(sql).includes('COUNT(*)') ? [{ count: '2' }] : [] }));
+    const evil = "x' OR '1'='1";
+    const r = await JourneyService.getEntries(277, { page: 1, limit: 50, status: 'active', q: evil });
+    expect(r.total).toBe(2);
+    const [[countSql, countParams], [pageSql, pageParams]] = m.query.mock.calls.map(c => [String(c[0]), c[1]]);
+    for (const sql of [countSql, pageSql]) {
+      expect(sql).toContain('uc.name ILIKE $3 OR uc.email ILIKE $3 OR uc.mobile ILIKE $3');
+      expect(sql).toContain('JOIN unified_contacts uc ON uc.id = e.customer_id');
+      expect(sql).toContain('e.status = $2');
+      expect(sql).not.toContain(evil);
+    }
+    expect(countParams).toEqual([277, 'active', `%${evil}%`]);
+    expect(pageParams).toEqual([277, 'active', `%${evil}%`, 50, 0]);
+    // a blank q is ignored and the count skips the contacts join
+    m.query.mockClear();
+    await JourneyService.getEntries(277, { q: '   ' });
+    expect(String(m.query.mock.calls[0][0])).not.toContain('JOIN unified_contacts');
+    expect(m.query.mock.calls[0][1]).toEqual([277]);
+  });
 });

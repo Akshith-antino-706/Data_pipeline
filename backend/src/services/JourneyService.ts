@@ -2625,17 +2625,24 @@ class JourneyService {
 
   // ── Journey Entries (real flow data) ────────────────────────
 
-  static async getEntries(journeyId: JourneyId, { page = 1, limit = 50, status }: { page?: number; limit?: number; status?: string } = {}) {
+  static async getEntries(journeyId: JourneyId, { page = 1, limit = 50, status, q }: { page?: number; limit?: number; status?: string; q?: string } = {}) {
     const offset = (page - 1) * limit;
     // Segment journeys keep people in journey_entries; GTM/giveaway (continuous) journeys keep
     // them in gtm_journey_entries. Read both so every journey type lists its people.
     // GTM rows are mapped to the same shape: purchased exits show as 'converted'.
     const params: unknown[] = [journeyId];
-    let statusWhere = '';
+    const where: string[] = [];
     if (status) {
       params.push(status);
-      statusWhere = `WHERE e.status = $${params.length}`;
+      where.push(`e.status = $${params.length}`);
     }
+    // `q` matches the person's name, email or phone (parameterised ILIKE, never interpolated).
+    const search = (q ?? '').trim().slice(0, 100);
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(`(uc.name ILIKE $${params.length} OR uc.email ILIKE $${params.length} OR uc.mobile ILIKE $${params.length})`);
+    }
+    const statusWhere = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const people = `
       SELECT je.entry_id::bigint AS entry_id, je.customer_id::bigint AS customer_id, je.current_node_id, je.status,
              je.entered_at, je.completed_at, je.converted_at, je.exit_reason, je.next_fire_at, je.track::text AS track
@@ -2650,7 +2657,7 @@ class JourneyService {
       FROM gtm_journey_entries g WHERE g.journey_id = $1`;
 
     const { rows: [{ count }] } = await db.query<{ count: string }>(
-      `SELECT COUNT(*) FROM (${people}) e ${statusWhere}`, params
+      `SELECT COUNT(*) FROM (${people}) e ${search ? 'JOIN unified_contacts uc ON uc.id = e.customer_id' : ''} ${statusWhere}`, params
     );
 
     const { rows } = await db.query<U1JourneyEntryListRow>(`

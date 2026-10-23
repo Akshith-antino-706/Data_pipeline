@@ -587,7 +587,7 @@ export default function SystemArchitecture() {
           ['Insights', 'Performance', '/journeys/analytics', 'Insights + per-journey table, paged, default 7 days', 'overview/insights, journeys/analytics/table'],
           ['Insights', 'Website & links', '/utm', 'UTM links, clicks and visits, link builder', 'overview/website, utm'],
           ['Insights', 'GTM & BigQuery', '/tag-manager', 'Tag snippet, live events, GA4 status', 'gtm'],
-          ['Insights', 'Reports', '/daily-report', 'Daily data report downloads', 'daily-report'],
+          ['hidden', 'Reports', '/daily-report', 'Daily data report downloads — kept but removed from the menu', 'daily-report'],
           ['Operations', 'Status center', '/data-pipeline', 'Overall health, data sources, queues, failed sends, what we hold, bookings by product, scheduled jobs', 'overview/status, rayna-sync/mapping-stats'],
           ['Operations', 'Journey monitor', '/journeys/dashboard', 'Engine and queue health', 'overview/status'],
           ['Operations', 'Message log', '/log', 'Every send with status, opens, clicks, errors; filters by channel, journey, node', 'overview/messages, send-track'],

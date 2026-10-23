@@ -5,6 +5,7 @@ import type { SourceCountRow, SegmentDailyLogCsvRow, SegmentCustomerCsvRow, User
 import type { QueryRequest } from '../types/routesCommon.js';
 import UnifiedContactService from '../services/UnifiedContactService.js';
 import UnifiedContactBuilder from '../services/UnifiedContactBuilder.js';
+import ContactActivityService from '../services/ContactActivityService.js';
 import { invalidate, cached } from '../config/cache.js';
 import { parseBusinessType } from '../utils/contactTypes.js';
 import { csvField, clampInt, MAX_PAGE } from '../utils/validate.js';
@@ -318,9 +319,46 @@ router.get('/:id/recommendations', async (req: QueryRequest, res: Response, next
 });
 
 // GET /:id/journeys — journeys this contact is enrolled in (via journey_entries)
+// Optional ?page=&limit= — when given, one page of journeys (newest enrolment first) plus total/
+// totalPages, and node engagement is read only for the journeys on that page. Without them the
+// full list is returned as before.
 router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
     const db = (await import('../config/database.js')).default;
+    const paged = req.query.page !== undefined || req.query.limit !== undefined;
+    const limit = clampInt(req.query.limit, 10, 100);
+    const page = clampInt(req.query.page, 1, MAX_PAGE);
+    // ?q= matches the journey name or exact #id; ?engagement= keeps only journeys where THIS contact
+    // had an email with that outcome. Both are parameterised — nothing from the query is interpolated.
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().replace(/^#/, '').slice(0, 100) : '';
+    const engagement = typeof req.query.engagement === 'string' ? req.query.engagement : '';
+    const ENGAGEMENT_SQL: Record<string, string> = {
+      sent: "(e.sent_at IS NOT NULL OR e.status IN ('sent','opened','clicked'))",
+      delivered: "(e.sent_at IS NOT NULL OR e.status IN ('sent','opened','clicked'))",
+      opened: 'e.opened_at IS NOT NULL',
+      clicked: 'e.clicked_at IS NOT NULL',
+      failed: "e.status = 'failed'",
+    };
+    if (engagement && !ENGAGEMENT_SQL[engagement]) {
+      return res.status(400).json({ success: false, error: `engagement must be one of ${Object.keys(ENGAGEMENT_SQL).join(', ')}` });
+    }
+    const params: unknown[] = [req.params.id];
+    const where: string[] = ['je.customer_id = $1'];
+    if (q) {
+      params.push(`%${q}%`, q);
+      where.push(`(jf.name ILIKE $${params.length - 1} OR jf.journey_id::text = $${params.length})`);
+    }
+    if (engagement) {
+      where.push(`EXISTS (SELECT 1 FROM email_send_log e WHERE e.unified_id = $1 AND e.journey_id = je.journey_id AND ${ENGAGEMENT_SQL[engagement]})`);
+    }
+    const whereSql = where.join(' AND ');
+    let total: number | null = null;
+    if (paged) {
+      const { rows: [c] } = await db.query<{ total: string }>(
+        `SELECT COUNT(*)::text AS total FROM journey_entries je JOIN journey_flows jf ON jf.journey_id = je.journey_id WHERE ${whereSql}`, params);
+      total = parseInt(c?.total ?? '0', 10) || 0;
+    }
+    const pageParams = paged ? [...params, limit, (page - 1) * limit] : params;
     const { rows } = await db.query<ContactJourneyRow>(`
       SELECT
         jf.journey_id,
@@ -333,9 +371,11 @@ router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextF
         je.completed_at
       FROM journey_entries je
       JOIN journey_flows jf ON jf.journey_id = je.journey_id
-      WHERE je.customer_id = $1
+      WHERE ${whereSql}
       ORDER BY je.entered_at DESC NULLS LAST
-    `, [req.params.id]);
+      ${paged ? `LIMIT $${params.length + 1} OFFSET $${params.length + 2}` : ''}
+    `, pageParams);
+    const pageJourneyIds = rows.map(r => Number(r.journey_id)).filter(n => Number.isFinite(n));
 
     // Per-node email engagement (delivered / opened / clicked) for THIS contact,
     // pulled from email_send_log keyed by unified_id + journey_id + node_id.
@@ -354,10 +394,10 @@ router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextF
         MIN(opened_at)                                                          AS opened_at,
         MIN(clicked_at)                                                         AS clicked_at
       FROM email_send_log
-      WHERE unified_id = $1 AND journey_id IS NOT NULL
+      WHERE unified_id = $1 AND journey_id IS NOT NULL ${paged ? 'AND journey_id = ANY($2::int[])' : ''}
       GROUP BY journey_id, node_id
       ORDER BY journey_id, MIN(sent_at) NULLS LAST
-    `, [req.params.id]);
+    `, paged ? [req.params.id, pageJourneyIds] : [req.params.id]);
 
     const nodesByJourney: Record<string, NodeEngagement[]> = {};
     for (const n of nodeRows) {
@@ -376,7 +416,20 @@ router.get('/:id/journeys', async (req: QueryRequest, res: Response, next: NextF
     }
     for (const j of rows) j.nodes = nodesByJourney[j.journey_id] || [];
 
+    if (total !== null) return res.json({ success: true, data: rows, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) });
     res.json({ success: true, data: rows });
+  } catch (err) { next(err); }
+});
+
+// GET /:id/activity?page=1&limit=30&kind=message — one page of the merged activity timeline
+// (emails, bookings, website events, chats, profile milestones), newest first, sorted on the server.
+router.get('/:id/activity', async (req: QueryRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await ContactActivityService.getActivity(req.params.id, {
+      page: clampInt(req.query.page, 1, MAX_PAGE), limit: clampInt(req.query.limit, 30, 100),
+      kind: typeof req.query.kind === 'string' ? req.query.kind : undefined,
+    });
+    res.json({ success: true, ...result });
   } catch (err) { next(err); }
 });
 

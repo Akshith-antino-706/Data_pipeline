@@ -224,3 +224,18 @@
   .filter select { flex: 1; }
   .tip { left: auto; right: -8px; }
 }
+
+/* Loading skeleton — mirrors header → tabs → flow canvas */
+.skelTabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.skelTab { font-size: 14px; font-weight: 600; color: var(--ink3); opacity: .55; }
+.skelCanvas { min-height: 420px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.skelSteps { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.skelNote { font-size: 13px; color: var(--ink3); }
+
+/* People tab: search + status filter */
+.peopleTools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.peopleSearch { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink3); min-width: 240px; }
+.peopleSearch:focus-within { outline: 2px solid var(--gold); outline-offset: 1px; }
+.peopleSearchInput { flex: 1; min-width: 0; font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--ink); outline: none; }
+.peopleSearchClear { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer; }
+.peopleSearchClear:hover { background: var(--sunken); color: var(--ink); }

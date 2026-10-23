@@ -126,7 +126,10 @@ describe('Journey detail', () => {
     vi.mocked(api.getJourney).mockReturnValue(new Promise(() => {}));
     renderPage();
     await waitFor(() => expect(screen.getByLabelText('Loading journey')).toBeTruthy());
-    expect(bodyText()).toContain('People joined');
+    // Mirrors the real layout: section tabs and the flow canvas, not an unrelated KPI grid.
+    for (const t of ['Flow', 'Overview', 'People', 'Advanced']) expect(bodyText()).toContain(t);
+    expect(bodyText()).toContain('Loading the journey…');
+    expect(bodyText()).not.toContain('People joined');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
@@ -357,6 +360,24 @@ describe('Journey detail', () => {
     fireEvent.change(screen.getByLabelText('Filter people by status'), { target: { value: 'completed' } });
     await waitFor(() => expect(api.getJourneyEntries).toHaveBeenLastCalledWith(5, { page: 1, limit: 50, status: 'completed' }));
     expect(await screen.findByText('Nobody matches this filter')).toBeTruthy();
+  });
+
+  it('people search sends q to the API (with the status filter), pages keep it, and clear resets', async () => {
+    await openDetail();
+    openSection(/People/);
+    await screen.findByText('Asha');
+    const box = screen.getByRole('textbox', { name: 'Search people' });
+    fireEvent.change(box, { target: { value: '  vaibhav ' } });
+    fireEvent.submit(box.closest('form')!);
+    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenLastCalledWith(5, { page: 1, limit: 50, q: 'vaibhav' }));
+    fireEvent.change(screen.getByLabelText('Filter people by status'), { target: { value: 'active' } });
+    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenLastCalledWith(5, { page: 1, limit: 50, status: 'active', q: 'vaibhav' }));
+    vi.mocked(api.getJourneyEntries).mockResolvedValue({ data: [], total: 0 });
+    fireEvent.change(box, { target: { value: 'zzz' } });
+    fireEvent.blur(box);
+    expect(await screen.findByText('Nobody matches “zzz”')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear people search' }));
+    await waitFor(() => expect(api.getJourneyEntries).toHaveBeenLastCalledWith(5, { page: 1, limit: 50, status: 'active' }));
   });
 
   it('people paging asks for the next page', async () => {

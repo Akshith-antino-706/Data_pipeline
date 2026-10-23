@@ -50,7 +50,8 @@ const NAV_GROUPS: NavGroup[] = [
       // { href: '/campaigns', icon: Megaphone, label: 'Campaign results' },
       { href: '/utm', icon: Globe, label: 'Website & links' },
       { href: '/tag-manager', icon: Code, label: 'GTM & BigQuery' },
-      { href: '/daily-report', icon: Download, label: 'Reports' },
+      // Hidden from the menu for now (page kept at /daily-report). Uncomment to bring it back.
+      // { href: '/daily-report', icon: Download, label: 'Reports' },
     ],
   },
   {

@@ -441,7 +441,34 @@ export const getUnifiedContacts = (params: QueryParams = {}) => {
 /** `bookings` = how many latest bookings per type to embed (server default 20; the profile pages the rest). */
 export const getUnifiedContact = (id: Id, opts: { bookings?: number } = {}) =>
   request(`/api/v3/unified-contacts/${id}${opts.bookings ? `?${toQuery({ bookings: opts.bookings })}` : ''}`);
-export const getContactJourneys = (id: Id) => request(`/api/v3/unified-contacts/${id}/journeys`);
+export type ContactJourneyEngagement = 'sent' | 'opened' | 'clicked' | 'failed';
+export interface ContactJourneyNode {
+  node_id: string; label?: string | null; subject?: string | null; day_number?: number | null;
+  delivered?: boolean; opened?: boolean; clicked?: boolean; sent_at?: string | null; opened_at?: string | null; clicked_at?: string | null;
+}
+export interface ContactJourneyRow {
+  journey_id: string | number; name?: string; journey_status: string; entry_status: string;
+  exit_reason?: string | null; current_node_id?: string | null; entered_at?: string | null; completed_at?: string | null; nodes?: ContactJourneyNode[];
+}
+export interface ContactJourneysPage { data: ContactJourneyRow[]; total?: number; page?: number; limit?: number; totalPages?: number }
+/** Journeys this contact is enrolled in. With `page`/`limit` the server pages (10 per page) and
+ *  `q` (name or #id) / `engagement` (sent | opened | clicked | failed) narrow the list. */
+export const getContactJourneys = (id: Id, opts: { page?: number; limit?: number; q?: string; engagement?: ContactJourneyEngagement | '' } = {}) => {
+  const qs = toQuery(Object.entries(opts).filter(([, v]) => v !== undefined && v !== '') as [string, unknown][]);
+  return request<ContactJourneysPage>(`/api/v3/unified-contacts/${id}/journeys${qs ? `?${qs}` : ''}`);
+};
+
+export type ContactActivityKind = 'booking' | 'message' | 'website' | 'chat' | 'profile';
+export interface ContactActivityItem { kind: ContactActivityKind; at: string; dateOnly: boolean; title: string; sub?: string }
+export interface ContactActivityPage {
+  items: ContactActivityItem[]; total: number; page: number; limit: number; totalPages: number;
+  kinds: Partial<Record<ContactActivityKind, number>>;
+}
+/** One page of the contact's activity timeline, merged and sorted on the server (30 per page). */
+export const getContactActivity = (id: Id, opts: { page?: number; limit?: number; kind?: ContactActivityKind | 'all' } = {}) => {
+  const qs = toQuery(Object.entries({ page: opts.page ?? 1, limit: opts.limit ?? 30, ...(opts.kind && opts.kind !== 'all' ? { kind: opts.kind } : {}) }) as [string, unknown][]);
+  return request<ContactActivityPage>(`/api/v3/unified-contacts/${id}/activity?${qs}`);
+};
 export type ContactBookingType = 'tours' | 'packages' | 'hotels' | 'visas' | 'others' | 'flights';
 export interface ContactBookingsPage { rows: Record<string, string>[]; total: number; page: number; limit: number; totalPages: number }
 /** One page (20 by default) of a contact's bookings of one type; the profile loads more only when asked. */

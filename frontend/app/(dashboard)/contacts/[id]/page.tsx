@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity, getContactBookings } from '@/lib/api';
-import type { ContactBookingType } from '@/lib/api';
+import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity, getContactBookings, getContactActivity } from '@/lib/api';
+import type { ContactBookingType, ContactJourneyEngagement, ContactJourneyRow, ContactActivityPage, ContactActivityKind } from '@/lib/api';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
 import {
   ChevronDown, ChevronUp, ExternalLink, Check, Loader2, Send, Eye, MousePointerClick,
-  ShoppingBag, Mail, Globe, MessageCircle, UserPlus, Pencil,
+  ShoppingBag, Mail, Globe, MessageCircle, UserPlus, Pencil, Search, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Chip, StatusChip, Field, Input, Select, Skeleton, Table, Tabs, EmptyState } from '@/components/ui';
@@ -44,15 +44,7 @@ interface ContactDetail {
 }
 interface GtmSummaryRow { event_name: string; count: number; total_value: string; last_seen?: string }
 interface GtmData { summary?: GtmSummaryRow[]; events?: TableRow[] }
-interface JourneyNodeStat {
-  node_id: string; label?: string; subject?: string; day_number?: number;
-  delivered?: boolean; opened?: boolean; clicked?: boolean;
-  sent_at?: string; opened_at?: string; clicked_at?: string;
-}
-interface ContactJourney {
-  journey_id: string | number; name?: string; journey_status: string; entry_status: string;
-  exit_reason?: string; current_node_id?: string; nodes?: JourneyNodeStat[];
-}
+type ContactJourney = ContactJourneyRow;
 interface AiProduct { product_id: string | number; url?: string; image?: string; name?: string; category?: string; sale_price?: number | string | null }
 interface AiRecommendation {
   recommendationType: string; computedAt?: string; source?: string;
@@ -67,7 +59,7 @@ interface ContactAffinity {
   products: AffinityProductRow[];
 }
 
-type TimelineKind = 'booking' | 'message' | 'website' | 'chat' | 'profile';
+type TimelineKind = ContactActivityKind;
 interface TimelineItem { at: Date; dateOnly: boolean; kind: TimelineKind; title: string; sub?: string }
 type ProfileTab = 'activity' | 'bookings' | 'website' | 'messages';
 
@@ -77,7 +69,6 @@ function parseDate(d: DateInput) {
   const dt = ddmmyyyy ? new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`) : new Date(d);
   return isNaN(dt.getTime()) ? null : dt;
 }
-function isDateOnly(d: DateInput) { return /^(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})$/.test(String(d ?? '')); }
 function formatDate(d: DateInput) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function formatDateTime(d: DateInput) { const dt = parseDate(d); return dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
 function formatAED(n: string | number | null | undefined) { return `AED ${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`; }
@@ -104,7 +95,8 @@ const JOURNEY_STATUS: Record<string, { tone: ChipTone; label: string }> = {
   active: { tone: 'ok', label: 'Active' }, draft: { tone: 'mute', label: 'Draft' },
   paused: { tone: 'warn', label: 'Paused' }, completed: { tone: 'info', label: 'Completed' },
 };
-const PAGE = 30;
+const ACTIVITY_PAGE = 30;
+const JOURNEYS_PAGE = 10;
 
 export default function ContactProfile() {
   const { id } = useParams<{ id: string }>();
@@ -114,8 +106,20 @@ export default function ContactProfile() {
   const [contactLoading, setContactLoading] = useState(true);
   const [gtmData, setGtmData] = useState<GtmData | null>(null);
   const [gtmLoading, setGtmLoading] = useState(true);
+  // Journeys card — paged (10 per page), searchable, filterable by this contact's email outcome.
   const [journeys, setJourneys] = useState<ContactJourney[]>([]);
+  const [journeysTotal, setJourneysTotal] = useState(0);
+  const [journeysPages, setJourneysPages] = useState(1);
+  const [journeysPage, setJourneysPage] = useState(1);
+  const [journeyQuery, setJourneyQuery] = useState('');
+  const [journeyQ, setJourneyQ] = useState('');
+  const [journeyEngagement, setJourneyEngagement] = useState<ContactJourneyEngagement | ''>('');
   const [journeysLoading, setJourneysLoading] = useState(true);
+  // Activity timeline — one server page (30) at a time.
+  const [activity, setActivity] = useState<ContactActivityPage | null>(null);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [activityPage, setActivityPage] = useState(1);
   const [aiRec, setAiRec] = useState<AiRecommendation | null>(null);
   const [affinity, setAffinity] = useState<ContactAffinity | null>(null);
   const [expandedJourneys, setExpandedJourneys] = useState(() => new Set<string | number>());
@@ -125,7 +129,6 @@ export default function ContactProfile() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [tab, setTab] = useState<ProfileTab>('activity');
   const [kind, setKind] = useState<TimelineKind | 'all'>('all');
-  const [shown, setShown] = useState(PAGE);
 
   useEffect(() => {
     if (!id) return;
@@ -141,12 +144,6 @@ export default function ContactProfile() {
       .catch(() => setGtmData(null))
       .finally(() => setGtmLoading(false));
 
-    setJourneysLoading(true);
-    (getContactJourneys(id) as Promise<{ data?: ContactJourney[] }>)
-      .then(res => setJourneys(res.data || []))
-      .catch(() => setJourneys([]))
-      .finally(() => setJourneysLoading(false));
-
     // Cached AI recommendation — the card is hidden when there is none.
     (getContactRecommendations(id) as Promise<{ recommendation?: AiRecommendation } | null>)
       .then(res => setAiRec(res?.recommendation || null))
@@ -157,6 +154,38 @@ export default function ContactProfile() {
       .then(res => setAffinity(res?.customer ? res : null))
       .catch(() => setAffinity(null));
   }, [id]);
+
+  // Debounce the journey search box so we don't hit the API on every keystroke.
+  useEffect(() => { const t = setTimeout(() => setJourneyQ(journeyQuery.trim()), 250); return () => clearTimeout(t); }, [journeyQuery]);
+  useEffect(() => { setJourneysPage(1); }, [journeyQ, journeyEngagement]);
+  useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    setJourneysLoading(true);
+    getContactJourneys(id, { page: journeysPage, limit: JOURNEYS_PAGE, q: journeyQ, engagement: journeyEngagement })
+      .then(res => {
+        if (!alive) return;
+        setJourneys(res?.data || []);
+        setJourneysTotal(typeof res?.total === 'number' ? res.total : (res?.data || []).length);
+        setJourneysPages(typeof res?.totalPages === 'number' ? res.totalPages : 1);
+      })
+      .catch(() => { if (alive) { setJourneys([]); setJourneysTotal(0); setJourneysPages(1); } })
+      .finally(() => { if (alive) setJourneysLoading(false); });
+    return () => { alive = false; };
+  }, [id, journeysPage, journeyQ, journeyEngagement]);
+
+  const loadActivity = useCallback(() => {
+    if (!id) return () => {};
+    let alive = true;
+    setActivityLoading(true);
+    setActivityError(null);
+    getContactActivity(id, { page: activityPage, limit: ACTIVITY_PAGE, kind })
+      .then(res => { if (alive) setActivity(res ?? null); })
+      .catch(err => { if (alive) { setActivity(null); setActivityError(err instanceof Error ? err.message : 'Could not load activity'); } })
+      .finally(() => { if (alive) setActivityLoading(false); });
+    return () => { alive = false; };
+  }, [id, activityPage, kind]);
+  useEffect(() => loadActivity(), [loadActivity]);
 
   if (contactLoading) return <ProfileSkeleton />;
   if (!contact) return (
@@ -217,40 +246,13 @@ export default function ContactProfile() {
   const sources = (contact.sources || '').split(',').map(x => x.trim()).filter(Boolean);
   const hasMessages = Boolean(contact.first_msg_text || contact.last_msg_text);
 
-  // ── Activity timeline: merged from data the APIs already return, newest first ──
-  const timeline: TimelineItem[] = [];
-  const push = (when: DateInput, kindKey: TimelineKind, title: string, sub?: string) => {
-    const at = parseDate(when);
-    if (at) timeline.push({ at, dateOnly: isDateOnly(when), kind: kindKey, title, sub });
-  };
-  types.forEach(t => (t.rows || []).forEach(r => {
-    const price = parseFloat(r.selling_price) > 0 ? ` — ${formatAED(r.selling_price)}` : '';
-    const sub = [t.label.replace(/s$/, ''), r.bill_no && `Bill ${r.bill_no}`, r.travel_date && `travel ${formatDate(r.travel_date)}`, r.is_cancel === '1' && 'Cancelled'].filter(Boolean).join(' · ');
-    push(r.booking_date, 'booking', `Booked ${r.service_name || t.label.toLowerCase()}${price}`, sub);
-  }));
-  journeys.forEach(j => (j.nodes || []).forEach(n => {
-    const what = n.subject || n.label || n.node_id;
-    const jn = j.name || `Journey ${j.journey_id}`;
-    const step = n.day_number ? ` · day ${n.day_number}` : '';
-    if (n.sent_at) push(n.sent_at, 'message', `Sent email “${what}”`, `${jn}${step}`);
-    if (n.opened_at) push(n.opened_at, 'message', `Opened email “${what}”`, `${jn}${step}`);
-    if (n.clicked_at) push(n.clicked_at, 'message', `Clicked a link in “${what}”`, `${jn}${step}`);
-  }));
-  (gtmData?.events || []).forEach(e => {
-    const page = e.page_title || pathOf(e.page_url);
-    const sub = [page && e.page_title ? pathOf(e.page_url) : '', parseFloat(e.event_value) > 0 ? formatAED(e.event_value) : '', e.device_type, e.city, e.utm_source && `from ${e.utm_source}`].filter(Boolean).join(' · ');
-    push(e.created_at, 'website', `${humanize(e.event_name || 'Website event')}${page ? ` · ${page}` : ''}`, sub || undefined);
-  });
-  if (contact.first_chat_at) push(contact.first_chat_at, 'chat', 'First chat', contact.first_msg_text || contact.chat_departments);
-  if (contact.last_chat_at && contact.last_chat_at !== contact.first_chat_at) push(contact.last_chat_at, 'chat', 'Latest chat', contact.last_msg_text || contact.chat_departments);
-  if (contact.created_at) push(contact.created_at, 'profile', 'Contact created', sources.length ? `From ${sources.join(', ')}` : undefined);
-  if (contact.first_seen_at && contact.first_seen_at !== contact.created_at) push(contact.first_seen_at, 'profile', 'First seen');
-  timeline.sort((a, b) => b.at.getTime() - a.at.getTime());
-  const kindsPresent = new Set(timeline.map(t => t.kind));
-  const visibleTimeline = timeline.filter(t => kind === 'all' || t.kind === kind);
+  const activityItems: TimelineItem[] = (activity?.items ?? []).map(it => ({ at: new Date(it.at), dateOnly: it.dateOnly, kind: it.kind, title: it.title, sub: it.sub }))
+    .filter(it => !Number.isNaN(it.at.getTime()));
+  const activityTotal = activity?.total ?? 0;
+  const kindsPresent = new Set<TimelineKind>((Object.entries(activity?.kinds ?? {}) as [TimelineKind, number][]).filter(([, n]) => n > 0).map(([k]) => k));
 
   const tabs: { key: ProfileTab; label: ReactNode }[] = [
-    { key: 'activity', label: <>Activity {timeline.length > 0 && <Chip className={s.miniChip}>{timeline.length}</Chip>}</> },
+    { key: 'activity', label: <>Activity {activityTotal > 0 && <Chip className={s.miniChip}>{activityTotal}</Chip>}</> },
     { key: 'bookings', label: <>Bookings <Chip className={s.miniChip}>{totalBookings}</Chip></> },
     { key: 'website', label: <>Website {gtmTotal > 0 && <Chip className={s.miniChip}>{gtmTotal}</Chip>}</> },
     ...(hasMessages ? [{ key: 'messages' as const, label: 'Chat messages' }] : []),
@@ -360,12 +362,29 @@ export default function ContactProfile() {
           <section className={s.card} aria-labelledby="cp-journeys">
             <div className={s.cardHead}>
               <h2 id="cp-journeys" className={s.cardTitle}>Journeys</h2>
-              {!journeysLoading && journeys.length > 0 && <span className={s.help}>{journeys.length} enrolled</span>}
+              {!journeysLoading && journeysTotal > 0 && <span className={s.help}>{journeysTotal} {journeyQ || journeyEngagement ? 'match' : 'enrolled'}</span>}
             </div>
-            {journeysLoading ? (
+            <div className={s.journeyTools}>
+              <div className={s.journeySearch}>
+                <Search size={13} aria-hidden="true" />
+                <input className={s.journeySearchInput} value={journeyQuery} onChange={e => setJourneyQuery(e.target.value)}
+                  placeholder="Search journey name or #id" aria-label="Search journeys" />
+                {journeyQuery && (
+                  <button type="button" className={s.journeySearchClear} aria-label="Clear journey search" onClick={() => setJourneyQuery('')}><X size={12} /></button>
+                )}
+              </div>
+              <div role="group" aria-label="Email outcome" className={s.pills}>
+                {([['', 'All'], ['sent', 'Sent'], ['opened', 'Opened'], ['clicked', 'Clicked'], ['failed', 'Failed']] as [ContactJourneyEngagement | '', string][]).map(([key, label]) => (
+                  <button key={key || 'all'} type="button" aria-pressed={journeyEngagement === key}
+                    className={`${s.pill} ${journeyEngagement === key ? s.pillOn : ''}`}
+                    onClick={() => setJourneyEngagement(key)}>{label}</button>
+                ))}
+              </div>
+            </div>
+            {journeysLoading && journeys.length === 0 ? (
               <><Skeleton height={44} /><Skeleton height={44} /></>
             ) : journeys.length === 0 ? (
-              <span className={s.help}>Not enrolled in any journey</span>
+              <span className={s.help}>{journeyQ || journeyEngagement ? 'No journeys match these filters' : 'Not enrolled in any journey'}</span>
             ) : journeys.map(j => {
               const js = JOURNEY_STATUS[j.journey_status] || { tone: 'mute' as const, label: humanize(j.journey_status || '—') };
               const entry = ({
@@ -425,6 +444,9 @@ export default function ContactProfile() {
                 </div>
               );
             })}
+            {journeysPages > 1 && (
+              <SegmentPager page={journeysPage} totalPages={journeysPages} onPage={p => setJourneysPage(p)} />
+            )}
           </section>
 
           {contact.total_chats > 0 && (
@@ -458,21 +480,27 @@ export default function ContactProfile() {
                   {KIND_FILTERS.filter(f => f.key === 'all' || kindsPresent.has(f.key)).map(f => (
                     <button key={f.key} type="button" aria-pressed={kind === f.key}
                       className={`${s.pill} ${kind === f.key ? s.pillOn : ''}`}
-                      onClick={() => { setKind(f.key); setShown(PAGE); }}>{f.label}</button>
+                      onClick={() => { setKind(f.key); setActivityPage(1); }}>{f.label}</button>
                   ))}
                 </div>
               </div>
-              {(gtmLoading || journeysLoading) && timeline.length === 0 ? (
-                <><Skeleton height={36} /><Skeleton height={36} /></>
-              ) : visibleTimeline.length === 0 ? (
+              {activityError ? (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '12px 0' }}>
+                  <span className={s.help}>{activityError}</span>
+                  <Button size="sm" onClick={() => loadActivity()}>Try again</Button>
+                </div>
+              ) : activityLoading && activityItems.length === 0 ? (
+                <div aria-busy="true"><Skeleton height={36} /><Skeleton height={36} /><Skeleton height={36} /></div>
+              ) : activityItems.length === 0 ? (
                 <span className={s.help} style={{ padding: '12px 0' }}>No activity recorded for this contact yet.</span>
               ) : (
-                <Timeline items={visibleTimeline.slice(0, shown)} />
+                <div style={{ opacity: activityLoading ? 0.6 : 1 }}><Timeline items={activityItems} /></div>
               )}
-              {visibleTimeline.length > shown && (
-                <Button size="sm" variant="ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setShown(n => n + PAGE)}>
-                  Show older activity ({visibleTimeline.length - shown} more)
-                </Button>
+              {activity && activity.totalPages > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingTop: 8 }}>
+                  <span className={s.help}>{Math.min((activity.page - 1) * activity.limit + 1, activity.total)}–{Math.min(activity.page * activity.limit, activity.total)} of {activity.total}</span>
+                  <SegmentPager page={activity.page} totalPages={activity.totalPages} onPage={p => setActivityPage(p)} />
+                </div>
               )}
             </div>
           )}

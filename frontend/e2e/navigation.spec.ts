@@ -13,7 +13,6 @@ const PAGES: { label: string; href: string }[] = [
   { label: 'Performance', href: '/journeys/analytics' },
   { label: 'Website & links', href: '/utm' },
   { label: 'GTM & BigQuery', href: '/tag-manager' },
-  { label: 'Reports', href: '/daily-report' },
   { label: 'Status center', href: '/data-pipeline' },
   { label: 'Journey monitor', href: '/journeys/dashboard' },
   { label: 'Message log', href: '/log' },

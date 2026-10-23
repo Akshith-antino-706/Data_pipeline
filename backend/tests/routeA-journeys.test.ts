@@ -384,6 +384,8 @@ describe('simple pass-through reads', () => {
     m.js.getEntries.mockResolvedValue({ entries: [] });
     await get('/2/entries?page=2&limit=x&status=active');
     expect(m.js.getEntries).toHaveBeenCalledWith(2, { page: 2, limit: 50, status: 'active' });
+    await get('/2/entries?q=%20vaibhav%20');
+    expect(m.js.getEntries).toHaveBeenLastCalledWith(2, { page: 1, limit: 50, status: undefined, q: 'vaibhav' });
   });
   it('GET /:id/node-breakdown 404 when missing', async () => {
     m.js.getJourneyNodeBreakdown.mockResolvedValue(null);

@@ -896,13 +896,16 @@ export default function Journeys() {
     snapshotPollRef.current = setTimeout(tick, 2000);
   }, [loadData]);
 
-  const loadEntries = useCallback(async (journeyId: number | null, page = 1, status = '') => {
+  const [entriesQuery, setEntriesQuery] = useState('');
+  const loadEntries = useCallback(async (journeyId: number | null, page = 1, status = '', q = '') => {
     setEntriesLoading(true);
     setEntriesError(false);
     setEntriesStatusFilter(status);
+    setEntriesQuery(q);
     try {
-      const params: { page: number; limit: number; status?: string } = { page, limit: 50 };
+      const params: { page: number; limit: number; status?: string; q?: string } = { page, limit: 50 };
       if (status) params.status = status;
+      if (q.trim()) params.q = q.trim();
       const res = await getJourneyEntries(journeyId!, params) as ApiData<JourneyEntry[]>;
       setJourneyEntries(res.data || []);
       setEntriesTotal(res.total || 0);
@@ -1764,7 +1767,8 @@ export default function Journeys() {
             onDelete={() => setConfirmAction('delete')}
             onEditSteps={() => { changeSection('flow'); setFlowEditMode(true); }}
             onOpenTab={tab => { changeSection(tab === 'entries' ? 'people' : 'advanced'); setActiveTab(tab); if (tab === 'entries' && journeyEntries.length === 0) loadEntries(selected, 1, entriesStatusFilter); if (tab === 'analytics') loadNodeAnalytics(selected); }}
-            onEntriesQuery={(page, status) => loadEntries(selected, page, status)}
+            onEntriesQuery={(page, status, q) => loadEntries(selected, page, status, q ?? entriesQuery)}
+            entriesQuery={entriesQuery}
             onPreviewNode={node => { const tpl = getNodeTemplate(node); if (tpl) void previewNode(node, tpl); }}
             onRetryBlocked={nodeId => { void retryBlocked(nodeId); }}
             onLoadEntries={() => loadEntries(selected, 1, '')}

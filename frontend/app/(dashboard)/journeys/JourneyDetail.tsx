@@ -8,8 +8,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft, BarChart3, Activity, Bell, ChevronRight, Clock, Copy, Edit3, Eye, Flag, GitBranch, Globe, Info,
   LogOut, Mail, MessageCircle, MessageSquare, MoreHorizontal, Pause, Play, RefreshCw, Settings, Smartphone,
-  Sparkles, Split, Trash2, Users, X,
-} from 'lucide-react';
+  Sparkles, Split, Trash2, Users, X, Search as SearchIcon } from 'lucide-react';
 import { Button, Card, Chip, StatusChip, EmptyState, ErrorState, Select, Skeleton, Table, Tabs } from '@/components/ui';
 import type { ChipTone, TabItem } from '@/components/ui';
 import type {
@@ -216,34 +215,57 @@ const DOT_CLASS: Record<ChipTone, string> = {
 };
 
 // ── Loading skeleton ───────────────────────────────────────────
-const KPI_LABELS = ['People joined', 'In progress', 'Finished', 'Booked'];
-
+// Same shape as the loaded page: one header line (back · title · status · summary · actions),
+// the section tabs, then the Flow tab's canvas with a few step cards.
 export function JourneyDetailSkeleton({ children }: { children?: ReactNode }) {
   return (
     <div className={styles.page} aria-busy="true" aria-label="Loading journey">
       {children}
-      <div className={styles.headSkel}>
-        <Skeleton width="min(320px, 70%)" height={24} />
-        <Skeleton width="min(260px, 50%)" height={14} />
+      <div className={styles.header}>
+        <Skeleton width={36} height={36} radius={10} />
+        <div className={styles.titleBlock}>
+          <Skeleton width="min(280px, 50%)" height={26} />
+          <Skeleton width={84} height={24} radius={999} />
+          <Skeleton width="min(260px, 30%)" height={14} />
+        </div>
+        <div className={styles.actions}>
+          <Skeleton width={88} height={32} radius={8} />
+          <Skeleton width={72} height={32} radius={8} />
+          <Skeleton width={84} height={32} radius={8} />
+        </div>
       </div>
-      <Skeleton width={240} height={30} />
-      <div className={styles.overview}>
-        <Card className={styles.col}>
-          <div className={styles.kpis}>
-            {KPI_LABELS.map(l => (
-              <div key={l} className={styles.kpi}>
-                <span className={styles.kpiLabel}>{l}</span>
-                <Skeleton width={64} height={24} />
-              </div>
-            ))}
-          </div>
-          <div className={styles.skelList}>{[0, 1, 2, 3].map(i => <Skeleton key={i} height={8} radius={4} />)}</div>
-        </Card>
-        <Card className={styles.col}>
-          <div className={styles.skelList}>{[0, 1, 2, 3].map(i => <Skeleton key={i} height={36} radius={8} />)}</div>
-        </Card>
+      <div className={styles.skelTabs}>
+        {['Flow', 'Overview', 'People', 'Advanced'].map(t => <span key={t} className={styles.skelTab}>{t}</span>)}
+      </div>
+      <div className={styles.skelCanvas}>
+        <div className={styles.skelSteps}>
+          <Skeleton width={220} height={56} radius={12} />
+          <Skeleton width={2} height={28} />
+          <Skeleton width={220} height={56} radius={12} />
+          <Skeleton width={2} height={28} />
+          <Skeleton width={220} height={56} radius={12} />
+        </div>
+        <span className={styles.skelNote}>Loading the journey…</span>
       </div>
     </div>
+  );
+}
+
+// ── People search (name, email or phone) ───────────────────────
+function PeopleSearch({ value, onSearch }: { value: string; onSearch: (q: string) => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => { setText(value); }, [value]);
+  const submit = () => { if (text.trim() !== value) onSearch(text.trim()); };
+  return (
+    <form className={styles.peopleSearch} role="search" onSubmit={e => { e.preventDefault(); submit(); }}>
+      <SearchIcon size={13} aria-hidden="true" />
+      <input className={styles.peopleSearchInput} value={text} onChange={e => setText(e.target.value)} onBlur={submit}
+        placeholder="Search name, email or phone" aria-label="Search people" />
+      {text && (
+        <button type="button" className={styles.peopleSearchClear} aria-label="Clear people search"
+          onClick={() => { setText(''); if (value) onSearch(''); }}><X size={12} /></button>
+      )}
+    </form>
   );
 }
 
@@ -274,6 +296,8 @@ export interface JourneyDetailOverviewProps {
   entriesError: boolean;
   entriesPage: number;
   entriesStatus: string;
+  /** Current people search (name, email or phone). */
+  entriesQuery?: string;
   starting: boolean;
   suggestLoading: boolean;
   previewLoading: boolean;
@@ -302,7 +326,7 @@ export interface JourneyDetailOverviewProps {
   onLoadEntries: () => void;
   /** Loads the delivery report (sent / opened / clicked / failed) — a read call the Analytics tab already makes. */
   onLoadDelivery: () => void;
-  onEntriesQuery: (page: number, status: string) => void;
+  onEntriesQuery: (page: number, status: string, q?: string) => void;
 }
 
 type FunnelTone = 'people' | 'messages' | 'outcome';
@@ -604,12 +628,15 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
       className={styles.peopleCard}
       title={`Who is in this journey${p.entriesTotal > 0 ? ` (${fmtNum(p.entriesTotal)} ${p.entriesTotal === 1 ? 'person' : 'people'})` : ''}`}
       actions={
-        <label className={styles.filter}>
-          <span>Show</span>
-          <Select aria-label="Filter people by status" value={p.entriesStatus} onChange={e => p.onEntriesQuery(1, e.target.value)}>
-            {STATUS_FILTERS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-          </Select>
-        </label>
+        <div className={styles.peopleTools}>
+          <PeopleSearch value={p.entriesQuery ?? ''} onSearch={q => p.onEntriesQuery(1, p.entriesStatus, q)} />
+          <label className={styles.filter}>
+            <span>Show</span>
+            <Select aria-label="Filter people by status" value={p.entriesStatus} onChange={e => p.onEntriesQuery(1, e.target.value, p.entriesQuery ?? '')}>
+              {STATUS_FILTERS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </Select>
+          </label>
+        </div>
       }
     >
       {p.entriesLoading && entries.length === 0 ? (
@@ -618,12 +645,12 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
         <ErrorState
           title="We couldn't load the people in this journey"
           description="Please try again in a moment."
-          action={<Button size="sm" onClick={() => p.onEntriesQuery(p.entriesPage || 1, p.entriesStatus)}><RefreshCw size={14} /> Try again</Button>}
+          action={<Button size="sm" onClick={() => p.onEntriesQuery(p.entriesPage || 1, p.entriesStatus, p.entriesQuery ?? '')}><RefreshCw size={14} /> Try again</Button>}
         />
       ) : entries.length === 0 ? (
         <EmptyState
-          title={p.entriesStatus ? 'Nobody matches this filter' : 'Nobody has joined yet'}
-          description={p.entriesStatus ? 'Try showing everyone.' : 'People appear here once they join the journey.'}
+          title={p.entriesQuery ? `Nobody matches “${p.entriesQuery}”` : p.entriesStatus ? 'Nobody matches this filter' : 'Nobody has joined yet'}
+          description={p.entriesQuery ? 'Try another name, email or phone number.' : p.entriesStatus ? 'Try showing everyone.' : 'People appear here once they join the journey.'}
         />
       ) : (
         <>
@@ -650,9 +677,9 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
           </div>
           {p.entriesTotal > PAGE_SIZE && (
             <nav className={styles.pager} aria-label="People pages">
-              <Button size="sm" variant="ghost" disabled={p.entriesLoading || p.entriesPage <= 1} onClick={() => p.onEntriesQuery(p.entriesPage - 1, p.entriesStatus)}>Previous</Button>
+              <Button size="sm" variant="ghost" disabled={p.entriesLoading || p.entriesPage <= 1} onClick={() => p.onEntriesQuery(p.entriesPage - 1, p.entriesStatus, p.entriesQuery ?? '')}>Previous</Button>
               <span className={styles.help}>Page {fmtNum(p.entriesPage)} of {fmtNum(pages)}</span>
-              <Button size="sm" variant="ghost" disabled={p.entriesLoading || p.entriesPage >= pages} onClick={() => p.onEntriesQuery(p.entriesPage + 1, p.entriesStatus)}>Next</Button>
+              <Button size="sm" variant="ghost" disabled={p.entriesLoading || p.entriesPage >= pages} onClick={() => p.onEntriesQuery(p.entriesPage + 1, p.entriesStatus, p.entriesQuery ?? '')}>Next</Button>
             </nav>
           )}
         </>
