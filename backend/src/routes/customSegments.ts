@@ -23,8 +23,18 @@ router.post('/preview-count', async (req, res, next) => {
 // GET / — list all active custom segments (optional ?status=active|draft)
 router.get('/', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const { status } = req.query;
-    const data = await CustomSegmentService.getAll({ status });
+    const { status, q, page, limit } = req.query;
+    const safeStatus = status === 'active' || status === 'draft' ? status : undefined;
+    // ?page / ?limit / ?q → one page with totals and per-status counts (Segments page).
+    // Without them the full list is returned as before (journey wizard, pickers).
+    if (page !== undefined || limit !== undefined || (typeof q === 'string' && q.trim())) {
+      const result = await CustomSegmentService.getPage({
+        status: safeStatus, q: typeof q === 'string' ? q : undefined,
+        page: clampInt(page, 1, MAX_PAGE), limit: clampInt(limit, 20, 100),
+      });
+      return res.json({ success: true, ...result });
+    }
+    const data = await CustomSegmentService.getAll({ status: safeStatus });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });

@@ -578,7 +578,7 @@ export default function SystemArchitecture() {
         <Tbl headers={['Menu', 'Page', 'Route', 'Shows', 'Main APIs']} rows={[
           ['—', 'Home', '/dashboard', 'KPIs, sending today, 14-day sends, segment distribution, contacts by source, top journeys', 'overview/home, overview/home/:section'],
           ['Audience', 'Contacts', '/contacts, /contacts/[id]', 'Searchable, sortable, filterable list; profile with bookings, chats, sends, interests', 'unified-contacts'],
-          ['Audience', 'Segments', '/segmentation, /all-segments, /[slug], /custom/[id]', 'Tree by status × tier × geography; custom segment builder', 'unified-contacts/segmentation-tree, custom-segments'],
+          ['Audience', 'Segments', '/segmentation, /[slug], /custom/[id]', 'Ready-made segments by booking status with breakdowns; custom segments (search, status, paging, edit); /all-segments redirects here', 'unified-contacts/segmentation-tree, segments/general, custom-segments'],
           ['Audience', 'Segment changes', '/segment-activity', 'Daily entered / exited / converted with CSV', 'unified-contacts/segment-activity'],
           ['Audience', 'Booking interests', '/affinity', 'Top services and products per customer', 'booking-affinity'],
           ['Audience', 'Leads', '/leads', 'Chat and email leads by department and agent', 'chat-leads'],

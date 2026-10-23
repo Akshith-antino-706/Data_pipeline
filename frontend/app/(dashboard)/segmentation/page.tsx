@@ -3,17 +3,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { Eye, Plus, RefreshCw, Search, Trash2, X, Activity, List } from 'lucide-react';
-import { getSegmentationTree, recomputeSegmentation, refreshSegmentationSnapshot, getGeneralSegment, getCustomSegments, deleteCustomSegment } from '@/lib/api';
+import { Eye, Plus, RefreshCw, Search, Trash2, X, Activity, Pencil, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { getSegmentationTree, recomputeSegmentation, refreshSegmentationSnapshot, getGeneralSegment, getCustomSegments, deleteCustomSegment, updateCustomSegment } from '@/lib/api';
 import CreateSegmentModal from './CreateSegmentModal';
 import { comboToSlug } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { PageHeader, Button, Input, Chip, StatusChip, Table, EmptyState, ErrorState, Skeleton, ConfirmDialog } from '@/components/ui';
-import { SegmentStat } from '@/components/ui/SegmentStat';
+import { SegmentPager } from '@/components/ui/SegmentPager';
 import { SegmentBars, type SegmentBarRow } from '@/components/ui/SegmentBars';
 import { segmentStatusMeta, tierLabel, geoLabel } from '@/components/ui/SegmentStatus';
 import s from '@/components/ui/Segment.module.css';
 import type { SegmentCombo } from '@/lib/segmentSlug';
+import type { Id } from '@/types/api';
 import type {
   CustomSegment, GeneralSegmentSummary, SegmentBreakdownRow, SegmentStatusCount, SegmentTree,
 } from '@/types/f7segments';
@@ -23,7 +24,6 @@ type SegmentNav = Partial<SegmentCombo> & { label?: string };
 
 const fmt = (n: number | string | null | undefined) => (n || 0).toLocaleString();
 const fmtAED = (n: unknown) => `AED ${(Number.isFinite(Number(n)) ? Number(n) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const fmtM = (n: unknown) => `AED ${(Number(n || 0) / 1000000).toFixed(2)}M`;
 const pct = (n: number | undefined, total: number | undefined) => { const v = ((n ?? 0) / (total ?? 0)) * 100; return (total ?? 0) > 0 && Number.isFinite(v) ? v.toFixed(1) + '%' : '0%'; };
 
 /** Short tag for a custom-segment condition. GTM / giveaway rules keep their detail outside `field`. */
@@ -48,7 +48,6 @@ const STATUS_DESC: Record<string, string> = {
   PROSPECT: 'Never engaged',
 };
 
-const SOURCE_LABELS: Record<string, string> = { tours: 'Tours', hotels: 'Hotels', visas: 'Visas', flights: 'Flights' };
 const BOOKING_TYPES = [
   { key: 'tours', label: 'Tours' },
   { key: 'packages', label: 'Packages' },
@@ -58,6 +57,9 @@ const BOOKING_TYPES = [
 ];
 
 const GENERAL = '__general__';
+const CUSTOM_PAGE = 20;
+const plural = (n: number, word: string) => `${n} ${word}${n !== 1 ? 's' : ''}`;
+type CustomStatusFilter = 'all' | 'active' | 'draft';
 
 export default function CustomerSegmentation() {
   const router = useRouter();
@@ -72,10 +74,20 @@ export default function CustomerSegmentation() {
   const [refreshing, setRefreshing] = useState(false);
   const [generalSeg, setGeneralSeg] = useState<GeneralSegmentSummary | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // Custom segments — one server page at a time, searched and filtered on the server.
   const [customSegments, setCustomSegments] = useState<CustomSegment[]>([]);
   const [customLoaded, setCustomLoaded] = useState(false);
+  const [customLoading, setCustomLoading] = useState(true);
   const [customError, setCustomError] = useState(false);
   const [customQuery, setCustomQuery] = useState('');
+  const [customQ, setCustomQ] = useState('');
+  const [customStatus, setCustomStatus] = useState<CustomStatusFilter>('all');
+  const [customPage, setCustomPage] = useState(1);
+  const [customTotal, setCustomTotal] = useState(0);
+  const [customPages, setCustomPages] = useState(1);
+  const [customCounts, setCustomCounts] = useState<{ all: number; active: number; draft: number } | null>(null);
+  const [editingSegment, setEditingSegment] = useState<CustomSegment | null>(null);
+  const [togglingId, setTogglingId] = useState<Id | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<CustomSegment | null>(null);
 
   const loadData = useCallback(() => {
@@ -115,19 +127,44 @@ export default function CustomerSegmentation() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  useEffect(() => { const t = setTimeout(() => setCustomQ(customQuery.trim()), 250); return () => clearTimeout(t); }, [customQuery]);
+  useEffect(() => { setCustomPage(1); }, [customQ, customStatus]);
+
   const loadCustomSegments = useCallback(async () => {
+    setCustomLoading(true);
     try {
-      const res = await getCustomSegments() as { data?: CustomSegment[] };
+      const params: Record<string, string | number> = { page: customPage, limit: CUSTOM_PAGE };
+      if (customStatus !== 'all') params.status = customStatus;
+      if (customQ) params.q = customQ;
+      const res = await getCustomSegments(params) as { data?: CustomSegment[]; total?: number; totalPages?: number; counts?: { all: number; active: number; draft: number } };
       setCustomSegments(res.data || []);
+      setCustomTotal(typeof res.total === 'number' ? res.total : (res.data || []).length);
+      setCustomPages(typeof res.totalPages === 'number' ? res.totalPages : 1);
+      setCustomCounts(res.counts ?? null);
       setCustomError(false);
     } catch (err) {
       console.error('Failed to load custom segments:', err);
       setCustomError(true);
     }
     setCustomLoaded(true);
-  }, []);
+    setCustomLoading(false);
+  }, [customPage, customStatus, customQ]);
 
   useEffect(() => { loadCustomSegments(); }, [loadCustomSegments]);
+
+  const handleToggleStatus = async (seg: CustomSegment) => {
+    const newStatus = seg.status === 'active' ? 'draft' : 'active';
+    setTogglingId(seg.id);
+    try {
+      await updateCustomSegment(seg.id, { status: newStatus });
+      toast.success(`Segment ${newStatus === 'active' ? 'activated' : 'set to draft'}`);
+      loadCustomSegments();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to update status');
+    }
+    setTogglingId(null);
+  };
 
   const confirmDelete = async () => {
     if (!deleteConfirm) return;
@@ -217,38 +254,29 @@ export default function CustomerSegmentation() {
   const expandedRows = expandedStatus === GENERAL ? getGeneralBreakdown() : expandedStatus ? getBreakdownForStatus(expandedStatus) : [];
   const expandedTitle = expandedStatus === GENERAL ? 'General' : expandedStatus ? segmentStatusMeta(expandedStatus).label : '';
 
-  const cq = customQuery.toLowerCase();
-  const matchingCustom = customSegments.filter(seg => (seg.name ?? '').toLowerCase().includes(cq) || (seg.description || '').toLowerCase().includes(cq));
-  // The overview shows the latest few; "View all" has the full list. A search covers every segment.
-  const OVERVIEW_LIMIT = 10;
-  const visibleCustom = cq ? matchingCustom : matchingCustom.slice(0, OVERVIEW_LIMIT);
+  const customFiltered = customQ !== '' || customStatus !== 'all';
+  const customTabs: { key: CustomStatusFilter; label: string; count?: number }[] = [
+    { key: 'all', label: 'All', count: customCounts?.all },
+    { key: 'active', label: 'Active', count: customCounts?.active },
+    { key: 'draft', label: 'Draft', count: customCounts?.draft },
+  ];
 
   return (
     <div className={s.page}>
       <PageHeader
-        breadcrumbs={[{ label: 'Audience' }, { label: 'Segments' }]}
         title="Segments"
-        description="Groups of contacts you can message. Ready-made segments follow each contact's booking status; custom segments use your own rules."
+        meta={refreshing ? <StatusChip tone="info">Updating counts…</StatusChip> : treeError ? <StatusChip tone="bad">Counts not loaded</StatusChip> : null}
         actions={
           <>
-            <Button variant="ghost" onClick={() => router.push('/segment-activity')}><Activity size={16} aria-hidden="true" />Changes over time</Button>
-            <Button onClick={() => router.push('/segmentation/all-segments')}><List size={16} aria-hidden="true" />All segments</Button>
-            <Button variant="primary" onClick={() => setShowCreateModal(true)}><Plus size={16} aria-hidden="true" />Create segment</Button>
+            <Button size="sm" onClick={handleRefresh} disabled={refreshing || treeLoading} title="Re-runs every ready-made rule against today's date (10–30 seconds)">
+              <RefreshCw size={14} aria-hidden="true" className={refreshing ? s.spin : undefined} />
+              {refreshing ? 'Updating…' : 'Update counts now'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => router.push('/segment-activity')}><Activity size={14} aria-hidden="true" />Changes over time</Button>
+            <Button size="sm" variant="primary" onClick={() => setShowCreateModal(true)}><Plus size={14} aria-hidden="true" />Create segment</Button>
           </>
         }
       />
-
-      <div className={s.statusLine}>
-        {refreshing ? <StatusChip tone="info">Updating</StatusChip> : treeError ? <StatusChip tone="bad">Not loaded</StatusChip> : null}
-        <span className={s.note}>
-          Ready-made segments are recomputed against today&apos;s date. Updating counts re-runs every rule and takes 10–30 seconds.
-        </span>
-        <span className={s.spacer} />
-        <Button size="sm" onClick={handleRefresh} disabled={refreshing || treeLoading}>
-          <RefreshCw size={14} aria-hidden="true" style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
-          {refreshing ? 'Updating…' : 'Update counts now'}
-        </Button>
-      </div>
 
       {treeError ? (
         <div className={s.card} style={{ borderColor: 'var(--bad)' }}>
@@ -260,37 +288,6 @@ export default function CustomerSegmentation() {
         </div>
       ) : (
         <>
-          <div className={s.stats}>
-            {treeLoading ? Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className={s.stat}><Skeleton width={90} height={12} /><Skeleton width={130} height={24} /></div>
-            )) : (
-              <>
-                <SegmentStat label="Total Customers" value={fmt(totals?.total)} />
-                <SegmentStat label="Segmented" value={`${fmt(totals?.segmented)} (${pct(totals?.segmented, totals?.total)})`} />
-                <SegmentStat label="Segments" value={totals?.segment_count ?? 0} />
-                <SegmentStat label="Total Confirmed Revenue" value={fmtM(acicoRevenue?.total)} />
-              </>
-            )}
-          </div>
-
-          {!treeLoading && acicoRevenue?.sources && (
-            <section className={s.card} aria-label="Revenue by product">
-              <div className={s.cardHead}>
-                <h2 className={s.cardTitle}>Revenue by product</h2>
-                <span className={s.help}>All-time confirmed · cancelled bookings excluded</span>
-              </div>
-              <div className={s.stats}>
-                {acicoRevenue.sources.map(src => (
-                  <div key={src.source} className={s.tile}>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>{SOURCE_LABELS[src.source] || src.source}</span>
-                    <span className={s.help}>{fmt(src.bookings)} bookings</span>
-                    <span className={s.num} style={{ fontWeight: 700 }}>{fmtM(src.revenue)}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
           <section className={s.card} aria-label="Contacts by booking status">
             <div className={s.cardHead}>
               <h2 className={s.cardTitle}>Contacts by booking status</h2>
@@ -299,11 +296,12 @@ export default function CustomerSegmentation() {
                 {!treeLoading && ` · ${fmt(totals?.total)} contacts`} · bar length is to scale · click a row to see its breakdown
               </span>
             </div>
-            {(treeLoading || generalLoading)
+            {treeLoading
               ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={22} />)
               : (generalRow ? [generalRow, ...barRows] : barRows).length > 0
                 ? <SegmentBars label="Contacts by booking status" rows={generalRow ? [generalRow, ...barRows] : barRows} />
                 : <span className={s.note}>No booking-status counts yet.</span>}
+            {!treeLoading && generalLoading && <Skeleton height={22} />}
           </section>
 
           {expandedStatus && (
@@ -350,19 +348,20 @@ export default function CustomerSegmentation() {
         </>
       )}
 
-      {/* Custom segments */}
+      {/* Custom segments — the full list (search, status filter, paging, edit, activate, delete) */}
       <section className={s.card} aria-label="Custom segments">
         <div className={s.cardHead}>
           <h2 className={s.cardTitle}>Custom segments</h2>
-          <span className={s.help}>Your own rules · contact counts are from the last time each segment was counted</span>
-          <span className={s.spacer} />
-          {customSegments.length > 0 && <Button variant="ghost" size="sm" onClick={() => router.push('/segmentation/all-segments')}>View all</Button>}
+          <span className={s.help}>
+            {customLoaded && !customError && customTotal > 0 && `${plural(customTotal, 'segment')}${customFiltered ? ' match' : ''} · `}
+            Your own rules · counts are from the last time each segment was counted
+          </span>
         </div>
         {customError ? (
           <ErrorState title="Couldn't load custom segments" action={<Button size="sm" onClick={loadCustomSegments}>Try again</Button>} />
         ) : !customLoaded ? (
-          <Skeleton height={40} />
-        ) : customSegments.length === 0 ? (
+          <div className={s.skelRows} aria-busy="true">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} height={44} />)}</div>
+        ) : customSegments.length === 0 && !customFiltered ? (
           <EmptyState
             title="No custom segments yet"
             description="Ready-made segments are above. Create your own from booking status, product, location, website events or giveaways."
@@ -370,58 +369,84 @@ export default function CustomerSegmentation() {
           />
         ) : (
           <>
-            <div className={s.search} style={{ position: 'relative', flex: 'none', width: '100%' }}>
-              <Search size={14} aria-hidden="true" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink3)' }} />
-              <Input aria-label="Search custom segments" placeholder="Search segments" value={customQuery} onChange={e => setCustomQuery(e.target.value)} style={{ paddingLeft: 34 }} />
+            <div className={s.toolbar}>
+              <div className={`${s.search} ${s.searchWrap}`}>
+                <Search size={14} aria-hidden="true" className={s.searchIcon} />
+                <Input aria-label="Search custom segments" placeholder="Search segments" value={customQuery} onChange={e => setCustomQuery(e.target.value)} className={s.searchInput} />
+                {customQuery && <button type="button" className={s.searchClear} aria-label="Clear segment search" onClick={() => setCustomQuery('')}><X size={12} /></button>}
+              </div>
+              <div className={s.pills} role="group" aria-label="Status">
+                {customTabs.map(tab => (
+                  <button key={tab.key} type="button" className={s.pill} aria-pressed={customStatus === tab.key} onClick={() => setCustomStatus(tab.key)}>
+                    {tab.label}{typeof tab.count === 'number' ? ` (${tab.count.toLocaleString()})` : ''}
+                  </button>
+                ))}
+              </div>
             </div>
-            <Table label="Custom segments" style={{ minWidth: 720 }}>
-              <thead>
-                <tr><th>Segment</th><th>Kind</th><th className={s.r}>Contacts</th><th>Status</th><th><span className={s.srOnly}>Actions</span></th></tr>
-              </thead>
-              <tbody>
-                {visibleCustom.map(seg => {
-                  const conds = seg.conditions || [];
-                  const open = () => router.push(`/segmentation/custom/${seg.id}`);
-                  return (
-                    <tr key={seg.id} className={s.clickRow} onClick={open}>
-                      <td style={{ maxWidth: 380 }}>
-                        <button type="button" className={s.nameBtn} onClick={e => { e.stopPropagation(); open(); }}>{seg.name}</button>
-                        <div className={s.help}>{conds.length} condition{conds.length !== 1 ? 's' : ''}</div>
-                        <div className={s.tags}>
-                          {conds.slice(0, 3).map((c, i) => <span key={i} className={s.tag}>{conditionLabel(c)}</span>)}
-                          {conds.length > 3 && <span className={s.help}>+{conds.length - 3} more</span>}
-                        </div>
-                      </td>
-                      <td><Chip tone="gold">Custom</Chip></td>
-                      <td className={`${s.r} ${s.num}`} style={{ fontWeight: 600 }}>{(seg.cached_count || 0).toLocaleString()}</td>
-                      <td>{seg.status === 'draft' ? <Chip tone="mute" dot>Draft</Chip> : seg.status === 'active' ? <Chip tone="ok" dot>Active</Chip> : '—'}</td>
-                      <td onClick={e => e.stopPropagation()}>
-                        <div className={s.actions}>
-                          <Button variant="ghost" size="sm" icon title="Delete segment" aria-label={`Delete ${seg.name}`} onClick={() => setDeleteConfirm(seg)}>
-                            <Trash2 size={14} style={{ color: 'var(--bad)' }} />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {visibleCustom.length === 0 && <tr><td colSpan={5} className={s.note}>No segments match your search.</td></tr>}
-              </tbody>
-            </Table>
-            {!cq && matchingCustom.length > OVERVIEW_LIMIT && (
-              <div className={s.help} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-                <span>Showing {OVERVIEW_LIMIT} of {matchingCustom.length.toLocaleString()} segments</span>
-                <Button variant="ghost" size="sm" onClick={() => router.push('/segmentation/all-segments')}>View all segments</Button>
+            {customSegments.length === 0 ? (
+              <EmptyState title={customQ ? `No segments match “${customQ}”` : 'No segments with this status'} description={customQ ? 'Try a different name.' : undefined} />
+            ) : (
+              <div className={customLoading ? s.dimmed : undefined}>
+                <Table label="Custom segments" style={{ minWidth: 760 }}>
+                  <thead>
+                    <tr><th>Segment</th><th className={s.r}>Contacts</th><th>Created</th><th>Status</th><th><span className={s.srOnly}>Actions</span></th></tr>
+                  </thead>
+                  <tbody>
+                    {customSegments.map(seg => {
+                      const conds = seg.conditions || [];
+                      const open = () => router.push(`/segmentation/custom/${seg.id}`);
+                      return (
+                        <tr key={seg.id} className={s.clickRow} onClick={open}>
+                          <td className={s.segCell}>
+                            <button type="button" className={s.nameBtn} onClick={e => { e.stopPropagation(); open(); }}>{seg.name}</button>
+                            {seg.description && <div className={s.help}>{seg.description}</div>}
+                            <div className={s.tags}>
+                              {conds.slice(0, 3).map((c, i) => <span key={i} className={s.tag}>{conditionLabel(c)}</span>)}
+                              {conds.length > 3 && <span className={s.help}>+{conds.length - 3} more</span>}
+                            </div>
+                          </td>
+                          <td className={`${s.r} ${s.num}`}>
+                            <b>{(seg.cached_count || 0).toLocaleString()}</b>
+                            <div className={s.help}>{plural(conds.length, 'rule')}</div>
+                          </td>
+                          <td className={s.help}>{seg.created_at ? new Date(seg.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}</td>
+                          <td>{seg.status === 'draft' ? <Chip tone="mute" dot>Draft</Chip> : <Chip tone="ok" dot>Active</Chip>}</td>
+                          <td onClick={e => e.stopPropagation()}>
+                            <div className={s.actions}>
+                              <Button variant="ghost" size="sm" icon disabled={togglingId === seg.id} onClick={() => handleToggleStatus(seg)}
+                                title={seg.status === 'active' ? 'Set to Draft' : 'Activate'} aria-label={seg.status === 'active' ? `Set ${seg.name} to draft` : `Activate ${seg.name}`}>
+                                {togglingId === seg.id ? <Loader2 size={14} className={s.spin} /> : seg.status === 'active' ? <ToggleRight size={16} className={s.okIcon} /> : <ToggleLeft size={16} />}
+                              </Button>
+                              <Button variant="ghost" size="sm" icon title="Edit segment" aria-label={`Edit ${seg.name}`} onClick={() => setEditingSegment(seg)}><Pencil size={14} /></Button>
+                              <Button variant="ghost" size="sm" icon title="Delete segment" aria-label={`Delete ${seg.name}`} onClick={() => setDeleteConfirm(seg)}>
+                                <Trash2 size={14} className={s.badIcon} />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
               </div>
             )}
+            {customPages > 1 && (
+              <div className={s.pagerRow}>
+                <span className={s.help}>{Math.min((customPage - 1) * CUSTOM_PAGE + 1, customTotal)}–{Math.min(customPage * CUSTOM_PAGE, customTotal)} of {customTotal.toLocaleString()}</span>
+                <SegmentPager page={customPage} totalPages={customPages} onPage={p => setCustomPage(p)} />
+              </div>
+            )}
+            <span className={s.help}>Draft segments can&apos;t be used in journeys or sends until they are made active.</span>
           </>
         )}
       </section>
 
-      {showCreateModal && (
+      {(showCreateModal || editingSegment) && (
         <CreateSegmentModal
-          onClose={() => setShowCreateModal(false)}
+          segment={editingSegment}
+          onClose={() => { setShowCreateModal(false); setEditingSegment(null); }}
           onCreated={() => { toast.success('Segment created'); loadCustomSegments(); }}
+          onUpdated={() => { toast.success('Segment updated'); loadCustomSegments(); }}
         />
       )}
 

@@ -2,10 +2,12 @@ import { Router } from 'express';
 import type { Response, NextFunction } from 'express';
 import type { QueryRequest } from '../types/routesCommon.js';
 import SegmentEngine from '../services/SegmentEngine.js';
-import type { RedisCacheStub } from '../types/routesMisc.js';
-import type { GeneralCounts, CountNRow, GeneralJourneyRow } from '../types/u5Routes.js';
+import type { GeneralCounts, CountNRow } from '../types/u5Routes.js';
 import { clampInt, MAX_PAGE } from '../utils/validate.js';
 const router = Router();
+
+/** /general counts: fresh for 5 minutes per audience. */
+const GENERAL_COUNTS_TTL = 300;
 
 // Get full funnel overview (7 stages with segments + customer counts)
 router.get('/funnel', async (req, res, next) => {
@@ -42,80 +44,39 @@ router.post('/run', async (req, res, next) => {
 // "General Segment" — virtual segment covering all email- or WA-eligible
 // contacts in unified_contacts. Cuts across booking_status, so we surface it
 // as a separate panel in the segmentation UI. Shape:
-//   {
-//     emailEligible: <int>, waEligible: <int>, totalContacts: <int>,
-//     journeys: [{ journey_id, name, status, total_entries, audience, ... }]
-//   }
+//   { emailEligible: <int>, waEligible: <int>, totalContacts: <int> }
 router.get('/general', async (req, res, next) => {
   try {
     const { query } = await import('../config/database.js');
-    // There is no config/redis.js; this import made the route always 500. Fall back to
-    // no caching (the counts below are still computed) until a shared client is wired.
-    const getRedisClient = (): RedisCacheStub => ({ get: async () => null, set: async () => {} });
-
+    const { cached } = await import('../config/cache.js');
     const { parseBusinessType } = await import('../utils/contactTypes.js');
     const businessType = parseBusinessType(req.query.businessType) || null;
     const btParams = businessType ? [businessType] : [];
     const btAnd = businessType ? `AND uc.contact_type = $1` : '';
     const btWhere = businessType ? `WHERE contact_type = $1` : '';
 
-    const cacheKey = `general_counts:${businessType || 'all'}`;
-    const redis = getRedisClient();
+    // Three COUNT(*) passes over unified_contacts (~1.7M rows) — cached for 5 minutes per
+    // audience through the shared Redis cache so the Segments page doesn't re-scan on every open.
+    const counts = await cached<GeneralCounts>(`general_counts:${businessType || 'all'}`, async () => {
+      const [emailRow, waRow, totalRow] = await Promise.all([
+        query<CountNRow>(`
+          SELECT COUNT(*)::int AS n FROM unified_contacts uc
+           WHERE uc.email IS NOT NULL AND uc.email <> ''
+             AND COALESCE(uc.email_unsubscribe,'No') <> 'Yes'
+             AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$'
+             ${btAnd}`, btParams),
+        query<CountNRow>(`
+          SELECT COUNT(*)::int AS n FROM unified_contacts uc
+           WHERE uc.mobile IS NOT NULL AND uc.mobile <> ''
+             AND COALESCE(uc.wa_unsubscribe,'No') <> 'Yes'
+             AND COALESCE(uc.is_indian,false) = true
+             ${btAnd}`, btParams),
+        query<CountNRow>(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),
+      ]);
+      return { emailEligible: emailRow.rows[0].n, waEligible: waRow.rows[0].n, totalContacts: totalRow.rows[0].n };
+    }, GENERAL_COUNTS_TTL);
 
-    // Try cache first
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      const counts = JSON.parse(cached) as GeneralCounts;
-      const journeysRow = await query<GeneralJourneyRow>(`
-        SELECT journey_id, name, description, status, audience,
-               total_entries, total_conversions, total_exits,
-               jsonb_array_length(nodes) AS node_count,
-               created_at, updated_at
-          FROM journey_flows
-         WHERE segment_id IS NULL
-         ORDER BY updated_at DESC`);
-      return res.json({
-        data: { ...counts, journeys: journeysRow.rows },
-      });
-    }
-
-    // Cache miss — run all queries
-    const [emailRow, waRow, totalRow, journeysRow] = await Promise.all([
-      query<CountNRow>(`
-        SELECT COUNT(*)::int AS n FROM unified_contacts uc
-         WHERE uc.email IS NOT NULL AND uc.email <> ''
-           AND COALESCE(uc.email_unsubscribe,'No') <> 'Yes'
-           AND uc.email ~ '^[^@]+@[^@]+\\.[^@]+$'
-           ${btAnd}`, btParams),
-      query<CountNRow>(`
-        SELECT COUNT(*)::int AS n FROM unified_contacts uc
-         WHERE uc.mobile IS NOT NULL AND uc.mobile <> ''
-           AND COALESCE(uc.wa_unsubscribe,'No') <> 'Yes'
-           AND COALESCE(uc.is_indian,false) = true
-           ${btAnd}`, btParams),
-      query<CountNRow>(`SELECT COUNT(*)::int AS n FROM unified_contacts ${btWhere}`, btParams),
-      query<GeneralJourneyRow>(`
-        SELECT journey_id, name, description, status, audience,
-               total_entries, total_conversions, total_exits,
-               jsonb_array_length(nodes) AS node_count,
-               created_at, updated_at
-          FROM journey_flows
-         WHERE segment_id IS NULL
-         ORDER BY updated_at DESC`),
-    ]);
-
-    const counts = {
-      emailEligible: emailRow.rows[0].n,
-      waEligible:    waRow.rows[0].n,
-      totalContacts: totalRow.rows[0].n,
-    };
-
-    // Cache for 5 minutes
-    await redis.set(cacheKey, JSON.stringify(counts), 'EX', 300);
-
-    res.json({
-      data: { ...counts, journeys: journeysRow.rows },
-    });
+    res.json({ data: counts });
   } catch (err) { next(err); }
 });
 

@@ -265,3 +265,33 @@ describe('CustomSegmentService.buildSegmentSQL', () => {
     expect(sql).toMatch(/SELECT uc\.id[\s\S]*ORDER BY uc\.id[\s\S]*LIMIT 5/);
   });
 });
+
+describe('CustomSegmentService.getPage — search + paging', () => {
+  const dbMock = async () => { const db = await import('../src/config/database.js'); const q = vi.mocked(db.query); q.mockReset(); return q; };
+  it('runs a per-status count and one LIMIT/OFFSET page, both parameterised', async () => {
+    const q = await dbMock();
+    q.mockImplementation((async (sql: string) => sql.includes('GROUP BY status')
+      ? { rows: [{ status: 'active', n: '30' }, { status: 'draft', n: '1' }], rowCount: 2 }
+      : { rows: [{ id: 7, name: 'Big spenders' }], rowCount: 1 }) as never);
+    const evil = "x' OR '1'='1";
+    const r = await CustomSegmentService.getPage({ status: 'active', q: evil, page: 2, limit: 20 });
+    expect(r).toEqual({ data: [{ id: 7, name: 'Big spenders' }], total: 30, page: 2, limit: 20, totalPages: 2, counts: { all: 31, active: 30, draft: 1 } });
+    const [[countSql, countParams], [pageSql, pageParams]] = q.mock.calls.map(c => [String(c[0]), c[1]]);
+    expect(countSql).toContain("name ILIKE $1 OR COALESCE(description, '') ILIKE $1");
+    expect(countSql).not.toContain('status = $');
+    expect(countParams).toEqual([`%${evil}%`]);
+    expect(pageSql).toContain('AND status = $2');
+    expect(pageSql).toContain('LIMIT $3 OFFSET $4');
+    expect(pageParams).toEqual([`%${evil}%`, 'active', 20, 20]);
+    for (const sql of [countSql, pageSql]) { expect(sql).not.toContain(evil); expect(/^\s*SELECT/i.test(sql)).toBe(true); }
+  });
+  it('defaults and clamps: page 1, 20 per page, max 100; blank search ignored', async () => {
+    const q = await dbMock();
+    q.mockResolvedValue({ rows: [], rowCount: 0 } as never);
+    const r = await CustomSegmentService.getPage({ q: '  ', limit: 5000, page: -1 });
+    expect(r).toMatchObject({ page: 1, limit: 100, total: 0, totalPages: 1, counts: { all: 0, active: 0, draft: 0 } });
+    const page = q.mock.calls.find(([sql]) => String(sql).includes('LIMIT'));
+    expect(String(page?.[0])).not.toContain('ILIKE');
+    expect(page?.[1]).toEqual([100, 0]);
+  });
+});

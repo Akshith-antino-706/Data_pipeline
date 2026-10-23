@@ -43,9 +43,9 @@ const tree = {
 };
 const general = { data: { totalContacts: 900, emailEligible: 700, waEligible: 600 } };
 const customSegs = { data: [
-  { id: 5, name: 'My Custom', conditions: [{ field: 'a_b' }, { field: 'c' }, { field: 'd' }, { field: 'e' }], cached_count: 42, created_at: '2026-01-01' },
-  { id: 6, name: 'Single', conditions: [{ field: 'x' }], cached_count: null, created_at: '2026-01-01' },
-] };
+  { id: 5, name: 'My Custom', description: 'Big wallets', status: 'active', conditions: [{ field: 'a_b' }, { field: 'c' }, { field: 'd' }, { field: 'e' }], cached_count: 42, created_at: '2026-01-01' },
+  { id: 6, name: 'Single', status: 'draft', conditions: [{ field: 'x' }], cached_count: null, created_at: '2026-01-01' },
+], total: 2, page: 1, limit: 20, totalPages: 1, counts: { all: 2, active: 1, draft: 1 } };
 
 beforeEach(() => {
   for (const fn of Object.values(api)) {
@@ -71,24 +71,32 @@ const withData = () => {
 };
 
 describe('Segmentation overview page', () => {
-  it('renders KPIs, revenue sources, status cards, general card and custom segments', async () => {
+  it('renders the status bars, general row and the custom segments list — no KPI strip or revenue card', async () => {
     withData();
     renderPage();
-    await screen.findByText('Total Customers');
-    expect(screen.getByText((1000).toLocaleString())).toBeTruthy();
-    expect(screen.getByText(`${(800).toLocaleString()} (80.0%)`)).toBeTruthy();
-    expect(screen.getByText('12')).toBeTruthy();
-    expect(screen.getByText('AED 2.50M')).toBeTruthy();
-    expect(screen.getByText('cruise')).toBeTruthy();
+    await screen.findByText('Contacts by booking status');
+    expect(screen.queryByText('Total Customers')).toBeNull();
+    expect(screen.queryByText('Revenue by product')).toBeNull();
+    expect(screen.queryByText(/Ready-made segments are recomputed/)).toBeNull();
+    expect(screen.queryByText('All segments')).toBeNull();
     expect(screen.getAllByText('On Trip').length).toBeGreaterThan(0);
     expect(screen.getAllByText('MYSTERY').length).toBeGreaterThan(0);
     await screen.findByText('General');
     expect(screen.getByText(/700 email/)).toBeTruthy();
     await screen.findByText('My Custom');
-    expect(screen.getByText('4 conditions')).toBeTruthy();
-    expect(screen.getByText('1 condition')).toBeTruthy();
+    expect(screen.getByText('4 rules')).toBeTruthy();
+    expect(screen.getByText('1 rule')).toBeTruthy();
     expect(screen.getByText('+1 more')).toBeTruthy();
     expect(screen.getByText('a b')).toBeTruthy();
+    // merged from the old All segments page: status pills with counts, Created column, edit + activate actions
+    expect(screen.getByText('All (2)')).toBeTruthy();
+    expect(screen.getByText('Active (1)')).toBeTruthy();
+    expect(screen.getByText('Draft (1)')).toBeTruthy();
+    expect(bodyText()).toContain('2 segments · Your own rules');
+    expect(screen.getByTitle('Set to Draft')).toBeTruthy();
+    expect(screen.getByTitle('Activate')).toBeTruthy();
+    expect(screen.getByLabelText('Edit My Custom')).toBeTruthy();
+    expect(api.getCustomSegments).toHaveBeenCalledWith({ page: 1, limit: 20 });
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
 
@@ -96,18 +104,62 @@ describe('Segmentation overview page', () => {
     vi.mocked(api.getSegmentationTree).mockReturnValue(new Promise(() => {}));
     vi.mocked(api.getGeneralSegment).mockReturnValue(new Promise(() => {}));
     renderPage();
-    expect(screen.queryByText('Total Customers')).toBeNull();
+    expect(screen.queryByText('On Trip')).toBeNull();
     expect((screen.getByText('Update counts now').closest('button') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('empty data renders zeroes without NaN/undefined', async () => {
+  it('status bars render as soon as the tree arrives; the General row joins when its slower call finishes', async () => {
+    vi.mocked(api.getSegmentationTree).mockResolvedValue(tree as unknown as TreeRes);
+    let resolveGeneral: (v: GenRes) => void = () => {};
+    vi.mocked(api.getGeneralSegment).mockReturnValue(new Promise<GenRes>(r => { resolveGeneral = r; }));
     renderPage();
-    await screen.findByText('Total Customers');
-    expect(screen.getByText('0 (0%)')).toBeTruthy();
-    expect(screen.getByText('AED 0.00M')).toBeTruthy();
+    await screen.findAllByText('On Trip');
+    expect(screen.queryByText('General')).toBeNull();
+    resolveGeneral(general as unknown as GenRes);
+    await screen.findByText('General');
+  });
+
+  it('empty data renders without NaN/undefined', async () => {
+    renderPage();
+    await screen.findByText('Contacts by booking status');
     expect(screen.queryByText('General')).toBeNull();
     await screen.findByText('No custom segments yet');
     expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('custom segments: search and status filter go to the server, pages work, clear resets', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      withData();
+      vi.mocked(api.getCustomSegments).mockResolvedValue({ ...customSegs, total: 45, totalPages: 3, counts: { all: 45, active: 40, draft: 5 } } as unknown as CustomRes);
+      renderPage();
+      await screen.findByText('My Custom');
+      expect(screen.getByText('1–20 of 45')).toBeTruthy();
+      fireEvent.click(screen.getByText('Draft (5)'));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 20, status: 'draft' }));
+      fireEvent.change(screen.getByLabelText('Search custom segments'), { target: { value: 'wall' } });
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 20, status: 'draft', q: 'wall' }));
+      fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 2, limit: 20, status: 'draft', q: 'wall' }));
+      vi.mocked(api.getCustomSegments).mockResolvedValue({ data: [], total: 0, page: 1, limit: 20, totalPages: 1, counts: { all: 45, active: 40, draft: 5 } } as unknown as CustomRes);
+      fireEvent.change(screen.getByLabelText('Search custom segments'), { target: { value: 'zzz' } });
+      await screen.findByText('No segments match “zzz”');
+      fireEvent.click(screen.getByRole('button', { name: 'Clear segment search' }));
+      await waitFor(() => expect(api.getCustomSegments).toHaveBeenLastCalledWith({ page: 1, limit: 20, status: 'draft' }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('activate / set-to-draft toggles call the API and reload', async () => {
+    withData();
+    renderPage();
+    await screen.findByText('My Custom');
+    fireEvent.click(screen.getByTitle('Set to Draft'));
+    await waitFor(() => expect(api.updateCustomSegment).toHaveBeenCalledWith(5, { status: 'draft' }));
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith('Segment set to draft'));
+    fireEvent.click(screen.getByTitle('Activate'));
+    await waitFor(() => expect(api.updateCustomSegment).toHaveBeenCalledWith(6, { status: 'active' }));
   });
 
   it('API errors show error states with retry instead of fake zeroes', async () => {
@@ -116,19 +168,18 @@ describe('Segmentation overview page', () => {
     vi.mocked(api.getCustomSegments).mockRejectedValue(new Error('HTTP 500'));
     renderPage();
     await screen.findByText("Couldn't load segment counts");
-    expect(screen.queryByText('Total Customers')).toBeNull();
+    expect(screen.queryByText('Contacts by booking status')).toBeNull();
     await screen.findByText("Couldn't load custom segments");
     expect(bodyText()).not.toMatch(/NaN|undefined/);
     vi.mocked(api.getSegmentationTree).mockResolvedValue(tree as unknown as TreeRes);
     fireEvent.click(screen.getAllByText('Try again')[0]);
-    await screen.findByText('Total Customers');
-    expect(screen.getByText('Contacts by booking status')).toBeTruthy();
+    await screen.findByText('Contacts by booking status');
   });
 
   it('expanding a status card shows its breakdown and navigates to the combo slug', async () => {
     withData();
     renderPage();
-    await screen.findByText('Total Customers');
+    await screen.findByText('Contacts by booking status');
     fireEvent.click(screen.getAllByText('On Trip')[0]);
     await screen.findByText('On Trip breakdown');
     expect(screen.getByText('4 Indian')).toBeTruthy();
@@ -151,7 +202,7 @@ describe('Segmentation overview page', () => {
   it('booking breakdown modal opens with per-type rows', async () => {
     withData();
     renderPage();
-    await screen.findByText('Total Customers');
+    await screen.findAllByText('On Trip');
     fireEvent.click(screen.getByTitle('View booking breakdown'));
     await screen.findByText('Booking Breakdown');
     expect(screen.getByText('60.0%')).toBeTruthy();
@@ -163,7 +214,7 @@ describe('Segmentation overview page', () => {
   it('Refresh recomputes, refreshes snapshot, then reloads', async () => {
     withData();
     renderPage();
-    await screen.findByText('Total Customers');
+    await screen.findAllByText('On Trip');
     fireEvent.click(screen.getByText('Update counts now'));
     await waitFor(() => expect(api.refreshSegmentationSnapshot).toHaveBeenCalled());
     expect(api.recomputeSegmentation).toHaveBeenCalled();
@@ -175,7 +226,7 @@ describe('Segmentation overview page', () => {
     withData();
     vi.mocked(api.recomputeSegmentation).mockRejectedValue(new Error('timeout'));
     renderPage();
-    await screen.findByText('Total Customers');
+    await screen.findAllByText('On Trip');
     fireEvent.click(screen.getByText('Update counts now'));
     await waitFor(() => expect((screen.getByText('Update counts now').closest('button') as HTMLButtonElement).disabled).toBe(false));
     expect(toastMock.error).toHaveBeenCalledWith('Couldn’t update counts');
@@ -185,9 +236,7 @@ describe('Segmentation overview page', () => {
 
   it('header buttons navigate / open create modal', async () => {
     renderPage();
-    await screen.findByText('Total Customers');
-    fireEvent.click(screen.getByText('All segments'));
-    expect(nav.push).toHaveBeenCalledWith('/segmentation/all-segments');
+    await screen.findByText('Contacts by booking status');
     fireEvent.click(screen.getByText('Changes over time'));
     expect(nav.push).toHaveBeenCalledWith('/segment-activity');
     fireEvent.click(screen.getAllByText('Create segment')[0]);
@@ -230,7 +279,7 @@ describe('Segmentation overview page', () => {
   it('missing totals.segmented does not render NaN', async () => {
     vi.mocked(api.getSegmentationTree).mockResolvedValue({ totals: { total: 10 } } as unknown as TreeRes);
     renderPage();
-    await screen.findByText('Total Customers');
+    await screen.findByText('Contacts by booking status');
     expect(bodyText()).not.toContain('NaN');
   });
 });

@@ -402,6 +402,44 @@ export default class CustomSegmentService {
     return rows;
   }
 
+  /**
+   * One page of custom segments for the Segments page: optional status filter, name/description
+   * search (parameterised ILIKE), newest first. `counts` are per-status totals ignoring the
+   * status filter (for the All / Active / Draft pills) but honouring the search.
+   */
+  static async getPage({ status, q, page = 1, limit = 20 }: { status?: string; q?: string; page?: number; limit?: number } = {}) {
+    const cols = 'id, name, description, color, icon, conditions, cached_count, cached_at, status, condition_operator, created_at, updated_at';
+    const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 20, 100));
+    const safePage = Math.max(1, Math.trunc(page) || 1);
+    const params: unknown[] = [];
+    const where: string[] = ['is_active = true'];
+    const search = (q ?? '').trim().slice(0, 100);
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(`(name ILIKE $${params.length} OR COALESCE(description, '') ILIKE $${params.length})`);
+    }
+    const base = where.join(' AND ');
+    const statusWhere = status ? ` AND status = $${params.length + 1}` : '';
+    const listParams = status ? [...params, status] : [...params];
+
+    const [countsRes, pageRes] = await Promise.all([
+      query<{ status: string | null; n: string }>(`SELECT status, COUNT(*)::text AS n FROM custom_segments WHERE ${base} GROUP BY status`, params),
+      query<CustomSegmentRow>(
+        `SELECT ${cols} FROM custom_segments WHERE ${base}${statusWhere} ORDER BY created_at DESC LIMIT $${listParams.length + 1} OFFSET $${listParams.length + 2}`,
+        [...listParams, safeLimit, (safePage - 1) * safeLimit],
+      ),
+    ]);
+    const counts = { all: 0, active: 0, draft: 0 };
+    for (const r of countsRes.rows) {
+      const n = parseInt(r.n, 10) || 0;
+      counts.all += n;
+      if (r.status === 'active') counts.active += n;
+      else if (r.status === 'draft') counts.draft += n;
+    }
+    const total = status === 'active' ? counts.active : status === 'draft' ? counts.draft : counts.all;
+    return { data: pageRes.rows, total, page: safePage, limit: safeLimit, totalPages: Math.max(1, Math.ceil(total / safeLimit)), counts };
+  }
+
   static async getById(id: number | string) {
     const cols = 'id, name, description, color, icon, conditions, cached_count, cached_at, status, condition_operator, created_at, updated_at';
     const { rows: [seg] } = await query<CustomSegmentRow>(`SELECT ${cols} FROM custom_segments WHERE id = $1 AND is_active = true`, [id]);

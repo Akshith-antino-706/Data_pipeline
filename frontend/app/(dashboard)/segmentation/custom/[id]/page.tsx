@@ -90,7 +90,7 @@ export default function CustomSegmentDetailPage() {
   return (
     <div className={s.page}>
       <PageHeader
-        breadcrumbs={[{ label: 'Audience' }, { label: 'Segments', href: '/segmentation' }, { label: 'All segments', href: '/segmentation/all-segments' }, { label: segment.name || 'Segment' }]}
+        breadcrumbs={[{ label: 'Audience' }, { label: 'Segments', href: '/segmentation' }, { label: segment.name || 'Segment' }]}
         title={segment.name}
         meta={<Chip tone="gold">Custom</Chip>}
         description={

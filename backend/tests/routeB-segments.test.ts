@@ -119,26 +119,48 @@ describe('segmentsV3.ts', () => {
 
   describe('GET /general', () => {
     const rows = (n: number) => ({ rows: [{ n }] });
-    it('returns counts + journeys with no business filter', async () => {
-      m.query.mockImplementation((sql: string) =>
-        Promise.resolve(sql.includes('journey_flows') ? { rows: [{ journey_id: 1 }] } : rows(4)));
+    const passThrough = async () => {
+      const cache = await import('../src/config/cache.js');
+      vi.mocked(cache.cached).mockImplementation(async (_k: string, fn: () => unknown) => fn());
+      return cache;
+    };
+    it('returns the three counts (no journeys) and caches them per audience for 5 minutes', async () => {
+      const cache = await passThrough();
+      vi.mocked(cache.cached).mockClear();
+      m.query.mockResolvedValue(rows(4));
       const r = await get('/v3/general');
       expect(r.status).toBe(200);
-      expect(await json(r)).toEqual({ data: { emailEligible: 4, waEligible: 4, totalContacts: 4, journeys: [{ journey_id: 1 }] } });
-      expect(m.query.mock.calls[0][1]).toEqual([]);
+      expect(await json(r)).toEqual({ data: { emailEligible: 4, waEligible: 4, totalContacts: 4 } });
+      expect(m.query).toHaveBeenCalledTimes(3);
+      for (const [sql] of m.query.mock.calls) expect(String(sql)).not.toContain('journey_flows');
+      expect(vi.mocked(cache.cached).mock.calls[0][0]).toBe('general_counts:all');
+      expect(vi.mocked(cache.cached).mock.calls[0][2]).toBe(300);
+    });
+    it('serves from the cache without touching the database', async () => {
+      const cache = await import('../src/config/cache.js');
+      m.query.mockClear();
+      vi.mocked(cache.cached).mockClear();
+      vi.mocked(cache.cached).mockResolvedValue({ emailEligible: 1, waEligible: 2, totalContacts: 3 });
+      const r = await get('/v3/general?businessType=B2C');
+      expect(await json(r)).toEqual({ data: { emailEligible: 1, waEligible: 2, totalContacts: 3 } });
+      expect(m.query).not.toHaveBeenCalled();
+      expect(vi.mocked(cache.cached).mock.calls[0][0]).toBe('general_counts:B2C');
     });
     it('parameterises a valid businessType', async () => {
-      m.query.mockImplementation((sql: string) => Promise.resolve(sql.includes('journey_flows') ? { rows: [] } : rows(1)));
+      await passThrough();
+      m.query.mockResolvedValue(rows(1));
       await get('/v3/general?businessType=B2B');
       expect(m.query.mock.calls[0][1]).toEqual(['B2B']);
     });
     it('ignores an injection businessType', async () => {
-      m.query.mockImplementation((sql: string) => Promise.resolve(sql.includes('journey_flows') ? { rows: [] } : rows(1)));
+      await passThrough();
+      m.query.mockResolvedValue(rows(1));
       await get(`/v3/general?businessType=${encodeURIComponent("B2B' OR 1=1")}`);
       expect(m.query.mock.calls[0][1]).toEqual([]);
       expect(String(m.query.mock.calls[0][0])).not.toContain('OR 1=1');
     });
     it('500s when a query fails', async () => {
+      await passThrough();
       m.query.mockRejectedValue(new Error('db'));
       expect((await get('/v3/general')).status).toBe(500);
     });

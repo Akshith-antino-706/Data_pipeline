@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { once } from 'node:events';
 
 const m = vi.hoisted(() => ({
-  getCountPreview: vi.fn(), getAll: vi.fn(), create: vi.fn(), getById: vi.fn(),
+  getCountPreview: vi.fn(), getAll: vi.fn(), getPage: vi.fn(), create: vi.fn(), getById: vi.fn(),
   update: vi.fn(), delete: vi.fn(), getCustomers: vi.fn(),
 }));
 vi.mock('../src/config/database.js', () => ({ default: { query: vi.fn(), connect: vi.fn() }, query: vi.fn() }));
@@ -57,10 +57,25 @@ describe('POST /preview-count', () => {
 });
 
 describe('GET /', () => {
-  it('passes ?status through', async () => {
+  it('passes ?status through (full list, unchanged shape)', async () => {
     m.getAll.mockResolvedValue([]);
     expect(await (await send('GET', '/?status=draft')).json()).toEqual({ success: true, data: [] });
     expect(m.getAll).toHaveBeenCalledWith({ status: 'draft' });
+    expect(m.getPage).not.toHaveBeenCalled();
+  });
+  it('ignores an unknown status value', async () => {
+    m.getAll.mockResolvedValue([]);
+    await send('GET', "/?status=x'%20OR%201=1");
+    expect(m.getAll).toHaveBeenCalledWith({ status: undefined });
+  });
+  it('?page/?limit/?q return one page with totals and per-status counts', async () => {
+    m.getPage.mockResolvedValue({ data: [{ id: 1 }], total: 31, page: 2, limit: 20, totalPages: 2, counts: { all: 31, active: 30, draft: 1 } });
+    const body = await (await send('GET', '/?page=2&limit=20&q=spend&status=active')).json();
+    expect(body).toEqual({ success: true, data: [{ id: 1 }], total: 31, page: 2, limit: 20, totalPages: 2, counts: { all: 31, active: 30, draft: 1 } });
+    expect(m.getPage).toHaveBeenCalledWith({ status: 'active', q: 'spend', page: 2, limit: 20 });
+    expect(m.getAll).not.toHaveBeenCalled();
+    await send('GET', '/?limit=9999');
+    expect(m.getPage).toHaveBeenLastCalledWith({ status: undefined, q: undefined, page: 1, limit: 100 });
   });
 });
 

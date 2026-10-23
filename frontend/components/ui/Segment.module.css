@@ -103,3 +103,18 @@
 }
 
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Segments page: custom-segments toolbar, pager and icon helpers */
+.searchWrap { position: relative; display: flex; align-items: center; }
+.searchIcon { position: absolute; left: 12px; color: var(--ink3); pointer-events: none; }
+.searchInput { padding-left: 34px; padding-right: 30px; width: 100%; }
+.searchClear { position: absolute; right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer; }
+.searchClear:hover { background: var(--sunken); color: var(--ink); }
+.segCell { max-width: 420px; }
+.skelRows { display: flex; flex-direction: column; gap: 8px; }
+.dimmed { opacity: .6; transition: opacity .15s; }
+.pagerRow { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.okIcon { color: var(--ok); }
+.badIcon { color: var(--bad); }
+.spin { animation: segspin 1s linear infinite; }
+@keyframes segspin { to { transform: rotate(360deg); } }
