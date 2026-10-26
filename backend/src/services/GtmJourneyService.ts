@@ -602,7 +602,7 @@ class GtmJourneyService {
     // Sender selection honours the journey's email_credential — the SAME helper the fixed
     // engine (workers.js) uses: 'giveaway' → giveaway SMTP, else default AWS Email API.
     const start = Date.now();
-    const res = await sendJourneyEmail({ emailCredential, to: recipientEmail, subject, html });
+    const res = await sendJourneyEmail({ emailCredential, to: recipientEmail, subject, html, unifiedId: c.id });
     if (emailCredential === 'giveaway') console.log(`[GtmJourney ${journeyId}] sender=${res.provider} (email_credential=giveaway)`);
     const ms = Date.now() - start;
 

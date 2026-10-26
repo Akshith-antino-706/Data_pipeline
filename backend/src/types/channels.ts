@@ -48,6 +48,8 @@ export interface JourneyEmailArgs {
   to: string;
   subject: string;
   html: string;
+  /** Contact id — when set, SMTP sends carry RFC 8058 one-click List-Unsubscribe headers. */
+  unifiedId?: string | number | null;
 }
 
 export interface SendGridErrorResponse {

@@ -520,6 +520,7 @@ async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
     to: recipientEmail,
     subject,
     html: trackedHtml,
+    unifiedId: d.customerId,
   });
 
   // Update send log status
