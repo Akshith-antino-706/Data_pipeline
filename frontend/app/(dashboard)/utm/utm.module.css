@@ -89,7 +89,7 @@ a.linkText:hover, a.linkText:focus-visible { text-decoration: underline; }
 .pager { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
 .pagerText { font-size: 13px; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .pageSize { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink2); }
-.pageSizeSelect { height: 30px; width: 68px; }
+.pageSizeSelect { height: 30px; width: 78px; }
 .pagerBtns { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 .channelStrip { display: flex; gap: 8px; flex-wrap: wrap; }
