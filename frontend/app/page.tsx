@@ -3,6 +3,10 @@
 /**
  * Public landing page (/). Describes what the workspace does — product copy only, no figures —
  * in the same dark + gold style as the sign-in page. Signed-in visitors go straight to /dashboard.
+ *
+ * Motion: an animated hero backdrop, a looping "set up a journey" demo, data-source tiles that
+ * fly in and tick, a schedule timeline that draws itself, and scroll reveals. Everything is
+ * CSS/SVG; visitors who prefer reduced motion get the finished, still picture.
  */
 
 import Link from 'next/link';
@@ -10,13 +14,14 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight, Mail, MessageCircle, Smartphone, Radio, Target, Route, Users, LayoutTemplate, Globe2, BarChart3,
-  Zap, Clock,
+  Check, Receipt, UserPlus, MessagesSquare, Inbox, MousePointerClick, RefreshCw,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import s from './landing.module.css';
 
-interface Item { icon: LucideIcon; title: string; text: string }
+interface Item { icon: LucideIcon; title: string; text: string; tint?: string }
 
 /** The four channels the journey engine sends on. */
 const CHANNELS: { icon: LucideIcon; label: string }[] = [
@@ -28,34 +33,34 @@ const CHANNELS: { icon: LucideIcon; label: string }[] = [
 
 /** The main areas of the workspace (same names as the app's menu). */
 const FEATURES: Item[] = [
-  { icon: Target, title: 'Segments', text: 'Group travellers by booking status, product and destination, or build your own rules.' },
-  { icon: Route, title: 'Journeys', text: 'Automated multi-step flows with waits and branches, sent on the right channel for each person.' },
-  { icon: Users, title: 'Contacts', text: 'One profile per traveller, joining bookings, chats, website activity and messages.' },
-  { icon: LayoutTemplate, title: 'Templates', text: 'Email, WhatsApp and SMS templates with personal details filled in for every send.' },
-  { icon: Globe2, title: 'Website & links', text: 'See what people do on raynatours.com after a message, with tracked links for every campaign.' },
-  { icon: BarChart3, title: 'Performance', text: 'Delivered, opened, clicked and booked for every journey, compared with the period before.' },
+  { icon: Target, title: 'Segments', tint: 'gold', text: 'Group travellers by booking status, product and destination, or build your own rules.' },
+  { icon: Route, title: 'Journeys', tint: 'blue', text: 'Automated multi-step flows with waits and branches, sent on the right channel for each person.' },
+  { icon: Users, title: 'Contacts', tint: 'green', text: 'One profile per traveller, joining bookings, chats, website activity and messages.' },
+  { icon: LayoutTemplate, title: 'Templates', tint: 'rose', text: 'Email, WhatsApp and SMS templates with personal details filled in for every send.' },
+  { icon: Globe2, title: 'Website & links', tint: 'violet', text: 'See what people do on raynatours.com after a message, with tracked links for every campaign.' },
+  { icon: BarChart3, title: 'Performance', tint: 'teal', text: 'Delivered, opened, clicked and booked for every journey, compared with the period before.' },
 ];
 
-const STEPS: Item[] = [
-  { icon: Zap, title: 'Collect', text: 'Bookings, registrations, chats and website events sync in automatically every day.' },
-  { icon: Users, title: 'Unify', text: 'Records are matched into a single contact with their full history.' },
-  { icon: Target, title: 'Segment', text: 'Every contact is placed in the right audience as their trip status changes.' },
-  { icon: Route, title: 'Engage', text: 'Journeys send the right message at the right moment, and every result is tracked.' },
+/** Where the contact data comes from (the real sources the pipeline syncs). */
+const SOURCES: { icon: LucideIcon; label: string }[] = [
+  { icon: Receipt, label: 'Bookings' },
+  { icon: UserPlus, label: 'Sign-ups' },
+  { icon: MessagesSquare, label: 'WhatsApp chats' },
+  { icon: Inbox, label: 'Email enquiries' },
+  { icon: MousePointerClick, label: 'Website visits' },
+  { icon: Mail, label: 'Message results' },
 ];
 
-/** Illustration of a journey's shape — no numbers, no real data. */
-const FLOW = [
-  { icon: Zap, cls: s.nodeTrigger, title: 'Booking made', sub: 'Starts the journey', kind: 'Trigger' },
-  { icon: Clock, cls: s.nodeWait, title: 'Wait 1 day', sub: 'Then continue', kind: 'Wait' },
-  { icon: Mail, cls: s.nodeEmail, title: 'Trip checklist', sub: 'Personalised email', kind: 'Email' },
-  { icon: MessageCircle, cls: s.nodeWa, title: 'Day-before reminder', sub: 'WhatsApp message', kind: 'WhatsApp' },
+/** The real daily schedule the backend runs (Dubai time). */
+const SCHEDULE: { time: string; title: string; text: string; tag: string; tone: string }[] = [
+  { time: '00:30', title: 'New sign-ups join', text: 'Affiliate, guest and agent registrations are added to the contact list.', tag: 'Contacts', tone: 'green' },
+  { time: '01:00', title: "Yesterday's bookings arrive", text: 'Tours, hotels, visas, flights and packages from the Rayna billing system.', tag: 'Bookings', tone: 'gold' },
+  { time: '02:00', title: 'Audiences refresh', text: 'Every contact moves to the right segment as trips start and end.', tag: 'Segments', tone: 'violet' },
+  { time: 'Every 5 min', title: 'Journeys send', text: 'Each person gets their next message on time, on their channel.', tag: 'Journeys', tone: 'blue' },
+  { time: 'Every 30 min', title: 'Results update', text: 'Opens, clicks and bookings flow into Performance.', tag: 'Performance', tone: 'rose' },
 ];
 
-/**
- * Animated hero backdrop: drifting gold glows, dashed flight routes that flow, small planes
- * flying along them and pulsing city points. Pure SVG/CSS (no video), hidden from screen
- * readers, and still when the visitor prefers reduced motion.
- */
+// ── Hero backdrop ───────────────────────────────────────────────────────────
 const ROUTES = [
   { id: 'r1', d: 'M -80 520 C 260 360, 560 620, 880 400 S 1320 150, 1540 230', dur: '16s', begin: '0s' },
   { id: 'r2', d: 'M -80 170 C 240 90, 520 300, 820 190 S 1260 30, 1540 110', dur: '21s', begin: '-7s' },
@@ -108,28 +113,90 @@ function HeroBackdrop({ idPrefix = 'hero' }: { idPrefix?: string }) {
   );
 }
 
+// ── Hero demo: a journey being set up, on a loop ────────────────────────────
+const DEMO_CARDS: { icon: LucideIcon; cls: string; title: string; sub: string }[] = [
+  { icon: Mail, cls: s.dEmail, title: 'Email', sub: 'Trip checklist' },
+  { icon: MessageCircle, cls: s.dWa, title: 'WhatsApp', sub: 'Day-before reminder' },
+  { icon: Smartphone, cls: s.dSms, title: 'SMS', sub: 'Pickup details' },
+];
+const CONFETTI = Array.from({ length: 12 }, (_, i) => {
+  const a = (i / 12) * Math.PI * 2;
+  return { x: Math.round(Math.cos(a) * 90), y: Math.round(Math.sin(a) * 46), c: ['#E8CF9C', '#7FD3A6', '#93C5FD', '#F9A8B4'][i % 4] };
+});
+
+function HeroDemo() {
+  return (
+    <div className={s.demo} aria-label="Example: setting up a journey">
+      <div className={s.demoPrompt}>
+        <span className={s.demoMark} aria-hidden />
+        <span className={s.demoTyped}>Welcome every new booking</span>
+        <span className={s.demoOk} aria-hidden><Check size={13} strokeWidth={3} /></span>
+      </div>
+
+      <div className={s.demoCards}>
+        {DEMO_CARDS.map(({ icon: Icon, cls, title, sub }, i) => (
+          <div key={title} className={s.demoCard} style={{ '--i': i } as CSSProperties}>
+            <span className={s.demoReady}><Check size={10} strokeWidth={3} aria-hidden /> Ready</span>
+            <span className={`${s.demoIcon} ${cls}`} aria-hidden><Icon size={16} /></span>
+            <b>{title}</b>
+            <span>{sub}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className={s.demoFoot}>
+        <span className={s.demoBtn}>
+          <span className={s.demoBtnStart}>Start journey</span>
+          <span className={s.demoBtnLive}><span className={s.liveDot} aria-hidden /> Live</span>
+          {CONFETTI.map((c, i) => (
+            <span key={i} className={s.confetti} aria-hidden
+              style={{ '--x': `${c.x}px`, '--y': `${c.y}px`, background: c.c } as CSSProperties} />
+          ))}
+        </span>
+        <svg className={s.cursor} viewBox="0 0 24 24" aria-hidden>
+          <path d="M4 2 L4 19 L8.5 14.8 L11.6 21.5 L14.4 20.3 L11.3 13.7 L17.5 13.4 Z" fill="#fff" stroke="#121820" strokeWidth="1.4" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      <div className={s.demoCaptions} aria-hidden>
+        <span className={s.cap1}>Pick who it&apos;s for</span>
+        <span className={s.cap2}>Messages ready on every channel</span>
+        <span className={s.cap3}>Live with one click</span>
+      </div>
+    </div>
+  );
+}
+
 /**
- * Fades [data-reveal] blocks in as they scroll into view. Only blocks that start BELOW the fold
- * are hidden first, so nothing on screen at load ever flashes or stays blank; without
- * IntersectionObserver, or with reduced motion, everything simply stays visible.
+ * Scroll motion:
+ *  - [data-reveal] blocks that start BELOW the fold fade/slide in when they scroll into view
+ *    (blocks visible at load are left alone, so nothing flashes or stays blank).
+ *  - [data-anim] blocks get `inView` the first time they are seen, which starts their sequence.
+ * Without IntersectionObserver, or with reduced motion, everything just shows in its final state.
  */
-function useReveal(rootRef: React.RefObject<HTMLDivElement | null>) {
+function useScrollMotion(rootRef: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
     const root = rootRef.current;
-    if (!root || typeof IntersectionObserver === 'undefined') return undefined;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
-    const els = [...root.querySelectorAll<HTMLElement>('[data-reveal]')]
+    if (!root) return undefined;
+    const anim = [...root.querySelectorAll<HTMLElement>('[data-anim]')];
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (typeof IntersectionObserver === 'undefined' || reduced) {
+      anim.forEach(el => el.classList.add(s.inView));
+      return undefined;
+    }
+    const reveal = [...root.querySelectorAll<HTMLElement>('[data-reveal]')]
       .filter(el => el.getBoundingClientRect().top > window.innerHeight);
-    els.forEach(el => el.classList.add(s.revealPending));
+    reveal.forEach(el => el.classList.add(s.revealPending));
     const io = new IntersectionObserver(entries => {
       for (const e of entries) {
         if (!e.isIntersecting) continue;
-        e.target.classList.add(s.revealed);
-        e.target.classList.remove(s.revealPending);
-        io.unobserve(e.target);
+        const el = e.target as HTMLElement;
+        if (el.hasAttribute('data-anim')) el.classList.add(s.inView);
+        if (el.classList.contains(s.revealPending)) { el.classList.add(s.revealed); el.classList.remove(s.revealPending); }
+        io.unobserve(el);
       }
-    }, { rootMargin: '0px 0px -8% 0px' });
-    els.forEach(el => io.observe(el));
+    }, { rootMargin: '0px 0px -12% 0px' });
+    [...new Set([...reveal, ...anim])].forEach(el => io.observe(el));
     return () => io.disconnect();
   }, [rootRef]);
 }
@@ -139,7 +206,7 @@ export default function LandingPage() {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(false);
-  useReveal(rootRef);
+  useScrollMotion(rootRef);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
     onScroll();
@@ -155,12 +222,13 @@ export default function LandingPage() {
   return (
     <div className={s.page} ref={rootRef}>
       <header className={scrolled ? `${s.header} ${s.headerScrolled}` : s.header}>
-        <div className={`${s.wrap} ${s.headerInner}`}>
+        <div className={s.headerInner}>
           <Link href="/" className={s.logoLink} aria-label="Rayna Tours home">
             <img src="/rayna-logo.webp" alt="Rayna Tours" className={s.logo} />
           </Link>
           <nav className={s.nav} aria-label="Page sections">
             <a href="#features">Features</a>
+            <a href="#sources">Your data</a>
             <a href="#how-it-works">How it works</a>
           </nav>
           <Link href="/login" className={`${s.btn} ${s.btnGold}`}>
@@ -192,26 +260,14 @@ export default function LandingPage() {
                 ))}
               </div>
             </div>
-
-            <div className={s.flowCard} aria-label="Example journey">
-              <div className={s.flowHead}>
-                <span className={s.flowTitle}>Example journey</span>
-                <span className={s.flowTag}>Running</span>
-              </div>
-              <ol className={s.flow}>
-                {FLOW.map(({ icon: Icon, cls, title, sub, kind }) => (
-                  <li key={title} className={s.node}>
-                    <span className={`${s.nodeIcon} ${cls}`} aria-hidden><Icon size={16} /></span>
-                    <span className={s.nodeText}><b>{title}</b><span>{sub}</span></span>
-                    <span className={s.nodeKind}>{kind}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
+            <HeroDemo />
           </div>
         </section>
 
-        <section id="features" className={`${s.section} ${s.sectionAlt}`} style={{ scrollMarginTop: 68 }}>
+        <section id="features" className={`${s.section} ${s.sectionAlt}`}>
+          <div className={s.aurora} aria-hidden>
+            <span className={s.auA} /><span className={s.auB} /><span className={s.auC} />
+          </div>
           <div className={s.wrap}>
             <div className={s.sectionHead} data-reveal>
               <span className={s.kicker}>Features</span>
@@ -219,8 +275,9 @@ export default function LandingPage() {
               <p>From the first booking to the follow-up message, in one place.</p>
             </div>
             <div className={s.grid3}>
-              {FEATURES.map(({ icon: Icon, title, text }, i) => (
-                <article key={title} className={s.card} data-reveal style={{ '--d': `${(i % 3) * 90}ms` } as React.CSSProperties}>
+              {FEATURES.map(({ icon: Icon, title, text, tint }, i) => (
+                <article key={title} className={s.card} data-tint={tint} data-reveal
+                  style={{ '--d': `${(i % 3) * 90}ms` } as CSSProperties}>
                   <span className={s.cardIcon} aria-hidden><Icon size={19} /></span>
                   <h3>{title}</h3>
                   <p>{text}</p>
@@ -230,19 +287,48 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="how-it-works" className={s.section} style={{ scrollMarginTop: 68 }}>
+        <section id="sources" className={s.section}>
+          <div className={s.wrap}>
+            <div className={s.sectionHead} data-reveal>
+              <span className={s.kicker}>Your data</span>
+              <h2>Every source, one contact</h2>
+              <p>Bookings, sign-ups, chats and website visits come together automatically.</p>
+            </div>
+            <div className={s.hub} data-anim>
+              <span className={s.hubCore}>
+                <RefreshCw size={18} aria-hidden className={s.hubSpin} />
+                <img src="/rayna-logo.webp" alt="" className={s.hubLogo} />
+              </span>
+              <ul className={s.tiles}>
+                {SOURCES.map(({ icon: Icon, label }, i) => (
+                  <li key={label} className={s.tile} style={{ '--i': i } as CSSProperties}>
+                    <span className={s.tileTick} aria-hidden><Check size={10} strokeWidth={3} /></span>
+                    <span className={s.tileIcon} aria-hidden><Icon size={18} /></span>
+                    <span>{label}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="how-it-works" className={`${s.section} ${s.sectionAlt}`}>
           <div className={s.wrap}>
             <div className={s.sectionHead} data-reveal>
               <span className={s.kicker}>How it works</span>
-              <h2>From data to the right message</h2>
-              <p>Four steps run every day without anyone lifting a finger.</p>
+              <h2>Runs on its own, every day</h2>
+              <p>The schedule the workspace keeps (Dubai time), so the team can focus on the messages.</p>
             </div>
-            <ol className={s.steps}>
-              {STEPS.map(({ title, text }, i) => (
-                <li key={title} className={s.step} data-reveal style={{ '--d': `${i * 110}ms` } as React.CSSProperties}>
-                  <span className={s.stepNum}>Step {i + 1}</span>
-                  <h3>{title}</h3>
-                  <p>{text}</p>
+            <ol className={s.timeline} data-anim>
+              {SCHEDULE.map(({ time, title, text, tag, tone }, i) => (
+                <li key={title} className={s.tItem} data-tone={tone} style={{ '--i': i } as CSSProperties}>
+                  <span className={s.tTime}>{time}</span>
+                  <span className={s.tDot} aria-hidden />
+                  <div className={s.tCard}>
+                    <h3>{title}</h3>
+                    <p>{text}</p>
+                    <span className={s.tTag}>{tag}</span>
+                  </div>
                 </li>
               ))}
             </ol>
