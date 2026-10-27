@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
   Heart, Map as MapIcon, Package, Building2, FileCheck, Plane, Layers, Loader2, Download, RefreshCw,
-  ShoppingBag, Users, X, ExternalLink,
+  ShoppingBag, Users, X, ExternalLink, Search, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   getAffinitySummary, getAffinityTopProducts, getAffinityCustomers, getContactAffinity, rebuildAffinity, downloadAffinityCSV,
@@ -50,6 +50,9 @@ const SORT_OPTIONS = [
 ];
 const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 const RANKS = [1, 2, 3];
+
+/** Products per page in the "all products" panel. */
+const ALL_PAGE = 50;
 
 function formatNum(n) { return (Number(n) || 0).toLocaleString(); }
 function formatAED(n) { return `AED ${Math.round(Number(n) || 0).toLocaleString()}`; }
@@ -249,6 +252,16 @@ export default function AffinityPage() {
   const [summary, setSummary] = useState(null);
   const [summaryError, setSummaryError] = useState(null);
   const [topProducts, setTopProducts] = useState([]);
+  const [productTotal, setProductTotal] = useState(null);
+  // "All products" panel: every #1 product, searchable, 50 at a time.
+  const [showAll, setShowAll] = useState(false);
+  const [allQInput, setAllQInput] = useState('');
+  const [allQ, setAllQ] = useState('');
+  const [allItems, setAllItems] = useState([]);
+  const [allTotal, setAllTotal] = useState(null);
+  const [allHasMore, setAllHasMore] = useState(false);
+  const [allLoading, setAllLoading] = useState(false);
+  const [allError, setAllError] = useState(null);
   const [list, setList] = useState({ total: 0, customers: [] });
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState(null);
@@ -292,11 +305,38 @@ export default function AffinityPage() {
   useEffect(() => {
     if (view !== 'product') return;
     let active = true;
-    getAffinityTopProducts({ ...audience, limit: 12 })
-      .then(d => { if (active) setTopProducts(d.data || []); })
-      .catch(() => { if (active) setTopProducts([]); });
+    getAffinityTopProducts({ ...audience, limit: 12, withTotal: 1 })
+      .then(d => { if (active) { setTopProducts(d.data || []); setProductTotal(typeof d.total === 'number' ? d.total : null); } })
+      .catch(() => { if (active) { setTopProducts([]); setProductTotal(null); } });
     return () => { active = false; };
   }, [view, audience, refreshKey]);
+
+  // Debounce the panel's search box.
+  useEffect(() => {
+    const t = setTimeout(() => setAllQ(allQInput.trim()), 250);
+    return () => clearTimeout(t);
+  }, [allQInput]);
+
+  // First page of the panel whenever it opens or its search / the audience changes.
+  useEffect(() => {
+    if (view !== 'product' || !showAll) return;
+    let active = true;
+    setAllLoading(true);
+    setAllError(null);
+    getAffinityTopProducts({ ...audience, limit: ALL_PAGE, offset: 0, q: allQ, withTotal: 1 })
+      .then(d => { if (!active) return; setAllItems(d.data || []); setAllTotal(d.total ?? null); setAllHasMore(!!d.hasMore); })
+      .catch(err => { if (active) { setAllItems([]); setAllError(err.message || 'Failed to load products'); } })
+      .finally(() => { if (active) setAllLoading(false); });
+    return () => { active = false; };
+  }, [view, showAll, allQ, audience, refreshKey]);
+
+  const loadMoreProducts = () => {
+    setAllLoading(true);
+    getAffinityTopProducts({ ...audience, limit: ALL_PAGE, offset: allItems.length, q: allQ })
+      .then(d => { setAllItems(prev => [...prev, ...(d.data || [])]); setAllHasMore(!!d.hasMore); })
+      .catch(err => setAllError(err.message || 'Failed to load more products'))
+      .finally(() => setAllLoading(false));
+  };
 
   // Back to page 1 whenever what the table shows changes.
   useEffect(() => { setPage(1); }, [listParams, limit]);
@@ -455,7 +495,62 @@ export default function AffinityPage() {
                 {productFilter && !topProducts.some(p => p.product_key === productFilter.key) && (
                   <span style={{ padding: '6px 12px', borderRadius: 20, fontSize: 12.5, border: '1px solid #8b5cf6', color: '#8b5cf6' }}>{productFilter.name}</span>
                 )}
+                {(productTotal == null || productTotal > topProducts.length) && (
+                  <button type="button" onClick={() => setShowAll(v => !v)} aria-expanded={showAll}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, cursor: 'pointer', fontSize: 12.5, fontWeight: 600,
+                      border: '1px dashed #8b5cf6', background: 'transparent', color: '#8b5cf6' }}>
+                    {showAll ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {showAll ? 'Hide full list' : `Show all${productTotal != null ? ` ${formatNum(productTotal)}` : ''} products`}
+                  </button>
+                )}
               </div>
+
+              {showAll && (
+                <div style={{ marginTop: 14, borderTop: '1px solid var(--border-color)', paddingTop: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <div style={{ position: 'relative', flex: '1 1 260px', maxWidth: 380 }}>
+                      <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+                      <input value={allQInput} onChange={e => setAllQInput(e.target.value)} placeholder="Search products" aria-label="Search all products"
+                        style={{ width: '100%', height: 34, padding: '0 10px 0 30px', fontSize: 13, borderRadius: 8 }} />
+                    </div>
+                    <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                      {allLoading && allItems.length === 0 ? 'Loading…'
+                        : allTotal != null ? `${formatNum(allTotal)} product${allTotal === 1 ? '' : 's'}${allQ ? ` matching “${allQ}”` : ''} · most customers first` : ''}
+                    </span>
+                  </div>
+                  {allError && <div style={{ fontSize: 12.5, color: '#ef4444', marginBottom: 8 }}>{allError}</div>}
+                  <div role="list" aria-label="All products"
+                    style={{ maxHeight: 360, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6, paddingRight: 4 }}>
+                    {allItems.map(p => {
+                      const selected = productFilter?.key === p.product_key;
+                      return (
+                        <button key={p.product_key} role="listitem" type="button" title={p.product_name}
+                          onClick={() => setProductFilter(selected ? null : { key: p.product_key, name: p.product_name })} aria-pressed={selected}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 10px', borderRadius: 8, cursor: 'pointer',
+                            fontSize: 12.5, textAlign: 'left',
+                            border: `1px solid ${selected ? '#8b5cf6' : 'var(--border-color)'}`,
+                            background: selected ? 'color-mix(in srgb, #8b5cf6 12%, var(--bg-card))' : 'var(--bg-card)',
+                            color: selected ? '#8b5cf6' : 'var(--text-secondary)' }}>
+                          <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.product_name}</span>
+                          <span style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums', color: 'var(--text-tertiary)', flexShrink: 0 }}>{formatNum(p.customers)}</span>
+                        </button>
+                      );
+                    })}
+                    {!allLoading && allItems.length === 0 && !allError && (
+                      <div style={{ gridColumn: '1 / -1', fontSize: 13, color: 'var(--text-tertiary)', padding: '8px 2px' }}>
+                        {allQ ? `No products match “${allQ}”.` : 'No products for these filters.'}
+                      </div>
+                    )}
+                  </div>
+                  {allHasMore && (
+                    <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+                      <button type="button" onClick={loadMoreProducts} disabled={allLoading} className="btn btn-sm btn-ghost">
+                        {allLoading ? <Loader2 size={13} className="animate-spin" /> : null} Show more
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
 

@@ -431,16 +431,40 @@ export default class BookingAffinityService {
   }
 
   /** The most common #1 products for the current filters. */
-  static async getTopProducts(filters, limit = 12) {
+  /**
+   * Most common #1 products for the filters, most customers first.
+   * Default (no options) is unchanged: the top `limit` rows. The "all products" panel also passes
+   * `offset` (paging), `q` (name search) and `withTotal` (how many distinct products match).
+   * Returns rows; when paging/search/total is asked for, returns { data, total, hasMore }.
+   */
+  static async getTopProducts(filters, limit = 12, { q = null, offset = null, withTotal = false } = {}) {
     const { sql, params } = this.buildWhere({ ...filters, view: null, search: null });
-    const { rows } = await query(`
+    const conds = sql ? [sql.replace(/^WHERE\s+/i, ''), 'product_1_key IS NOT NULL'] : ['product_1_key IS NOT NULL'];
+    const term = typeof q === 'string' ? q.trim().slice(0, 100) : '';
+    if (term) {
+      params.push(`%${term.replace(/[\\%_]/g, c => `\\${c}`)}%`);
+      conds.push(`product_1_name ILIKE $${params.length}`);
+    }
+    const where = `WHERE ${conds.join(' AND ')}`;
+    const size = Math.min(Math.max(parseInt(limit) || 12, 1), 100);
+    const skip = Math.min(Math.max(parseInt(offset) || 0, 0), 100000);
+    const extended = term || offset != null || withTotal;
+
+    const pageP = query(`
       SELECT product_1_key AS product_key, MIN(product_1_name) AS product_name, COUNT(*)::int AS customers
-        FROM user_affinity_top3 ${sql ? `${sql} AND` : 'WHERE'} product_1_key IS NOT NULL
+        FROM user_affinity_top3 ${where}
        GROUP BY product_1_key
        ORDER BY customers DESC, product_name
-       LIMIT ${Math.min(Math.max(parseInt(limit) || 12, 1), 50)}
+       LIMIT ${extended ? size + 1 : size} OFFSET ${skip}
     `, params);
-    return rows;
+    if (!extended) return (await pageP).rows;
+
+    const totalP = withTotal
+      ? query(`SELECT COUNT(DISTINCT product_1_key)::int AS n FROM user_affinity_top3 ${where}`, params)
+      : Promise.resolve(null);
+    const [{ rows }, totalRes] = await Promise.all([pageP, totalP]);
+    const hasMore = rows.length > size;
+    return { data: hasMore ? rows.slice(0, size) : rows, total: totalRes ? totalRes.rows[0].n : null, hasMore };
   }
 
   /** Search the product catalog (most customers first). */
