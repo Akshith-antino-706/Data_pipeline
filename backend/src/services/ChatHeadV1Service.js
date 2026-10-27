@@ -16,7 +16,27 @@
 import db from '../config/database.js';
 
 const BASE = 'https://ser1.chathead.io/apis/v1/services';
+const ACCOUNT_BASE = 'https://ser1.chathead.io/apis/v1/account';
 const CLIENT = 'rayna';
+// Required (with c=rayna) by the account/* endpoints that return the rendered template.
+const APP_KEY = process.env.CHATHEAD_APP_KEY || '732f0e1d575de309e168c0d945db9bc8';
+
+// Header-media key in a .data record. ChatHead binds the template's header image from `img`;
+// a row without it renders the template's own header (when the template has one baked in) or
+// fails outright (when the template's header is an empty variable slot).
+const MEDIA_KEY = 'img';
+
+// Last-resort header image, used only when the row has none AND the template has none.
+// WhatsApp rejects a template whose header media is empty or unreachable.
+const WA_DEFAULT_IMG = process.env.WA_DEFAULT_IMG
+  || `${(process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '')}/rayna-og.jpg`;
+
+const blank = v => v == null || String(v).trim() === '';
+
+// templateId → { url, at }. Template media changes only when the template is re-approved,
+// so a short TTL keeps a bulk send to one lookup without pinning a stale image forever.
+const _mediaCache = new Map();
+const MEDIA_TTL_MS = 10 * 60 * 1000;
 
 // Upload contract (verified 2026-06-03 against the official Postman collection):
 //   • URL must end in /index.php — without it, the request 200s with empty body
@@ -30,29 +50,90 @@ const UPLOAD_URL = `${BASE}/broadcast/data/add/index.php`;
 
 export class ChatHeadV1Service {
 
+  // ── Template default header image ──────────────────────────────────────
+
+  /**
+   * The template's own header image, as ChatHead renders it.
+   *
+   * Templates fall into two shapes: one with the artwork baked into the header
+   * (the rendered preview carries an <img>), and one whose header is an empty
+   * variable slot the .data file must fill. This returns the baked-in URL for
+   * the first and null for the second, so callers can tell "the template has a
+   * default" from "the template needs one".
+   *
+   * Never throws — a lookup failure degrades to null so a broadcast is not lost
+   * over a missing image.
+   *
+   * @param {number|string} templateId
+   * @returns {Promise<string|null>}
+   */
+  static async fetchTemplateMedia(templateId) {
+    if (templateId == null || templateId === '') return null;
+    const key = String(templateId);
+    const hit = _mediaCache.get(key);
+    if (hit && Date.now() - hit.at < MEDIA_TTL_MS) return hit.url;
+
+    let url = null;
+    try {
+      const res = await fetch(`${ACCOUNT_BASE}/template_content/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ c: CLIENT, id: key, app_key: APP_KEY, formate: 'html' }).toString(),
+      });
+      const body = await res.text();
+      // An auth/lookup failure comes back as a JSON error object, not HTML.
+      if (!body.trim().startsWith('{')) {
+        const m = body.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
+        if (m && /^https?:\/\//i.test(m[1])) url = m[1];
+      }
+    } catch { /* leave null — caller falls back */ }
+
+    _mediaCache.set(key, { url, at: Date.now() });
+    return url;
+  }
+
   // ── Step 1: build NDJSON + persist to data_files ────────────────────────
 
   /**
    * @param {Array<{phone:string, name?:string}>} contacts
-   * @param {string} [filename]  defaults to `auto-<unix>.data`
-   * @returns {{id:number, filename:string, content:string}}
+   * @param {string|{filename?:string, defaultMedia?:string|null}} [opts]
+   *        A bare string stays supported as the filename (original signature).
+   *        `defaultMedia` fills `img` on any row that doesn't carry one — pass the
+   *        template's own header image so a row missing it still renders the
+   *        artwork the template was approved with, rather than nothing.
+   * @returns {{id:number, filename:string, content:string, mediaFilled:number}}
    */
-  static async buildAndSaveDataFile(contacts, filename = null) {
+  static async buildAndSaveDataFile(contacts, opts = null) {
     if (!Array.isArray(contacts) || !contacts.length) {
       throw new Error('buildAndSaveDataFile: contacts must be a non-empty array');
     }
+    const { filename = null, defaultMedia = null } =
+      (typeof opts === 'string' || opts == null) ? { filename: opts } : opts;
+
+    // Row image → template's own header image → global fallback. Only the last is
+    // generic; the middle one keeps each template looking like itself.
+    const fallbackMedia = !blank(defaultMedia) ? String(defaultMedia).trim() : WA_DEFAULT_IMG;
+    let mediaFilled = 0;
+
     const cleaned = contacts.map((c, i) => {
       // Extra per-recipient template variables (item_name, item_image, cta_url, img, …)
       // resolved upstream via placeholderResolver so ChatHead can bind them to the
       // template's {{key}} placeholders. id/d always win; name falls back to the resolved
       // vars.name (USER_NAME || USER_FIRST_NAME) when no explicit contact name was passed.
       const vars = (c.vars && typeof c.vars === 'object') ? c.vars : {};
-      return {
+      const row = {
         ...vars,
         id:   String(i + 1),
         d:    String(c.phone || '').replace(/^\+/, '').replace(/\s+/g, ''),
         name: (c.name && String(c.name).trim()) ? c.name : (vars.name || ''),
       };
+      // Header media is compulsory: WhatsApp rejects a media template whose header
+      // resolves to empty. A row that omits it inherits the template's own image.
+      if (blank(row[MEDIA_KEY])) {
+        row[MEDIA_KEY] = fallbackMedia;
+        mediaFilled++;
+      }
+      return row;
     });
     if (cleaned.some(r => !/^\d{10,15}$/.test(r.d))) {
       throw new Error('buildAndSaveDataFile: every contact needs a valid phone (10-15 digits, no +)');
@@ -70,7 +151,10 @@ export class ChatHeadV1Service {
        RETURNING id, filename`,
       [name, cleaned.length, JSON.stringify(cleaned), Buffer.byteLength(content, 'utf8')]
     );
-    return { id: row.id, filename: row.filename, content };
+    if (mediaFilled) {
+      console.log(`[chathead] data file ${row.filename}: filled ${MEDIA_KEY} on ${mediaFilled}/${cleaned.length} row(s) → ${fallbackMedia}`);
+    }
+    return { id: row.id, filename: row.filename, content, mediaFilled };
   }
 
   // ── Step 2: upload to ChatHead ─────────────────────────────────────────
@@ -199,9 +283,18 @@ export class ChatHeadV1Service {
 
   static async sendBroadcast({
     contacts, filename, channelId, channelName, templateId, templateName,
-    name, sendTime,
+    name, sendTime, defaultMedia,
   }) {
-    const dataFile = await this.buildAndSaveDataFile(contacts, filename);
+    // Resolve the template's own header image once per send, so any contact whose
+    // row has no `img` still goes out with the artwork the template was approved
+    // with. An explicit `defaultMedia` from the caller wins over the lookup.
+    const templateMedia = !blank(defaultMedia)
+      ? defaultMedia
+      : await this.fetchTemplateMedia(templateId);
+
+    const dataFile = await this.buildAndSaveDataFile(contacts, {
+      filename, defaultMedia: templateMedia,
+    });
     const upload   = await this.uploadDataFile(dataFile);
     if (!upload.ok || !upload.chatheadFilename) {
       return { success: false, stage: 'upload', error: upload.response, dataFileId: dataFile.id };
