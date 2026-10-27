@@ -53,8 +53,10 @@ export default function LoginPage() {
   return (
     <div className={s.page}>
       <aside className={s.brand}>
-        <span className={s.logoWrap}>
-          <img src="/rayna-logo.webp" alt="Rayna Tours" className={s.logo} />
+        {/* The logo's dark lettering needs a light background, so on this page it lives in the
+            sign-in card; the dark panel carries a text wordmark instead of a white logo box. */}
+        <span className={s.wordmark} aria-hidden>
+          <span className={s.wordmarkDot} />Rayna Tours
         </span>
         <div className={s.pitch}>
           <span className={s.eyebrow}>Marketing workspace</span>
@@ -74,6 +76,7 @@ export default function LoginPage() {
 
       <main className={s.main}>
         <div className={s.panel}>
+          <img src="/rayna-logo.webp" alt="Rayna Tours" className={s.cardLogo} />
           <div className={s.panelHead}>
             <h1>Welcome back</h1>
             <p className={s.note}>Sign in with your Rayna work email.</p>

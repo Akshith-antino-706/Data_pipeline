@@ -47,6 +47,26 @@
 }
 .logo { height: 34px; width: auto; display: block; object-fit: contain; }
 
+/* Login: text wordmark on the dark panel, real logo inside the light card. */
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #F1F4F7;
+}
+.wordmarkDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, #E8C98F, #C9A96E);
+  box-shadow: 0 0 0 4px rgba(201, 169, 110, 0.18);
+}
+.cardLogo { height: 40px; width: auto; display: block; object-fit: contain; align-self: flex-start; margin-bottom: 2px; }
+
 .pitch {
   margin-block: auto;
   display: flex;
