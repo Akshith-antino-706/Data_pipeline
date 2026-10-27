@@ -56,7 +56,7 @@ export default function LeadsAccessPage() {
 
       <main className={s.main}>
         <div className={s.panel}>
-          <div>
+          <div className={s.panelHead}>
             <h1>Protected Leads</h1>
             <p className={s.note}>Enter the access token to view leads and registration data.</p>
           </div>

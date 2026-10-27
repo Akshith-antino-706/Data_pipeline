@@ -3,11 +3,18 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Loader, Eye, EyeOff, Mail, Lock, Route, Send, BarChart3 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui';
 import s from '../auth.module.css';
+
+/** What the workspace does — product description only, no figures. */
+const FEATURES = [
+  { icon: Route, title: 'Journeys', text: 'Automated email, WhatsApp and SMS flows for each audience.' },
+  { icon: Send, title: 'Sends', text: 'Every message tracked from sent to opened, clicked and booked.' },
+  { icon: BarChart3, title: 'Insights', text: 'Segments, website activity and performance at a glance.' },
+];
 
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
@@ -50,41 +57,55 @@ export default function LoginPage() {
           <img src="/rayna-logo.webp" alt="Rayna Tours" className={s.logo} />
         </span>
         <div className={s.pitch}>
+          <span className={s.eyebrow}>Marketing workspace</span>
           <h2>Reach every traveller at the right moment.</h2>
-          <p>Journeys, sends and insights for Rayna Tours — for the marketing team only.</p>
+          <p>Journeys, sends and insights for Rayna Tours, in one place for the marketing team.</p>
+          <ul className={s.features}>
+            {FEATURES.map(({ icon: Icon, title, text }) => (
+              <li key={title} className={s.feature}>
+                <span className={s.featureIcon} aria-hidden><Icon size={16} /></span>
+                <span className={s.featureText}><b>{title}</b><span>{text}</span></span>
+              </li>
+            ))}
+          </ul>
         </div>
-        <span className={s.foot}>Trouble signing in? Ask your admin.</span>
+        <span className={s.foot}>© Rayna Tours · Internal use only</span>
       </aside>
 
       <main className={s.main}>
         <div className={s.panel}>
-          <div>
-            <h1>Sign in</h1>
-            <p className={s.note}>Use your Rayna work email.</p>
+          <div className={s.panelHead}>
+            <h1>Welcome back</h1>
+            <p className={s.note}>Sign in with your Rayna work email.</p>
           </div>
 
           <form onSubmit={handleSubmit} className={s.form} noValidate>
             <div className={s.field}>
               <label htmlFor="email" className={s.label}>Work email</label>
-              <input
-                id="email"
-                className={s.input}
-                type="email"
-                placeholder="you@raynatours.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                autoFocus
-              />
+              <div className={s.inputWrap}>
+                <Mail size={16} className={s.inputIcon} aria-hidden />
+                <input
+                  id="email"
+                  className={`${s.input} ${s.withIcon}`}
+                  type="email"
+                  placeholder="you@raynatours.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  autoFocus
+                />
+              </div>
             </div>
 
             <div className={s.field}>
               <label htmlFor="password" className={s.label}>Password</label>
               <div className={s.pwWrap}>
+                <Lock size={16} className={s.inputIcon} aria-hidden />
                 <input
                   id="password"
-                  className={`${s.input} ${s.pwInput}`}
+                  className={`${s.input} ${s.withIcon} ${s.pwInput}`}
                   type={showPassword ? 'text' : 'password'}
+                  placeholder="Your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
@@ -107,10 +128,13 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          <Link href="/" className={s.back}>
-            <ArrowLeft size={14} aria-hidden />
-            Back to home
-          </Link>
+          <div className={s.panelFoot}>
+            <Link href="/" className={s.back}>
+              <ArrowLeft size={14} aria-hidden />
+              Back to home
+            </Link>
+            <span>Trouble signing in? Ask your admin.</span>
+          </div>
         </div>
       </main>
     </div>
