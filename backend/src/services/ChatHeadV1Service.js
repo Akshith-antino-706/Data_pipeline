@@ -124,7 +124,10 @@ export class ChatHeadV1Service {
       const row = {
         ...vars,
         id:   String(i + 1),
-        d:    String(c.phone || '').replace(/^\+/, '').replace(/\s+/g, ''),
+        // Strip human formatting BEFORE the leading +, not after: " +971505671946"
+        // (a stored number with a leading space) otherwise keeps its + and fails the
+        // digits-only check below — which throws and loses the whole chunk, not one row.
+        d:    String(c.phone || '').replace(/[\s\-().]/g, '').replace(/^\+/, ''),
         name: (c.name && String(c.name).trim()) ? c.name : (vars.name || ''),
       };
       // Header media is compulsory: WhatsApp rejects a media template whose header
