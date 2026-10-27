@@ -215,8 +215,10 @@ describe('Leads access page', () => {
 describe('Home (landing) page', () => {
   it('renders marketing content and sign-in links', () => {
     render(<HomePage />);
-    expect(screen.getByText('Everything You Need')).toBeTruthy();
-    expect(screen.getByText('Smart Segmentation')).toBeTruthy();
+    expect(screen.getByText('Everything the marketing team needs')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Segments' })).toBeTruthy();
+    // Product copy only: no invented figures on the public page
+    expect(bodyText()).not.toMatch(/1\.3M|1\.3 million|\b28\b|A\/B testing|Push/);
     expect(screen.getAllByRole('link').some(a => a.getAttribute('href') === '/login')).toBe(true);
     expect(bodyText()).toContain(String(new Date().getFullYear()));
     expect(bodyText()).not.toMatch(/NaN|undefined/);
