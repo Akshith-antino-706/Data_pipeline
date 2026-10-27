@@ -344,8 +344,14 @@ export function buildWaVars(ctx = {}, keys = WA_DATA_KEYS) {
   }
 
   // ── COMPULSORY keys: img + 0_url are ALWAYS emitted (WhatsApp templates require them) ──
-  // `img` header image: USER_IMAGE (the `img` alias) → item image → default. Never empty/missing.
-  out.img = out.img || out.item_image || out.item_image_url || values.ITEM_IMAGE_URL || WA_DEFAULT_IMG;
+  // `img` header image: USER_IMAGE (the `img` alias) → item image. Deliberately NOT defaulted
+  // here: a generic value would be indistinguishable from a real one, and would stop
+  // ChatHeadV1Service.buildAndSaveDataFile from substituting the TEMPLATE's own header image
+  // (which looks right for that template, where a site-wide default does not). Leaving the key
+  // absent is the signal "nothing resolved — use the template's". The .data file still always
+  // carries `img`, because that builder fills it: template image → WA_DEFAULT_IMG.
+  const _img = out.img || out.item_image || out.item_image_url || values.ITEM_IMAGE_URL;
+  if (_img) out.img = _img; else delete out.img;
   // Button URL: 0_url (zero) AND o_url (letter O). The WhatsApp template's button ALREADY
   // prepends the site base (https://www.raynatours.com/), so these must be the RELATIVE PATH
   // only — otherwise the URL doubles (…/https://…). Strip the scheme+host (+leading slash).
