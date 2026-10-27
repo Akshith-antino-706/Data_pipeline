@@ -7,7 +7,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight, Mail, MessageCircle, Smartphone, Radio, Target, Route, Users, LayoutTemplate, Globe2, BarChart3,
   Zap, Clock,
@@ -51,9 +51,101 @@ const FLOW = [
   { icon: MessageCircle, cls: s.nodeWa, title: 'Day-before reminder', sub: 'WhatsApp message', kind: 'WhatsApp' },
 ];
 
+/**
+ * Animated hero backdrop: drifting gold glows, dashed flight routes that flow, small planes
+ * flying along them and pulsing city points. Pure SVG/CSS (no video), hidden from screen
+ * readers, and still when the visitor prefers reduced motion.
+ */
+const ROUTES = [
+  { id: 'r1', d: 'M -80 520 C 260 360, 560 620, 880 400 S 1320 150, 1540 230', dur: '16s', begin: '0s' },
+  { id: 'r2', d: 'M -80 170 C 240 90, 520 300, 820 190 S 1260 30, 1540 110', dur: '21s', begin: '-7s' },
+  { id: 'r3', d: 'M 140 760 C 380 540, 700 560, 1010 640 S 1320 520, 1540 590', dur: '26s', begin: '-13s' },
+];
+// Points on the routes, kept to the right of the headline so nothing pulses over the text.
+const CITIES = [
+  { x: 880, y: 400, delay: '0s' }, { x: 820, y: 190, delay: '1.2s' }, { x: 1010, y: 640, delay: '2.1s' },
+];
+
+function HeroBackdrop({ idPrefix = 'hero' }: { idPrefix?: string }) {
+  const gid = `${idPrefix}-routeFade`;
+  return (
+    <div className={s.heroBg} aria-hidden>
+      <span className={`${s.orb} ${s.orbA}`} />
+      <span className={`${s.orb} ${s.orbB}`} />
+      <span className={`${s.orb} ${s.orbC}`} />
+      <svg className={s.routes} viewBox="0 0 1440 700" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id={gid} x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0" stopColor="#C9A96E" stopOpacity="0" />
+            <stop offset="0.2" stopColor="#C9A96E" stopOpacity="0.55" />
+            <stop offset="0.8" stopColor="#C9A96E" stopOpacity="0.55" />
+            <stop offset="1" stopColor="#C9A96E" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {ROUTES.map(r => (
+          <g key={r.id}>
+            <path id={`${idPrefix}-${r.id}`} d={r.d} className={s.route} stroke={`url(#${gid})`} />
+            <g className={s.moving}>
+              {/* paper-plane glyph, nose pointing along +x so rotate="auto" follows the route */}
+              <path d="M -9 -6 L 11 0 L -9 6 L -5 0 Z" className={s.plane} />
+              <animateMotion dur={r.dur} begin={r.begin} repeatCount="indefinite" rotate="auto">
+                <mpath href={`#${idPrefix}-${r.id}`} />
+              </animateMotion>
+            </g>
+          </g>
+        ))}
+        {CITIES.map(c => (
+          <g key={`${c.x}-${c.y}`} transform={`translate(${c.x} ${c.y})`}>
+            <circle r="3.5" className={s.cityDot} />
+            <circle r="4" className={`${s.cityRing} ${s.moving}`}>
+              <animate attributeName="r" values="4;18" dur="3s" begin={c.delay} repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.7;0" dur="3s" begin={c.delay} repeatCount="indefinite" />
+            </circle>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * Fades [data-reveal] blocks in as they scroll into view. Only blocks that start BELOW the fold
+ * are hidden first, so nothing on screen at load ever flashes or stays blank; without
+ * IntersectionObserver, or with reduced motion, everything simply stays visible.
+ */
+function useReveal(rootRef: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+    const els = [...root.querySelectorAll<HTMLElement>('[data-reveal]')]
+      .filter(el => el.getBoundingClientRect().top > window.innerHeight);
+    els.forEach(el => el.classList.add(s.revealPending));
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        e.target.classList.add(s.revealed);
+        e.target.classList.remove(s.revealPending);
+        io.unobserve(e.target);
+      }
+    }, { rootMargin: '0px 0px -8% 0px' });
+    els.forEach(el => io.observe(el));
+    return () => io.disconnect();
+  }, [rootRef]);
+}
+
 export default function LandingPage() {
   const { isAuthenticated } = useAuth();
   const router = useRouter();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [scrolled, setScrolled] = useState(false);
+  useReveal(rootRef);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
   useEffect(() => {
     if (isAuthenticated) router.replace('/dashboard');
   }, [isAuthenticated, router]);
@@ -61,8 +153,8 @@ export default function LandingPage() {
   if (isAuthenticated) return null;
 
   return (
-    <div className={s.page}>
-      <header className={s.header}>
+    <div className={s.page} ref={rootRef}>
+      <header className={scrolled ? `${s.header} ${s.headerScrolled}` : s.header}>
         <div className={`${s.wrap} ${s.headerInner}`}>
           <Link href="/" className={s.logoLink} aria-label="Rayna Tours home">
             <img src="/rayna-logo.webp" alt="Rayna Tours" className={s.logo} />
@@ -79,6 +171,7 @@ export default function LandingPage() {
 
       <main>
         <section className={s.hero}>
+          <HeroBackdrop />
           <div className={`${s.wrap} ${s.heroInner}`}>
             <div className={s.heroCopy}>
               <span className={s.eyebrow}>Marketing workspace</span>
@@ -120,14 +213,14 @@ export default function LandingPage() {
 
         <section id="features" className={`${s.section} ${s.sectionAlt}`} style={{ scrollMarginTop: 68 }}>
           <div className={s.wrap}>
-            <div className={s.sectionHead}>
+            <div className={s.sectionHead} data-reveal>
               <span className={s.kicker}>Features</span>
               <h2>Everything the marketing team needs</h2>
               <p>From the first booking to the follow-up message, in one place.</p>
             </div>
             <div className={s.grid3}>
-              {FEATURES.map(({ icon: Icon, title, text }) => (
-                <article key={title} className={s.card}>
+              {FEATURES.map(({ icon: Icon, title, text }, i) => (
+                <article key={title} className={s.card} data-reveal style={{ '--d': `${(i % 3) * 90}ms` } as React.CSSProperties}>
                   <span className={s.cardIcon} aria-hidden><Icon size={19} /></span>
                   <h3>{title}</h3>
                   <p>{text}</p>
@@ -139,14 +232,14 @@ export default function LandingPage() {
 
         <section id="how-it-works" className={s.section} style={{ scrollMarginTop: 68 }}>
           <div className={s.wrap}>
-            <div className={s.sectionHead}>
+            <div className={s.sectionHead} data-reveal>
               <span className={s.kicker}>How it works</span>
               <h2>From data to the right message</h2>
               <p>Four steps run every day without anyone lifting a finger.</p>
             </div>
             <ol className={s.steps}>
               {STEPS.map(({ title, text }, i) => (
-                <li key={title} className={s.step}>
+                <li key={title} className={s.step} data-reveal style={{ '--d': `${i * 110}ms` } as React.CSSProperties}>
                   <span className={s.stepNum}>Step {i + 1}</span>
                   <h3>{title}</h3>
                   <p>{text}</p>
@@ -158,7 +251,8 @@ export default function LandingPage() {
       </main>
 
       <footer className={s.closing}>
-        <div className={`${s.wrap} ${s.closingInner}`}>
+        <HeroBackdrop idPrefix="closing" />
+        <div className={`${s.wrap} ${s.closingInner}`} data-reveal>
           <h2>Ready when you are</h2>
           <p>Sign in with your Rayna work email.</p>
           <Link href="/login" className={`${s.btn} ${s.btnGold} ${s.btnLg}`}>

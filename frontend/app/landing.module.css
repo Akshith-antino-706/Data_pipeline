@@ -5,12 +5,15 @@
 .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
 
 /* ── Header ─────────────────────────────────────────────── */
+/* header gains a shadow once the page scrolls */
 .header {
+  transition: box-shadow 0.2s;
   position: sticky; top: 0; z-index: 50;
   background: rgba(255, 255, 255, 0.86);
   backdrop-filter: saturate(160%) blur(12px);
   border-bottom: 1px solid #E7EAEE;
 }
+.headerScrolled { box-shadow: 0 6px 20px rgba(16, 24, 32, 0.08); }
 .headerInner { height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .logoLink { display: inline-flex; align-items: center; }
 .logo { height: 34px; width: auto; display: block; }
@@ -46,6 +49,28 @@
   background-size: 22px 22px;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.85), transparent 85%);
 }
+/* Animated backdrop (sits above the dot grid, below the content). */
+.heroBg { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.orb { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.5; will-change: transform; }
+.orbA { width: 420px; height: 420px; top: -120px; right: 6%; background: rgba(201, 169, 110, 0.55); animation: drift1 18s ease-in-out infinite alternate; }
+.orbB { width: 360px; height: 360px; bottom: -160px; left: -60px; background: rgba(201, 169, 110, 0.35); animation: drift2 22s ease-in-out infinite alternate; }
+.orbC { width: 260px; height: 260px; top: 30%; left: 42%; background: rgba(96, 165, 250, 0.16); animation: drift3 26s ease-in-out infinite alternate; }
+@keyframes drift1 { to { transform: translate(-120px, 80px) scale(1.15); } }
+@keyframes drift2 { to { transform: translate(140px, -70px) scale(1.1); } }
+@keyframes drift3 { to { transform: translate(-90px, -60px) scale(1.25); } }
+
+.routes {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  /* Quieter behind the headline (left), full strength on the right. */
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0.28) 38%, #000 62%);
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0.28) 38%, #000 62%);
+}
+.route { fill: none; stroke-width: 1.6; stroke-dasharray: 2 9; stroke-linecap: round; animation: dashFlow 3.5s linear infinite; }
+@keyframes dashFlow { to { stroke-dashoffset: -44; } }
+.plane { fill: #E8CF9C; filter: drop-shadow(0 0 6px rgba(232, 207, 156, 0.8)); }
+.cityDot { fill: #E8CF9C; opacity: 0.85; }
+.cityRing { fill: none; stroke: #E8CF9C; stroke-width: 1.2; }
+
 .heroInner { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: 56px; align-items: center; padding: 96px 24px 104px; }
 .eyebrow {
   display: inline-flex; align-self: flex-start; align-items: center; gap: 8px;
@@ -67,7 +92,9 @@
 
 /* Journey illustration (a flow, not data) */
 .flowCard {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(22, 29, 37, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 18px; padding: 22px;
   box-shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
@@ -85,6 +112,36 @@
   content: ''; position: absolute; left: 30px; top: -23px; height: 22px; width: 2px;
   background: linear-gradient(180deg, rgba(201, 169, 110, 0.15), rgba(201, 169, 110, 0.6));
 }
+/* A gold signal travels down the journey: each connector lights in turn, then its node glows. */
+.node + .node::after {
+  content: ''; position: absolute; left: 27px; top: -26px; width: 8px; height: 8px; border-radius: 50%;
+  background: #E8CF9C; box-shadow: 0 0 10px 2px rgba(232, 207, 156, 0.7);
+  opacity: 0; animation: signal 6s ease-in-out infinite;
+}
+.node:nth-child(2)::after { animation-delay: 0s; }
+.node:nth-child(3)::after { animation-delay: 1.5s; }
+.node:nth-child(4)::after { animation-delay: 3s; }
+@keyframes signal {
+  0% { opacity: 0; transform: translateY(0); }
+  4% { opacity: 1; }
+  18% { opacity: 1; transform: translateY(22px); }
+  24%, 100% { opacity: 0; transform: translateY(22px); }
+}
+.node { animation: nodeGlow 6s ease-in-out infinite; }
+.node:nth-child(1) { animation-delay: -0.6s; }
+.node:nth-child(2) { animation-delay: 0.9s; }
+.node:nth-child(3) { animation-delay: 2.4s; }
+.node:nth-child(4) { animation-delay: 3.9s; }
+@keyframes nodeGlow {
+  0%, 100% { border-color: rgba(255, 255, 255, 0.08); box-shadow: none; }
+  6% { border-color: rgba(201, 169, 110, 0.55); box-shadow: 0 0 0 3px rgba(201, 169, 110, 0.12); }
+  20% { border-color: rgba(255, 255, 255, 0.08); box-shadow: none; }
+}
+.flowTag::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%;
+  background: #7FD3A6; vertical-align: 1px; animation: live 1.6s ease-in-out infinite;
+}
+@keyframes live { 50% { opacity: 0.25; } }
 .nodeIcon { flex: none; width: 32px; height: 32px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; }
 .nodeTrigger { background: rgba(201, 169, 110, 0.16); color: #D9BE8C; }
 .nodeWait { background: rgba(255, 255, 255, 0.07); color: #A9B4C0; }
@@ -97,7 +154,15 @@
 
 /* ── Sections ───────────────────────────────────────────── */
 .section { padding: 88px 0; }
-.sectionAlt { background: #fff; border-top: 1px solid #E7EAEE; border-bottom: 1px solid #E7EAEE; }
+.sectionAlt { position: relative; isolation: isolate; overflow: hidden; background: #fff; border-top: 1px solid #E7EAEE; border-bottom: 1px solid #E7EAEE; }
+/* A soft gold glow drifting slowly behind the feature cards. */
+.sectionAlt::before {
+  content: ''; position: absolute; z-index: -1; width: 640px; height: 640px; border-radius: 50%;
+  top: -260px; left: -200px; filter: blur(60px);
+  background: radial-gradient(circle, rgba(201, 169, 110, 0.18), transparent 65%);
+  animation: sweep 24s ease-in-out infinite alternate;
+}
+@keyframes sweep { to { transform: translate(min(70vw, 900px), 420px); } }
 .sectionHead { max-width: 620px; margin: 0 auto 48px; text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center; }
 .kicker { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #9A7B3F; }
 .sectionHead h2 { margin: 0; font-size: clamp(26px, 3.4vw, 38px); line-height: 1.15; font-weight: 700; letter-spacing: -0.015em; }
@@ -111,11 +176,30 @@
 }
 .sectionAlt .card { background: #F9FAFB; }
 .card:hover { border-color: #DCC59A; box-shadow: 0 10px 28px rgba(16, 24, 32, 0.07); transform: translateY(-2px); }
-.cardIcon { width: 40px; height: 40px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; background: #F6EEDD; color: #8A6A2E; }
+.cardIcon { position: relative; width: 40px; height: 40px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; background: #F6EEDD; color: #8A6A2E; transition: transform 0.25s; }
+.card:hover .cardIcon { transform: translateY(-3px) rotate(-6deg); }
+.card:hover .cardIcon::after {
+  content: ''; position: absolute; inset: -2px; border-radius: 13px; border: 2px solid rgba(201, 169, 110, 0.55);
+  animation: ping 1.2s ease-out infinite;
+}
+@keyframes ping { to { transform: scale(1.45); opacity: 0; } }
 .card h3 { margin: 4px 0 0; font-size: 16px; font-weight: 650; }
 .card p { margin: 0; font-size: 14px; line-height: 1.55; color: #5B6673; }
 
-.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; counter-reset: step; }
+.steps { position: relative; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; counter-reset: step; }
+/* A gold line linking the steps, with a light running along it. */
+.steps::before {
+  content: ''; position: absolute; left: 12%; right: 12%; top: -18px; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, rgba(201, 169, 110, 0.1), rgba(201, 169, 110, 0.5), rgba(201, 169, 110, 0.1));
+}
+.steps::after {
+  content: ''; position: absolute; top: -21px; left: 12%; width: 8px; height: 8px; border-radius: 50%;
+  background: #C9A96E; box-shadow: 0 0 12px 3px rgba(201, 169, 110, 0.6);
+  animation: runLine 5s ease-in-out infinite;
+}
+@keyframes runLine { 0% { left: 12%; opacity: 0; } 8% { opacity: 1; } 92% { opacity: 1; } 100% { left: calc(88% - 8px); opacity: 0; } }
+.step { transition: border-color 0.15s, box-shadow 0.15s; }
+.step:hover { border-color: #DCC59A; box-shadow: 0 10px 28px rgba(16, 24, 32, 0.07); }
 .step { position: relative; background: #fff; border: 1px solid #E7EAEE; border-radius: 16px; padding: 24px 22px; display: flex; flex-direction: column; gap: 8px; }
 .stepNum { font-size: 12px; font-weight: 700; color: #9A7B3F; letter-spacing: 0.08em; }
 .step h3 { margin: 0; font-size: 16px; font-weight: 650; }
@@ -123,6 +207,7 @@
 
 /* ── Closing band ───────────────────────────────────────── */
 .closing {
+  position: relative; isolation: isolate; overflow: hidden;
   color: #E9EDF2;
   background:
     radial-gradient(600px 300px at 50% 0%, rgba(201, 169, 110, 0.2), transparent 70%),
@@ -153,4 +238,22 @@
   .ctaRow .btn { flex: 1 1 100%; }
   .nodeKind { display: none; }
   .footerInner { flex-direction: column; justify-content: center; gap: 4px; height: auto; padding: 18px 0; }
+}
+
+/* Scroll reveal (only applied to blocks that start below the fold). */
+.revealPending { opacity: 0; transform: translateY(22px); }
+.revealed { opacity: 1; transform: none; transition: opacity 0.7s ease var(--d, 0ms), transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) var(--d, 0ms); }
+
+/* Visitors who ask for less motion get the still picture. */
+@media (prefers-reduced-motion: reduce) {
+  .orb, .route, .node, .node + .node::after, .flowTag::before, .sectionAlt::before, .steps::after, .card:hover .cardIcon::after { animation: none !important; }
+  .revealPending { opacity: 1; transform: none; }
+  .moving { display: none; }
+}
+@media (max-width: 600px) {
+  .orbC { display: none; }
+  .route { stroke-width: 2; }
+}
+@media (max-width: 960px) {
+  .steps::before, .steps::after { display: none; }
 }
