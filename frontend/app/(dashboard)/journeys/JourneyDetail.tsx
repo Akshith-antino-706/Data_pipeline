@@ -41,7 +41,9 @@ const pctOf = (part: number | null, whole: number | null): number | null =>
 const TZ = 'Asia/Dubai';
 const toDate = (v: string | null | undefined): Date | null => {
   if (!v) return null;
-  const d = new Date(v);
+  // The timeline API sends India wall-clock text ("2026-10-28 14:30 IST"), which Date can't parse.
+  const ist = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) IST$/.exec(v.trim());
+  const d = new Date(ist ? `${ist[1]}T${ist[2]}:00+05:30` : v);
   return Number.isNaN(d.getTime()) ? null : d;
 };
 /** Days since epoch of the Dubai calendar day the instant falls on. */
@@ -283,6 +285,8 @@ export interface JourneyDetailOverviewProps {
   channels: string[];
   /** Messages that failed, or null when the delivery report hasn't loaded. */
   failedTotal: number | null;
+  /** When the journey's first message batch started sending (earliest campaign start), if any. */
+  firstSendAt?: string | null;
   sentByNode: Record<string, number>;
   openedByNode: Record<string, number>;
   clickedByNode: Record<string, number>;
@@ -452,6 +456,18 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
       : joinedCount !== null ? `${fmtCount(joinedCount)} joined` : null;
   const scheduled = detail.status === 'draft' ? humanDateTime(detail.scheduled_start_at) : null;
   const created = humanDay(detail.created_at);
+  // There is no "started at" column: a scheduled start that has passed is the start time;
+  // otherwise the first send is the earliest moment we know the journey was running.
+  const scheduledPassed = detail.status !== 'draft' && detail.scheduled_start_at && (toDate(detail.scheduled_start_at)?.getTime() ?? Infinity) <= Date.now()
+    ? detail.scheduled_start_at : null;
+  const headerDates: [string, string][] = [];
+  const createdAt = humanDateTime(detail.created_at);
+  if (createdAt) headerDates.push(['Created', createdAt]);
+  const startedAt = humanDateTime(scheduledPassed);
+  const firstSend = startedAt ? null : humanDateTime(p.firstSendAt);
+  if (startedAt) headerDates.push(['Started', startedAt]);
+  else if (firstSend) headerDates.push(['Started (first send)', firstSend]);
+  else if (detail.status === 'draft') headerDates.push(['Started', 'Not yet']);
   const summary = [
     p.channels.length ? p.channels.map(channelLabel).join(' + ') : 'No messages yet',
     detail.segment_name || 'No audience picked yet',
@@ -753,21 +769,28 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
           <ArrowLeft size={16} />
         </button>
         <section className={styles.titleBlock} aria-label="Journey summary">
-          {p.editSlot ?? <h1 className={styles.title} title={detail.name || undefined}>{detail.name || `Journey ${p.journeyId}`}</h1>}
-          <StatusChip tone={status.tone}>{status.label}</StatusChip>
-          {detail.test_mode && <Chip tone="warn" title="Messages only go to the test address, not to real customers.">Test mode</Chip>}
-          <span className={styles.tipWrap}>
-            <button type="button" className={styles.tipBtn} aria-label="About this journey" aria-describedby={tipId}>
-              <Info size={15} />
-            </button>
-            <span role="tooltip" id={tipId} className={styles.tip}>
-              {detail.description && <span className={styles.tipDesc}>{detail.description}</span>}
-              {explain && <span className={styles.tipLead}>{explain}</span>}
-              {tipFacts.map(([k, v]) => <span key={k} className={styles.tipFact}><b>{k}:</b> {v}</span>)}
-              {detail.test_mode && <span className={styles.tipFact}>Test mode: messages only go to the test address, not to real customers.</span>}
+          {headerDates.length > 0 && (
+            <span className={styles.dates} data-testid="journey-dates">
+              {headerDates.map(([k, v], i) => <span key={k}>{i > 0 && <span aria-hidden="true"> · </span>}{k} <b>{v}</b></span>)}
             </span>
-          </span>
-          <span className={styles.summary} data-testid="journey-summary-line">{summary}</span>
+          )}
+          <div className={styles.titleRow}>
+            {p.editSlot ?? <h1 className={styles.title} title={detail.name || undefined}>{detail.name || `Journey ${p.journeyId}`}</h1>}
+            <StatusChip tone={status.tone}>{status.label}</StatusChip>
+            {detail.test_mode && <Chip tone="warn" title="Messages only go to the test address, not to real customers.">Test mode</Chip>}
+            <span className={styles.tipWrap}>
+              <button type="button" className={styles.tipBtn} aria-label="About this journey" aria-describedby={tipId}>
+                <Info size={15} />
+              </button>
+              <span role="tooltip" id={tipId} className={styles.tip}>
+                {detail.description && <span className={styles.tipDesc}>{detail.description}</span>}
+                {explain && <span className={styles.tipLead}>{explain}</span>}
+                {tipFacts.map(([k, v]) => <span key={k} className={styles.tipFact}><b>{k}:</b> {v}</span>)}
+                {detail.test_mode && <span className={styles.tipFact}>Test mode: messages only go to the test address, not to real customers.</span>}
+              </span>
+            </span>
+            <span className={styles.summary} data-testid="journey-summary-line">{summary}</span>
+          </div>
         </section>
         <div className={styles.actions}>
           {detail.status === 'draft' && (

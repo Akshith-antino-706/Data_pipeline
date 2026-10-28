@@ -312,6 +312,48 @@ describe('Journey detail', () => {
     expect(drawer.textContent).not.toMatch(ISO);
   });
 
+  it('reads the timeline API\'s "YYYY-MM-DD HH:MM IST" text as India time (never "Invalid Date")', async () => {
+    vi.mocked(api.getJourneyTimeline).mockResolvedValue({ data: { journeyId: 5, timeline: [{ nodeId: 'n1', status: 'completed', triggeredAt: '2025-01-05 11:30 IST' }] } });
+    await openDetail();
+    fireEvent.click(within(stepsList()).getByRole('button', { name: /^Step 1:/ }));
+    const drawer = screen.getByRole('dialog', { name: 'Step details' });
+    // 11:30 IST = 10:00 Dubai
+    await waitFor(() => expect(drawer.textContent).toContain('Sun, 5 Jan 2025, 10:00 AM'));
+    expect(bodyText()).not.toContain('Invalid Date');
+  });
+
+  it('the flow shows no predicted-time line on the steps', async () => {
+    vi.mocked(api.getJourneyTimeline).mockResolvedValue({ data: { journeyId: 5, timeline: [{ nodeId: 'n1', status: 'pending', predictedAt: '2026-10-28 10:00 IST' }] } });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Welcome Series' });
+    await waitFor(() => expect(api.getJourneyTimeline).toHaveBeenCalledWith(5));
+    expect(bodyText()).not.toMatch(/Predicted|Invalid Date/);
+  });
+
+  it('above the name: created time, and start time from the first send', async () => {
+    vi.mocked(api.getJourneyCampaignAnalytics).mockResolvedValue({ data: { ...CAMPAIGN, campaigns: [
+      { id: 1, started_at: '2025-01-07T05:00:00Z' }, { id: 2, started_at: '2025-01-06T08:15:00Z' }, { id: 3, started_at: null },
+    ] } });
+    vi.mocked(api.getJourney).mockResolvedValue({ data: { ...DETAIL, created_at: '2025-01-05T06:00:00Z' } });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Welcome Series' });
+    const dates = screen.getByTestId('journey-dates');
+    expect(dates.textContent).toContain('Created Sun, 5 Jan 2025, 10:00 AM');
+    await waitFor(() => expect(dates.textContent).toContain('Started (first send) Mon, 6 Jan 2025, 12:15 PM'));
+  });
+
+  it('a past scheduled start is the start time; a draft says "Not yet"', async () => {
+    vi.mocked(api.getJourney).mockResolvedValue({ data: { ...DETAIL, created_at: '2025-01-05T06:00:00Z', scheduled_start_at: '2025-01-06T04:00:00Z' } });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Welcome Series' });
+    expect(screen.getByTestId('journey-dates').textContent).toContain('Started Mon, 6 Jan 2025, 8:00 AM');
+    cleanup();
+    vi.mocked(api.getJourney).mockResolvedValue({ data: { ...DETAIL, status: 'draft', created_at: '2025-01-05T06:00:00Z' } });
+    renderPage();
+    await screen.findByRole('heading', { name: 'Welcome Series' });
+    expect(screen.getByTestId('journey-dates').textContent).toBe('Created Sun, 5 Jan 2025, 10:00 AM · Started Not yet');
+  });
+
   it('selecting a step with skipped people offers Retry skipped', async () => {
     vi.mocked(api.retryBlockedEntries).mockResolvedValue({ data: { retried: 4 } });
     await openDetail();

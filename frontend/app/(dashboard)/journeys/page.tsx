@@ -1760,6 +1760,10 @@ export default function Journeys() {
             journeyId={selected}
             detail={detail}
             channels={channels}
+            firstSendAt={(campaignData?.campaigns || []).reduce<string | null>((min, c) => {
+              const t = c.started_at ? Date.parse(c.started_at) : NaN;
+              return !Number.isNaN(t) && (min === null || t < Date.parse(min)) ? c.started_at ?? null : min;
+            }, null)}
             failedTotal={campaignData?.totals?.total_failed === undefined || campaignData?.totals?.total_failed === null ? null : (Number(campaignData.totals.total_failed) || 0)}
             sentByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.sent || 0]))}
             openedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.opened || 0]))}
@@ -2154,26 +2158,6 @@ export default function Journeys() {
                                       border: `1px solid ${isClaude ? 'rgba(139,92,246,0.25)' : 'rgba(251,146,60,0.3)'}`,
                                     }}>
                                       {isClaude ? '✨ AI-ranked' : '⚠ Fallback ranking (Claude unavailable)'}
-                                    </div>
-                                  );
-                                })()}
-                                {/* Per-node predicted trigger time from timeline API */}
-                                {(() => {
-                                  const tl = Array.isArray(timeline) ? timeline.find(t => t.nodeId === node.id) : null;
-                                  if (!tl) return null;
-                                  const time = tl.triggeredAt || tl.nextFireAt || tl.predictedAt;
-                                  if (!time) return null;
-                                  const label = tl.status === 'completed' ? 'Triggered' : tl.status === 'active' ? 'Next fire' : 'Predicted';
-                                  const dotColor = tl.status === 'completed' ? '#22c55e' : tl.status === 'active' ? '#fb923c' : 'var(--text-muted)';
-                                  const formatted = new Date(time).toLocaleString('en-IN', {
-                                    timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric',
-                                    hour: '2-digit', minute: '2-digit', hour12: true,
-                                  });
-                                  return (
-                                    <div style={{ fontSize: 10, color: dotColor, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                      <Clock size={9} />
-                                      <span style={{ color: 'var(--text-tertiary)' }}>{label}:</span>
-                                      <strong style={{ color: dotColor }}>{formatted} IST</strong>
                                     </div>
                                   );
                                 })()}
