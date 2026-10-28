@@ -1759,7 +1759,9 @@ button.shell-avatar { width: 36px; height: 36px; cursor: pointer; }
 
 .ui-table-wrap { width: 100%; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
 .ui-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.ui-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--ink3); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; background: transparent; }
+/* Default header alignment at zero specificity, so a column class (.r, .num, .right…) can right-align it */
+:where(.ui-table) th { text-align: left; }
+.ui-table th { font-size: 12px; font-weight: 600; color: var(--ink3); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; background: transparent; }
 .ui-table td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .ui-table tr:last-child td { border-bottom: 0; }
 

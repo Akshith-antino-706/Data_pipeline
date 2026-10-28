@@ -76,7 +76,7 @@ describe('Send Log page', () => {
       await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '534', nodeId: 'node_1', status: 'clicked', email: 'farah' }));
       // The node survives the journey list loading in after the URL was read
       await waitFor(() => expect((screen.getByRole('combobox', { name: 'Journey' }) as HTMLInputElement).placeholder).toBe('#534 · SL Holidays'));
-      expect((screen.getByRole('combobox', { name: 'Node' }) as HTMLInputElement).placeholder).toBe('Node 1 · Intro');
+      await waitFor(() => expect((screen.getByRole('combobox', { name: 'Node' }) as HTMLInputElement).placeholder).toBe('Node 1 · Intro'));
       expect(lastParams()).toMatchObject({ journeyId: '534', nodeId: 'node_1' });
       expect(screen.getByRole('button', { name: 'Active' }).getAttribute('aria-pressed')).toBe('true');
       expect(new URLSearchParams(window.location.search).get('journey')).toBe('534');
