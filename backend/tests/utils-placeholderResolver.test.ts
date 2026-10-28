@@ -138,10 +138,10 @@ describe('buildWaVars', () => {
     expect(empty.o_url).toBe('');
   });
 
-  it('img always present: contact img > item image > default', () => {
+  it('img: contact img > item image; left out when nothing resolves (the data file fills the template image)', () => {
     expect(buildWaVars({ contact: { img: 'https://c/i.png' } }).img).toBe('https://c/i.png');
     expect(buildWaVars(productCtx).img).toBe('https://img.test/Saudi%20Arabia%20Visa/a%20b.jpg');
-    expect(buildWaVars({}).img).toBe(`${SITE}/rayna-og.jpg`);
+    expect(buildWaVars({})).not.toHaveProperty('img');
   });
 
   it('item_price always present (empty string when none); name defaults blank-safe', () => {
@@ -153,7 +153,7 @@ describe('buildWaVars', () => {
 
   it('explicit key list emits only those keys (plus the compulsory ones), trimmed', () => {
     const v = buildWaVars({ payload: { itemName: '  Burj  ', city: 'Dubai' }, contact: { name: 'Ana' } }, RCS_DATA_KEYS);
-    expect(v).toEqual({ item_name: 'Burj', destination_city: 'Dubai', user_first_name: 'Ana', name: 'Ana', img: `${SITE}/rayna-og.jpg`, '0_url': '', o_url: '', item_price: '' });
+    expect(v).toEqual({ item_name: 'Burj', destination_city: 'Dubai', user_first_name: 'Ana', name: 'Ana', '0_url': '', o_url: '', item_price: '' });
   });
 
   it('"all" behaves like "*"', () => {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Mock } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { Component } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
@@ -175,6 +175,50 @@ describe('Affinity page', () => {
     expect(localStorage.getItem('affinity-view')).toBe('product');
     fireEvent.click(await screen.findByText('Desert Safari'));
     await waitFor(() => expect(lastCall('getAffinityCustomers')).toMatchObject({ view: 'product', product: 'p1' }));
+  });
+
+  it('"Show all products" lists every #1 product: search, show more, and pick filters the table', async () => {
+    const top = Array.from({ length: 12 }, (_, i) => ({ product_key: `t${i}`, product_name: `Top ${i}`, customers: 100 - i }));
+    const page1 = Array.from({ length: 50 }, (_, i) => ({ product_key: `a${i}`, product_name: `Product ${i}`, customers: 50 - i }));
+    asMock('getAffinityTopProducts').mockImplementation((...args: unknown[]) => {
+      const p = (args[0] ?? {}) as Record<string, unknown>;
+      if (p.limit === 12) return Promise.resolve({ data: top, total: 63, hasMore: true });
+      if (p.q === 'safari') return Promise.resolve({ data: [{ product_key: 'ds', product_name: 'Desert Safari', customers: 7 }], total: 1, hasMore: false });
+      if (p.offset === 50) return Promise.resolve({ data: [{ product_key: 'a50', product_name: 'Product 50', customers: 1 }], hasMore: false });
+      return Promise.resolve({ data: page1, total: 63, hasMore: true });
+    });
+    renderPage();
+    await screen.findByText(/No customers booked/);
+    fireEvent.click(screen.getByRole('tab', { name: 'Products' }));
+    const toggle = await screen.findByRole('button', { name: 'Show all 63 products' });
+    expect(lastCall('getAffinityTopProducts')).toMatchObject({ limit: 12, withTotal: 1 });
+    fireEvent.click(toggle);
+    const list = await screen.findByRole('list', { name: 'All products' });
+    await waitFor(() => expect(list.querySelectorAll('li')).toHaveLength(50));
+    expect(lastCall('getAffinityTopProducts')).toMatchObject({ limit: 50, offset: 0, withTotal: 1 });
+    expect(bodyText()).toContain('63 products');
+    fireEvent.click(screen.getByRole('button', { name: /Show more/ }));
+    await waitFor(() => expect(screen.getByRole('list', { name: 'All products' }).querySelectorAll('li')).toHaveLength(51));
+    expect(screen.queryByRole('button', { name: /Show more/ })).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search all products' }), { target: { value: ' safari ' } });
+    await screen.findByText('Desert Safari');
+    expect(lastCall('getAffinityTopProducts')).toMatchObject({ q: 'safari', offset: 0 });
+    expect(bodyText()).toContain('1 product match');
+    const inList = () => within(screen.getByRole('list', { name: 'All products' })).getByRole('button', { name: /Desert Safari/ });
+    fireEvent.click(inList());
+    await waitFor(() => expect(lastCall('getAffinityCustomers')).toMatchObject({ view: 'product', product: 'ds' }));
+    expect(inList().getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide full list' }));
+    expect(screen.queryByRole('list', { name: 'All products' })).toBeNull();
+  });
+
+  it('no "Show all" button when the top list already holds every product', async () => {
+    mockOk('getAffinityTopProducts', { data: [{ product_key: 'p1', product_name: 'Desert Safari', customers: 30 }], total: 1, hasMore: false });
+    renderPage();
+    await screen.findByText(/No customers booked/);
+    fireEvent.click(screen.getByRole('tab', { name: 'Products' }));
+    await screen.findByText('Desert Safari');
+    expect(screen.queryByRole('button', { name: /Show all/ })).toBeNull();
   });
 
   it('pagination moves pages and export passes the list params', async () => {

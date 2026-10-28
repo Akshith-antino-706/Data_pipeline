@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Map as MapIcon, Package, Building2, FileCheck, Plane, Layers, Loader2, Download, RefreshCw,
-  Users, X, ExternalLink, Search,
+  Users, X, ExternalLink, Search, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   getAffinitySummary, getAffinityStatus, getAffinityTopProducts, getAffinityCustomers, getContactAffinity, rebuildAffinity, downloadAffinityCSV,
@@ -17,7 +17,7 @@ import {
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { ContactType, Id } from '@/types/api';
-import type { AffinityCustomerList, AffinitySummary, AffinityTopProduct, ContactAffinity } from '@/types/f7affinity';
+import type { AffinityCustomerList, AffinitySummary, AffinityTopProduct, AffinityTopProductsResponse, ContactAffinity } from '@/types/f7affinity';
 import s from './affinity.module.css';
 
 type View = 'service' | 'product';
@@ -150,6 +150,79 @@ function BarList({ items }: { items: BarItem[] }) {
   );
 }
 
+const ALL_PAGE = 50;
+interface AllProductsProps {
+  audience: Record<string, string | number>;
+  refreshKey: number;
+  selectedKey: string | null;
+  onPick: (p: ProductFilter) => void;
+}
+
+// Every #1 product for the audience: searchable, 50 at a time, newest page appended.
+function AllProducts({ audience, refreshKey, selectedKey, onPick }: AllProductsProps) {
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [items, setItems] = useState<AffinityTopProduct[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const reqId = useRef(0);
+
+  useEffect(() => {
+    const t = setTimeout(() => setQ(qInput.trim()), 250);
+    return () => clearTimeout(t);
+  }, [qInput]);
+
+  const fetchPage = useCallback((offset: number) => {
+    const id = ++reqId.current;
+    setLoading(true);
+    setError(null);
+    (getAffinityTopProducts({ ...audience, limit: ALL_PAGE, offset, q, withTotal: offset === 0 ? 1 : undefined }) as Promise<AffinityTopProductsResponse>)
+      .then(d => {
+        if (id !== reqId.current) return;
+        const rows = d.data || [];
+        setItems(prev => (offset === 0 ? rows : [...prev, ...rows]));
+        if (offset === 0) setTotal(typeof d.total === 'number' ? d.total : null);
+        setHasMore(d.hasMore === true);
+      })
+      .catch((err: unknown) => { if (id === reqId.current) setError(err instanceof Error ? err.message : 'Request failed'); })
+      .finally(() => { if (id === reqId.current) setLoading(false); });
+  }, [audience, q]);
+
+  useEffect(() => { fetchPage(0); }, [fetchPage, refreshKey]);
+
+  return (
+    <div className={s.allPanel}>
+      <Input value={qInput} onChange={e => setQInput(e.target.value)} placeholder="Search products…" aria-label="Search all products" />
+      <span className={s.help} aria-live="polite">
+        {total != null ? `${formatNum(total)} product${total === 1 ? '' : 's'}${q ? ' match' : ''}` : loading ? 'Loading…' : ''}
+      </span>
+      {error && <div className={s.statusErr} role="alert">{error}</div>}
+      {!loading && !error && items.length === 0 ? (
+        <span className={s.help}>No products{q ? ` matching “${q}”` : ''}.</span>
+      ) : (
+        <ul className={s.allList} role="list" aria-label="All products">
+          {items.map(p => p.product_key && (
+            <li key={p.product_key}>
+              <button type="button" className={s.allItem} aria-pressed={selectedKey === p.product_key}
+                onClick={() => p.product_key && onPick({ key: p.product_key, name: p.product_name })} title={p.product_name}>
+                <span className={s.allName}>{p.product_name}</span>
+                <span className={s.barNum}>{p.customers != null ? formatNum(p.customers) : '—'}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasMore && (
+        <Button size="sm" variant="secondary" onClick={() => fetchPage(items.length)} disabled={loading}>
+          {loading ? <Loader2 size={14} className="animate-spin" /> : null} Show more
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // Side drawer: every ranked service and product of one customer.
 function CustomerDrawer({ id, onClose }: CustomerDrawerProps) {
   const [data, setData] = useState<ContactAffinity | null>(null);
@@ -279,6 +352,8 @@ export default function AffinityPage() {
   const [summary, setSummary] = useState<AffinitySummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [topProducts, setTopProducts] = useState<AffinityTopProduct[]>([]);
+  const [productTotal, setProductTotal] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const [list, setList] = useState<AffinityCustomerList>({ total: 0, customers: [] });
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -327,9 +402,9 @@ export default function AffinityPage() {
   useEffect(() => {
     if (view !== 'product') return;
     let active = true;
-    (getAffinityTopProducts({ ...audience, limit: 12 }) as Promise<{ data?: AffinityTopProduct[] }>)
-      .then(d => { if (active) setTopProducts(d.data || []); })
-      .catch(() => { if (active) setTopProducts([]); });
+    (getAffinityTopProducts({ ...audience, limit: 12, withTotal: 1 }) as Promise<AffinityTopProductsResponse>)
+      .then(d => { if (active) { setTopProducts(d.data || []); setProductTotal(typeof d.total === 'number' ? d.total : null); } })
+      .catch(() => { if (active) { setTopProducts([]); setProductTotal(null); } });
     return () => { active = false; };
   }, [view, audience, refreshKey]);
 
@@ -468,6 +543,14 @@ export default function AffinityPage() {
             <span className={s.sideTitle}>{view === 'service' ? 'Customers by #1 service' : 'Most common #1 products'}</span>
             <span className={s.help}>Click to filter the table · bars to scale</span>
             <BarList items={view === 'service' ? serviceBars : productBars} />
+            {view === 'product' && productTotal != null && productTotal > topProducts.length && (
+              <button type="button" className={s.showAll} onClick={() => setShowAll(v => !v)} aria-expanded={showAll}>
+                {showAll ? <><ChevronUp size={14} aria-hidden="true" /> Hide full list</> : <><ChevronDown size={14} aria-hidden="true" /> Show all {formatNum(productTotal)} products</>}
+              </button>
+            )}
+            {view === 'product' && showAll && (
+              <AllProducts audience={audience} refreshKey={refreshKey} selectedKey={productFilter?.key ?? null} onPick={setProductFilter} />
+            )}
           </Card>
 
           <div className={s.content}>

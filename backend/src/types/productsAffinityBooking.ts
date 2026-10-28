@@ -69,6 +69,20 @@ export interface TopProductRow {
   customers: number;
 }
 
+/** Extras for the paged / searchable "all products" list. */
+export interface TopProductsOptions {
+  q?: string | null;
+  offset?: string | number | null;
+  withTotal?: boolean;
+}
+
+/** One page of #1 products; `total` is null unless it was asked for. */
+export interface TopProductsPage {
+  data: TopProductRow[];
+  total: number | null;
+  hasMore: boolean;
+}
+
 export interface AffinityProductRow {
   product_key: string;
   product_name: string;

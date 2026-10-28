@@ -53,7 +53,7 @@ describe('queries', () => {
     await BookingAffinityService.getTopProducts({}, 'abc');
     const [a, b] = m.query.mock.calls;
     expect(flat(a![0])).toContain('WHERE contact_type = $1 AND product_1_key IS NOT NULL');
-    expect(a![0]).toContain('LIMIT 50');
+    expect(a![0]).toContain('LIMIT 100');
     expect(flat(b![0])).toContain('user_affinity_top3 WHERE product_1_key IS NOT NULL');
     expect(b![0]).toContain('LIMIT 12');
   });

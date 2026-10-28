@@ -43,8 +43,14 @@ router.get('/summary', async (req: QueryRequest, res: Response, next: NextFuncti
 // GET /api/v3/booking-affinity/top-products — most common #1 products for the filters
 router.get('/top-products', async (req: QueryRequest, res: Response, next: NextFunction) => {
   try {
-    const data = await BookingAffinityService.getTopProducts(parseFilters(req.query), req.query.limit);
-    res.json({ success: true, data });
+    const { q, offset, withTotal } = req.query;
+    const result = await BookingAffinityService.getTopProducts(parseFilters(req.query), req.query.limit, {
+      q: q ? String(q) : null,
+      offset: offset != null && offset !== '' ? offset : null,
+      withTotal: withTotal === '1' || withTotal === 'true',
+    });
+    // Plain call → { data: rows } as before; paging/search/total → { data, total, hasMore }.
+    res.json(Array.isArray(result) ? { success: true, data: result } : { success: true, ...result });
   } catch (err) { next(err); }
 });
 

@@ -63,6 +63,13 @@ export interface AffinityTopProduct {
   customers?: number | null;
 }
 
+/** /top-products response: `total`/`hasMore` come back when paging, search or a total is asked for. */
+export interface AffinityTopProductsResponse {
+  data?: AffinityTopProduct[];
+  total?: number | null;
+  hasMore?: boolean;
+}
+
 /** One row of GET /api/v3/booking-affinity/customers. Rank columns are service_1..3, product_1..3_name etc. */
 export interface AffinityCustomerRow {
   [column: string]: string | number | boolean | null | undefined;
