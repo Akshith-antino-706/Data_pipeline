@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, type FormEvent, type KeyboardEvent } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type FormEvent, type KeyboardEvent } from 'react';
 import { Mail, MessageCircle, Smartphone, RefreshCw, ChevronLeft, ChevronRight, Eye, MousePointerClick, Search, X, Copy, Check } from 'lucide-react';
 import { getSendLog, getJourneys, getOverviewMessages } from '@/lib/api';
 import type { OverviewMessage, OverviewMessagesParams } from '@/lib/api';
@@ -218,9 +218,19 @@ export default function LogPage() {
     if (ch === 'all' || ch === 'email' || ch === 'whatsapp' || ch === 'sms') setChannel(ch);
     const st = q.get('status');
     if (st && STATUS_FILTERS.some(f => f.key === st)) setStatusFilter(st);
+    const sub = q.get('sub');
+    if (sub && SUB_FILTERS.some(f => f.key === sub)) setSubFilter(sub);
+    const term = q.get('q')?.trim().slice(0, 200);
+    if (term) { setSearch(term); setSearchInput(term); }
+    const jny = q.get('journey');
+    if (jny && /^\d{1,10}$/.test(jny)) {
+      setJourneyId(jny);
+      const node = q.get('node');
+      if (node && /^[\w-]{1,64}$/.test(node)) setNodeId(node);
+    }
   }, []);
 
-  // Keep the URL in step with the chosen tab and status, so the address bar is accurate and
+  // Keep the URL in step with the chosen tab and filters, so a refresh keeps them and
   // the view can be shared or bookmarked. replaceState avoids adding history entries.
   const [urlReady, setUrlReady] = useState(false);
   useEffect(() => { setUrlReady(true); }, []);
@@ -229,10 +239,14 @@ export default function LogPage() {
     const q = new URLSearchParams(window.location.search);
     if (channel === 'email') q.delete('channel'); else q.set('channel', channel);
     if (statusFilter) q.set('status', statusFilter); else q.delete('status');
+    if (subFilter !== 'all') q.set('sub', subFilter); else q.delete('sub');
+    if (search) q.set('q', search); else q.delete('q');
+    if (journeyId) q.set('journey', journeyId); else q.delete('journey');
+    if (journeyId && nodeId) q.set('node', nodeId); else q.delete('node');
     const qs = q.toString();
     const next = `${window.location.pathname}${qs ? `?${qs}` : ''}`;
     if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, '', next);
-  }, [channel, statusFilter, urlReady]);
+  }, [channel, statusFilter, subFilter, search, journeyId, nodeId, urlReady]);
 
   const [journeys, setJourneys] = useState<LogJourney[]>([]);
   const [journeyNodes, setJourneyNodes] = useState<LogNode[]>([]);
@@ -245,13 +259,29 @@ export default function LogPage() {
       .catch(() => {});
   }, []);
 
+  // Clear the node only when the journey itself changes, not when the journey list
+  // finishes loading — otherwise a node restored from the URL would be wiped.
+  const prevJourneyId = useRef(journeyId);
   useEffect(() => {
-    if (!journeyId) { setJourneyNodes([]); setNodeId(''); return; }
+    if (prevJourneyId.current !== journeyId) {
+      if (prevJourneyId.current !== '') setNodeId('');
+      prevJourneyId.current = journeyId;
+    }
+    if (!journeyId) { setJourneyNodes([]); return; }
     const jny = journeys.find(j => String(j.journey_id || j.id) === String(journeyId));
     const nodes = Array.isArray(jny?.nodes) ? jny.nodes.filter(n => n.type === 'action') : [];
     setJourneyNodes(nodes);
-    setNodeId('');
   }, [journeyId, journeys]);
+
+  // A journey from the URL may not be in the loaded list (yet); keep it selectable as "#id".
+  const journeyItems = useMemo(() => {
+    const items = journeys.map(j => ({ id: String(j.journey_id ?? j.id ?? ''), name: j.name ?? '' })).filter(j => j.id);
+    return journeyId && !items.some(j => j.id === journeyId) ? [{ id: journeyId, name: '' }, ...items] : items;
+  }, [journeys, journeyId]);
+  const nodeItems = useMemo(() => {
+    const items = journeyNodes.map(n => ({ id: String(n.id), name: n.data?.label ? `${nodeLabel(n.id)} · ${n.data.label}` : nodeLabel(n.id) }));
+    return nodeId && !items.some(n => n.id === nodeId) ? [{ id: nodeId, name: nodeLabel(nodeId) }, ...items] : items;
+  }, [journeyNodes, nodeId]);
 
   const activeFilterCount = (isEmail
     ? [statusFilter, search, journeyId, nodeId, subFilter !== 'all' ? subFilter : '']
@@ -408,7 +438,7 @@ export default function LogPage() {
           </form>
 
           <SearchPicker
-            items={journeys.map(j => ({ id: String(j.journey_id ?? j.id ?? ''), name: j.name ?? '' })).filter(j => j.id)}
+            items={journeyItems}
             value={journeyId}
             onChange={setJourneyId}
           />
@@ -420,7 +450,7 @@ export default function LogPage() {
               allLabel={journeyNodes.length === 0 ? 'No action nodes' : 'All nodes'}
               idPrefix=""
               sortByIdDesc={false}
-              items={journeyNodes.map(n => ({ id: String(n.id), name: n.data?.label ? `${nodeLabel(n.id)} · ${n.data.label}` : nodeLabel(n.id) }))}
+              items={nodeItems}
               showId={false}
               value={nodeId}
               onChange={setNodeId}

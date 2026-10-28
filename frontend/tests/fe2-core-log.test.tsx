@@ -65,6 +65,40 @@ describe('Send Log page', () => {
     } finally { window.history.replaceState(null, '', '/'); }
   });
 
+  it('keeps the journey, node, search and audience filter across a refresh', async () => {
+    sendLog(ROWS, 2);
+    vi.mocked(api.getJourneys).mockResolvedValue({ data: { data: [
+      { id: 534, name: 'SL Holidays', nodes: [{ id: 'node_1', type: 'action', data: { label: 'Intro' } }, { id: 'node_3', type: 'action' }] },
+    ] } } as unknown as Awaited<ReturnType<typeof api.getJourneys>>);
+    window.history.replaceState(null, '', '/log?status=clicked&journey=534&node=node_1&q=farah&sub=active');
+    try {
+      render(<LogPage />);
+      await waitFor(() => expect(lastParams()).toMatchObject({ journeyId: '534', nodeId: 'node_1', status: 'clicked', email: 'farah' }));
+      // The node survives the journey list loading in after the URL was read
+      await waitFor(() => expect((screen.getByRole('combobox', { name: 'Journey' }) as HTMLInputElement).placeholder).toBe('#534 · SL Holidays'));
+      expect((screen.getByRole('combobox', { name: 'Node' }) as HTMLInputElement).placeholder).toBe('Node 1 · Intro');
+      expect(lastParams()).toMatchObject({ journeyId: '534', nodeId: 'node_1' });
+      expect(screen.getByRole('button', { name: 'Active' }).getAttribute('aria-pressed')).toBe('true');
+      expect(new URLSearchParams(window.location.search).get('journey')).toBe('534');
+      // Picking another journey clears the node, and the URL follows
+      fireEvent.click(screen.getByRole('button', { name: 'Clear journey' }));
+      await waitFor(() => expect(window.location.search).not.toContain('journey='));
+      expect(window.location.search).not.toContain('node=');
+      expect(lastParams()).not.toHaveProperty('journeyId');
+    } finally { window.history.replaceState(null, '', '/'); }
+  });
+
+  it('ignores a malformed journey or node in the URL', async () => {
+    sendLog(ROWS, 2);
+    window.history.replaceState(null, '', '/log?journey=abc&node=x');
+    try {
+      render(<LogPage />);
+      await screen.findByText('Alice');
+      expect(lastParams()).not.toHaveProperty('journeyId');
+      expect(lastParams()).not.toHaveProperty('nodeId');
+    } finally { window.history.replaceState(null, '', '/'); }
+  });
+
   it('opens pre-filtered from a deep link (?channel=all&status=failed)', async () => {
     unified(MSGS, 2);
     window.history.replaceState(null, '', '/log?channel=all&status=failed');
