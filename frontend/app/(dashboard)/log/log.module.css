@@ -70,12 +70,16 @@
 .clickRow { cursor: pointer; }
 .clickRow:hover td { background: var(--sunken); }
 .clickRow:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+/* Row whose details are open in the side panel */
+.rowOpen td, .rowOpen:hover td { background: color-mix(in srgb, var(--gold) 18%, var(--surface)); }
+.rowOpen td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
 
 .pager { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
 .pagerSizes, .pagerNav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
-.overlay { position: fixed; inset: 0; background: rgba(18, 24, 32, 0.4); z-index: 50; display: flex; justify-content: flex-end; }
-.drawer { width: min(440px, 100%); height: 100%; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--line); padding: 20px; box-sizing: border-box; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 110; width: min(440px, 100%); overflow-y: auto; background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(18, 24, 32, 0.12); padding: 20px; box-sizing: border-box; }
+/* Leave room for the panel on wide screens so the open row stays in view */
+@media (min-width: 1280px) { .pageWithDrawer { padding-right: 464px; } }
 .drawerHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .drawerHead h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .fields { margin: 0; display: flex; flex-direction: column; }

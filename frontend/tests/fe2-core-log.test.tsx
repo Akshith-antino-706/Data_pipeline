@@ -295,4 +295,37 @@ describe('Send Log page', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
   });
+
+  it('highlights the open row, switches rows live and closes on an outside click', async () => {
+    sendLog(ROWS, 2);
+    unified(MSGS, 2);
+    render(<LogPage />);
+    const row1 = await screen.findByRole('row', { name: 'Message 1 details' });
+    const row2 = screen.getByRole('row', { name: 'Message 2 details' });
+    expect(row1.getAttribute('aria-current')).toBeNull();
+    fireEvent.mouseDown(row1);
+    fireEvent.click(row1);
+    expect((await screen.findByRole('dialog', { name: 'Message details' })).textContent).toContain('alice@x.com');
+    expect(row1.getAttribute('aria-current')).toBe('true');
+    expect(row2.getAttribute('aria-current')).toBeNull();
+    // Clicking another row keeps the panel open and moves the highlight
+    fireEvent.mouseDown(row2);
+    fireEvent.click(row2);
+    const dlg = screen.getByRole('dialog', { name: 'Message details' });
+    expect(dlg.textContent).toContain('manual');
+    expect(row2.getAttribute('aria-current')).toBe('true');
+    expect(row1.getAttribute('aria-current')).toBeNull();
+    // Clicks inside the panel keep it open; clicks elsewhere close it
+    fireEvent.mouseDown(dlg);
+    expect(screen.getByRole('dialog', { name: 'Message details' })).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(row2.getAttribute('aria-current')).toBeNull();
+    // Unified rows: the open row is matched by channel and id
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    const sms = await screen.findByRole('row', { name: 'Message 12 details' });
+    fireEvent.click(sms);
+    expect(sms.getAttribute('aria-current')).toBe('true');
+    expect(screen.getByRole('row', { name: 'Message 11 details' }).getAttribute('aria-current')).toBeNull();
+  });
 });

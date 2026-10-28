@@ -121,8 +121,19 @@ function rowKeyHandler(open: () => void) {
 function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    // Clicking a log row switches the details; any other click outside the panel closes it.
+    const onDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      if (t.closest('[data-log-drawer]') || t.closest('[data-log-row]')) return;
+      onClose();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+    };
   }, [onClose]);
 
   const fields: [string, string][] = selected.kind === 'email'
@@ -167,22 +178,20 @@ function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () =
     ];
 
   return (
-    <div className={styles.overlay} onClick={onClose}>
-      <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="Message details" onClick={e => e.stopPropagation()}>
-        <div className={styles.drawerHead}>
-          <h2>Message details</h2>
-          <Button variant="ghost" size="sm" aria-label="Close details" onClick={onClose}><X size={16} /></Button>
-        </div>
-        <dl className={styles.fields}>
-          {fields.map(([k, v]) => (
-            <div key={k} className={styles.fieldRow}>
-              <dt>{k}</dt>
-              <dd>{v}</dd>
-            </div>
-          ))}
-        </dl>
-      </aside>
-    </div>
+    <aside className={styles.drawer} role="dialog" aria-modal="false" aria-label="Message details" data-log-drawer="">
+      <div className={styles.drawerHead}>
+        <h2>Message details</h2>
+        <Button variant="ghost" size="sm" aria-label="Close details" onClick={onClose}><X size={16} /></Button>
+      </div>
+      <dl className={styles.fields}>
+        {fields.map(([k, v]) => (
+          <div key={k} className={styles.fieldRow}>
+            <dt>{k}</dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </aside>
   );
 }
 
@@ -339,7 +348,7 @@ export default function LogPage() {
       : total == null && !isEmail ? 'Total unavailable' : '';
 
   return (
-    <div className={styles.page}>
+    <div className={selected ? `${styles.page} ${styles.pageWithDrawer}` : styles.page}>
       <PageHeader
         title="Message log"
         meta={
@@ -442,8 +451,9 @@ export default function LogPage() {
             <tbody>
               {data.rows.map(row => {
                 const open = () => setSelected({ kind: 'email', row });
+                const isOpen = selected?.kind === 'email' && selected.row.id === row.id;
                 return (
-                  <tr key={row.id} className={styles.clickRow} tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
+                  <tr key={row.id} className={isOpen ? `${styles.clickRow} ${styles.rowOpen}` : styles.clickRow} aria-current={isOpen ? 'true' : undefined} data-log-row="" tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
                     <td>
                       <Copyable text={row.uc_name || row.contact_name} className={styles.strong}>{row.uc_name || row.contact_name || '—'}</Copyable>
                       {row.email_unsubscribed === 'Yes' && <div><Chip tone="bad">Unsubscribed</Chip></div>}
@@ -489,8 +499,9 @@ export default function LogPage() {
           <tbody>
             {unified.rows.map(row => {
               const open = () => setSelected({ kind: 'unified', row });
+              const isOpen = selected?.kind === 'unified' && selected.row.id === row.id && selected.row.channel === row.channel;
               return (
-                <tr key={`${row.channel}-${row.id}`} className={styles.clickRow} tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
+                <tr key={`${row.channel}-${row.id}`} className={isOpen ? `${styles.clickRow} ${styles.rowOpen}` : styles.clickRow} aria-current={isOpen ? 'true' : undefined} data-log-row="" tabIndex={0} onClick={open} onKeyDown={rowKeyHandler(open)} aria-label={`Message ${row.id} details`}>
                   <td><span className={styles.tabLabel}><ChannelIcon channel={row.channel} />{CHANNEL_LABEL[row.channel] ?? row.channel}</span></td>
                   <td><Copyable text={row.contactName} className={styles.strong}>{row.contactName || '—'}</Copyable></td>
                   <td className={styles.ellipsis}><Copyable text={row.recipient}>{row.recipient || '—'}</Copyable></td>
@@ -503,7 +514,7 @@ export default function LogPage() {
                     {row.journeyId != null
                       ? <a href={`/journeys/${row.journeyId}`} className={styles.link} onClick={e => e.stopPropagation()}>#{row.journeyId}</a>
                       : '—'}
-                    {row.nodeId && <div className={styles.mono}>{row.nodeId}</div>}
+                    {row.nodeId && <div className={styles.mono}>{nodeLabel(row.nodeId)}</div>}
                   </td>
                   <td className={styles.nowrap}>{fmtDate(row.time)}</td>
                   <td>
