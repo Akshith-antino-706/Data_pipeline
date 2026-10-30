@@ -1061,6 +1061,15 @@ cron.schedule('* * * * *', async () => {
 }, { timezone: 'Asia/Dubai' });
 console.log('[Cron] Journey auto-start scheduled: every 1 min (Asia/Dubai)');
 
+// ── Daily offer email automation — OFF unless DAILY_OFFER_ENABLED=true ──
+// 9 AM–2 PM: create today's template + journey (Draft); 3:45 PM: final check → 4 PM start.
+try {
+  const { registerDailyOfferCrons } = await import('./src/services/dailyOffer/cron.js');
+  registerDailyOfferCrons(cron);
+} catch (err) {
+  console.error('[Cron:DailyOffer] registration failed:', err.message);
+}
+
 // ── Journey Analytics rollup — powers the dashboard Analytics tab ──
 // Precomputes per-journey/per-node stats into journey_node_stats so the tab reads a small
 // flat table (ms) instead of aggregating email_send_log (~17M rows) live for every journey

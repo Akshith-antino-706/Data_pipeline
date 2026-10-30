@@ -35,6 +35,7 @@ import GtmJourneyService from '../GtmJourneyService.js';
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
 import { reserveSend, releaseSend, reserveWaSend, releaseWaSend } from '../../utils/emailFrequencyCap.js';
 import { buildReviewUrl } from '../../utils/reviewUrl.js';
+import { isDailyOfferHtml, personalizeDailyOffer } from '../dailyOffer/sendTime.js';
 
 // ── Per-journey graph cache ──
 // Workers need the journey's nodes+edges only to advance an entry after a send.
@@ -351,6 +352,23 @@ async function processEmail(job) {
       html = html.split('%%REVIEW_URL%%').join(reviewUrl);
       console.log(`[Worker:email]   injected review link for customer=${d.customerId}`);
     }
+  }
+
+  // ── Daily offer email: per-recipient prices (mobile country → market + currency) ──
+  // Only daily-offer templates start with the marker, so this is skipped for every
+  // other journey. An email that can't be fully priced is never sent.
+  if (isDailyOfferHtml(html)) {
+    const { nodeMap } = await getJourneyGraph(d.journeyId);
+    const label = nodeMap[d.nodeId]?.data?.dailyOffer;
+    const personal = await personalizeDailyOffer({ html, subject, label, customerId: d.customerId })
+      .catch(err => ({ error: `daily_offer_error: ${err.message}` }));
+    if (personal.error) {
+      console.log(`[Worker:email] DAILY OFFER BLOCKED — entry=${d.entryId}: ${personal.error}`);
+      return _logAndAdvance(d, 'action_blocked', { reason: personal.error }, false);
+    }
+    html = personal.html;
+    subject = personal.subject;
+    console.log(`[Worker:email]   daily offer priced → plan=${personal.market?.plan} currency=${personal.market?.currency}`);
   }
 
   // ── Per-recipient affinity ──
