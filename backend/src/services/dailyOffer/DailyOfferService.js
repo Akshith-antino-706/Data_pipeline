@@ -201,24 +201,31 @@ export default class DailyOfferService {
         feedGeneratedAt: feed.generatedAt,
         createdAt: now.toISOString(),
       };
-      const journey = await JourneyService.create({
-        name,
-        description: `Automated daily offer (Day ${loopDay} of 8). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
-        segmentId: `custom:${this.config.segmentId}`,
-        audience: 'all',
-        journeyType: 'fixed',
-        exitOnConversion: true,
-        scheduledStartAt: null,
-        createdBy: CREATED_BY,
-        nodes: [
-          { id: 'node_0', type: 'trigger', position: { x: 300, y: 50 },
-            data: { label: 'Entry Point', segmentId: `custom:${this.config.segmentId}`, triggerType: 'segment_entry' } },
-          { id: 'node_1', type: 'action', position: { x: 300, y: 170 },
-            data: { label: pick.themeName, channel: 'email', goalType: 'booking', waitDays: 1, condition: 'booked',
-                    restChannel: 'email', emailTemplateId: Number(template.id), dailyOffer: label } },
-        ],
-        edges: [{ id: 'e_node_0_node_1', source: 'node_0', target: 'node_1' }],
-      });
+      let journey;
+      try {
+        journey = await JourneyService.create({
+          name,
+          description: `Automated daily offer (Day ${loopDay} of 8). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
+          segmentId: `custom:${this.config.segmentId}`,
+          audience: 'all',
+          journeyType: 'fixed',
+          exitOnConversion: true,
+          scheduledStartAt: null,
+          createdBy: CREATED_BY,
+          nodes: [
+            { id: 'node_0', type: 'trigger', position: { x: 300, y: 50 },
+              data: { label: 'Entry Point', segmentId: `custom:${this.config.segmentId}`, triggerType: 'segment_entry' } },
+            { id: 'node_1', type: 'action', position: { x: 300, y: 170 },
+              data: { label: pick.themeName, channel: 'email', goalType: 'booking', waitDays: 1, condition: 'booked',
+                      restChannel: 'email', emailTemplateId: Number(template.id), dailyOffer: label } },
+          ],
+          edges: [{ id: 'e_node_0_node_1', source: 'node_0', target: 'node_1' }],
+        });
+      } catch (err) {
+        // Don't leave a half-made day behind: remove the template this run just saved.
+        await ContentService.delete(template.id).catch(() => {});
+        throw err;
+      }
       this.log.log(`[DailyOffer] Created "${name}" — template ${template.id}, journey ${journey.journey_id}, ${pick.count} products`);
       return { status: 'created', journeyId: journey.journey_id, templateId: template.id, name, count: pick.count };
     } catch (err) {
@@ -301,28 +308,39 @@ export default class DailyOfferService {
 
   // ── Preview (Templates page "View as") ─────────────────────────────────
 
-  /** Rendered preview of a daily offer template for one market, or null when not one. */
-  async previewTemplate(template, marketKey = 'uae') {
+  /**
+   * Render a saved daily offer template for one market ({ plan, currency }).
+   * Returns null when `template` is not a daily offer template; { error } when its
+   * journey (which holds the product prices) can't be found.
+   */
+  async renderTemplateFor(template, market) {
     if (!template?.body || !String(template.body).startsWith(DAILY_OFFER_MARKER)) return null;
     const tid = Number(template.id);
     const { rows: [j] } = await this.db.query(
       `SELECT journey_id, nodes FROM journey_flows
         WHERE nodes @> $1::jsonb
         ORDER BY journey_id DESC LIMIT 1`,
-      [JSON.stringify([{ data: { emailTemplateId: tid } }])]);
+      [JSON.stringify([{ data: { emailTemplateId: tid, dailyOffer: {} } }])]);
     const found = offerLabelOf(j);
-    if (!found) return null;
-    const market = PREVIEW_MARKETS[marketKey] || PREVIEW_MARKETS.uae;
+    if (!found) return { error: 'This daily offer template has no journey with product prices, so it cannot be shown or sent.' };
     const { rates } = await this.loadRates();
     const out = applyMarket({ html: template.body, subject: template.subject }, found.label.products, market, rates);
-    return {
-      html: out.html.replace(DAILY_OFFER_MARKER, ''),
-      subject: out.subject,
-      market: marketKey in PREVIEW_MARKETS ? marketKey : 'uae',
-      markets: Object.entries(PREVIEW_MARKETS).map(([key, m]) => ({ key, label: m.label })),
-      currency: out.currency,
-      journeyId: j.journey_id,
-      status: found.label.status,
-    };
+    const problems = renderProblems(out);
+    if (problems.length) return { error: `This email cannot be priced: ${problems.join(', ')}` };
+    return { html: out.html.replace(DAILY_OFFER_MARKER, ''), subject: out.subject, currency: out.currency,
+      journeyId: j.journey_id, status: found.label.status };
+  }
+
+  /** Templates page preview ("View as"), or null when not a daily offer template. */
+  async previewTemplate(template, marketKey = 'uae') {
+    const key = marketKey in PREVIEW_MARKETS ? marketKey : 'uae';
+    const out = await this.renderTemplateFor(template, PREVIEW_MARKETS[key]);
+    if (!out) return null;
+    const markets = Object.entries(PREVIEW_MARKETS).map(([k, m]) => ({ key: k, label: m.label }));
+    if (out.error) {
+      return { html: `<p style="padding:24px;font-family:sans-serif;color:#b91c1c">${out.error}</p>`,
+        market: key, currency: null };
+    }
+    return { ...out, market: key, markets };
   }
 }

@@ -34,6 +34,7 @@ function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Use
     ContentService: {
       async create(t) { const row = { id: state.nextTemplate++, ...t }; state.templates.push(row); return row; },
       async update(id, f) { Object.assign(state.templates.find(t => t.id === id), f); },
+      async delete(id) { state.templates = state.templates.filter(t => t.id !== id); },
     },
     JourneyService: {
       async create(j) {
@@ -209,4 +210,26 @@ test('memory: repeated runs do not grow the heap', { skip: typeof global.gc !== 
   global.gc();
   const grown = (process.memoryUsage().heapUsed - before) / 1048576;
   assert.ok(grown < 5, `heap grew ${grown.toFixed(1)} MB over 40 runs`);
+});
+
+test('create: if saving the journey fails, the template it just saved is removed', async () => {
+  const w = world();
+  w.services.JourneyService.create = async () => { throw new Error('db down'); };
+  const res = await svc(w).runCreate({ now: NINE_AM });
+  assert.equal(res.status, 'skipped');
+  assert.equal(w.state.templates.length, 0);
+});
+
+test('preview: a daily template whose journey is gone shows a clear message, never raw tokens', async () => {
+  const w = world();
+  const s = svc(w);
+  await s.runCreate({ now: NINE_AM });
+  const tpl = { ...w.state.templates[0] };
+  w.state.journeys = [];
+  const out = await s.previewTemplate(tpl, 'india');
+  assert.ok(!out.html.includes('%%DO_'));
+  assert.match(out.html, /no journey with product prices/);
+  assert.equal(out.markets, undefined);
+  const render = await s.renderTemplateFor(tpl, { plan: 'IN', currency: 'INR' });
+  assert.ok(render.error);
 });
