@@ -73,8 +73,11 @@ export async function hydrateProducts(productIds, market = { plan: 'default', cu
       const defStrike = num(mp.default?.price)      ?? num(r.normal_price);
       // Recipient's plan (AED in the feed) → converted to their display currency.
       const planP     = mp[plan] || mp.default || null;
-      const planSale  = num(planP?.sale_price) ?? defSale;
-      const planStrike= num(planP?.price)      ?? defStrike;
+      // A plan price of 0 (some feed rows) means "no price for this market", not free —
+      // fall back to the default plan instead of rendering "0".
+      const pos = (v) => { const n = num(v); return n != null && n > 0 ? n : null; };
+      const planSale  = pos(planP?.sale_price) ?? defSale;
+      const planStrike= pos(planP?.price)      ?? defStrike;
       const planHasStrike = planSale != null && planStrike != null && planStrike > planSale;
 
       // ONE canonical price, market-aware. `product_price` now carries the recipient's

@@ -420,6 +420,16 @@ class GtmJourneyService {
         if (!tplSubject && h?.subject_line) tplSubject = h.subject_line;
       }
     }
+    // Daily offer templates carry per-market price tokens that only the daily offer
+    // journey can fill — never send them from a continuous journey.
+    if (tplBody && tplBody.startsWith('<!--DAILY_OFFER-->')) {
+      console.warn(`[GtmJourney ${journeyId}] template ${templateId} is a daily offer template — send skipped`);
+      if (entryId) {
+        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+      }
+      return;
+    }
     if (!tplBody) { tplBody = fs.readFileSync(DEFAULT_TEMPLATE_PATH, 'utf8'); console.warn(`[GtmJourney ${journeyId}] node template ${templateId} has no HTML — using default welcome template`); }
 
     // Universal placeholder fill — body AND subject (subjects may contain keys too).

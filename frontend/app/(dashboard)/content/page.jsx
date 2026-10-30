@@ -386,9 +386,28 @@ export default function Content() {
     setPreview({ template: tpl, html: null, loading: true });
     try {
       const res = await previewTemplate(tpl.id);
-      setPreview({ template: tpl, html: res?.data?.html || '', loading: false });
+      setPreview({ template: tpl, html: res?.data?.html || '', loading: false, ...dailyOfferFields(res?.data) });
     } catch (err) {
       setPreview({ template: tpl, html: `<pre style="padding:20px;color:#f87171">${err.message || 'Preview failed'}</pre>`, loading: false });
+    }
+  }
+
+  // Daily offer templates come back with a market list → "View as" dropdown.
+  function dailyOfferFields(data) {
+    return Array.isArray(data?.markets)
+      ? { markets: data.markets, market: data.market, subject: data.subject }
+      : {};
+  }
+
+  async function changePreviewMarket(market) {
+    const tpl = preview?.template;
+    if (!tpl) return;
+    setPreview(p => ({ ...p, market, loading: true }));
+    try {
+      const res = await previewTemplate(tpl.id, {}, market);
+      setPreview(p => ({ ...p, html: res?.data?.html || '', loading: false, ...dailyOfferFields(res?.data) }));
+    } catch (err) {
+      setPreview(p => ({ ...p, html: `<pre style="padding:20px;color:#f87171">${err.message || 'Preview failed'}</pre>`, loading: false }));
     }
   }
 
@@ -1239,8 +1258,20 @@ export default function Content() {
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
                   {preview.template.channel} · {preview.template.segment_label || 'ALL'} · {preview.template.status}
                 </div>
+                {preview.subject && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>Subject: {preview.subject}</div>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {preview.markets && (
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)' }}>
+                    View as
+                    <select id="preview-market" value={preview.market || 'uae'} onChange={e => changePreviewMarket(e.target.value)}
+                      style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text-primary)' }}>
+                      {preview.markets.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                    </select>
+                  </label>
+                )}
                 {/* Device-view toggle */}
                 <div style={{ display: 'flex', gap: 2, background: 'var(--bg-secondary)', borderRadius: 8, padding: 2 }}>
                   {[

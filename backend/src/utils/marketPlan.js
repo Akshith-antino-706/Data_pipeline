@@ -43,4 +43,19 @@ export function resolveMarket(contact = {}) {
   return { plan: 'default', currency: currencyForCountry(n) || 'AED' };
 }
 
-export default { resolveMarket };
+/**
+ * Mobile-country-only market (daily offer email rule):
+ *   India → IN/INR · Saudi → SA/SAR · UAE → AE/AED · other known country → default in
+ *   its own currency · blank/unknown → default/AED. Ignores is_indian, the typed country
+ *   and the stored market_plan/currency_code. Existing callers keep using resolveMarket.
+ */
+export function resolveMarketByMobileCountry(mobileCountry) {
+  const n = normalizeCountry(mobileCountry);
+  if (!n)              return { plan: 'default', currency: 'AED' };
+  if (INDIA.has(n))    return { plan: 'IN', currency: 'INR' };
+  if (SAUDI.has(n))    return { plan: 'SA', currency: 'SAR' };
+  if (UAE.has(n))      return { plan: 'AE', currency: 'AED' };
+  return { plan: 'default', currency: currencyForCountry(n) || 'AED' };
+}
+
+export default { resolveMarket, resolveMarketByMobileCountry };
