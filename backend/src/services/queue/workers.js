@@ -596,10 +596,15 @@ async function processWA(job) {
       // (matches the email per-message model). Targets unified_contacts.mobile (d.phone).
       // NOTE: at very high volume this is the per-message path; the batched collector
       // (one broadcast per due-cohort chunk) is the throughput-optimized variant.
-      const affinity = await getAffinityVars(d.customerId);
+      // 'without_values' (fixed journeys only) → the record carries id/d/name/img alone and
+      // the template renders its own approved copy, so the affinity lookup and the resolver
+      // are both skipped. Any other value, including the null every existing node carries,
+      // keeps the full resolved variable set.
+      const bareData = d.waDataMode === 'without_values';
+      const affinity = bareData ? null : await getAffinityVars(d.customerId);
       const r = await ChatHeadV1Service.sendBroadcast({
         contacts:     [{ phone: d.phone, name: d.name || '',
-                         vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity }) }],
+                         vars: bareData ? {} : buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity }) }],
         channelId:    parseInt(d.waChannelId),
         channelName:  d.waChannelName || null,
         templateId:   parseInt(d.waTemplateId),

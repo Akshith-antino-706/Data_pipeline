@@ -514,6 +514,49 @@ const formatWaitLabel = (waitDays) => {
   const d = mins / 1440;
   return `${Number.isInteger(d) ? d : +d.toFixed(2)} day${d === 1 ? '' : 's'}`;
 };
+/**
+ * What each recipient's ChatHead .data record carries. FIXED journeys only — the
+ * continuous engine always resolves values, so this renders nothing there.
+ *
+ *   with_values     {"id","d","name","img", item_name, item_image, cta_url, …}
+ *   without_values  {"id","d","name","img"}  ← template renders its own approved copy
+ *
+ * A node saved before this option existed has no waDataMode; the sender treats that as
+ * 'with_values', so leaving it alone is a no-op for every journey running today.
+ */
+function WaDataModePicker({ value, onChange }) {
+  const mode = value === 'without_values' ? 'without_values' : 'with_values';
+  const opts = [
+    { key: 'with_values',    title: 'With values',    hint: 'All journey keys resolved per recipient' },
+    { key: 'without_values', title: 'Without values', hint: 'id, d, name, img only' },
+  ];
+  return (
+    <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--bg-subtle, rgba(148,163,184,0.08))', border: '1px solid var(--border-subtle, rgba(148,163,184,0.25))', borderRadius: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', marginBottom: 8, textTransform: 'uppercase' }}>.data file contents</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {opts.map(o => {
+          const active = mode === o.key;
+          return (
+            <button
+              key={o.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(o.key)}
+              style={{
+                flex: 1, textAlign: 'left', padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${active ? 'var(--brand-primary)' : 'var(--border-subtle, rgba(148,163,184,0.3))'}`,
+                background: active ? 'rgba(59,130,246,0.08)' : 'transparent',
+                color: active ? 'var(--brand-primary)' : 'var(--text-secondary)',
+              }}>
+              <div style={{ fontSize: 12, fontWeight: 700 }}>{o.title}</div>
+              <div style={{ fontSize: 10, marginTop: 2, opacity: 0.75 }}>{o.hint}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 function WaitDelayInput({ nodeForm, setNodeForm, continuous }) {
   const wd = parseFloat(nodeForm.waitDays) || 0;
   if (!continuous) {
@@ -1009,6 +1052,9 @@ export default function Journeys() {
     waChannelName:  form?.waChannelName  ?? null,
     waTemplateId:   form?.waTemplateId   ?? form?.whatsappTemplateId ?? null,
     waTemplateName: form?.waTemplateName ?? null,
+    // Fixed journeys only — see the ".data contents" picker below. Null on every node
+    // saved before this option existed, which the sender reads as 'with_values'.
+    waDataMode:     form?.waDataMode     ?? null,
   });
 
   // Find template for a given action node
@@ -1063,6 +1109,9 @@ export default function Journeys() {
       waChannelName: d.waChannelName ?? null,
       waTemplateId: d.waTemplateId ?? (ch === 'whatsapp' ? (d.templateId || d.whatsappTemplateId || null) : null),
       waTemplateName: d.waTemplateName ?? null,
+      // Nodes saved before this option existed have no waDataMode; show them as 'with_values',
+      // which is exactly what the sender does with a null.
+      waDataMode: d.waDataMode ?? 'with_values',
       // RCS metadata (so the picker re-selects the saved templateCode)
       rcsTemplateCode: d.rcsTemplateCode ?? (ch === 'rcs' ? (d.templateId || null) : null),
       rcsTemplateName: d.rcsTemplateName ?? null,
@@ -3424,6 +3473,13 @@ export default function Journeys() {
                           onChange={m => setNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName, templateVariables: {} }))}
                         />
 
+                        {detail?.journey_type !== 'gtm' && (
+                          <WaDataModePicker
+                            value={nodeForm.waDataMode}
+                            onChange={v => setNodeForm(f => ({ ...f, waDataMode: v }))}
+                          />
+                        )}
+
                         {/* Rest-of-world auto-pair */}
                         <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: '#3B82F6', marginBottom: 8 }}>🌍 Rest-of-World auto-pair channel</div>
@@ -4130,6 +4186,12 @@ export default function Journeys() {
                                       value={{ waChannelId: editCreateNodeForm.waChannelId, waTemplateId: editCreateNodeForm.whatsappTemplateId }}
                                       onChange={m => setEditCreateNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName, templateVariables: {} }))}
                                     />
+                                    {createForm.journeyType !== 'continuous' && (
+                                      <WaDataModePicker
+                                        value={editCreateNodeForm.waDataMode}
+                                        onChange={v => setEditCreateNodeForm(f => ({ ...f, waDataMode: v }))}
+                                      />
+                                    )}
                                   </div>
                                 )}
                                 {editCreateNodeForm.channel === 'sms' && (
@@ -4326,6 +4388,12 @@ export default function Journeys() {
                                   value={{ waChannelId: createNodeForm.waChannelId, waTemplateId: createNodeForm.whatsappTemplateId }}
                                   onChange={m => setCreateNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName }))}
                                 />
+                                {createForm.journeyType !== 'continuous' && (
+                                  <WaDataModePicker
+                                    value={createNodeForm.waDataMode}
+                                    onChange={v => setCreateNodeForm(f => ({ ...f, waDataMode: v }))}
+                                  />
+                                )}
                               </div>
                               <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
                                 <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 7 }}>Rest-of-World fallback</div>

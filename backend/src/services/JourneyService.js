@@ -1903,6 +1903,11 @@ class JourneyService {
           waChannelName:     currentNode.data?.waChannelName ?? null,
           waTemplateId:      currentNode.data?.waTemplateId ?? null,
           waTemplateName:    currentNode.data?.waTemplateName ?? null,
+          // What goes into each .data record (fixed journeys only — the continuous engine
+          // always resolves values). 'without_values' sends id/d/name/img alone, so the
+          // template renders its own approved copy; anything else (incl. null, the default
+          // every existing node carries) keeps the full resolved variable set.
+          waDataMode:        currentNode.data?.waDataMode ?? null,
           // RCS (Gupshup RBM) node config — templateCode + resolved per-recipient params.
           // Present only on rcs nodes; used by processRCS to fire GupshupService.sendRCS.
           rcsTemplateCode:   currentNode.data?.rcsTemplateCode ?? null,
@@ -2447,15 +2452,19 @@ class JourneyService {
 
       for (let i = 0; i < list.length; i += CHUNK) {
         const chunk = list.slice(i, i + CHUNK);
+        // Every job in a group shares one node, so the node's data mode is the same for all.
+        // 'without_values' → each record is id/d/name/img only; the affinity lookup and the
+        // resolver are both skipped because nothing would consume their output.
+        const bareData = chunk[0].waDataMode === 'without_values';
         // product_affinity_* / service_affinity_* for the whole chunk — one query.
-        const affMap = await getAffinityVarsMany(chunk.map(d => d.customerId));
+        const affMap = bareData ? new Map() : await getAffinityVarsMany(chunk.map(d => d.customerId));
         const contacts = chunk
           .filter(d => d.phone && String(d.phone).replace(/\D/g, '').length >= 10)
           // Carry the same dynamic keys the email uses into the .data record. Fixed
           // journeys have no per-entry event, so item_* keys resolve blank (omitted);
           // any node-level templateVariables still flow through the resolver.
           .map(d => ({ phone: d.phone, name: d.name || '',
-                       vars: buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity: affMap.get(String(d.customerId)) }) }));
+                       vars: bareData ? {} : buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity: affMap.get(String(d.customerId)) }) }));
 
         let result;
         try {
