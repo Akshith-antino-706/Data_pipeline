@@ -61,11 +61,26 @@ export interface QaReportState {
   report: QaReportData | null;
 }
 
+/** A market the daily offer preview can be shown as ("View as" dropdown). */
+export interface PreviewMarket { key: string; label: string }
+
+/** Preview response body; daily offer templates also return the market list and real subject. */
+export interface TemplatePreviewData {
+  html?: string;
+  subject?: string;
+  market?: string;
+  markets?: PreviewMarket[];
+}
+
 export interface TemplatePreviewState {
   template: ContentTemplate;
   html: string | null;
   loading: boolean;
   ai?: boolean;
+  /** Daily offer only: the markets to view as, the one shown, and its priced subject. */
+  markets?: PreviewMarket[];
+  market?: string;
+  subject?: string;
 }
 
 export interface PreviewFit {

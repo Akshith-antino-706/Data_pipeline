@@ -122,10 +122,11 @@ export const getTemplates = (params: QueryParams = {}) => {
   return request(`/api/v2/content/templates?${qs}`);
 };
 export const getTemplate = (id: Id) => request(`/api/v2/content/templates/${id}`);
-export const previewTemplate = (id: Id, variables: Record<string, unknown> = {}) =>
+// `market` only matters for daily offer templates ('india' | 'uae' | 'saudi' | 'other' | 'none').
+export const previewTemplate = (id: Id, variables: Record<string, unknown> = {}, market?: string) =>
   request(`/api/v2/content/templates/${id}/preview`, {
     method: 'POST',
-    body: JSON.stringify({ variables }),
+    body: JSON.stringify(market ? { variables, market } : { variables }),
   });
 export const previewTemplateAI = (id: Id) => request(`/api/v2/content/templates/${id}/preview-ai`);
 // Render arbitrary HTML through the server's Liquid + sample-vars pipeline.

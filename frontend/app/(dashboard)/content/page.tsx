@@ -27,7 +27,7 @@ import { Table } from '@/components/ui/Table';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { QueryParams } from '@/types/api';
-import type { ContentTemplate, TestSendRecipient, InboxPlacement, QaReportData, QaReportState, TemplatePreviewState, PreviewFit } from '@/types/f4Content';
+import type { ContentTemplate, TestSendRecipient, InboxPlacement, QaReportData, QaReportState, TemplatePreviewState, TemplatePreviewData, PreviewFit } from '@/types/f4Content';
 import { cleanExcerpt, exactDateTime, readablePlaceholders, readableTitle, relativeTime, splitPlaceholders } from './templateText';
 import styles from './content.module.css';
 
@@ -638,10 +638,29 @@ export default function Content() {
     setPreviewDevice('desktop');
     setPreview({ template: tpl, html: null, loading: true });
     try {
-      const res = await previewTemplate(tpl.id) as { data?: { html?: string } } | null;
-      setPreview({ template: tpl, html: res?.data?.html || '', loading: false });
+      const res = await previewTemplate(tpl.id) as { data?: TemplatePreviewData } | null;
+      setPreview({ template: tpl, html: res?.data?.html || '', loading: false, ...dailyOfferFields(res?.data) });
     } catch (err) {
       setPreview({ template: tpl, html: `<pre style="padding:20px;color:#b42318">${(err as Error).message || 'Preview failed'}</pre>`, loading: false });
+    }
+  }
+
+  // Daily offer templates come back with a market list → "View as" dropdown.
+  function dailyOfferFields(data: TemplatePreviewData | undefined): Pick<TemplatePreviewState, 'markets' | 'market' | 'subject'> {
+    return Array.isArray(data?.markets)
+      ? { markets: data.markets, market: data.market, subject: data.subject }
+      : {};
+  }
+
+  async function changePreviewMarket(market: string) {
+    const tpl = preview?.template;
+    if (!tpl) return;
+    setPreview(p => (p ? { ...p, market, loading: true } : p));
+    try {
+      const res = await previewTemplate(tpl.id, {}, market) as { data?: TemplatePreviewData } | null;
+      setPreview(p => (p ? { ...p, html: res?.data?.html || '', loading: false, ...dailyOfferFields(res?.data) } : p));
+    } catch (err) {
+      setPreview(p => (p ? { ...p, html: `<pre style="padding:20px;color:#b42318">${(err as Error).message || 'Preview failed'}</pre>`, loading: false } : p));
     }
   }
 
@@ -962,8 +981,8 @@ export default function Content() {
               <div className={styles.help}>
                 {channelLabel(preview.template.channel)} · {preview.template.segment_label || 'Everyone'} · {statusMeta(preview.template.status).label}
               </div>
-              {preview.template.subject && (
-                <div className={styles.drawerSubject}><span className={styles.subLabel}>Subject</span> <Readable text={preview.template.subject} /></div>
+              {(preview.subject || preview.template.subject) && (
+                <div className={styles.drawerSubject}><span className={styles.subLabel}>Subject</span> <Readable text={preview.subject || preview.template.subject || ''} /></div>
               )}
             </>
           )}
@@ -1013,7 +1032,17 @@ export default function Content() {
                 );
               })}
             </div>
-            <span className={styles.help}>Shown with sample customer details</span>
+            {preview.markets ? (
+              <label className={styles.help} htmlFor="preview-market">
+                View as{' '}
+                <Select id="preview-market" value={preview.market || 'uae'} onChange={e => changePreviewMarket(e.target.value)}
+                  style={{ width: 'auto', display: 'inline-block' }}>
+                  {preview.markets.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </Select>
+              </label>
+            ) : (
+              <span className={styles.help}>Shown with sample customer details</span>
+            )}
           </div>
           <div className={[styles.previewBody, previewDevice === 'desktop' ? styles.previewBodyDesktop : ''].join(' ')}>
             {preview.loading ? (

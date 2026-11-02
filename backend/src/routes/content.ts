@@ -6,6 +6,7 @@ import type { TemplateVars } from '../types/emailRender.js';
 import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
 import { ContentService } from '../services/ContentService.js';
+import type { TemplatePreview, TemplateRef } from '../services/dailyOffer/DailyOfferService.js';
 
 const router = Router();
 
@@ -150,6 +151,13 @@ router.get('/templates/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Daily offer email preview (null for every other template — they render as before).
+async function dailyOfferPreview(template: TemplateRef | null | undefined, market: unknown): Promise<TemplatePreview | null> {
+  if (!String(template?.body || '').startsWith('<!--DAILY_OFFER-->')) return null;
+  const { default: DailyOfferService } = await import('../services/dailyOffer/DailyOfferService.js');
+  return new DailyOfferService().previewTemplate(template, String(market || 'uae'));
+}
+
 // GET /api/v2/content/templates/:id/preview — render via the file-based Day{N} renderer
 router.get('/templates/:id/preview', async (req, res, next) => {
   try {
@@ -158,6 +166,10 @@ router.get('/templates/:id/preview', async (req, res, next) => {
     if (template.channel !== 'email') {
       return res.json({ success: true, data: { html: template.body } });
     }
+
+    // Daily offer templates: real products + prices for the chosen market (?market=india|uae|saudi|other|none).
+    const dailyOffer = await dailyOfferPreview(template, req.query.market);
+    if (dailyOffer) return res.json({ success: true, data: dailyOffer });
 
     const dayMatch = (template.name || '').match(/^Day\s+(\d)\s*-/i);
     if (!dayMatch) {
@@ -198,6 +210,9 @@ router.post('/templates/:id/preview', async (req, res, next) => {
   try {
     const template = await ContentService.getById(req.params.id);
     if (!template) return res.status(404).json({ success: false, error: 'Template not found' });
+
+    const dailyOffer = template.channel === 'email' ? await dailyOfferPreview(template, req.query.market || (req.body as { market?: unknown } | undefined)?.market) : null;
+    if (dailyOffer) return res.json({ success: true, data: dailyOffer });
 
     // Static Day N templates use the file-based renderer, not EmailRenderer
     const dayMatch = template.channel === 'email' && (template.name || '').match(/^Day\s+(\d)\s*-/i);

@@ -127,6 +127,13 @@ export async function resolveTemplateHtml(templateId: number | string, ctx: Plac
     'SELECT subject, body, html_template_id FROM content_templates WHERE id = $1', [tid]
   );
   if (!t) return null;
+  // Daily offer templates hold prices as tokens — render them (UAE prices) instead of
+  // passing the raw tokens on. No journey/prices → no HTML (nothing gets sent).
+  if (String(t.body || '').startsWith('<!--DAILY_OFFER-->')) {
+    const { default: DailyOfferService } = await import('../services/dailyOffer/DailyOfferService.js');
+    const out = await new DailyOfferService().renderTemplateFor({ id: tid, body: t.body, subject: t.subject }, { plan: 'AE', currency: 'AED' });
+    return out?.html ? { html: out.html, subject: out.subject, dynamic: false } : null;
+  }
   let body = t.body, subject = t.subject;
   if (!body && t.html_template_id) {
     const { rows: [h] } = await db.query<U4EmailHtmlTemplateRow>(
@@ -409,6 +416,28 @@ router.post('/send-template', async (req: U4TestSendRequest, res) => {
       bodyHtml = h?.html_body; subject = tpl.subject || h?.subject_line || tpl.name;
     }
     if (!bodyHtml)          return res.status(400).json({ success: false, error: `Template ${templateId} has no body` });
+
+    // Daily offer templates: each test recipient gets their own market's prices
+    // (mobile country → ₹ / AED / SAR / own currency), exactly like the real send.
+    if (String(bodyHtml).startsWith('<!--DAILY_OFFER-->')) {
+      const { default: DailyOfferService } = await import('../services/dailyOffer/DailyOfferService.js');
+      const { resolveMarketByMobileCountry } = await import('../utils/marketPlan.js');
+      const svc = new DailyOfferService();
+      const EmailChannel = await loadEmailChannel();
+      const rendered: Array<{ email: string | undefined; r: (typeof recipients)[number]; html: string; subject: string }> = [];
+      for (const r of recipients) {
+        const { rows: [c] } = await db.query<{ mobile_country: string | null }>('SELECT mobile_country FROM unified_contacts WHERE id = $1', [r.unified_id]);
+        const out = await svc.renderTemplateFor(tpl, resolveMarketByMobileCountry(c?.mobile_country));
+        if (!out || out.error !== undefined) return res.status(400).json({ success: false, error: out?.error || 'Daily offer template could not be rendered' });
+        rendered.push({ email: r.email, r, html: out.html, subject: out.subject });
+      }
+      const results = await parallelMap(rendered, ({ r, html, subject }) => sendAndLog({
+        EmailChannel, recipient: r, subject, html,
+        templateLabel: tpl.name, dayNumber: templateId, source: req.body?.source || 'test-send',
+      }));
+      const sent = results.filter(x => x.success).length;
+      return res.json({ success: true, data: { templateId, name: tpl.name, recipients: recipients.length, sent, results } });
+    }
 
     // Render placeholders so the test send matches a real send. Liquid templates ({% … %}) —
     // e.g. the giveaway templates — render via LiquidRenderer with sample data (incl. giveaway
