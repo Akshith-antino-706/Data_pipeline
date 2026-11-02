@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import { useRouter } from 'next/navigation';
 import {
   GitBranch, Users, Send, Clock, Mail, Eye, TrendingUp, Target,
@@ -27,6 +28,7 @@ const n0 = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const fmtN = (v: unknown) => n0(v).toLocaleString();
 
 type JourneyStatus = 'active' | 'paused' | 'completed' | 'draft';
+const STATUS_FILTER_KEYS: readonly string[] = ['all', 'active', 'paused', 'completed', 'draft'];
 type NodeType = 'action' | 'wait' | 'condition' | 'goal' | 'trigger';
 type JourneyId = string | number;
 interface JNode {
@@ -85,7 +87,7 @@ export default function JourneyDashboardPage() {
   // that date, fetched filtered from the backend. All-time mode ('' date): the full
   // journey list with lazily-loaded per-node breakdowns.
   const [journeyDate, setJourneyDate] = useState(''); // default = all time (no date scope)
-  const [statusFilter, setStatusFilter] = useState('all'); // journey status filter
+  const [statusFilter, setStatusFilter] = useUrlState<string>('status', 'all', STATUS_FILTER_KEYS); // journey status filter (?status=)
   const [journeyQuery, setJourneyQuery] = useState('');
   const [listPage, setListPage] = useState(1);
   useEffect(() => { setListPage(1); }, [statusFilter, journeyQuery]);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import { useRouter } from 'next/navigation';
 import { getSegmentActivity, snapshotDailySegments, downloadSegmentActivity, getSegmentChanges } from '@/lib/api';
 import { comboToSlug } from '@/lib/segmentSlug';
@@ -36,11 +37,14 @@ function formatDate(d: string | number | null | undefined) {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+/** The period options in the Period select below. */
+const DAY_OPTIONS: readonly number[] = [1, 2, 7, 14, 30, 90];
+
 export default function SegmentActivity() {
   const [data, setData] = useState<SegmentActivityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [snapshotting, setSnapshotting] = useState(false);
-  const [days, setDays] = useState(2);
+  const [days, setDays] = useUrlState<number>('days', 2, DAY_OPTIONS); // ?days= survives a refresh
   const [segmentFilter, setSegmentFilter] = useState('');
   const [logLoading, setLogLoading] = useState(false);
   const { businessType } = useBusinessType();

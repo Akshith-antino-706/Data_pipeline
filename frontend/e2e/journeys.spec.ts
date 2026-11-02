@@ -32,6 +32,35 @@ test.describe('journeys', () => {
     await expect(page.getByText('Welcome email').first()).toBeVisible();
   });
 
+  test('the chosen tab and filters survive a refresh and a round trip to a journey', async ({ authed: page }) => {
+    await page.goto('/journeys');
+    await expect(page.getByRole('tab', { name: /Running/ })).toHaveAttribute('aria-selected', 'true');
+
+    await page.getByRole('tab', { name: /Drafts/ }).click();
+    await page.getByLabel('Sort').selectOption('name');
+    await expect(page).toHaveURL(/\/journeys\?status=draft&sort=name$/);
+
+    await page.reload();
+    await expect(page.getByRole('tab', { name: /Drafts/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByLabel('Sort')).toHaveValue('name');
+
+    // Open a journey and come back with the in-app button: same tab and sort.
+    await page.getByText('Welcome Series').first().click();
+    await expect(page).toHaveURL(/\/journeys\/11$/);
+    await page.getByRole('button', { name: /All journeys/ }).click();
+    await expect(page).toHaveURL(/\/journeys\?status=draft&sort=name$/);
+    await expect(page.getByRole('tab', { name: /Drafts/ })).toHaveAttribute('aria-selected', 'true');
+
+    // Back to the default tab drops the param again.
+    await page.getByRole('tab', { name: /Running/ }).click();
+    await expect(page).toHaveURL(/\/journeys\?sort=name$/);
+  });
+
+  test('an unknown ?status= falls back to Running', async ({ authed: page }) => {
+    await page.goto('/journeys?status=bogus');
+    await expect(page.getByRole('tab', { name: /Running/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
   test('Create journey opens the wizard on /journeys/new', async ({ authed: page, api }) => {
     await page.goto('/journeys');
     await page.getByRole('link', { name: 'Create journey' }).first().click();

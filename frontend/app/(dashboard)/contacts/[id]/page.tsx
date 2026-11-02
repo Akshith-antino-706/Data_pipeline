@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import type { ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getUnifiedContact, getContactGTMEvents, updateUnifiedContact, getContactJourneys, getContactRecommendations, getContactAffinity, getContactBookings, getContactActivity } from '@/lib/api';
@@ -62,7 +63,8 @@ interface ContactAffinity {
 
 type TimelineKind = ContactActivityKind;
 interface TimelineItem { at: Date; dateOnly: boolean; kind: TimelineKind; title: string; sub?: string }
-type ProfileTab = 'activity' | 'bookings' | 'website' | 'messages';
+const PROFILE_TABS = ['activity', 'bookings', 'website', 'messages'] as const;
+type ProfileTab = typeof PROFILE_TABS[number];
 
 function parseDate(d: DateInput) {
   if (!d) return null;
@@ -128,7 +130,7 @@ export default function ContactProfile() {
   const [editForm, setEditForm] = useState<Record<string, string>>({});
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [tab, setTab] = useState<ProfileTab>('activity');
+  const [tab, setTab] = useUrlState<ProfileTab>('tab', 'activity', PROFILE_TABS); // ?tab= survives a refresh
   const [kind, setKind] = useState<TimelineKind | 'all'>('all');
 
   useEffect(() => {

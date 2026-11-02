@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Eye, Plus, RefreshCw, Search, Trash2, X, Activity, Pencil, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
@@ -60,7 +61,8 @@ const GENERAL = '__general__';
 const CUSTOM_PAGE_SIZES = [10, 20, 50] as const;
 const CUSTOM_PAGE_DEFAULT = 10;
 const plural = (n: number, word: string) => `${n} ${word}${n !== 1 ? 's' : ''}`;
-type CustomStatusFilter = 'all' | 'active' | 'draft';
+const CUSTOM_STATUS_FILTERS = ['all', 'active', 'draft'] as const;
+type CustomStatusFilter = typeof CUSTOM_STATUS_FILTERS[number];
 
 export default function CustomerSegmentation() {
   const router = useRouter();
@@ -82,7 +84,7 @@ export default function CustomerSegmentation() {
   const [customError, setCustomError] = useState(false);
   const [customQuery, setCustomQuery] = useState('');
   const [customQ, setCustomQ] = useState('');
-  const [customStatus, setCustomStatus] = useState<CustomStatusFilter>('all');
+  const [customStatus, setCustomStatus] = useUrlState<CustomStatusFilter>('status', 'all', CUSTOM_STATUS_FILTERS); // ?status= survives a refresh
   const [customPage, setCustomPage] = useState(1);
   const [customLimit, setCustomLimit] = useState<number>(CUSTOM_PAGE_DEFAULT);
   const [customTotal, setCustomTotal] = useState(0);

@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import { RefreshCw } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { getOverviewWebsite } from '@/lib/api';
@@ -222,7 +223,7 @@ function isPayload(v: unknown): v is OverviewWebsite {
 }
 
 export default function WebsiteOverview() {
-  const [days, setDays] = useState<Days>(7);
+  const [days, setDays] = useUrlState<Days>('days', 7, PERIODS.map(p => p.days)); // ?days= survives a refresh
   const [data, setData] = useState<OverviewWebsite | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

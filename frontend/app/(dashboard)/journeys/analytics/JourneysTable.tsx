@@ -14,6 +14,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import {
@@ -52,7 +53,10 @@ interface AnalyticsTableResponse {
 }
 interface ExpandedState { loading: boolean; nodes?: AnalyticsRow[]; error?: string }
 interface QaModalState { templateId: string | number | null | undefined; templateName: string | undefined }
-type TypeFilter = 'all' | 'fixed' | 'continuous';
+const TYPE_FILTERS = ['all', 'fixed', 'continuous'] as const;
+type TypeFilter = typeof TYPE_FILTERS[number];
+const SORT_KEYS: readonly JourneyAnalyticsSort[] = ['entries', 'sent', 'delivered', 'opened', 'clicked', 'unsubscribed', 'booked', 'openRate', 'clickRate', 'name'];
+const SORT_DIRS = ['asc', 'desc'] as const;
 
 export const PAGE_SIZES = [20, 50] as const;
 const TZ = 'Asia/Dubai';
@@ -236,11 +240,12 @@ export default function JourneysTable() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
-  const [type, setType] = useState<TypeFilter>('all');
+  // Type, sort and direction live in the URL so a refresh keeps the table as it was.
+  const [type, setType] = useUrlState<TypeFilter>('type', 'all', TYPE_FILTERS);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [sort, setSortKey] = useState<JourneyAnalyticsSort>('entries');
-  const [dir, setDir] = useState<'asc' | 'desc'>('desc');
+  const [sort, setSortKey] = useUrlState<JourneyAnalyticsSort>('sort', 'entries', SORT_KEYS);
+  const [dir, setDir] = useUrlState<'asc' | 'desc'>('dir', 'desc', SORT_DIRS);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState<number>(PAGE_SIZES[0]);
   const [dateFilter, setDateFilter] = useState(''); // '' = all time; YYYY-MM-DD = one Dubai day
@@ -330,7 +335,7 @@ export default function JourneysTable() {
 
   const onSort = (field: JourneyAnalyticsSort) => {
     setPage(1);
-    if (sort === field) { setDir(d => (d === 'asc' ? 'desc' : 'asc')); return; }
+    if (sort === field) { setDir(dir === 'asc' ? 'desc' : 'asc'); return; }
     setSortKey(field);
     setDir(field === 'name' ? 'asc' : 'desc');
   };

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import Link from 'next/link';
 import {
   Map as MapIcon, Package, Building2, FileCheck, Plane, Layers, Loader2, Download, RefreshCw,
@@ -20,7 +21,8 @@ import type { ContactType, Id } from '@/types/api';
 import type { AffinityCustomerList, AffinitySummary, AffinityTopProduct, AffinityTopProductsResponse, ContactAffinity } from '@/types/f7affinity';
 import s from './affinity.module.css';
 
-type View = 'service' | 'product';
+const VIEWS = ['service', 'product'] as const;
+type View = typeof VIEWS[number];
 interface IconCfg { label: string; icon: LucideIcon; color: string }
 interface PillOption<T> { value: T; label: string }
 interface PillGroupProps<T> { options: PillOption<T>[]; value: T; onChange: (value: T) => void; label: string }
@@ -337,14 +339,15 @@ function CustomerDrawer({ id, onClose }: CustomerDrawerProps) {
 
 export default function AffinityPage() {
   const { businessType } = useBusinessType();
-  const [view, setView] = useState<View>('service');
-  const [period, setPeriod] = useState('all');
+  // View, period and sort live in the URL so a refresh keeps them.
+  const [view, setView] = useUrlState<View>('view', 'service', VIEWS);
+  const [period, setPeriod] = useUrlState<string>('period', 'all', PERIOD_OPTIONS.map(o => o.value));
   const [excludeBulk, setExcludeBulk] = useState(true);
   const [serviceFilter, setServiceFilter] = useState<string | null>(null);
   const [productFilter, setProductFilter] = useState<ProductFilter | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('score');
+  const [sort, setSort] = useUrlState<string>('sort', 'score', SORT_OPTIONS.map(o => o.value));
   const [limit, setLimit] = useState(25);
   const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);

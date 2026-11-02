@@ -699,6 +699,10 @@ export default function Journeys() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
   const listState = useJourneyListState(); // list filters / view / page — kept here so they survive opening a journey
+  // The list's own query (?status=draft&sort=…) when a journey was opened from it, so
+  // coming back lands on the same tab and filters.
+  const listSearchRef = useRef('');
+  const listUrl = (): string => `${JOURNEYS_PATH}${listSearchRef.current}`;
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedNode, setExpandedNode] = useState<string | null>(null);
   const [techExpanded, setTechExpanded] = useState<Record<string, boolean>>({});
@@ -994,7 +998,10 @@ export default function Journeys() {
 
     selectedRef.current = id;
     setSelected(id);
-    if (pushUrl && window.location.pathname !== journeyPath(id)) window.history.pushState(null, '', journeyPath(id));
+    if (pushUrl && window.location.pathname !== journeyPath(id)) {
+      if (window.location.pathname === JOURNEYS_PATH) listSearchRef.current = window.location.search;
+      window.history.pushState(null, '', journeyPath(id));
+    }
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
@@ -1040,7 +1047,7 @@ export default function Journeys() {
       if (isCurrent()) {
         selectedRef.current = null;
         setSelected(null);
-        window.history.replaceState(null, '', JOURNEYS_PATH);
+        window.history.replaceState(null, '', listUrl());
         showToast('Failed to load journey', 'error');
       }
     }
@@ -1066,8 +1073,8 @@ export default function Journeys() {
     setDetailLoading(false);
     setEditMode(false);
     if (window.location.pathname === JOURNEYS_PATH) return;
-    if (replaceUrl) window.history.replaceState(null, '', JOURNEYS_PATH);
-    else if (pushUrl) window.history.pushState(null, '', JOURNEYS_PATH);
+    if (replaceUrl) window.history.replaceState(null, '', listUrl());
+    else if (pushUrl) window.history.pushState(null, '', listUrl());
   };
 
   // The URL is the source of truth for which journey is open: /journeys/<id> on load,

@@ -7,6 +7,7 @@ import {
 import Link from 'next/link';
 import hotToast from 'react-hot-toast';
 import { deleteJourney } from '@/lib/api';
+import { useUrlState } from '@/lib/useUrlState';
 import {
   Button, buttonClass, Card, Chip, StatusChip, ConfirmDialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Table, Tabs,
 } from '@/components/ui';
@@ -15,10 +16,14 @@ import type { JourneyNode, JourneySummary } from '@/types/f1Journeys';
 import styles from './JourneyList.module.css';
 
 // ── Types ──────────────────────────────────────────────────────
-export type JourneyStatusTab = 'all' | 'active' | 'scheduled' | 'paused' | 'draft' | 'completed';
-export type JourneyViewMode = 'cards' | 'list';
-export type JourneySort = 'recent' | 'joined' | 'conversions' | 'name';
-export type JourneyTypeFilter = 'any' | 'always' | 'once';
+export const JOURNEY_STATUS_TABS = ['all', 'active', 'scheduled', 'paused', 'draft', 'completed'] as const;
+export const JOURNEY_VIEW_MODES = ['cards', 'list'] as const;
+export const JOURNEY_SORTS = ['recent', 'joined', 'conversions', 'name'] as const;
+export const JOURNEY_TYPE_FILTERS = ['any', 'always', 'once'] as const;
+export type JourneyStatusTab = typeof JOURNEY_STATUS_TABS[number];
+export type JourneyViewMode = typeof JOURNEY_VIEW_MODES[number];
+export type JourneySort = typeof JOURNEY_SORTS[number];
+export type JourneyTypeFilter = typeof JOURNEY_TYPE_FILTERS[number];
 
 export interface JourneyListState {
   searchQuery: string; setSearchQuery: (v: string) => void;
@@ -30,15 +35,18 @@ export interface JourneyListState {
   channelFilter: string; setChannelFilter: (v: string) => void;
 }
 
-/** List filters live in the page component so they survive opening a journey and coming back. */
+/**
+ * List filters live in the page component so they survive opening a journey and coming back,
+ * and in the URL (?status=draft&sort=name…) so a refresh or shared link keeps them.
+ */
 export function useJourneyListState(): JourneyListState {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<JourneyStatusTab>('active'); // default = running journeys
-  const [viewMode, setViewMode] = useState<JourneyViewMode>('cards');
+  const [searchQuery, setSearchQuery] = useUrlState<string>('q', '', null);
+  const [statusFilter, setStatusFilter] = useUrlState<JourneyStatusTab>('status', 'active', JOURNEY_STATUS_TABS); // default = running journeys
+  const [viewMode, setViewMode] = useUrlState<JourneyViewMode>('view', 'cards', JOURNEY_VIEW_MODES);
   const [page, setPage] = useState(1);
-  const [sort, setSort] = useState<JourneySort>('recent');
-  const [typeFilter, setTypeFilter] = useState<JourneyTypeFilter>('any');
-  const [channelFilter, setChannelFilter] = useState('any');
+  const [sort, setSort] = useUrlState<JourneySort>('sort', 'recent', JOURNEY_SORTS);
+  const [typeFilter, setTypeFilter] = useUrlState<JourneyTypeFilter>('type', 'any', JOURNEY_TYPE_FILTERS);
+  const [channelFilter, setChannelFilter] = useUrlState<string>('channel', 'any', null);
   return {
     searchQuery, setSearchQuery, statusFilter, setStatusFilter, viewMode, setViewMode,
     page, setPage, sort, setSort, typeFilter, setTypeFilter, channelFilter, setChannelFilter,

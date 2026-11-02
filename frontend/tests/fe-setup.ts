@@ -8,3 +8,10 @@ if (handle) {
     Object.defineProperty(globalThis, key, { value: store, configurable: true, writable: true });
   }
 }
+
+// Pages keep their tab / filters in the URL (lib/useUrlState). jsdom keeps one URL for a
+// whole test file, so start every test at a clean URL — like opening the page fresh.
+import { beforeEach } from 'vitest';
+beforeEach(() => {
+  if (typeof window !== 'undefined' && window.location.search) window.history.replaceState(null, '', window.location.pathname);
+});

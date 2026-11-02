@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useUrlState } from '@/lib/useUrlState';
 import Link from 'next/link';
 import { getGTMSnippet, getDataLayerScripts, getGTMAnalytics, getGTMEventDetail, getSpecialOccasions, getGTMExport } from '@/lib/api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -24,7 +25,8 @@ interface SpecialOccasion {
 }
 type Wrapped<T> = { data?: T } & T;
 
-type TabKey = 'overview' | 'datalayer' | 'occasions' | 'snippet';
+const TAB_KEYS = ['overview', 'datalayer', 'occasions', 'snippet'] as const;
+type TabKey = typeof TAB_KEYS[number];
 
 const n0 = (v: unknown): number => { const n = typeof v === 'number' ? v : parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0; };
 const errText = (e: unknown): string => (e instanceof Error && e.message) || 'Request failed';
@@ -73,7 +75,7 @@ export default function GTMIntegration() {
   const [scriptsError, setScriptsError] = useState<string | null>(null);
   const [occasions, setOccasions] = useState<SpecialOccasion[] | null>(null);
   const [occasionsError, setOccasionsError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const [activeTab, setActiveTab] = useUrlState<TabKey>('tab', 'overview', TAB_KEYS); // ?tab= survives a refresh
   const [selectedScript, setSelectedScript] = useState('page_view');
   const [copied, setCopied] = useState('');
 

@@ -30,12 +30,15 @@ import type { QueryParams } from '@/types/api';
 import type { ContentTemplate, TestSendRecipient, InboxPlacement, QaReportData, QaReportState, TemplatePreviewState, TemplatePreviewData, PreviewFit } from '@/types/f4Content';
 import { cleanExcerpt, exactDateTime, readablePlaceholders, readableTitle, relativeTime, splitPlaceholders } from './templateText';
 import styles from './content.module.css';
+import { useUrlState } from '@/lib/useUrlState';
 
 interface DynVar { key: string; value: string }
 interface SendOptions { emails?: string[]; mode?: string }
 interface QaSectionProps { title: string; items: string[]; okText: string; danger?: boolean }
-type ChannelKey = 'all' | 'email' | 'whatsapp' | 'sms' | 'push';
-type StatusKey = 'all' | 'draft' | 'pending_approval' | 'approved' | 'rejected';
+const CHANNEL_KEYS = ['all', 'email', 'whatsapp', 'sms', 'push'] as const;
+const STATUS_KEYS = ['all', 'draft', 'pending_approval', 'approved', 'rejected'] as const;
+type ChannelKey = typeof CHANNEL_KEYS[number];
+type StatusKey = typeof STATUS_KEYS[number];
 type ToolKey = 'email' | 'whatsapp' | 'sms' | 'rcs';
 type TabKey = 'library' | 'testing' | 'approval';
 type Device = 'desktop' | 'tablet' | 'mobile';
@@ -88,7 +91,16 @@ function parseContentPath(pathname: string | null | undefined): ContentRoute {
   }
   return { kind: 'invalid' };
 }
-const listUrl = (tab: TabKey) => (tab === 'library' ? CONTENT_PATH : `${CONTENT_PATH}?tab=${tab}`);
+/** The library URL: ?tab= plus the channel/status filters, defaults left out. */
+interface ListFilters { channel: ChannelKey; status: StatusKey }
+const listUrl = (tab: TabKey, { channel, status }: ListFilters) => {
+  const q = new URLSearchParams();
+  if (tab !== 'library') q.set('tab', tab);
+  if (channel !== 'all') q.set('channel', channel);
+  if (status !== 'all') q.set('status', status);
+  const qs = q.toString();
+  return qs ? `${CONTENT_PATH}?${qs}` : CONTENT_PATH;
+};
 const tabFromSearch = (search: string): TabKey => {
   const t = new URLSearchParams(search).get('tab');
   return TAB_KEYS.find(k => k === t) ?? 'library';
@@ -386,8 +398,11 @@ export default function Content() {
 
   const [tab, setTabState] = useState<TabKey>('library');
   const tabRef = useRef<TabKey>('library');
-  const [channelFilter, setChannelFilter] = useState<ChannelKey>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusKey>('all');
+  // Kept in the URL (?channel=&status=) so a refresh keeps the filtered library.
+  const [channelFilter, setChannelFilter] = useUrlState<ChannelKey>('channel', 'all', CHANNEL_KEYS);
+  const [statusFilter, setStatusFilter] = useUrlState<StatusKey>('status', 'all', STATUS_KEYS);
+  const listFiltersRef = useRef<ListFilters>({ channel: channelFilter, status: statusFilter });
+  listFiltersRef.current = { channel: channelFilter, status: statusFilter };
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState(() => {
     if (typeof window === 'undefined') return 'card';
@@ -774,7 +789,7 @@ export default function Content() {
       if (openingRef.current === id) {
         hotToast.error('Template not found');
         setEditor(null);
-        navigate(listUrl(tabRef.current), true);
+        navigate(listUrl(tabRef.current, listFiltersRef.current), true);
       }
     } finally {
       if (openingRef.current === id) { openingRef.current = null; setOpening(null); }
@@ -785,7 +800,7 @@ export default function Content() {
     tabRef.current = next;
     setTabState(next);
     if (next === 'testing') setTestingOpened(true);
-    if (typeof window !== 'undefined' && parseContentPath(window.location.pathname).kind === 'list') navigate(listUrl(next), true);
+    if (typeof window !== 'undefined' && parseContentPath(window.location.pathname).kind === 'list') navigate(listUrl(next, listFiltersRef.current), true);
   }
 
   // Navigation (pushState keeps the list state; back/forward still work).
@@ -803,7 +818,7 @@ export default function Content() {
     openingRef.current = null;
     setOpening(null);
     setEditor(null);
-    navigate(listUrl(tabRef.current));
+    navigate(listUrl(tabRef.current, listFiltersRef.current));
   }
 
   // The URL decides what is shown: /content (+ ?tab=), /content/new or /content/<id>.
@@ -901,7 +916,7 @@ export default function Content() {
         hotToast.success('Template updated');
       }
       setEditor(null);
-      navigate(listUrl(tabRef.current));
+      navigate(listUrl(tabRef.current, listFiltersRef.current));
     } catch (err) {
       hotToast.error((err as Error).message || 'Failed to save template');
     } finally {
