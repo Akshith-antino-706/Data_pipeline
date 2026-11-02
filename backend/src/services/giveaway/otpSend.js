@@ -10,18 +10,16 @@
  * supplies the ChatHead channel and template, so either can be changed in the journey builder
  * instead of by deploy. Env vars override it only as an escape hatch.
  *
- * WHY THE ENTRY IS WRITTEN AS 'snapshot', NOT 'active':
- *   ContinuousJourneyService.processDue claims `status = 'active'` rows. Writing an active entry
- *   would hand the send to the 1-minute cron — which batches WhatsApp and schedules the broadcast
- *   at now+60s, most of a 10-minute code's life, and applies the 3-per-24h cap that would block a
- *   4th code in a day. 'snapshot' is never claimed either, so the journey UI gets its row (the
- *   SNAPSHOTTED tile) while delivery stays on the fast path here.
+ * NOTHING IS PERSISTED. A verification code is transient and its recipient is not a marketing
+ * contact, so this path writes no unified_contacts row, no gtm_journey_entries row and no
+ * whatsapp_send_log row. The only trace is the consumer's log line, the capped Redis event list
+ * it already writes for every feed, and the code itself in Redis under its own expiry.
  *
- *   Both outcomes are recorded as 'snapshot' so exactly ONE counter moves on journey 549; whether
- *   a code actually went out is in whatsapp_send_log.status (sent | failed), not in the entry.
+ * Consequence to know: journey 549's counters stay at 0 forever. gtm_journey_entries.unified_id
+ * is NOT NULL, so a UI row is impossible without creating a contact — which is exactly what we
+ * are declining to do. The journey exists to hold the channel + template, nothing more.
  *
- * Scope: this only ever touches the single journey named by OTP_JOURNEY_ID (549). It is not a
- * general mechanism — no other journey writes terminal entries from outside the engine.
+ * Scope: this reads the single journey named by OTP_JOURNEY_ID (549) and writes to no table.
  *
  * Transport is ChatHead's single-send endpoint, which differs from the broadcast API:
  *   - GET only. A POST (JSON or form) returns HTTP 200 with an EMPTY body and sends nothing.
@@ -91,59 +89,6 @@ async function stash(p, phone) {
 }
 
 /**
- * Find the contact holding this number, or create a phone-only one.
- * `mobile` is stored WITHOUT a '+', so the normalized form matches directly and uses idx_uc_mobile.
- * That index is not unique, so two codes for a brand-new number can race; the re-select after the
- * insert collapses the duplicate rather than leaving two rows.
- */
-async function resolveContact(phone) {
-  const { rows } = await db.query('SELECT id FROM unified_contacts WHERE mobile = $1 ORDER BY id LIMIT 1', [phone]);
-  if (rows.length) return rows[0].id;
-  try {
-    // `sources` marks these so an OTP requester can be excluded from marketing segments —
-    // they asked for a verification code, not to be contacted.
-    const { rows: [ins] } = await db.query(
-      `INSERT INTO unified_contacts (mobile, sources) VALUES ($1, 'otp') RETURNING id`, [phone]);
-    return ins.id;
-  } catch {
-    const { rows: again } = await db.query('SELECT id FROM unified_contacts WHERE mobile = $1 ORDER BY id LIMIT 1', [phone]);
-    return again[0]?.id ?? null;
-  }
-}
-
-/**
- * Record the OTP against journey 549 so it appears in the UI.
- * `item_id = p.id` makes it one row per code, and ON CONFLICT keeps a redelivered message from
- * double-counting. Status is always 'snapshot' — see the header for why it is never 'active'.
- */
-async function recordEntry({ p, phone, unifiedId, cfg, result }) {
-  if (!unifiedId) return;
-  const ok = result.ok;
-  try {
-    await db.query(
-      `INSERT INTO gtm_journey_entries
-         (journey_id, unified_id, item_id, current_node_id, status, entered_at, last_event_id)
-       VALUES ($1,$2,$3,$4,'snapshot',NOW(),$3)
-       ON CONFLICT (journey_id, unified_id, item_id) DO NOTHING`,
-      [JOURNEY_ID, unifiedId, String(p.id), cfg.nodeId]
-    );
-  } catch (e) { console.error(`[OtpMQ] entry insert failed: ${e.message}`); }
-
-  try {
-    await db.query(
-      `INSERT INTO whatsapp_send_log
-         (unified_id, phone, channel_id, template_id, template_name, journey_id, node_id,
-          status, source, error, wamid, sent_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'otp',$9,$10, CASE WHEN $8='sent' THEN NOW() ELSE NULL END)`,
-      [unifiedId, phone, cfg.channelId ? parseInt(cfg.channelId) : null,
-       cfg.templateId ? parseInt(cfg.templateId) : null, cfg.templateName,
-       JOURNEY_ID, cfg.nodeId, ok ? 'sent' : 'failed',
-       ok ? null : String(result.error || '').slice(0, 500), result.wamid ?? null]
-    );
-  } catch (e) { console.error(`[OtpMQ] send-log insert failed: ${e.message}`); }
-}
-
-/**
  * Send one OTP. Returns { ok, wamid, error } — never throws, so the consumer always acks.
  * @param {object} p  the validated phone.otp.prod.send payload
  */
@@ -189,14 +134,6 @@ export async function sendOtp(p) {
     }
   } catch (e) {
     result = { ok: false, error: `fetch_failed:${e.message}` };
-  }
-
-  // Attribute it to the journey either way — a failed code is worth seeing in the UI too.
-  try {
-    const unifiedId = await resolveContact(phone);
-    await recordEntry({ p, phone, unifiedId, cfg, result });
-  } catch (e) {
-    console.error(`[OtpMQ] attribution failed (send result unaffected): ${e.message}`);
   }
 
   return result;
