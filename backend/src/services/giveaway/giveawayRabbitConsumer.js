@@ -50,10 +50,20 @@ const EMAIL_RE    = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const AFF_QUEUE   = process.env.AFFILIATE_QUEUE || 'affiliate-emails-prod';
 const AFF_BINDING = process.env.AFFILIATE_BINDING || 'affiliate.email.prod.*';
 
+// ── OTP feed ───────────────────────────────────────────────────────────────
+// `phone.otp.<env>.send` on the same exchange. Self-addressed (the payload names the phone),
+// so it carries no email, no contact and no segment — see otpSend.js. Gated by OTP_ENABLED so
+// the queue can be declared and drained to a log before real codes go out.
+// ⚠️ Prod key only, for the same reason as AFF_BINDING: all four envs share this vhost.
+const OTP_QUEUE   = process.env.OTP_QUEUE   || 'otp.send.prod';
+const OTP_BINDING = process.env.OTP_BINDING || 'phone.otp.prod.*';
+const OTP_ENABLED = process.env.OTP_ENABLED === 'true';
+
 // Event types per source. A type outside its source's set is poison (ack + drop, never requeued).
 const TYPES_BY_SOURCE = {
   GIVEAWAY:  new Set(['participation', 'eligible', 'winner', 'loser']),
   AFFILIATE: new Set(['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated']),
+  OTP:       new Set(['otp']),
 };
 // The affiliate block that must accompany each type (it carries the event's actual data).
 const AFF_BLOCK_FOR_TYPE = {
@@ -64,10 +74,16 @@ const AFF_BLOCK_FOR_TYPE = {
   card_offer_generated:  'cardOffer',
 };
 
-/** Source from the routing key's first segment — `giveaway.*` → GIVEAWAY, `affiliate.*` → AFFILIATE. */
+/**
+ * Source from the routing key's first segment — `affiliate.*` → AFFILIATE, `phone.*` → OTP,
+ * anything else → GIVEAWAY. The OTP branch has to come before the fallback: lifecycle and OTP
+ * keys would otherwise be treated as giveaway emails and rejected for having no `to.email`.
+ */
 function sourceFromRoutingKey(rk) {
   const first = String(rk || '').split('.')[0].toLowerCase();
-  return first === 'affiliate' ? 'AFFILIATE' : 'GIVEAWAY';
+  if (first === 'affiliate') return 'AFFILIATE';
+  if (first === 'phone')     return 'OTP';
+  return 'GIVEAWAY';
 }
 
 
@@ -92,6 +108,15 @@ function validate(p, source = 'GIVEAWAY') {
   if (!p.id)                                       return { ok: false, reason: 'missing_id' };
   const types = TYPES_BY_SOURCE[source] || TYPES_BY_SOURCE.GIVEAWAY;
   if (!types.has(p.type))                          return { ok: false, reason: `bad_type:${p.type}` };
+  // OTP messages are addressed by PHONE and carry no email, subject or body — so they must
+  // return before the email contract below, which would otherwise reject every one of them.
+  if (source === 'OTP') {
+    if (!p.to?.phone)                              return { ok: false, reason: 'missing_phone' };
+    if (!p.code)                                   return { ok: false, reason: 'missing_code' };
+    if (!p.expiresAt)                              return { ok: false, reason: 'missing_expiresAt' };
+    return { ok: true };
+  }
+
   if (!p.to?.email || !EMAIL_RE.test(p.to.email))  return { ok: false, reason: 'invalid_email' };
 
   if (source === 'AFFILIATE') {
@@ -146,7 +171,8 @@ async function handle(msg) {
     return _ch.ack(msg);
   }
 
-  const tag = `[${source === 'AFFILIATE' ? 'AffiliateMQ' : 'GiveawayMQ'}] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
+  const LABEL = { AFFILIATE: 'AffiliateMQ', OTP: 'OtpMQ', GIVEAWAY: 'GiveawayMQ' };
+  const tag = `[${LABEL[source] || 'GiveawayMQ'}] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
   // meta = light fields the toast uses; payload = parsed §3 message; raw = exact wire string.
   const meta = { id: p?.id ?? null, type: p?.type ?? null, source, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
 
@@ -155,6 +181,29 @@ async function handle(msg) {
   if (!v.ok) {
     console.warn(`${tag} ⛔ POISON (${v.reason}) — ack+drop`);
     await record({ ...meta, outcome: 'poison', reason: v.reason });
+    return _ch.ack(msg);
+  }
+
+  // 1a. OTP — send and stop. Nothing is persisted: no contact (the requester is not a marketing
+  // contact), no giveaway_affiliate_events row, no journey entry. The journey named by
+  // OTP_JOURNEY_ID supplies the channel + template only. Always ack — a verification code is
+  // worthless by the time a retry would land, and the queue's x-message-ttl expires the rest.
+  if (source === 'OTP') {
+    if (!OTP_ENABLED) {
+      console.log(`${tag} 🔕 OTP_ENABLED=false — not sending (phone=${p?.to?.phone ?? '?'})`);
+      await record({ ...meta, outcome: 'otp_disabled' });
+      return _ch.ack(msg);
+    }
+    let r;
+    try {
+      const { sendOtp } = await import('./otpSend.js');
+      r = await sendOtp(p);
+    } catch (e) {
+      r = { ok: false, error: `crash:${e.message}` };
+    }
+    if (r.ok) console.log(`${tag} ✅ OTP sent wamid=${r.wamid ?? '-'}`);
+    else      console.warn(`${tag} ⛔ OTP send failed: ${r.error}`);
+    await record({ ...meta, outcome: r.ok ? 'otp_sent' : 'otp_failed', reason: r.error ?? null, wamid: r.wamid ?? null });
     return _ch.ack(msg);
   }
 
@@ -261,6 +310,10 @@ async function assertTopology(ch) {
   // Bound to THIS env's key only (all envs share the vhost — see AFF_BINDING).
   await ch.assertQueue(AFF_QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX } });
   await ch.bindQueue(AFF_QUEUE, EXCHANGE, AFF_BINDING);
+  // OTP feed — x-message-ttl matches the code's own 10-minute lifetime, so a backlog built up
+  // while the consumer was down expires itself instead of sending a burst of dead codes.
+  await ch.assertQueue(OTP_QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX, 'x-message-ttl': 600000 } });
+  await ch.bindQueue(OTP_QUEUE, EXCHANGE, OTP_BINDING);
 }
 
 async function connect() {
@@ -285,9 +338,10 @@ async function connect() {
     // the idempotency, retry and DLQ behaviour.
     await _ch.consume(QUEUE,     onMessage('GiveawayMQ'),  { noAck: false });
     await _ch.consume(AFF_QUEUE, onMessage('AffiliateMQ'), { noAck: false });
+    await _ch.consume(OTP_QUEUE, onMessage('OtpMQ'),       { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) + ${OTP_QUEUE} (bound ${OTP_BINDING}, otp=${OTP_ENABLED ? 'ENABLED' : 'log-only'}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     scheduleReconnect(`connect failed: ${err.message}`);
   }
