@@ -2,6 +2,9 @@
 
 export type TplId = string | number | null;
 
+/** What each recipient's ChatHead .data record carries (fixed journeys only). */
+export type WaDataMode = 'with_values' | 'without_values';
+
 export interface NodeForm {
   type: string;
   channel: string;
@@ -21,6 +24,8 @@ export interface NodeForm {
   waChannelName: string | null;
   waTemplateId: TplId;
   waTemplateName: string | null;
+  /** WhatsApp .data record contents (fixed journeys): 'with_values' | 'without_values'. Absent on older nodes. */
+  waDataMode?: WaDataMode | null;
   rcsTemplateCode: string | null;
   rcsTemplateName: string | null;
   rcsTemplateType: string | null;
@@ -48,6 +53,7 @@ export interface JourneyNodeData {
   waChannelName?: string | null;
   waTemplateId?: TplId;
   waTemplateName?: string | null;
+  waDataMode?: WaDataMode | null;
   templateName?: string;
   rcsTemplateCode?: string | null;
   rcsTemplateName?: string | null;

@@ -21,7 +21,7 @@ import JourneyList, { useJourneyListState } from './JourneyList';
 import type { JourneyListMeta } from './JourneyList';
 import JourneyWizard from './JourneyWizard';
 import { ScheduledStartCountdown, useLiveNow } from './LiveClocks';
-import NodeEditor from './NodeEditor';
+import NodeEditor, { WaDataModePicker } from './NodeEditor';
 import { JourneyDetailOverview, JourneyDetailSkeleton, isDetailSection } from './JourneyDetail';
 import type { DetailSection } from './JourneyDetail';
 import styles from './JourneyDetail.module.css';
@@ -1166,6 +1166,9 @@ export default function Journeys() {
     waChannelName:  form?.waChannelName  ?? null,
     waTemplateId:   form?.waTemplateId   ?? form?.whatsappTemplateId ?? null,
     waTemplateName: form?.waTemplateName ?? null,
+    // Fixed journeys only — see the ".data file contents" picker. Null on every node
+    // saved before this option existed, which the sender reads as 'with_values'.
+    waDataMode:     form?.waDataMode     ?? null,
   });
 
   // Find template for a given action node
@@ -1220,6 +1223,9 @@ export default function Journeys() {
       waChannelName: d.waChannelName ?? null,
       waTemplateId: d.waTemplateId ?? (ch === 'whatsapp' ? (d.templateId || d.whatsappTemplateId || null) : null),
       waTemplateName: d.waTemplateName ?? null,
+      // Nodes saved before this option existed have no waDataMode; show them as 'with_values',
+      // which is exactly what the sender does with a null.
+      waDataMode: d.waDataMode ?? 'with_values',
       // RCS metadata (so the picker re-selects the saved templateCode)
       rcsTemplateCode: d.rcsTemplateCode ?? (ch === 'rcs' ? (d.templateId as string || null) : null),
       rcsTemplateName: d.rcsTemplateName ?? null,
@@ -3343,6 +3349,10 @@ export default function Journeys() {
                           value={{ waChannelId: nodeForm.waChannelId, waTemplateId: nodeForm.whatsappTemplateId }}
                           onChange={m => setNodeForm(f => ({ ...f, waChannelId: m.waChannelId, waChannelName: m.waChannelName, whatsappTemplateId: m.waTemplateId, waTemplateId: m.waTemplateId, waTemplateName: m.waTemplateName, templateVariables: {} }))}
                         />
+
+                        {detail?.journey_type !== 'gtm' && (
+                          <WaDataModePicker value={nodeForm.waDataMode} onChange={v => setNodeForm(f => ({ ...f, waDataMode: v }))} />
+                        )}
 
                         {/* Rest-of-world auto-pair */}
                         <div style={{ marginTop: 10, padding: '10px 12px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>

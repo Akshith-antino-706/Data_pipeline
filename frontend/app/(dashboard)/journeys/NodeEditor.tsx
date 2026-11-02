@@ -6,7 +6,7 @@ import {
   ChevronUp, ChevronDown, Plus, Sparkles, type LucideIcon,
 } from 'lucide-react';
 import { Button, Chip, Field, Input } from '@/components/ui';
-import type { NodeForm, TplId } from '@/types/f1Journeys';
+import type { NodeForm, TplId, WaDataMode } from '@/types/f1Journeys';
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
 import {
@@ -75,6 +75,43 @@ const CHANNELS: { key: string; icon: LucideIcon }[] = [
 ];
 
 const cx = (...c: (string | false | null | undefined)[]): string => c.filter(Boolean).join(' ');
+
+const WA_DATA_MODES: Array<{ key: WaDataMode; title: string; hint: string }> = [
+  { key: 'with_values', title: 'With values', hint: 'All journey keys resolved per recipient' },
+  { key: 'without_values', title: 'Without values', hint: 'id, d, name, img only' },
+];
+
+/**
+ * What each recipient's ChatHead .data record carries. FIXED journeys only — the
+ * continuous engine always resolves values, so callers don't render it there.
+ *
+ *   with_values     {"id","d","name","img", item_name, item_image, cta_url, …}
+ *   without_values  {"id","d","name","img"}  ← template renders its own approved copy
+ *
+ * A node saved before this option existed has no waDataMode; the sender treats that as
+ * 'with_values', so leaving it alone is a no-op for every journey running today.
+ */
+export function WaDataModePicker({ value, onChange }: { value: WaDataMode | null | undefined; onChange: (v: WaDataMode) => void }) {
+  const uid = useId();
+  const mode: WaDataMode = value === 'without_values' ? 'without_values' : 'with_values';
+  return (
+    <div className={styles.subCard}>
+      <span className="ui-label" id={`${uid}-wadata`}>.data file contents</span>
+      <div role="radiogroup" aria-labelledby={`${uid}-wadata`} className={styles.chips}>
+        {WA_DATA_MODES.map(o => {
+          const on = mode === o.key;
+          return (
+            <button key={o.key} type="button" role="radio" aria-checked={on} className={cx(styles.chip, on && styles.chipOn)}
+              title={o.hint} onClick={() => onChange(o.key)}>
+              {o.title}
+            </button>
+          );
+        })}
+      </div>
+      <span className="ui-help">{WA_DATA_MODES.find(o => o.key === mode)?.hint}</span>
+    </div>
+  );
+}
 
 interface Draft {
   form: NodeForm;
@@ -344,6 +381,7 @@ function NodeFields(p: NodeFieldsProps) {
                 />
                 {errNode(tplErr, `${uid}-tplerr`)}
               </div>
+              {!continuous && <WaDataModePicker value={f.waDataMode} onChange={v => set(n => ({ ...n, waDataMode: v }))} />}
               <div className={styles.subCard}>
                 <span className="ui-label" id={`${uid}-rest`}>Rest-of-world fallback</span>
                 <span className="ui-help">Contacts outside WhatsApp coverage get this instead.</span>

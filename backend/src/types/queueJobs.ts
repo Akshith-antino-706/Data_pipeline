@@ -38,6 +38,8 @@ export interface JourneySendJobData {
   waChannelName?: string | null;
   waTemplateId?: string | null;
   waTemplateName?: string | null;
+  /** WhatsApp .data record contents (fixed journeys): 'without_values' → id/d/name/img only; null → full set. */
+  waDataMode?: string | null;
   rcsTemplateCode?: string | null;
   rcsTemplateName?: string | null;
   rcsCustomParams?: Record<string, string> | null;
