@@ -320,7 +320,7 @@ describe('giveawayRabbitConsumer', () => {
     expect(m.ch.bindQueue).toHaveBeenCalledWith('giveaways.email.send', 'giveaways', 'giveaway.email.prod.*');
     expect(m.ch.bindQueue).toHaveBeenCalledWith('giveaways.email.dlq', 'giveaways.dlx', '');
     expect(m.ch.prefetch).toHaveBeenCalledWith(10);
-    expect(m.ch.consume.mock.calls.map(c => c[0])).toEqual(['giveaways.email.send', 'affiliate-emails-prod']);
+    expect(m.ch.consume.mock.calls.map(c => c[0])).toEqual(['giveaways.email.send', 'affiliate-emails-prod', 'otp.send.prod']);
     for (const c of m.ch.consume.mock.calls) expect(c[2]).toEqual({ noAck: false });
   });
 

@@ -6,6 +6,8 @@
  *   'default'   → AWS Email API   (ChatheadEmailChannel — the normal journey sender)
  *   'giveaway'  → giveaway SMTP   (nodemailer, GIVEAWAY_SMTP_*  / GIVEAWAY_FROM)
  *   'affiliate' → affiliate SMTP  (nodemailer, AFFILIATE_SMTP_* / AFFILIATE_FROM)
+ *   'rania' | 'samaira' | 'tia'   → named mailboxes on mail.m.raynatours.com, each sending as
+ *                                   "<Name> from Rayna Tours" (RANIA_/SAMAIRA_/TIA_SMTP_*)
  *
  * Every branch returns the same result shape so callers don't care which was used.
  * Adding another mailbox is a new entry in SMTP_CREDENTIALS plus its env vars — the
@@ -65,6 +67,11 @@ function htmlToText(html: string | null | undefined): string {
 const SMTP_CREDENTIALS = {
   giveaway:  'GIVEAWAY',
   affiliate: 'AFFILIATE',
+  // Named sender personas, same host as affiliate. Their *_FROM carries the display name
+  // ("Rania from Rayna Tours"), which is what a recipient sees in the inbox list.
+  rania:     'RANIA',
+  samaira:   'SAMAIRA',
+  tia:       'TIA',
 } as const;
 
 type SmtpCredential = keyof typeof SMTP_CREDENTIALS;
