@@ -381,10 +381,56 @@ function SearchableSelect({ options, value, onChange, placeholder = '— Select 
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const listRef = useRef(null);
+  const panelRef = useRef(null);
+  // Viewport coords for the portalled panel. The create-journey modal body scrolls, so an
+  // absolutely positioned panel is clipped by it however high its z-index — the panel has to
+  // leave that subtree entirely and be positioned against the viewport instead.
+  const [rect, setRect] = useState(null);
+
+  const measure = useCallback(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const GAP = 12;        // breathing room against the viewport edge
+    const HEADER = 46;     // the search row sits ABOVE the list inside the same panel
+    const MIN_LIST = 120;  // below this, flipping is worth it even if space is tighter
+
+    const spaceBelow = window.innerHeight - r.bottom - GAP;
+    const spaceAbove = r.top - GAP;
+    // Open upward only when that genuinely gives more room — otherwise stay below.
+    const flip = spaceBelow - HEADER < MIN_LIST && spaceAbove > spaceBelow;
+    const space = flip ? spaceAbove : spaceBelow;
+
+    setRect({
+      left: r.left, width: r.width, flip,
+      top: r.bottom + 4,
+      bottom: window.innerHeight - r.top + 4,
+      // The list is only part of the panel — reserve the header, or the panel ends up
+      // taller than the space just measured and runs off the screen edge.
+      maxH: Math.max(MIN_LIST, space - HEADER),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) { setRect(null); return; }
+    measure();
+    // `true` captures scroll on any ancestor, not just the window.
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [open, measure]);
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    const handler = (e) => {
+      // The panel lives outside rootRef now, so both have to be checked.
+      const inRoot  = rootRef.current  && rootRef.current.contains(e.target);
+      const inPanel = panelRef.current && panelRef.current.contains(e.target);
+      if (!inRoot && !inPanel) setOpen(false);
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
@@ -424,8 +470,9 @@ function SearchableSelect({ options, value, onChange, placeholder = '— Select 
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected ? selected.label : placeholder}</span>
         <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: 'var(--text-tertiary)', flexShrink: 0, fontSize: 11 }}>▾</span>
       </button>
-      {open && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 60,
+      {open && rect && typeof document !== 'undefined' && createPortal(
+        <div ref={panelRef} style={{ position: 'fixed', left: rect.left, width: rect.width, zIndex: 4000,
+          ...(rect.flip ? { bottom: rect.bottom } : { top: rect.top }),
           border: '1px solid var(--border)', borderRadius: 10,
           background: 'var(--surface-elevated, var(--surface, #fff))', boxShadow: '0 12px 32px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
           <div style={{ padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -439,7 +486,7 @@ function SearchableSelect({ options, value, onChange, placeholder = '— Select 
                 style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
             )}
           </div>
-          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+          <div ref={listRef} style={{ maxHeight: rect.maxH, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 && (
               <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>No matches</div>
             )}
@@ -461,7 +508,8 @@ function SearchableSelect({ options, value, onChange, placeholder = '— Select 
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -479,6 +527,12 @@ const EMAIL_CREDENTIAL_OPTIONS = [
   { value: 'default',  label: 'Default — Marketing',  description: 'AWS Email API · explore@promotions.raynatours.com' },
   { value: 'giveaway', label: 'Giveaway SMTP',         description: 'Giveaway mailbox · giveaways@promotions.raynatours.com' },
   { value: 'affiliate', label: 'Affiliate SMTP',       description: 'Affiliate mailbox · affiliates@m.raynatours.com' },
+  // Named sender personas, each its own mailbox on mail.m.raynatours.com. The label is the
+  // display name the inbox list shows, so two drop "Tours" — Gmail truncates the sender
+  // column around 20 characters and "Samaira from Rayna Tours" (24) clipped.
+  { value: 'tia',      label: 'Tia from Rayna Tours',  description: 'Tia mailbox · tia@m.raynatours.com' },
+  { value: 'samaira',  label: 'Samaira from Rayna',    description: 'Samaira mailbox · samaira@m.raynatours.com' },
+  { value: 'rania',    label: 'Rania from Rayna',      description: 'Rania mailbox · rania@m.raynatours.com' },
 ];
 
 // Per-template dynamic sections — these are AI-ranked by Claude when the journey runs.
