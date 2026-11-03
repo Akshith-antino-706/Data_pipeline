@@ -112,6 +112,7 @@ async function main() {
     `SELECT count(*) AS n FROM journey_events
        WHERE entry_id = ANY($1::bigint[]) AND event_type='action_sent'`,
     [entriesBefore.map(e => e.entry_id)]);
+    
   console.log(`\n✓ ${sentOk.rows[0].n} send(s) recorded.`);
 
   process.exit(0);
