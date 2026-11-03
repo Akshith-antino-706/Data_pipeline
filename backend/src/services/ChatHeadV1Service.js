@@ -312,10 +312,34 @@ export class ChatHeadV1Service {
   }
 }
 
+/**
+ * `send_time` for broadcast/add — "YYYY-MM-DD HH:MM:SS", no timezone marker.
+ *
+ * This USED TO read the host clock (getFullYear/getHours/…), so the string meant whatever
+ * timezone the machine happened to be set to. Production runs UTC so it was right by accident;
+ * the same code on a TZ=Asia/Dubai host sends a time four hours ahead for a broadcast meant to
+ * go out now, and a local run produced exactly that (broadcast 2947: "17:30:19" for 13:30 UTC).
+ *
+ * Now pinned to CHATHEAD_SEND_TZ (default UTC), so the output no longer depends on the host.
+ * On the production server this emits the identical string it emitted before — the fix removes
+ * the host dependency without changing today's behaviour.
+ *
+ * ChatHead does not document the timezone of this field, and a broadcast carrying a timestamp
+ * four hours in the future still sent immediately — so they may not honour it as a schedule at
+ * all. If they confirm a timezone, set CHATHEAD_SEND_TZ to it rather than editing this.
+ */
+const CHATHEAD_SEND_TZ = process.env.CHATHEAD_SEND_TZ || 'UTC';
+
 function formatChatHeadDate(d) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
-       + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CHATHEAD_SEND_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(d).reduce((acc, p) => (acc[p.type] = p.value, acc), {});
+  // en-CA gives ISO-ordered numeric parts; hour can come back as "24" at midnight.
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}`;
 }
 
 export default ChatHeadV1Service;
