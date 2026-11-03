@@ -10,7 +10,7 @@ const CHECK = new Date('2026-11-06T11:45:00Z');          // 15:45 Dubai
 const silent = { log() {}, warn() {}, error() {} };
 
 /** In-memory stand-ins for the database and the two services the job uses. */
-function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Users', is_active: true }, fxAgeHours = 3 } = {}) {
+function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Users', is_active: true }, fxAgeHours = 3, sentJourneys = [] } = {}) {
   const state = { journeys: [...journeys], templates: [], nextJourney: 1000, nextTemplate: 500 };
   const db = {
     async query(sql, params = []) {
@@ -27,6 +27,7 @@ function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Use
         return { rows: [['INR', 25.95], ['SAR', 1.02], ['USD', 0.2723]].map(([currency, r]) => ({ currency, aed_to_currency: r, updated_at: at })) };
       }
       if (sql.includes('FROM content_templates')) return { rows: state.templates.filter(t => t.id === params[0]) };
+      if (sql.includes('FROM email_send_log')) return { rows: sentJourneys.includes(params[0]) ? [{ '?column?': 1 }] : [] };
       throw new Error(`unexpected query: ${sql}`);
     },
   };
@@ -272,4 +273,21 @@ test('subject: AI unavailable → standard subject, reason recorded', async () =
   await svc(w).runCreate({ now: NINE_AM });
   assert.equal(w.state.templates[0].subject, 'Visas for UAE, USA, Schengen & more – from %%DO_FROM%%');
   assert.equal(w.state.journeys[0].nodes[1].data.dailyOffer.subject.source, 'fallback');
+});
+
+test('send check: scheduled journey with no sends → not_sent; with sends → sent', async () => {
+  const day = (sent) => world({ journeys: [past(10, '2026-11-06', 4, 'visa', 'active')], sentJourneys: sent });
+  const at = new Date('2026-11-06T13:30:00Z');   // 17:30 Dubai
+  const quiet = await svc(day([])).runSendCheck({ now: at });
+  assert.equal(quiet.status, 'not_sent');
+  assert.equal(quiet.journeyId, 10);
+  assert.match(quiet.message, /No emails sent by 17:30 Dubai \(send time 16:00/);
+  assert.equal((await svc(day([10])).runSendCheck({ now: at })).status, 'sent');
+});
+
+test('send check: no journey today, or one already skipped → nothing to check', async () => {
+  const at = new Date('2026-11-06T13:30:00Z');
+  assert.equal((await svc(world()).runSendCheck({ now: at })).status, 'none');
+  const skipped = world({ journeys: [past(11, '2026-11-06', 4, 'visa', 'draft', { status: 'skipped' })] });
+  assert.equal((await svc(skipped).runSendCheck({ now: at })).status, 'skipped_earlier');
 });

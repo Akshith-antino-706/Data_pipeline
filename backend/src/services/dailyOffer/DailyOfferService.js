@@ -312,6 +312,23 @@ export default class DailyOfferService {
     }
   }
 
+  // ── Send check (17:30): did anything go out? ───────────────────────────
+
+  async runSendCheck({ now = new Date() } = {}) {
+    const today = dubaiDate(now);
+    const recent = await this.recentJourneys();
+    const journey = recent.find(j => offerLabelOf(j)?.label.date === today);
+    if (!journey) return { status: 'none' };
+    const { label } = offerLabelOf(journey);
+    if (label.status === 'skipped') return { status: 'skipped_earlier', journeyId: journey.journey_id };
+    const { rows } = await this.db.query('SELECT 1 FROM email_send_log WHERE journey_id = $1 LIMIT 1', [journey.journey_id]);
+    if (rows.length) return { status: 'sent', journeyId: journey.journey_id };
+    return {
+      status: 'not_sent', journeyId: journey.journey_id,
+      message: `No emails sent by ${this.config.sendCheckAt} Dubai (send time ${this.config.sendAt}; journey status "${journey.status}", audience ${journey.snapshot_count ?? '?'}).`,
+    };
+  }
+
   // ── Preview (Templates page "View as") ─────────────────────────────────
 
   /**
