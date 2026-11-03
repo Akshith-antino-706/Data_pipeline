@@ -1,18 +1,22 @@
 /**
  * Daily offer email — product picker (pure functions, no I/O).
  *
- * The 8-day loop:
- *   1 Visa           fixed UAE/USA/Schengen + ranked visas 1–7
- *   2 Holidays       top 5 countries × 3 (multi-destination)
- *   3 Activities     next 5 activity countries × 3
- *   4 Visa           fixed 3 + ranked visas 8–14
- *   5 Cruises        top 10
- *   6 Holidays       top country → top 3 cities × 5 (single destination)
- *   7 Activities     next 5 activity countries × 3
- *   8 Visa           fixed 3 + ranked visas 15–21
+ * A 4-day theme rotation — Holiday → Cruise → Activities → Visa — run as a 24-day loop so
+ * the holiday style alternates and the visa ranks walk 1–7 → 8–14 → 15–21 before repeating:
  *
- * Which loop day runs today comes from the last daily journey that actually sent
- * (see DailyOfferService) — a skipped day's theme carries over to the next day.
+ *    1 Holidays (multi)    2 Cruises    3 Activities    4 Visa  1–7
+ *    5 Holidays (single)   6 Cruises    7 Activities    8 Visa  8–14
+ *    9 Holidays (multi)   10 Cruises   11 Activities   12 Visa 15–21
+ *   13 Holidays (single)  14 Cruises   15 Activities   16 Visa  1–7
+ *   17 Holidays (multi)   18 Cruises   19 Activities   20 Visa  8–14
+ *   21 Holidays (single)  22 Cruises   23 Activities   24 Visa 15–21
+ *
+ *   Holidays (multi)   top 5 countries × 3
+ *   Holidays (single)  top country → top 3 cities × 5
+ *   Visa               fixed UAE/USA/Schengen + that day's ranked visas
+ *
+ * The Dubai date decides the loop day (loopDayForDate) — the calendar is fixed, so a
+ * skipped day is simply skipped, it does not push the following themes back.
  *
  * "Fresh" rule for holidays and cruises: take the top products by ranking, skipping
  * those sent in that theme's previous email; when the list runs out, refill from the top.
@@ -20,16 +24,23 @@
  */
 import { isUsable } from './feed.js';
 
-export const LOOP = [
-  { loopDay: 1, theme: 'visa', visaFrom: 1, visaTo: 7 },
-  { loopDay: 2, theme: 'holiday_multi' },
-  { loopDay: 3, theme: 'activities' },
-  { loopDay: 4, theme: 'visa', visaFrom: 8, visaTo: 14 },
-  { loopDay: 5, theme: 'cruise' },
-  { loopDay: 6, theme: 'holiday_single' },
-  { loopDay: 7, theme: 'activities' },
-  { loopDay: 8, theme: 'visa', visaFrom: 15, visaTo: 21 },
-];
+const VISA_WINDOWS = [[1, 7], [8, 14], [15, 21]];
+const HOLIDAY_STYLES = ['holiday_multi', 'holiday_single'];
+
+export const LOOP = Array.from({ length: 24 }, (_, i) => {
+  const block = Math.floor(i / 4);               // 0..5 — one Holiday/Cruise/Activities/Visa run
+  const theme = ['holiday', 'cruise', 'activities', 'visa'][i % 4];
+  if (theme === 'holiday') return { loopDay: i + 1, theme: HOLIDAY_STYLES[block % 2] };
+  if (theme === 'visa') {
+    const [visaFrom, visaTo] = VISA_WINDOWS[block % 3];
+    return { loopDay: i + 1, theme, visaFrom, visaTo };
+  }
+  return { loopDay: i + 1, theme };
+});
+
+// Loop day 1 falls on this Dubai date; every other date counts from it.
+// 2026-11-03 → Holidays, so 2026-11-04 is Cruises (the agreed November calendar).
+export const LOOP_START_DATE = '2026-11-03';
 
 // UAE, USA, Schengen — matched by page link so a rename in the feed doesn't break them.
 export const FIXED_VISA_SLUGS = ['dubai-visa', 'usa-visa', 'schengen-visa'];
@@ -37,11 +48,11 @@ export const ACTIVITY_COUNTRY_CAP = 30;
 
 const byRank = (a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity);
 
-/** Next loop day after the given one (8 → 1). No previous → 1. */
-export function nextLoopDay(lastLoopDay) {
-  const n = Number(lastLoopDay);
-  if (!Number.isInteger(n) || n < 1 || n > LOOP.length) return 1;
-  return (n % LOOP.length) + 1;
+/** Loop day (1..24) for a Dubai date "YYYY-MM-DD". Dates before the start count backwards. */
+export function loopDayForDate(date) {
+  const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${LOOP_START_DATE}T00:00:00Z`)) / 86400000);
+  if (!Number.isFinite(days)) throw new Error(`Bad date ${date}`);
+  return (((days % LOOP.length) + LOOP.length) % LOOP.length) + 1;
 }
 
 /** Plain transfers (airport pick-ups, intercity rides) are not offers — tours that include a transfer stay. */
@@ -182,7 +193,7 @@ const joinNames = (names, more = false) => {
 /**
  * Pick today's products.
  *   products  normalized feed products (feed.js)
- *   loopDay   1..8
+ *   loopDay   1..24
  *   previous  { productKeys: string[] (previous email of the same theme), activityCursor: number|null }
  */
 export function pickForLoopDay(products, loopDay, previous = {}) {

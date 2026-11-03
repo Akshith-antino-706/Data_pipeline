@@ -5,8 +5,8 @@ import { getDailyOfferConfig } from '../../src/services/dailyOffer/config.js';
 import { validateFeed } from '../../src/services/dailyOffer/feed.js';
 import { fullFeed } from './fixtures.js';
 
-const NINE_AM = new Date('2026-11-01T05:00:00Z');        // 09:00 Dubai
-const CHECK = new Date('2026-11-01T11:45:00Z');          // 15:45 Dubai
+const NINE_AM = new Date('2026-11-06T05:00:00Z');        // 09:00 Dubai — loop Day 4, Visa
+const CHECK = new Date('2026-11-06T11:45:00Z');          // 15:45 Dubai
 const silent = { log() {}, warn() {}, error() {} };
 
 /** In-memory stand-ins for the database and the two services the job uses. */
@@ -50,9 +50,12 @@ function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Use
   return { state, db, services };
 }
 
-function svc(w, { feed = (now) => validateFeed(fullFeed(now), { now }), env = {} } = {}) {
+// Default AI stand-in: behaves like "no API key" so tests never call Claude.
+const noAi = async (pick) => ({ lead: pick.subjectLead, source: 'fallback', reason: 'no_api_key' });
+
+function svc(w, { feed = (now) => validateFeed(fullFeed(now), { now }), env = {}, suggestSubject = noAi } = {}) {
   return new DailyOfferService({
-    db: w.db, services: w.services, log: silent,
+    db: w.db, services: w.services, log: silent, suggestSubject,
     config: getDailyOfferConfig({ DAILY_OFFER_ENABLED: 'true', ...env }),
     fetchFeed: async ({ now }) => feed(now),
   });
@@ -71,18 +74,18 @@ test('names: ordinal dates', () => {
   assert.equal(ordinalDate('2026-11-23'), '23rd November');
 });
 
-test('create: first run makes Day 1 (Visa) template + Draft journey with no start time', async () => {
+test('create: first run makes the date\'s theme (6 Nov → Day 4, Visa) template + Draft journey with no start time', async () => {
   const w = world();
   const res = await svc(w).runCreate({ now: NINE_AM });
   assert.equal(res.status, 'created');
-  assert.equal(res.name, '1st November - Visa Offers (Day 1)');
+  assert.equal(res.name, '6th November - Visa Offers (Day 4)');
   const j = w.state.journeys[0];
   assert.equal(j.segmentId, 'custom:95');
   assert.equal(j.scheduledStartAt, null);
   assert.equal(j.journeyType, 'fixed');
   const node = j.nodes[1];
   assert.equal(node.data.emailTemplateId, w.state.templates[0].id);
-  assert.equal(node.data.dailyOffer.loopDay, 1);
+  assert.equal(node.data.dailyOffer.loopDay, 4);
   assert.equal(node.data.dailyOffer.products.length, 10);
   assert.ok(w.state.templates[0].body.startsWith('<!--DAILY_OFFER-->'));
   assert.equal(w.state.templates[0].createdBy, 'daily-offer-automation');
@@ -99,19 +102,31 @@ test('create: runs again the same day → nothing new (no duplicate, no download
   assert.equal(downloads, 1);
 });
 
-test('create: continues the loop from the last journey that actually sent', async () => {
-  const w = world({ journeys: [past(10, '2026-10-31', 4, 'visa')] });
-  const res = await svc(w).runCreate({ now: NINE_AM });
-  assert.match(res.name, /Cruises \(Day 5\)$/);
+test('create: the date decides the theme, whatever sent before (4 Nov → Cruises)', async () => {
+  const w = world({ journeys: [past(10, '2026-11-03', 5, 'cruise')] });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
+  assert.match(res.name, /^4th November - Cruises \(Day 2\)$/);
 });
 
-test('create: a skipped day carries its theme to the next day (Draft journey does not count)', async () => {
+test('create: a skipped day does not shift the calendar (Draft journey does not count)', async () => {
   const w = world({ journeys: [
-    past(10, '2026-10-30', 1, 'visa'),
-    past(11, '2026-10-31', 2, 'holiday_multi', 'draft', { status: 'skipped' }),
+    past(10, '2026-11-04', 2, 'cruise'),
+    past(11, '2026-11-05', 3, 'activities', 'draft', { status: 'skipped' }),
   ] });
   const res = await svc(w).runCreate({ now: NINE_AM });
-  assert.match(res.name, /Holiday Packages \(Day 2\)$/);
+  assert.match(res.name, /Visa Offers \(Day 4\)$/);
+});
+
+test('create: cruise skips the cruises sent in the last cruise email', async () => {
+  const first = world();
+  await svc(first).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
+  const sentKeys = first.state.journeys[0].nodes[1].data.dailyOffer.productKeys;
+  // Rates dated 3 hours before 8 Nov 09:00 Dubai, so they are fresh for that run.
+  const w = world({ journeys: [past(10, '2026-11-04', 2, 'cruise', 'completed', { productKeys: sentKeys })], fxAgeHours: 3 - 48 });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-08T05:00:00Z') });
+  assert.match(res.name, /^8th November - Cruises \(Day 6\)$/);
+  const next = w.state.journeys.at(-1).nodes[1].data.dailyOffer.productKeys;
+  assert.equal(next.filter(k => sentKeys.includes(k)).length, 0);
 });
 
 test('create: skipped (nothing saved) when the feed is not today', async () => {
@@ -143,7 +158,7 @@ test('final check: passes → start time set to 4 PM Dubai, prices refreshed', a
   const res = await s.runFinalCheck({ now: CHECK });
   assert.equal(res.status, 'scheduled', res.message);
   const j = w.state.journeys[0];
-  assert.equal(j.scheduled_start_at, '2026-11-01T12:00:00.000Z');   // 16:00 Dubai
+  assert.equal(j.scheduled_start_at, '2026-11-06T12:00:00.000Z');   // 16:00 Dubai
   assert.equal(j.nodes[1].data.dailyOffer.status, 'scheduled');
   // Runs again → no change.
   assert.equal((await s.runFinalCheck({ now: CHECK })).status, 'already_scheduled');
@@ -232,4 +247,29 @@ test('preview: a daily template whose journey is gone shows a clear message, nev
   assert.equal(out.markets, undefined);
   const render = await s.renderTemplateFor(tpl, { plan: 'IN', currency: 'INR' });
   assert.ok(render.error);
+});
+
+test('subject: the AI lead is used, the price suffix stays, and the source is recorded', async () => {
+  const w = world();
+  const ai = async () => ({ lead: 'Visas for your next trip, sorted ✈️', source: 'ai', reason: null });
+  await svc(w, { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  assert.equal(w.state.templates[0].subject, 'Visas for your next trip, sorted ✈️ – from %%DO_FROM%%');
+  const label = w.state.journeys[0].nodes[1].data.dailyOffer;
+  assert.deepEqual(label.subject, { source: 'ai', reason: null, lead: 'Visas for your next trip, sorted ✈️', standardLead: 'Visas for UAE, USA, Schengen & more' });
+});
+
+test('subject: the AI lead survives the 3:45 final check', async () => {
+  const w = world();
+  const ai = async () => ({ lead: 'Visas for your next trip, sorted', source: 'ai', reason: null });
+  await svc(w, { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  const res = await svc(w).runFinalCheck({ now: CHECK });
+  assert.equal(res.status, 'scheduled', res.message);
+  assert.equal(w.state.templates[0].subject, 'Visas for your next trip, sorted – from %%DO_FROM%%');
+});
+
+test('subject: AI unavailable → standard subject, reason recorded', async () => {
+  const w = world();
+  await svc(w).runCreate({ now: NINE_AM });
+  assert.equal(w.state.templates[0].subject, 'Visas for UAE, USA, Schengen & more – from %%DO_FROM%%');
+  assert.equal(w.state.journeys[0].nodes[1].data.dailyOffer.subject.source, 'fallback');
 });

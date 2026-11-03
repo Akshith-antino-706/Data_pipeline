@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateFeed, fetchFeed, normalizeProduct, isUsable, FeedError } from '../../src/services/dailyOffer/feed.js';
-import { pickForLoopDay, nextLoopDay, isPlainTransfer, takeFresh } from '../../src/services/dailyOffer/picker.js';
+import { pickForLoopDay, loopDayForDate, LOOP, isPlainTransfer, takeFresh } from '../../src/services/dailyOffer/picker.js';
 import { raw, feedBody, fullFeed, sampleProducts } from './fixtures.js';
 
 const NOW = new Date('2026-11-01T05:30:00Z');   // 9:30 AM Dubai
@@ -56,17 +56,26 @@ test('feed: unusable products — unavailable, no image, zero price', () => {
 
 // ── Loop ──
 
-test('loop: next day wraps 8 → 1, nothing sent yet → 1', () => {
-  assert.equal(nextLoopDay(null), 1);
-  assert.equal(nextLoopDay(1), 2);
-  assert.equal(nextLoopDay(8), 1);
-  assert.equal(nextLoopDay(99), 1);
+test('loop: the Dubai date decides the day — Holiday, Cruise, Activities, Visa from 3 Nov 2026', () => {
+  const theme = (d) => LOOP[loopDayForDate(d) - 1].theme;
+  assert.deepEqual(['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-30'].map(theme),
+    ['holiday_multi', 'cruise', 'activities', 'visa', 'holiday_single', 'visa']);
+  assert.equal(loopDayForDate('2026-11-03'), 1);
+  assert.equal(loopDayForDate('2026-11-27'), 1, 'wraps after 24 days');
+  assert.equal(loopDayForDate('2026-11-02'), 24, 'dates before the start count backwards');
+});
+
+test('loop: holiday style alternates and visa ranks walk 1–7, 8–14, 15–21 across the 24 days', () => {
+  assert.deepEqual(LOOP.filter(s => s.theme.startsWith('holiday')).map(s => s.theme),
+    ['holiday_multi', 'holiday_single', 'holiday_multi', 'holiday_single', 'holiday_multi', 'holiday_single']);
+  assert.deepEqual(LOOP.filter(s => s.theme === 'visa').map(s => s.visaFrom), [1, 8, 15, 1, 8, 15]);
+  assert.ok(LOOP.every((s, i) => s.theme.startsWith(['holiday', 'cruise', 'activities', 'visa'][i % 4])));
 });
 
 // ── Visa ──
 
-test('visa day 1: fixed UAE/USA/Schengen first, then ranked 1–7 without Schengen twice', () => {
-  const pick = pickForLoopDay(products(), 1);
+test('visa (Day 4): fixed UAE/USA/Schengen first, then ranked 1–7 without Schengen twice', () => {
+  const pick = pickForLoopDay(products(), 4);
   const names = pick.groups[0].products.map(p => p.name);
   assert.deepEqual(names.slice(0, 3), ['Dubai Visa', 'US Visa', 'Schengen Visa']);
   assert.deepEqual(names.slice(3), ['Visa 1', 'Visa 2', 'Visa 3', 'Visa 4', 'Visa 5', 'Visa 6', 'Visa 7']);
@@ -74,14 +83,14 @@ test('visa day 1: fixed UAE/USA/Schengen first, then ranked 1–7 without Scheng
   assert.equal(new Set(pick.productKeys).size, 10);
 });
 
-test('visa days 4 and 8 use ranks 8–14 and 15–21', () => {
-  assert.deepEqual(pickForLoopDay(products(), 4).groups[0].products.slice(3).map(p => p.name), ['Visa 8', 'Visa 9', 'Visa 10', 'Visa 11', 'Visa 12', 'Visa 13', 'Visa 14']);
-  assert.deepEqual(pickForLoopDay(products(), 8).groups[0].products.slice(3).map(p => p.name).at(-1), 'Visa 21');
+test('visa Days 8 and 12 use ranks 8–14 and 15–21', () => {
+  assert.deepEqual(pickForLoopDay(products(), 8).groups[0].products.slice(3).map(p => p.name), ['Visa 8', 'Visa 9', 'Visa 10', 'Visa 11', 'Visa 12', 'Visa 13', 'Visa 14']);
+  assert.deepEqual(pickForLoopDay(products(), 12).groups[0].products.slice(3).map(p => p.name).at(-1), 'Visa 21');
 });
 
 test('visa: an unavailable fixed visa is left out and reported', () => {
   const ps = products().map(p => p.slug === 'usa-visa' ? { ...p, available: false } : p);
-  const pick = pickForLoopDay(ps, 1);
+  const pick = pickForLoopDay(ps, 4);
   assert.deepEqual(pick.missingFixedVisas, ['usa-visa']);
   assert.equal(pick.count, 9);
 });
@@ -89,20 +98,20 @@ test('visa: an unavailable fixed visa is left out and reported', () => {
 // ── Holidays ──
 
 test('holiday multi: top 5 countries × 3', () => {
-  const pick = pickForLoopDay(products(), 2);
+  const pick = pickForLoopDay(products(), 1);
   assert.deepEqual(pick.groups.map(g => g.title), ['HolCountry1', 'HolCountry2', 'HolCountry3', 'HolCountry4', 'HolCountry5']);
   assert.ok(pick.groups.every(g => g.products.length === 3));
 });
 
 test('holiday multi: skips products sent in the previous holiday email', () => {
-  const first = pickForLoopDay(products(), 2);
-  const second = pickForLoopDay(products(), 2, { productKeys: first.productKeys });
+  const first = pickForLoopDay(products(), 1);
+  const second = pickForLoopDay(products(), 1, { productKeys: first.productKeys });
   assert.equal(second.productKeys.filter(k => first.productKeys.includes(k)).length, 0);
   assert.equal(second.count, 15);
 });
 
 test('holiday single: top country, top 3 cities × 5 (refills from the top when a city runs out)', () => {
-  const pick = pickForLoopDay(products(), 6);
+  const pick = pickForLoopDay(products(), 5);
   assert.equal(pick.themeName, 'HolCountry1 Holidays');
   assert.ok(pick.groups.length >= 3);
   assert.ok(pick.groups.every(g => g.products.every(p => p.country === 'HolCountry1')));
@@ -133,11 +142,11 @@ test('activities: countries 1–5, then 6–10 next time, up to 30 then wrap', (
 // ── Cruises ──
 
 test('cruise: top 10, then the next 10, then refill from the top', () => {
-  const a = pickForLoopDay(products(), 5);
+  const a = pickForLoopDay(products(), 2);
   assert.equal(a.count, 10);
-  const b = pickForLoopDay(products(), 5, { productKeys: a.productKeys });
+  const b = pickForLoopDay(products(), 2, { productKeys: a.productKeys });
   assert.equal(b.productKeys.filter(k => a.productKeys.includes(k)).length, 0);
-  const c = pickForLoopDay(products(), 5, { productKeys: [...a.productKeys, ...b.productKeys] });
+  const c = pickForLoopDay(products(), 2, { productKeys: [...a.productKeys, ...b.productKeys] });
   assert.equal(c.count, 10, '5 fresh + 5 refilled from the top');
 });
 

@@ -18,8 +18,9 @@
 import dbDefault from '../../config/database.js';
 import { getDailyOfferConfig, dubaiDate, dubaiInstant, dubaiMinutes, hhmmToMinutes } from './config.js';
 import { fetchFeed as fetchFeedDefault, FeedError, isUsable } from './feed.js';
-import { pickForLoopDay, nextLoopDay, LOOP } from './picker.js';
+import { pickForLoopDay, loopDayForDate, LOOP } from './picker.js';
 import { buildTemplate, buildSubject, applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
+import { suggestSubjectLead } from './aiSubject.js';
 
 export const CREATED_BY = 'daily-offer-automation';
 const STARTED = new Set(['active', 'completed', 'paused']);
@@ -52,9 +53,10 @@ export function offerLabelOf(journey) {
 }
 
 export default class DailyOfferService {
-  constructor({ db = dbDefault, fetchFeed = fetchFeedDefault, config = getDailyOfferConfig(), services = null, log = console } = {}) {
+  constructor({ db = dbDefault, fetchFeed = fetchFeedDefault, config = getDailyOfferConfig(), services = null, suggestSubject = suggestSubjectLead, log = console } = {}) {
     this.db = db;
     this.fetchFeed = fetchFeed;
+    this.suggestSubject = suggestSubject;   // AI subject lead (aiSubject.js) — injectable for tests
     this.config = config;
     this._services = services;     // { ContentService, JourneyService } — injectable for tests
     this.log = log;
@@ -83,11 +85,10 @@ export default class DailyOfferService {
     return rows;
   }
 
-  /** Loop position + "previous" info for the picker, from journeys that actually sent. */
-  async planToday(recent) {
+  /** Loop day from today's Dubai date + "previous" info for the picker, from journeys that actually sent. */
+  async planToday(recent, today) {
     const sent = recent.filter(j => STARTED.has(j.status) && offerLabelOf(j));
-    const last = sent[0] ? offerLabelOf(sent[0]).label : null;
-    const loopDay = nextLoopDay(last?.loopDay);
+    const loopDay = loopDayForDate(today);
     const theme = LOOP.find(s => s.loopDay === loopDay).theme;
     const sameTheme = sent.map(j => offerLabelOf(j).label).find(l => l.theme === theme);
     const lastActivities = sent.map(j => offerLabelOf(j).label).find(l => l.theme === 'activities');
@@ -176,9 +177,13 @@ export default class DailyOfferService {
       const feed = await this.fetchFeed({
         url: this.config.feedUrl, timeoutMs: this.config.feedTimeoutMs, minRows: this.config.minFeedRows, now,
       });
-      const { loopDay, previous } = await this.planToday(recent);
+      const { loopDay, previous } = await this.planToday(recent, today);
       const pick = pickForLoopDay(feed.products, loopDay, previous);
       this.checkCount(pick);
+      // AI-written subject opening; the rule-based one when the AI call fails or breaks the rules.
+      const standardLead = pick.subjectLead;
+      const aiSubject = await this.suggestSubject(pick, { log: this.log });
+      pick.subjectLead = aiSubject.lead;
       const built = this.build(pick);
       this.testRender(built, fx.rates);
 
@@ -199,13 +204,14 @@ export default class DailyOfferService {
         groups: built.groups,
         products: built.products,
         feedGeneratedAt: feed.generatedAt,
+        subject: { source: aiSubject.source, reason: aiSubject.reason, lead: aiSubject.lead, standardLead },
         createdAt: now.toISOString(),
       };
       let journey;
       try {
         journey = await JourneyService.create({
           name,
-          description: `Automated daily offer (Day ${loopDay} of 8). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
+          description: `Automated daily offer (Day ${loopDay} of ${LOOP.length}). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
           segmentId: `custom:${this.config.segmentId}`,
           audience: 'all',
           journeyType: 'fixed',
