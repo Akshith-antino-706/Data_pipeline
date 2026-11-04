@@ -69,4 +69,24 @@ test.describe('journeys', () => {
     await expect(page.getByRole('button', { name: /Basics/ })).toHaveAttribute('aria-current', 'step');
     expect(api.calls.filter(c => c.startsWith('POST'))).toEqual([]);
   });
+
+  test('flow: one card per step — no IN / ROW split, even with a WhatsApp step', async ({ authed: page }) => {
+    // The fixture journey has a WhatsApp step; it is still a single column, and the card
+    // says what the rest of the world gets instead.
+    await page.goto('/journeys/11');
+    await expect(page.getByText('Welcome email')).toHaveCount(1);
+    await expect(page.getByText('Follow-up WhatsApp')).toHaveCount(1);
+    await expect(page.getByText('Indian Track')).toHaveCount(0);
+    await expect(page.getByText('🌍 ROW')).toHaveCount(0);
+    await expect(page.getByText('Rest of World gets email')).toBeVisible();
+
+    // A busy card: the per-state pills sit under the title row and never overlap the channel chip.
+    const chip = page.getByText('Email', { exact: true }).first();
+    const pill = page.getByText('73 active');
+    await expect(pill).toBeVisible();
+    const [c, p] = await Promise.all([chip.boundingBox(), pill.boundingBox()]);
+    expect(c && p && p.y >= c.y + c.height, 'stats pills overlap the channel chip').toBe(true);
+    await expect(page.getByText('45,514').first()).toBeVisible();
+    await page.screenshot({ path: 'test-results/flow-single.png', fullPage: true });
+  });
 });

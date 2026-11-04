@@ -29,7 +29,11 @@ export const journeyDetail: Json = {
   ...journeys[0],
   edges: [{ id: 'e1', source: 'n1', target: 'n2' }, { id: 'e2', source: 'n2', target: 'n3' }, { id: 'e3', source: 'n3', target: 'n4' }],
   entryStats: { total_entries: '320', active: '200', completed: '100', exited_booked: '12', unsubscribed_during_journey: '3' },
-  nodeAnalytics: [], nodeEntryCounts: [], nodeUnsubCounts: {}, node_stats: {}, node_statuses: { n2: 'sending' },
+  // n2 is mid-send with every per-state pill populated, so the flow card renders at its busiest.
+  nodeAnalytics: [{ node_id: 'n2', event_type: 'action_sent', event_count: '45514' }],
+  nodeEntryCounts: [], nodeUnsubCounts: { n2: 49 },
+  node_stats: { n2: { active: 73, exited_booked: 304, completed: 45514, exited: 882 } },
+  node_statuses: { n2: 'sending' },
 };
 
 export const campaignAnalytics: Json = {

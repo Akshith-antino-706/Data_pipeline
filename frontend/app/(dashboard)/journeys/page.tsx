@@ -764,7 +764,6 @@ interface SegmentationTreeResponse {
   statusCounts?: { booking_status?: string; count?: number | string }[];
 }
 interface CustomSegmentRow { id: number | string; name?: string; cached_count?: number | string }
-interface RenderSlot { gc: string; badge: string | null; accent?: string; centered?: boolean; key: string; channelOverride?: string; restPair?: boolean }
 
 // ══════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
@@ -1934,17 +1933,8 @@ export default function Journeys() {
                     <p className="text-secondary text-sm">Add a step to decide what people receive.</p>
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
-                    {/* Column headers */}
-                    <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                      <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,153,51,0.08)', border: '1px solid rgba(255,153,51,0.3)', fontWeight: 600, fontSize: 12, color: '#FF9933', textAlign: 'center' }}>
-                        🇮🇳 Indian Track — WhatsApp + Email + SMS
-                      </div>
-                      <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600, fontSize: 12, color: '#3B82F6', textAlign: 'center' }}>
-                        🌍 Rest of World — Email + SMS
-                      </div>
-                    </div>
-
+                  // One column, one card per step — the graph reads top to bottom.
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 560px)', justifyContent: 'center', gap: 14, alignItems: 'start' }}>
                     {nodes.map((node, i) => {
                       const Icon = NODE_ICONS[node.type] || Target;
                       const channelConf = node.data?.channel ? CHANNEL_CONFIG[node.data.channel.toLowerCase()] : null;
@@ -1967,49 +1957,26 @@ export default function Journeys() {
                         ? (NODE_COLORS[node.type] || 'var(--text-tertiary)')
                         : '#9ca3af';
 
-                      // ── Track-aware grid placement ──
-                      // Trigger spans both columns (single shared entry).
-                      // Indian-only → col 1; Rest-only → col 2.
-                      // Untagged (track='all') action/wait/condition/goal: DUPLICATE into BOTH columns
-                      //   so users visually see parallel tracks (same message fires for both audiences).
-                      // WhatsApp rule: Indian column always WhatsApp; Rest column auto-pairs to Email
-                      //   (or node.data.restChannel if configured) so Rest users don't skip the step.
+                      // Audience notes on the card. A step may be limited to one track, and a
+                      // WhatsApp step reaches Indian numbers only — everyone else gets the rest
+                      // channel (node.data.restChannel, email by default). The sending logic lives
+                      // in the backend; this only says so on the card.
                       const nodeTrack = node.data?.track || 'all';
-                      const isTriggerSpan = node.type === 'trigger';
                       const isWhatsApp = (node.data?.channel || '').toLowerCase() === 'whatsapp';
-                      const isDualShared = !isTriggerSpan && nodeTrack === 'all';
                       const restChannel = (node.data?.restChannel || 'email').toLowerCase();
+                      const trackNote = nodeTrack === 'indian' ? '🇮🇳 Indian only' : nodeTrack === 'rest' ? '🌍 Rest of World only' : null;
+                      const restPairNote = isWhatsApp && nodeTrack === 'all' ? `🌍 Rest of World gets ${restChannel}` : null;
 
-                      // Build the list of (column, label) mirror renders this node needs
-                      const renders: RenderSlot[] = isTriggerSpan
-                        ? [{ gc: '1 / span 2', badge: null, centered: true, key: node.id }]
-                        : isWhatsApp
-                          // WhatsApp: Indian column shows WhatsApp, Rest column shows auto-pair (Email/SMS)
-                          ? [
-                              { gc: '1', badge: '🇮🇳 IN · WhatsApp', accent: '#25D366', key: node.id },
-                              { gc: '2', badge: `🌍 ROW · auto ${restChannel}`, accent: '#3B82F6', key: node.id + '_row', channelOverride: restChannel, restPair: true },
-                            ]
-                          : isDualShared
-                            ? [
-                                { gc: '1', badge: '🇮🇳 IN',  accent: '#FF9933', key: node.id + '_in'  },
-                                { gc: '2', badge: '🌍 ROW', accent: '#3B82F6', key: node.id + '_row' },
-                              ]
-                            : [{ gc: nodeTrack === 'indian' ? '1' : '2', badge: nodeTrack === 'indian' ? '🇮🇳 IN' : '🌍 ROW', accent: nodeTrack === 'indian' ? '#FF9933' : '#3B82F6', key: node.id }];
-
-                      return renders.map(({ gc, badge, accent, centered, key, channelOverride, restPair }) => {
-                        const isExpanded = expandedNode === key;
-                        return (
-                        <div key={key} style={{ gridColumn: gc, width: '100%', maxWidth: centered ? 520 : '100%', justifySelf: centered ? 'center' : 'stretch', position: 'relative' }}>
-                          {/* Track label on each non-trigger node */}
-                          {badge && (
-                            <div style={{ position: 'absolute', top: -6, left: 10, fontSize: 9, fontWeight: 700, letterSpacing: 0.5, padding: '1px 6px', borderRadius: 3, background: accent, color: 'white', zIndex: 1 }}>
-                              {badge}
-                            </div>
-                          )}
+                      const key = node.id;
+                      const isExpanded = expandedNode === key;
+                      return (
+                        <div key={key} style={{ width: '100%', position: 'relative' }}>
                           {/* Connector Arrow + Insert Button */}
                           {i > 0 && (
-                            <div className="flex flex-col items-center" style={{ position: 'relative' }}>
-                              <div style={{ width: 2, height: 12, background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
+                            <div className="flex flex-col items-center" style={{ position: 'relative', marginTop: -14 }}>
+                              {/* Graph edge: dot leaving the previous step, a solid line, an arrowhead into this one */}
+                              <div style={{ width: 8, height: 8, borderRadius: '50%', background: NODE_COLORS[nodes[i-1]?.type] || color, opacity: isJourneyStarted ? 0.9 : 0.5 }} />
+                              <div style={{ width: 2, height: 14, background: color, opacity: isJourneyStarted ? 0.6 : 0.35 }} />
                               {flowEditMode ? (
                                 addNodeAfter === i - 1 ? (
                                   <div style={{ background: 'var(--bg-card)', border: '2px dashed var(--red)', borderRadius: 10, padding: 12, margin: '4px 0', width: '100%', maxWidth: 480 }}>
@@ -2092,10 +2059,10 @@ export default function Journeys() {
                                   </button>
                                 )
                               ) : isJourneyStarted ? (
-                                <div style={{ width: 2, height: 28, background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
+                                <div style={{ width: 2, height: 22, background: color, opacity: 0.6 }} />
                               ) : (
                                 <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', height: 28 }}>
-                                  <div style={{ width: 2, height: '100%', background: `linear-gradient(to bottom, ${NODE_COLORS[nodes[i-1]?.type] || '#e7e5e4'}40, ${color}40)` }} />
+                                  <div style={{ width: 2, height: '100%', background: color, opacity: 0.35 }} />
                                   <button
                                     onClick={e => { e.stopPropagation(); openNodeModal(i - 1); }}
                                     title="Add node here"
@@ -2105,7 +2072,7 @@ export default function Journeys() {
                                   >+</button>
                                 </div>
                               )}
-                              <div style={{ width: 2, height: 4, background: color + '40' }} />
+                              <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: `8px solid ${color}`, opacity: isJourneyStarted ? 0.8 : 0.45, marginBottom: 2 }} />
                             </div>
                           )}
 
@@ -2176,9 +2143,7 @@ export default function Journeys() {
                                     );
                                   })()}
                                   {(() => {
-                                    // Rest-pair duplicate for WhatsApp nodes: override the channel chip so
-                                    // the Rest column visually shows Email/SMS instead of WhatsApp.
-                                    const effChannel = channelOverride || node.data?.channel;
+                                    const effChannel = node.data?.channel;
                                     const effConf = effChannel ? CHANNEL_CONFIG[effChannel.toLowerCase()] : null;
                                     const EffIcon = effConf?.icon as LucideIcon;
                                     return effConf ? (
@@ -2188,10 +2153,15 @@ export default function Journeys() {
                                         background: effConf.color + '12', color: effConf.color
                                       }}>
                                         <EffIcon size={10} /> {effConf.label}
-                                        {restPair && <span style={{ opacity: 0.7, marginLeft: 2 }}>(auto-pair)</span>}
                                       </span>
                                     ) : null;
                                   })()}
+                                  {trackNote && (
+                                    <span style={{ padding: '2px 8px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: nodeTrack === 'indian' ? '#FF993318' : '#3B82F618', color: nodeTrack === 'indian' ? '#FF9933' : '#3B82F6' }}>{trackNote}</span>
+                                  )}
+                                  {restPairNote && (
+                                    <span style={{ padding: '2px 8px', borderRadius: 12, fontSize: 10, fontWeight: 600, background: '#3B82F618', color: '#3B82F6' }}>{restPairNote}</span>
+                                  )}
                                   {node.data?.timing && (
                                     <span className="flex items-center gap-0.5" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                                       <Clock size={10} /> {node.data.timing}
@@ -2227,6 +2197,35 @@ export default function Journeys() {
                                     </div>
                                   );
                                 })()}
+                                {backendStatus !== 'pending' && node.type !== 'wait' && node.type !== 'trigger' && nStats && (
+                                <div className="flex gap-2 flex-wrap" style={{ fontSize: 10, marginTop: 6 }}>
+                                    {nStats.active > 0 && (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', fontWeight: 700 }}>
+                                        {fmt(nStats.active)} active
+                                      </span>
+                                    )}
+                                    {nStats.exited_booked > 0 && (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(34,197,94,0.1)', color: '#22c55e', fontWeight: 700 }}>
+                                        {fmt(nStats.exited_booked)} booked
+                                      </span>
+                                    )}
+                                    {(nodeUnsubCountsMap[node.id] || 0) > 0 && (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 700 }}>
+                                        {fmt(nodeUnsubCountsMap[node.id])} unsub
+                                      </span>
+                                    )}
+                                    {nStats.completed > 0 && (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(156,163,175,0.1)', color: '#9ca3af', fontWeight: 700 }}>
+                                        {fmt(nStats.completed)} done
+                                      </span>
+                                    )}
+                                    {nStats.exited > 0 && (
+                                      <span title="Exited here (purchased / unsubscribed)" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontWeight: 700 }}>
+                                        {fmt(nStats.exited)} exited
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
 
 
@@ -2242,38 +2241,9 @@ export default function Journeys() {
                                 </span>
                               )}
 
-                              {/* Node stats preview — hidden for pending/wait/trigger nodes */}
-                              {backendStatus !== 'pending' && node.type !== 'wait' && node.type !== 'trigger' && (hasSent || nStats) && (
+                              {/* Sent count — pinned to the right; the per-state pills sit under the text */}
+                              {backendStatus !== 'pending' && node.type !== 'wait' && node.type !== 'trigger' && hasSent && (
                                 <div className="flex items-center gap-3 shrink-0">
-                                  {nStats && (
-                                    <div className="flex gap-2" style={{ fontSize: 10 }}>
-                                      {nStats.active > 0 && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(59,130,246,0.1)', color: '#3b82f6', fontWeight: 700 }}>
-                                          {fmt(nStats.active)} active
-                                        </span>
-                                      )}
-                                      {nStats.exited_booked > 0 && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(34,197,94,0.1)', color: '#22c55e', fontWeight: 700 }}>
-                                          {fmt(nStats.exited_booked)} booked
-                                        </span>
-                                      )}
-                                      {(nodeUnsubCountsMap[node.id] || 0) > 0 && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 700 }}>
-                                          {fmt(nodeUnsubCountsMap[node.id])} unsub
-                                        </span>
-                                      )}
-                                      {nStats.completed > 0 && (
-                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(156,163,175,0.1)', color: '#9ca3af', fontWeight: 700 }}>
-                                          {fmt(nStats.completed)} done
-                                        </span>
-                                      )}
-                                      {nStats.exited > 0 && (
-                                        <span title="Exited here (purchased / unsubscribed)" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '2px 6px', borderRadius: 8, background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontWeight: 700 }}>
-                                          {fmt(nStats.exited)} exited
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
                                   {hasSent && (
                                     <div className="text-right shrink-0">
                                       <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>{fmt(nodeStats.action_sent)}</div>
@@ -2727,7 +2697,6 @@ export default function Journeys() {
                             )}
                           </div>
                         </div>
-                      ); }
                       );
                     })}
                     {/* Add node at end */}
