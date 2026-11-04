@@ -60,6 +60,9 @@ export interface JourneyFlowRow {
   trigger_event?: string | null;
   trigger_from_date?: Date | string | null;
   trigger_source?: string | null;
+  enrollment_mode?: string | null;
+  broadcast_cooldown_min?: number | null;
+  last_broadcast_at?: string | Date | null;
   node_synced_at?: Record<string, string> | null;
   node_statuses?: Record<string, string> | null;
   exit_on_conversion?: boolean | null;
@@ -213,6 +216,8 @@ export interface CreateJourneyInput {
   recommendationType?: string | null;
   emailCredential?: string | null;
   triggerSource?: string | null;
+  enrollmentMode?: string | null;
+  broadcastCooldownMin?: number | string | null;
 }
 
 /** Arguments of JourneyService._snapshotEntries(). */

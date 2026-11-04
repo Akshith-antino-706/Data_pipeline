@@ -12,7 +12,9 @@ export type GiveawayType = 'participation' | 'eligible' | 'winner' | 'loser';
 export type AffiliateType = 'joined' | 'coupon_assigned' | 'commission_assigned' | 'link_generated' | 'card_offer_generated';
 
 /** Which RabbitMQ feed a message came from (first segment of its routing key). */
-export type GiveawayFeedSource = 'GIVEAWAY' | 'AFFILIATE' | 'OTP';
+export type GiveawayFeedSource = 'GIVEAWAY' | 'AFFILIATE' | 'OTP' | 'LIFECYCLE';
+/** `giveaway.lifecycle.<env>.<type>` — an admin edited a giveaway. */
+export type LifecycleType = 'updated';
 
 /** The affiliate data block that accompanies each affiliate type. */
 export type AffiliateBlockKey = 'coupon' | 'commission' | 'link' | 'cardOffer';
@@ -104,6 +106,13 @@ export interface GiveawayMessage {
   // ── OTP feed (`phone.otp.<env>.send`) ──
   code?: string | number;
   expiresAt?: string;
+  // ── LIFECYCLE feed (`giveaway.lifecycle.<env>.<type>`) — describes the giveaway, not a person ──
+  title?: string;
+  updatedAt?: string;
+  status?: string;
+  startAt?: string;
+  endAt?: string;
+  changes?: string[];
 }
 
 export type GiveawayValidation = { ok: true } | { ok: false; reason: string };

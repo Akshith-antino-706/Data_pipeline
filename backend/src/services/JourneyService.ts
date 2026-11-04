@@ -1004,6 +1004,20 @@ class JourneyService {
     if (!segRows) return 0;
     const events = await this._gtmTriggerEvents(journey);
     const { sql, params } = segRows;
+    // BROADCAST: one event boards the WHOLE segment, so the planned size is the segment
+    // itself — who triggered what is irrelevant. Counting trigger events here would also
+    // report 0 for every giveaway/affiliate-sourced journey, whose events live in
+    // giveaway_affiliate_events, not gtm_events.
+    const isBroadcast = String(journey.enrollment_mode || 'per_user') === 'segment_broadcast';
+    if (isBroadcast) {
+      const { rows: [bc] } = await db.query<{ n: number }>(`
+        SELECT COUNT(*)::int AS n
+        FROM   (${sql}) seg
+        JOIN   unified_contacts uc ON uc.id = seg.id
+        WHERE  LOWER(COALESCE(uc.email_unsubscribe, '')) <> 'yes'
+      `, params);
+      return bc?.n ?? 0;
+    }
     if (!events.length) {
       // PER-USER mode (no GTM event) → one entry per segment user, minus unsubscribed.
       const { rows: [pc] } = await db.query<{ n: number }>(`
@@ -1213,7 +1227,7 @@ class JourneyService {
     await this._refreshStamp(jid, { _exit: new Date().toISOString() });
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate, recommendationType, emailCredential, triggerSource }: CreateJourneyInput) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate, recommendationType, emailCredential, triggerSource, enrollmentMode, broadcastCooldownMin }: CreateJourneyInput) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
     let customSegmentId = null;
@@ -1250,16 +1264,26 @@ class JourneyService {
     // (both RabbitMQ feeds). Anything unrecognised falls back to 'gtm'.
     const trigSource = triggerSource === 'giveaway' || triggerSource === 'affiliate' ? triggerSource : 'gtm';
 
+    // DELIVERY MODE — only a CONTINUOUS journey can broadcast: one event reaching the
+    // WHOLE segment; anything else (and every fixed journey) stays per-user, which is how
+    // every journey created before this field behaved.
+    const enrollMode = (jType === 'gtm' && enrollmentMode === 'segment_broadcast') ? 'segment_broadcast' : 'per_user';
+    // A broadcast journey with no segment would enrol nobody and look healthy doing it.
+    if (enrollMode === 'segment_broadcast' && !customSegmentId && !stdSegmentId) {
+      throw new Error('A broadcast journey needs a segment — that segment is its audience.');
+    }
+    const cooldown = Number.isFinite(Number(broadcastCooldownMin)) ? Math.max(0, Math.trunc(Number(broadcastCooldownMin))) : 60;
+
     // Reject graphs whose edges point at nodes that don't exist.
     const nodeIds = new Set((nodes || []).map(n => String(n.id)));
     const badEdge = (edges || []).find(e => !nodeIds.has(String(e.source)) || !nodeIds.has(String(e.target)));
     if (badEdge) throw new Error(`Invalid journey graph: edge ${badEdge.source} -> ${badEdge.target} references an unknown node`);
 
     const { rows: [journey] } = await db.query<JourneyFlowRow>(`
-      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source, enrollment_mode, broadcast_cooldown_min)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       RETURNING *
-    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null), recType, emailCred, trigSource]);
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null), recType, emailCred, trigSource, enrollMode, cooldown]);
 
     // ── Snapshot segment users at creation time (NORMAL journeys only) ──────
     // GTM journeys are event-triggered (no snapshot) — users enter when they fire
@@ -1304,7 +1328,7 @@ class JourneyService {
   static async update(journeyId: JourneyId, fields: Record<string, unknown>): Promise<JourneyFlowRow | null> {
     const sets = [];
     const params: unknown[] = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date', recommendation_type: 'recommendation_type', email_credential: 'email_credential', trigger_source: 'trigger_source' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date', recommendation_type: 'recommendation_type', email_credential: 'email_credential', trigger_source: 'trigger_source', enrollment_mode: 'enrollment_mode', broadcast_cooldown_min: 'broadcast_cooldown_min' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {

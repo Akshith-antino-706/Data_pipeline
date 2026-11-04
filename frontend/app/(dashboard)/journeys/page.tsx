@@ -894,7 +894,7 @@ export default function Journeys() {
   const now = useLiveNow(detail?.status === 'active');
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState<CreateForm>({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
+  const [createForm, setCreateForm] = useState<CreateForm>({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm', enrollmentMode: 'per_user', broadcastCooldownMin: 60 });
   const [creating, setCreating] = useState(false); // create-journey API in flight — keeps the modal open + shows a button loader
   const [createNodes, setCreateNodes] = useState<NodeForm[]>([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
@@ -1423,6 +1423,11 @@ export default function Journeys() {
         // Continuous journeys trigger on GTM events OR giveaway types — trigger_event holds both.
         triggerSource: createForm.journeyType === 'continuous' ? createForm.triggerSource : 'gtm',
         triggerEvent: createForm.journeyType === 'continuous' ? createForm.triggerEvent : null,
+        // Delivery mode — continuous only. 'segment_broadcast' sends one event to the WHOLE
+        // segment; 'per_user' (the default, and every pre-existing journey) sends only to
+        // whoever fired it. The cooldown caps how often a broadcast may repeat.
+        enrollmentMode: createForm.journeyType === 'continuous' ? (createForm.enrollmentMode || 'per_user') : 'per_user',
+        broadcastCooldownMin: createForm.broadcastCooldownMin ?? 60,
         // Continuous only: only enroll GTM events fired on/after this date (Dubai midnight).
         // Blank → backend defaults to journey creation time (no historical backfill).
         triggerFromDate: (createForm.journeyType === 'continuous' && createForm.triggerFromDate)
@@ -1453,7 +1458,7 @@ export default function Journeys() {
       // with the real count once the snapshot lands (the journey is not listed until then).
       showToast(`Journey "${res.data?.name}" is being created — building audience…`, 'info', { sticky: true });
       if (res.data?.journey_id) pollSnapshotBuild(res.data.journey_id, res.data.name);
-      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
+      setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm', enrollmentMode: 'per_user', broadcastCooldownMin: 60 });
       setCreateNodes([]);
       setShowCreateNodeForm(false);
       setShowCreate(false);       // ← close/navigate only AFTER the API succeeds
@@ -3666,7 +3671,7 @@ export default function Journeys() {
     const resetCreate = () => {
       // The wizard has its own route: leaving it goes back to the list page.
       if (isCreateRoute) { router.replace(JOURNEYS_PATH); return; }
-      setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setEditCreateNodeIdx(null); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
+      setShowCreate(false); setCreateNodes([]); setShowCreateNodeForm(false); setEditCreateNodeIdx(null); setCreateForm({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm', enrollmentMode: 'per_user', broadcastCooldownMin: 60 });
     };
     return (
       <>

@@ -134,14 +134,16 @@ describe('giveawayRabbitConsumer — connection & topology', () => {
       ['giveaways.email.send', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx' } }],
       ['affiliate-emails-prod', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx' } }],
       ['otp.send.prod', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx', 'x-message-ttl': 600000 } }],
+      ['giveaways.lifecycle.prod', { durable: true, arguments: { 'x-dead-letter-exchange': 'giveaways.dlx' } }],
     ]);
     expect(ch.bindQueue.mock.calls).toEqual([
       ['giveaways.email.dlq', 'giveaways.dlx', ''],
       ['giveaways.email.send', 'giveaways', 'giveaway.email.prod.*'],
       ['affiliate-emails-prod', 'giveaways', 'affiliate.email.prod.*'],
       ['otp.send.prod', 'giveaways', 'phone.otp.prod.*'],
+      ['giveaways.lifecycle.prod', 'giveaways', 'giveaway.lifecycle.prod.*'],
     ]);
-    expect(ch.consume.mock.calls.map(c => c[0])).toEqual(['giveaways.email.send', 'affiliate-emails-prod', 'otp.send.prod']);
+    expect(ch.consume.mock.calls.map(c => c[0])).toEqual(['giveaways.email.send', 'affiliate-emails-prod', 'otp.send.prod', 'giveaways.lifecycle.prod']);
     expect(ch.prefetch).toHaveBeenCalledWith(7);
     expect(ch.consume.mock.calls[0][0]).toBe('giveaways.email.send');
     expect(ch.consume.mock.calls[0][2]).toEqual({ noAck: false });

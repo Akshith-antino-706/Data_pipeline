@@ -167,9 +167,9 @@ describe('Create journey wizard', () => {
     const payload = vi.mocked(api.createJourney).mock.calls[0][0] as Record<string, unknown>;
     // Exactly the keys the old form sent — no more, no fewer.
     expect(Object.keys(payload).sort()).toEqual([
-      'description', 'edges', 'emailCredential', 'exitOnConversion', 'journeyType', 'name', 'nodes',
-      'recommendationType', 'scheduledStartAt', 'segmentId', 'testEmail', 'testMode', 'testWaitSec',
-      'triggerEvent', 'triggerFromDate', 'triggerSource',
+      'broadcastCooldownMin', 'description', 'edges', 'emailCredential', 'enrollmentMode', 'exitOnConversion',
+      'journeyType', 'name', 'nodes', 'recommendationType', 'scheduledStartAt', 'segmentId', 'testEmail',
+      'testMode', 'testWaitSec', 'triggerEvent', 'triggerFromDate', 'triggerSource',
     ]);
     const { scheduledStartAt, ...rest } = payload;
     // Pre-filled Dubai now+10min, converted to UTC ISO exactly as before.
@@ -182,6 +182,8 @@ describe('Create journey wizard', () => {
       triggerSource: 'gtm',
       triggerEvent: null,
       triggerFromDate: null,
+      enrollmentMode: 'per_user',
+      broadcastCooldownMin: 60,
       exitOnConversion: false,
       testMode: false,
       testEmail: null,

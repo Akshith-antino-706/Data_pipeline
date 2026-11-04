@@ -31,7 +31,12 @@ export interface GtmJourneyFlowRow {
   custom_segment_id: number | null;
   segment_id: number | null;
   audience: string | null;
+  /** 'per_user' (default) or 'segment_broadcast' — who one event reaches. */
+  enrollment_mode?: JourneyEnrollmentMode | null;
+  broadcast_cooldown_min?: number | null;
 }
+
+export type JourneyEnrollmentMode = 'per_user' | 'segment_broadcast';
 
 export interface GtmOnEventArgs {
   eventName?: string | null;
@@ -70,6 +75,11 @@ export interface GiveawayAffiliatePayload {
   commission?: Record<string, unknown>;
   link?: Record<string, unknown>;
   cardOffer?: Record<string, unknown>;
+  // LIFECYCLE feed — the giveaway's own fields, read for {{ giveaway_status }} etc.
+  status?: string;
+  startAt?: string;
+  endAt?: string;
+  changes?: string[];
   [key: string]: unknown;
 }
 

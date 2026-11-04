@@ -230,6 +230,10 @@ export interface CreateForm {
   recommendationType: string;
   emailCredential?: string;
   triggerSource?: string;
+  /** Continuous only — who one event reaches: 'per_user' (default) or 'segment_broadcast'. */
+  enrollmentMode?: 'per_user' | 'segment_broadcast';
+  /** Minimum minutes between two broadcasts of the same journey; 0 turns the guard off. */
+  broadcastCooldownMin?: number;
 }
 
 export interface NodeCampaign {

@@ -84,6 +84,13 @@ export interface GiveawayEventInput {
   source?: GiveawayFeedSource;
 }
 
+/** `giveaway.lifecycle.<env>.<type>` — an admin edited a giveaway; names no person. */
+export interface GiveawayLifecycleInput {
+  lifecycleType?: string | null;
+  giveawayId?: string | number | null;
+  eventId?: string | number | null;
+}
+
 /** Journey node as read for stats display. */
 export interface StatsNodeDef {
   id: string;

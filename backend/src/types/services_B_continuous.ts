@@ -1,3 +1,4 @@
+import type { GtmJourneyFlowRow } from './servicesGtmJourney.js';
 /** Types for ContinuousJourneyService (continuous GTM journey engine). */
 import type { JourneyNode } from './queueJobs.js';
 
@@ -8,6 +9,15 @@ export interface ContinuousEnterInput {
   eventId?: string | number | null;
   serviceType?: string | null;
   firstNodeId: string;
+  entryDelayMs?: number;
+}
+
+/** enterSegment(): the journey row plus the cohort key shared by everyone it boards. */
+export interface ContinuousEnterSegmentInput {
+  journey: Pick<GtmJourneyFlowRow, 'journey_id' | 'audience' | 'custom_segment_id' | 'segment_id' | 'broadcast_cooldown_min'>;
+  firstNodeId: string;
+  itemId: string | number;
+  eventId?: string | number | null;
   entryDelayMs?: number;
 }
 

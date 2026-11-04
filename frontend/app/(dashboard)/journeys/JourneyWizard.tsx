@@ -40,7 +40,9 @@ export const WIZARD_STEPS = [
   { title: 'Review', hint: 'Check and create' },
 ] as const;
 
-export const GIVEAWAY_TYPES = ['participation', 'eligible', 'winner', 'loser'] as const;
+// 'updated' is a LIFECYCLE event — an admin edited the giveaway. It names no person, so it can
+// only drive a journey in "Everyone in the segment" mode; per-user has nobody to enrol.
+export const GIVEAWAY_TYPES = ['participation', 'eligible', 'winner', 'loser', 'updated'] as const;
 export const AFFILIATE_TYPES = ['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated'] as const;
 
 /**
@@ -118,6 +120,8 @@ export default function JourneyWizard(props: JourneyWizardProps) {
   const continuous = form.journeyType === 'continuous';
   const feed = rabbitFeed(form.triggerSource);
   const events = splitEvents(form.triggerEvent);
+  // Delivery mode (continuous only): does one event reach the person who fired it, or the whole segment?
+  const broadcast = continuous && (form.enrollmentMode || 'per_user') === 'segment_broadcast';
 
   // Move focus to the new step's heading so keyboard and screen-reader users land on it.
   useEffect(() => {
@@ -311,9 +315,24 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                       </div>
                       <span className={styles.help}>
                         {events.length
-                          ? <>A segment user who fires <b>{events.map(typeLabel).join(' / ')}</b> on {feed.where} enters — one entry per event.</>
+                          ? (broadcast
+                              ? <>Each <b>{events.map(typeLabel).join(' / ')}</b> event on {feed.where} sends to the <b>whole segment</b> — whoever triggered it need not be a member. Every new event sends again.</>
+                              : <>A segment user who fires <b>{events.map(typeLabel).join(' / ')}</b> on {feed.where} enters — one entry per event.</>)
                           : <>Pick one or more {feed.label.toLowerCase()} types. Only segment members who fire the selected type enter the journey.</>}
                       </span>
+                      {/* 'updated' fires when an ADMIN edits a giveaway (end date moved, status changed). It
+                          names no person, so per-user mode has nobody to enrol and the journey would sit at
+                          zero entries looking perfectly healthy. */}
+                      {events.includes('updated') && !broadcast && (
+                        <span className="ui-err" role="alert">
+                          <b>“updated” needs “Everyone in the segment”.</b> It fires when an admin edits the giveaway — there is no person attached to it, so in per-user mode nobody is ever enrolled and this journey will stay at zero entries.
+                        </span>
+                      )}
+                      {events.includes('updated') && broadcast && (
+                        <span className={styles.help} role="note">
+                          <b>“updated” fires on every admin save</b> of the giveaway, including a typo fix — each one mails the whole segment. Set a sensible gap between broadcasts below.
+                        </span>
+                      )}
                       {err('trigger') && <span className="ui-err" role="alert">{err('trigger')}</span>}
                     </div>
                   ) : (
@@ -326,6 +345,41 @@ export default function JourneyWizard(props: JourneyWizardProps) {
                           : <>No event → one entry per segment user. Pick events to fan out per distinct item instead.</>}
                       </span>
                     </div>
+                  )}
+
+                  {/* DELIVERY MODE — who does ONE event reach? Per-user (every journey before this
+                      field) enrols only the person who fired it, with the segment acting as a gate on
+                      them. Broadcast inverts it: the segment IS the audience and the trigger need not
+                      belong to it. */}
+                  <div className="ui-field">
+                    <span className="ui-label" id={`${uid}-mode`}>Who does one event reach?</span>
+                    <div role="group" aria-labelledby={`${uid}-mode`} className={styles.pills}>
+                      {([{ k: 'per_user', label: 'Just that person' }, { k: 'segment_broadcast', label: 'Everyone in the segment' }] as const).map(o => {
+                        const on = (form.enrollmentMode || 'per_user') === o.k;
+                        return (
+                          <button key={o.k} type="button" aria-pressed={on}
+                            className={[styles.pill, on ? styles.pillOn : ''].filter(Boolean).join(' ')}
+                            onClick={() => setForm(f => ({ ...f, enrollmentMode: o.k }))}>
+                            {on ? '✓ ' : ''}{o.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span className={styles.help}>
+                      {broadcast
+                        ? <>Every matching event sends to the <b>whole segment</b>, not just whoever triggered it — the segment size is the blast radius, and the trigger need not be in it. Each new event sends again. Use this for announcements, like a giveaway whose end date moved.</>
+                        : <>Only the person who fired the event enters, and only if they are in the segment. This is how every existing continuous journey behaves.</>}
+                    </span>
+                  </div>
+
+                  {broadcast && (
+                    <Field label="Minimum gap between broadcasts"
+                      help="Minutes. Guards against a frequent trigger mailing the whole segment over and over — events arriving inside the gap are logged and skipped. 0 turns the guard off.">
+                      {c => (
+                        <Input {...c} type="number" min={0} value={form.broadcastCooldownMin ?? 60}
+                          onChange={e => setForm(f => ({ ...f, broadcastCooldownMin: e.target.value === '' ? 60 : Math.max(0, parseInt(e.target.value, 10) || 0) }))} />
+                      )}
+                    </Field>
                   )}
 
                   <Field label={<>Trigger only for events on or after <span className={styles.optional}>(optional)</span></>}
