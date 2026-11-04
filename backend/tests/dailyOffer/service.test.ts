@@ -6,12 +6,13 @@ import DailyOfferService, {
 import { getDailyOfferConfig } from '../../src/services/dailyOffer/config.js';
 import { validateFeed, FeedError } from '../../src/services/dailyOffer/feed.js';
 import type { DailyOfferLabel, FeedResult, OfferTheme } from '../../src/services/dailyOffer/types.js';
+import type { SuggestSubjectFn } from '../../src/services/dailyOffer/aiSubject.js';
 import type { ContentTemplateInput, ContentTemplateUpdate } from '../../src/types/services_A.js';
 import type { CreateJourneyInput, JourneyFlowNode } from '../../src/types/journeyService.js';
 import { fullFeed } from './fixtures.js';
 
-const NINE_AM = new Date('2026-11-01T05:00:00Z');        // 09:00 Dubai
-const CHECK = new Date('2026-11-01T11:45:00Z');          // 15:45 Dubai
+const NINE_AM = new Date('2026-11-06T05:00:00Z');        // 09:00 Dubai — loop Day 4, Visa
+const CHECK = new Date('2026-11-06T11:45:00Z');          // 15:45 Dubai
 const silent = { log() {}, warn() {}, error() {} };
 
 /** A saved template / journey in the in-memory world. */
@@ -27,8 +28,8 @@ const nodesOf = (j: JourneyRow): JourneyFlowNode[] => j.nodes || [];
 const labelOf = (j: JourneyRow): DailyOfferLabel => nodesOf(j)[1].data?.dailyOffer as DailyOfferLabel;
 
 /** In-memory stand-ins for the database and the two services the job uses. */
-function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Users', is_active: true }, fxAgeHours = 3 }: {
-  journeys?: JourneyRow[]; segment?: { id: number; name: string; is_active: boolean } | null; fxAgeHours?: number;
+function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Users', is_active: true }, fxAgeHours = 3, sentJourneys = [] }: {
+  journeys?: JourneyRow[]; segment?: { id: number; name: string; is_active: boolean } | null; fxAgeHours?: number; sentJourneys?: number[];
 } = {}) {
   const state = { journeys: [...journeys], templates: [] as TemplateRow[], nextJourney: 1000, nextTemplate: 500 };
   const db: Queryable = {
@@ -47,6 +48,7 @@ function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Use
           return ([['INR', 25.95], ['SAR', 1.02], ['USD', 0.2723]] as const).map(([currency, r]) => ({ currency, aed_to_currency: r, updated_at: at }));
         }
         if (sql.includes('FROM content_templates')) return state.templates.filter(t => t.id === params[0]);
+        if (sql.includes('FROM email_send_log')) return sentJourneys.includes(Number(params[0])) ? [{ sent: 1 }] : [];
         throw new Error(`unexpected query: ${sql}`);
       })();
       return result(rows as R[]);
@@ -77,11 +79,14 @@ function world({ journeys = [], segment = { id: 95, name: 'B2C Testing Email Use
 
 type World = ReturnType<typeof world>;
 
-function svc(w: World, { feed = (now: Date): FeedResult => validateFeed(fullFeed(now), { now }), env = {} }: {
-  feed?: (now: Date) => FeedResult; env?: NodeJS.ProcessEnv;
+// Default AI stand-in: behaves like "no API key" so tests never call Claude.
+const noAi: SuggestSubjectFn = async (pick) => ({ lead: pick.subjectLead, source: 'fallback', reason: 'no_api_key' });
+
+function svc(w: World, { feed = (now: Date): FeedResult => validateFeed(fullFeed(now), { now }), env = {}, suggestSubject = noAi }: {
+  feed?: (now: Date) => FeedResult; env?: NodeJS.ProcessEnv; suggestSubject?: SuggestSubjectFn;
 } = {}) {
   return new DailyOfferService({
-    db: w.db, services: w.services, log: silent,
+    db: w.db, services: w.services, log: silent, suggestSubject,
     config: getDailyOfferConfig({ DAILY_OFFER_ENABLED: 'true', ...env }),
     fetchFeed: async ({ now }) => feed(now ?? new Date()),
   });
@@ -104,19 +109,19 @@ test('names: ordinal dates', () => {
   expect(ordinalDate('2026-11-23')).toBe('23rd November');
 });
 
-test('create: first run makes Day 1 (Visa) template + Draft journey with no start time', async () => {
+test('create: first run makes the date\'s theme (6 Nov → Day 4, Visa) template + Draft journey with no start time', async () => {
   const w = world();
   const res = await svc(w).runCreate({ now: NINE_AM });
   expect(res.status).toBe('created');
   if (res.status !== 'created') return;
-  expect(res.name).toBe('1st November - Visa Offers (Day 1)');
+  expect(res.name).toBe('6th November - Visa Offers (Day 4)');
   const j = w.state.journeys[0];
   expect(j.segmentId).toBe('custom:95');
   expect(j.scheduledStartAt).toBe(null);
   expect(j.journeyType).toBe('fixed');
   const node = nodesOf(j)[1];
   expect(node.data?.emailTemplateId).toBe(w.state.templates[0].id);
-  expect(labelOf(j).loopDay).toBe(1);
+  expect(labelOf(j).loopDay).toBe(4);
   expect(labelOf(j).products.length).toBe(10);
   expect(w.state.templates[0].body?.startsWith('<!--DAILY_OFFER-->')).toBe(true);
   expect(w.state.templates[0].createdBy).toBe('daily-offer-automation');
@@ -133,19 +138,31 @@ test('create: runs again the same day → nothing new (no duplicate, no download
   expect(downloads).toBe(1);
 });
 
-test('create: continues the loop from the last journey that actually sent', async () => {
-  const w = world({ journeys: [past(10, '2026-10-31', 4, 'visa')] });
-  const res = await svc(w).runCreate({ now: NINE_AM });
-  expect(res.status === 'created' && res.name).toMatch(/Cruises \(Day 5\)$/);
+test('create: the date decides the theme, whatever sent before (4 Nov → Cruises)', async () => {
+  const w = world({ journeys: [past(10, '2026-11-03', 5, 'cruise')] });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
+  expect(res.status === 'created' && res.name).toMatch(/^4th November - Cruises \(Day 2\)$/);
 });
 
-test('create: a skipped day carries its theme to the next day (Draft journey does not count)', async () => {
+test('create: a skipped day does not shift the calendar (Draft journey does not count)', async () => {
   const w = world({ journeys: [
-    past(10, '2026-10-30', 1, 'visa'),
-    past(11, '2026-10-31', 2, 'holiday_multi', 'draft', { status: 'skipped' }),
+    past(10, '2026-11-04', 2, 'cruise'),
+    past(11, '2026-11-05', 3, 'activities', 'draft', { status: 'skipped' }),
   ] });
   const res = await svc(w).runCreate({ now: NINE_AM });
-  expect(res.status === 'created' && res.name).toMatch(/Holiday Packages \(Day 2\)$/);
+  expect(res.status === 'created' && res.name).toMatch(/Visa Offers \(Day 4\)$/);
+});
+
+test('create: cruise skips the cruises sent in the last cruise email', async () => {
+  const first = world();
+  await svc(first).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
+  const sentKeys = labelOf(first.state.journeys[0]).productKeys;
+  // Rates dated 3 hours before 8 Nov 09:00 Dubai, so they are fresh for that run.
+  const w = world({ journeys: [past(10, '2026-11-04', 2, 'cruise', 'completed', { productKeys: sentKeys })], fxAgeHours: 3 - 48 });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-08T05:00:00Z') });
+  expect(res.status === 'created' && res.name).toMatch(/^8th November - Cruises \(Day 6\)$/);
+  const next = labelOf(w.state.journeys[w.state.journeys.length - 1]).productKeys;
+  expect(next.filter(k => sentKeys.includes(k)).length).toBe(0);
 });
 
 test('create: skipped (nothing saved) when the feed is not today', async () => {
@@ -178,7 +195,7 @@ test('final check: passes → start time set to 4 PM Dubai, prices refreshed', a
   const res = await s.runFinalCheck({ now: CHECK });
   expect(res.status, 'message' in res ? res.message : '').toBe('scheduled');
   const j = w.state.journeys[0];
-  expect(j.scheduled_start_at).toBe('2026-11-01T12:00:00.000Z');   // 16:00 Dubai
+  expect(j.scheduled_start_at).toBe('2026-11-06T12:00:00.000Z');   // 16:00 Dubai
   expect(labelOf(j).status).toBe('scheduled');
   // Runs again → no change.
   expect((await s.runFinalCheck({ now: CHECK })).status).toBe('already_scheduled');
@@ -272,4 +289,46 @@ test('preview: a daily template whose journey is gone shows a clear message, nev
   expect(out?.markets).toBe(undefined);
   const render = await s.renderTemplateFor(tpl, { plan: 'IN', currency: 'INR' });
   expect(render?.error).toBeTruthy();
+});
+
+test('subject: the AI lead is used, the price suffix stays, and the source is recorded', async () => {
+  const w = world();
+  const ai: SuggestSubjectFn = async () => ({ lead: 'Visas for your next trip, sorted ✈️', source: 'ai', reason: null });
+  await svc(w, { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  expect(w.state.templates[0].subject).toBe('Visas for your next trip, sorted ✈️ – from %%DO_FROM%%');
+  expect(labelOf(w.state.journeys[0]).subject).toEqual({ source: 'ai', reason: null, lead: 'Visas for your next trip, sorted ✈️', standardLead: 'Visas for UAE, USA, Schengen & more' });
+});
+
+test('subject: the AI lead survives the 3:45 final check', async () => {
+  const w = world();
+  const ai: SuggestSubjectFn = async () => ({ lead: 'Visas for your next trip, sorted', source: 'ai', reason: null });
+  await svc(w, { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  const res = await svc(w).runFinalCheck({ now: CHECK });
+  expect(res.status, 'message' in res ? res.message : '').toBe('scheduled');
+  expect(w.state.templates[0].subject).toBe('Visas for your next trip, sorted – from %%DO_FROM%%');
+});
+
+test('subject: AI unavailable → standard subject, reason recorded', async () => {
+  const w = world();
+  await svc(w).runCreate({ now: NINE_AM });
+  expect(w.state.templates[0].subject).toBe('Visas for UAE, USA, Schengen & more – from %%DO_FROM%%');
+  expect(labelOf(w.state.journeys[0]).subject?.source).toBe('fallback');
+});
+
+test('send check: scheduled journey with no sends → not_sent; with sends → sent', async () => {
+  const day = (sent: number[]) => world({ journeys: [past(10, '2026-11-06', 4, 'visa', 'active')], sentJourneys: sent });
+  const at = new Date('2026-11-06T13:30:00Z');   // 17:30 Dubai
+  const quiet = await svc(day([])).runSendCheck({ now: at });
+  expect(quiet.status).toBe('not_sent');
+  if (quiet.status !== 'not_sent') return;
+  expect(quiet.journeyId).toBe(10);
+  expect(quiet.message).toMatch(/No emails sent by 17:30 Dubai \(send time 16:00/);
+  expect((await svc(day([10])).runSendCheck({ now: at })).status).toBe('sent');
+});
+
+test('send check: no journey today, or one already skipped → nothing to check', async () => {
+  const at = new Date('2026-11-06T13:30:00Z');
+  expect((await svc(world()).runSendCheck({ now: at })).status).toBe('none');
+  const skipped = world({ journeys: [past(11, '2026-11-06', 4, 'visa', 'draft', { status: 'skipped' })] });
+  expect((await svc(skipped).runSendCheck({ now: at })).status).toBe('skipped_earlier');
 });

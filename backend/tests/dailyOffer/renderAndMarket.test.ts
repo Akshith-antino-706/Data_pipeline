@@ -74,7 +74,7 @@ test('money format', () => {
 // ── Template ──
 
 test('template: marker first, tokens in place, no {{…}} placeholders, footer kept', () => {
-  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 1);
+  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 4);
   const html = buildTemplate(pick);
   expect(html.startsWith(DAILY_OFFER_MARKER)).toBe(true);
   expect((html.match(/%%DO_PRICE:/g) || []).length).toBe(pick.count);
@@ -98,7 +98,7 @@ test('template: every market renders clean; India in ₹, UAE in AED, subject fi
 });
 
 test('template: a product without any price is caught before sending', () => {
-  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 5);
+  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 2);
   const products = snap(pick);
   products[0] = { ...products[0], prices: { default: { price: 0, sale: 0 } } };
   const out = applyMarket({ html: buildTemplate(pick), subject: buildSubject(pick) }, products, { plan: 'AE', currency: 'AED' }, RATES);
@@ -111,6 +111,37 @@ test('template: names are HTML-escaped', () => {
   if (!c) throw new Error('fixture has no cruise');
   c.name = 'Fish & Chips <Cruise>';
   c.rank = -1;
-  const html = buildTemplate(pickForLoopDay(ps, 5));
+  const html = buildTemplate(pickForLoopDay(ps, 2));
   expect(html).toContain('Fish &amp; Chips &lt;Cruise&gt;');
+});
+
+// ── Dark mode (team reference template) ──
+
+test('dark mode: white logo swaps in, hidden from Outlook desktop', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  expect(html).toContain('class="logo-light" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png"');
+  expect(html).toContain('raynatourslogo-dark');
+  // The dark logo sits inside an Outlook-desktop exclusion and starts hidden.
+  expect(html).toMatch(/<!--\[if !mso\]><!-->\s*<div class="logo-dark" style="display:none;[^"]*mso-hide:all;/);
+});
+
+test('dark mode: white Trustpilot and Tripadvisor badges next to the normal ones', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  expect(html.match(/class="badge-light"/g)).toHaveLength(4);       // 3 Trustpilot + Tripadvisor
+  expect(html.match(/class="badge-dark"/g)).toHaveLength(3);
+  expect(html.match(/class="badge-dark-block"/g)).toHaveLength(1);
+  for (const img of ['trustpilot-excellent-white', 'trustpilot-based-on-reviews-white', 'trustpilot-logo-white', 'tripadvisor-lockup-white']) {
+    expect(html, img).toContain(img);
+  }
+});
+
+test('dark mode: swap rules for prefers-color-scheme and Outlook.com / Outlook apps ([data-ogsc])', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  const darkBlock = html.slice(html.indexOf('@media (prefers-color-scheme:dark){'));
+  for (const rule of ['.logo-light{display:none !important;}', '.badge-light{display:none !important;}', '.badge-dark{display:inline-block !important;}', '.dm-foot{background-color:#080808 !important}']) {
+    expect(darkBlock, rule).toContain(rule);
+  }
+  for (const rule of ['[data-ogsc] .logo-light{display:none !important;}', '[data-ogsc] .badge-dark{display:inline-block !important;}', '[data-ogsc] .badge-dark-block{display:block !important;}']) {
+    expect(html, rule).toContain(rule);
+  }
 });

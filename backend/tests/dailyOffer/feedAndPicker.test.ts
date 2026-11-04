@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import { validateFeed, fetchFeed, normalizeProduct, isUsable, FeedError } from '../../src/services/dailyOffer/feed.js';
-import { pickForLoopDay, nextLoopDay, isPlainTransfer, takeFresh } from '../../src/services/dailyOffer/picker.js';
+import { pickForLoopDay, loopDayForDate, LOOP, isPlainTransfer, takeFresh } from '../../src/services/dailyOffer/picker.js';
 import type { OfferProduct } from '../../src/services/dailyOffer/types.js';
 import { raw, feedBody, fullFeed, sampleProducts } from './fixtures.js';
 
@@ -68,17 +68,26 @@ test('feed: unusable products — unavailable, no image, zero price', () => {
 
 // ── Loop ──
 
-test('loop: next day wraps 8 → 1, nothing sent yet → 1', () => {
-  expect(nextLoopDay(null)).toBe(1);
-  expect(nextLoopDay(1)).toBe(2);
-  expect(nextLoopDay(8)).toBe(1);
-  expect(nextLoopDay(99)).toBe(1);
+test('loop: the Dubai date decides the day — Holiday, Cruise, Activities, Visa from 3 Nov 2026', () => {
+  const theme = (d: string): string => LOOP[loopDayForDate(d) - 1].theme;
+  expect(['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-30'].map(theme))
+    .toEqual(['holiday_multi', 'cruise', 'activities', 'visa', 'holiday_single', 'visa']);
+  expect(loopDayForDate('2026-11-03')).toBe(1);
+  expect(loopDayForDate('2026-11-27'), 'wraps after 24 days').toBe(1);
+  expect(loopDayForDate('2026-11-02'), 'dates before the start count backwards').toBe(24);
+});
+
+test('loop: holiday style alternates and visa ranks walk 1–7, 8–14, 15–21 across the 24 days', () => {
+  expect(LOOP.filter(s => s.theme.startsWith('holiday')).map(s => s.theme))
+    .toEqual(['holiday_multi', 'holiday_single', 'holiday_multi', 'holiday_single', 'holiday_multi', 'holiday_single']);
+  expect(LOOP.filter(s => s.theme === 'visa').map(s => s.visaFrom)).toEqual([1, 8, 15, 1, 8, 15]);
+  expect(LOOP.every((s, i) => s.theme.startsWith(['holiday', 'cruise', 'activities', 'visa'][i % 4]))).toBe(true);
 });
 
 // ── Visa ──
 
-test('visa day 1: fixed UAE/USA/Schengen first, then ranked 1–7 without Schengen twice', () => {
-  const pick = pickForLoopDay(products(), 1);
+test('visa (Day 4): fixed UAE/USA/Schengen first, then ranked 1–7 without Schengen twice', () => {
+  const pick = pickForLoopDay(products(), 4);
   const names = pick.groups[0].products.map(p => p.name);
   expect(names.slice(0, 3)).toEqual(['Dubai Visa', 'US Visa', 'Schengen Visa']);
   expect(names.slice(3)).toEqual(['Visa 1', 'Visa 2', 'Visa 3', 'Visa 4', 'Visa 5', 'Visa 6', 'Visa 7']);
@@ -86,14 +95,14 @@ test('visa day 1: fixed UAE/USA/Schengen first, then ranked 1–7 without Scheng
   expect(new Set(pick.productKeys).size).toBe(10);
 });
 
-test('visa days 4 and 8 use ranks 8–14 and 15–21', () => {
-  expect(pickForLoopDay(products(), 4).groups[0].products.slice(3).map(p => p.name)).toEqual(['Visa 8', 'Visa 9', 'Visa 10', 'Visa 11', 'Visa 12', 'Visa 13', 'Visa 14']);
-  expect(pickForLoopDay(products(), 8).groups[0].products.slice(3).map(p => p.name).at(-1)).toBe('Visa 21');
+test('visa Days 8 and 12 use ranks 8–14 and 15–21', () => {
+  expect(pickForLoopDay(products(), 8).groups[0].products.slice(3).map(p => p.name)).toEqual(['Visa 8', 'Visa 9', 'Visa 10', 'Visa 11', 'Visa 12', 'Visa 13', 'Visa 14']);
+  expect(pickForLoopDay(products(), 12).groups[0].products.slice(3).map(p => p.name).at(-1)).toBe('Visa 21');
 });
 
 test('visa: an unavailable fixed visa is left out and reported', () => {
   const ps = products().map(p => p.slug === 'usa-visa' ? { ...p, available: false } : p);
-  const pick = pickForLoopDay(ps, 1);
+  const pick = pickForLoopDay(ps, 4);
   expect(pick.missingFixedVisas).toEqual(['usa-visa']);
   expect(pick.count).toBe(9);
 });
@@ -101,20 +110,20 @@ test('visa: an unavailable fixed visa is left out and reported', () => {
 // ── Holidays ──
 
 test('holiday multi: top 5 countries × 3', () => {
-  const pick = pickForLoopDay(products(), 2);
+  const pick = pickForLoopDay(products(), 1);
   expect(pick.groups.map(g => g.title)).toEqual(['HolCountry1', 'HolCountry2', 'HolCountry3', 'HolCountry4', 'HolCountry5']);
   expect(pick.groups.every(g => g.products.length === 3)).toBe(true);
 });
 
 test('holiday multi: skips products sent in the previous holiday email', () => {
-  const first = pickForLoopDay(products(), 2);
-  const second = pickForLoopDay(products(), 2, { productKeys: first.productKeys });
+  const first = pickForLoopDay(products(), 1);
+  const second = pickForLoopDay(products(), 1, { productKeys: first.productKeys });
   expect(second.productKeys.filter(k => first.productKeys.includes(k)).length).toBe(0);
   expect(second.count).toBe(15);
 });
 
 test('holiday single: top country, top 3 cities × 5 (refills from the top when a city runs out)', () => {
-  const pick = pickForLoopDay(products(), 6);
+  const pick = pickForLoopDay(products(), 5);
   expect(pick.themeName).toBe('HolCountry1 Holidays');
   expect(pick.groups.length).toBeGreaterThanOrEqual(3);
   expect(pick.groups.every(g => g.products.every(p => p.country === 'HolCountry1'))).toBe(true);
@@ -145,11 +154,11 @@ test('activities: countries 1–5, then 6–10 next time, up to 30 then wrap', (
 // ── Cruises ──
 
 test('cruise: top 10, then the next 10, then refill from the top', () => {
-  const a = pickForLoopDay(products(), 5);
+  const a = pickForLoopDay(products(), 2);
   expect(a.count).toBe(10);
-  const b = pickForLoopDay(products(), 5, { productKeys: a.productKeys });
+  const b = pickForLoopDay(products(), 2, { productKeys: a.productKeys });
   expect(b.productKeys.filter(k => a.productKeys.includes(k)).length).toBe(0);
-  const c = pickForLoopDay(products(), 5, { productKeys: [...a.productKeys, ...b.productKeys] });
+  const c = pickForLoopDay(products(), 2, { productKeys: [...a.productKeys, ...b.productKeys] });
   expect(c.count, '5 fresh + 5 refilled from the top').toBe(10);
 });
 
