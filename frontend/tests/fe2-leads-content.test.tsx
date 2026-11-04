@@ -208,9 +208,9 @@ describe('Templates page — library', () => {
     expect(menuItem('Delete').className).toMatch(/danger/);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
-    // WhatsApp templates have no email-only actions
+    // WhatsApp templates have no email-only actions; a Draft gets Approve
     openMenu('WA Promo');
-    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Delete']);
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Approve', 'Delete']);
   });
 
   it('renders the "no templates yet" empty state, and the table empty row', async () => {
@@ -565,6 +565,60 @@ describe('Templates page — actions', () => {
     await waitFor(() => expect(h.toastSuccess).toHaveBeenCalledWith('Sent Day 1 Welcome to 1 recipient(s)'));
     await waitFor(() => expect(api.analyzeTestEmail).toHaveBeenCalledWith(1));
     expect(screen.getByRole('dialog', { name: 'Email checks' })).toBeTruthy();
+  });
+});
+
+describe('Templates page — approve a Draft from the library', () => {
+  it('a complete draft is approved at once from the ⋯ menu — no dialog', async () => {
+    const D = { id: 40, name: 'Nov Offer', channel: 'email', status: 'draft', subject: 'Big sale', body: '<p>Offer</p>' };
+    mockLists([T1, D], []);
+    vi.mocked(api.approveTemplate).mockResolvedValue(as(api.approveTemplate, { data: { ...D, status: 'approved' } }));
+    render(<Content />);
+    await screen.findByText('Nov Offer');
+    openMenu('Nov Offer');
+    fireEvent.click(menuItem('Approve'));
+    await waitFor(() => expect(api.approveTemplate).toHaveBeenCalledWith(40));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(h.toastSuccess).toHaveBeenCalledWith('Template approved');
+    await waitFor(() => expect(within(card('Nov Offer')).getByText('Approved')).toBeTruthy());
+    noBadText();
+  });
+
+  it('a draft with no subject asks first, listing the doubt, and approves on "Approve anyway"', async () => {
+    const D = { id: 41, name: 'Blank Offer', channel: 'email', status: 'draft', subject: '', body: '<p>Offer</p>' };
+    mockLists([T1, D], []);
+    vi.mocked(api.approveTemplate).mockResolvedValue(as(api.approveTemplate, { data: { ...D, status: 'approved' } }));
+    render(<Content />);
+    await screen.findByText('Blank Offer');
+    openMenu('Blank Offer');
+    fireEvent.click(menuItem('Approve'));
+    const dlg = await screen.findByRole('alertdialog', { name: 'Approve this template?' });
+    expect(dlg.textContent).toContain('It has no subject line.');
+    expect(api.approveTemplate).not.toHaveBeenCalled();
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Approve anyway' }));
+    await waitFor(() => expect(api.approveTemplate).toHaveBeenCalledWith(41));
+    expect(h.toastSuccess).toHaveBeenCalledWith('Template approved');
+  });
+
+  it('a WhatsApp draft the provider has not cleared asks, and Cancel approves nothing', async () => {
+    mockLists([T1, T2], []);
+    render(<Content />);
+    await screen.findByText('WA Promo');
+    openMenu('WA Promo');
+    fireEvent.click(menuItem('Approve'));
+    const dlg = await screen.findByRole('alertdialog', { name: 'Approve this template?' });
+    expect(dlg.textContent).toContain('Meta has not approved it yet');
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(api.approveTemplate).not.toHaveBeenCalled();
+  });
+
+  it('approved templates get no Approve item', async () => {
+    mockTemplates([T1]);
+    render(<Content />);
+    await screen.findByText('Day 1 Welcome');
+    openMenu('Day 1 Welcome');
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'Approve' })).toBeNull();
   });
 });
 

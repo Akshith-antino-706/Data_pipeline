@@ -193,6 +193,22 @@ const tsGet = (path: string) => authFetch(`${apiBase}${path}`, { credentials: 'i
 
 const isDayTemplate = (t: ContentTemplate) => t.id >= 1 && t.id <= 7 && t.channel === 'email';
 const canTestSend = (t: ContentTemplate) => isDayTemplate(t) || (t.channel === 'email' && t.status === 'approved');
+
+/**
+ * Reasons to pause before approving a Draft straight from the library. Empty → approve at
+ * once; otherwise the approve dialog lists them and asks. Only what can be judged from the
+ * list row: an empty subject or body, and a WhatsApp/SMS template the provider has not
+ * cleared yet (approving it here still cannot make it sendable).
+ */
+function approvalDoubts(t: ContentTemplate): string[] {
+  const out: string[] = [];
+  if (t.channel === 'email' && !String(t.subject ?? '').trim()) out.push('It has no subject line.');
+  if (!String(t.html_body ?? t.body ?? t.body_plain ?? '').trim()) out.push('It has no message body.');
+  if ((t.channel === 'whatsapp' || t.channel === 'sms') && t.external_status !== 'approved') {
+    out.push(`${t.channel === 'sms' ? 'DLT' : 'Meta'} has not approved it yet (status: ${t.external_status || 'not submitted'}) — it still cannot be sent until that clears.`);
+  }
+  return out;
+}
 const excerptOf = (t: ContentTemplate) => cleanExcerpt(t.body || t.body_plain);
 
 /** Text with {{placeholders}} shown as small readable tags such as "[coupon code]". */
@@ -424,6 +440,8 @@ export default function Content() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ContentTemplate | null>(null);
+  // Draft approve with something worth a second look: the template and the reasons to pause.
+  const [confirmApprove, setConfirmApprove] = useState<{ template: ContentTemplate; doubts: string[] } | null>(null);
   const [liveDevice, setLiveDevice] = useState<'desktop' | 'mobile'>('desktop');
 
   // Approval review side panel
@@ -927,6 +945,13 @@ export default function Content() {
   const closeQa = useCallback(() => setQaReport(null), []);
   const closePreview = useCallback(() => setPreview(null), []);
   const cancelDelete = useCallback(() => setConfirmDelete(null), []);
+  const cancelApprove = useCallback(() => setConfirmApprove(null), []);
+  async function confirmAndApprove() {
+    if (!confirmApprove) return;
+    const t = confirmApprove.template;
+    setConfirmApprove(null);
+    await decideFor(t, 'approve');
+  }
 
   const pendingOnPage = templates.filter(t => t.status === 'pending_approval').length;
   const pendingCount = pendingTotal ?? pendingOnPage;
@@ -964,6 +989,18 @@ export default function Content() {
     if (t.status === 'pending_approval') {
       out.push({ key: 'review', label: 'Approve or reject', icon: <Check size={14} aria-hidden="true" />, onSelect: () => { setTab('approval'); void openReview(t); } });
     }
+    if (t.status === 'draft' || t.status === 'rejected') {
+      // Straight to approved — it only asks when approvalDoubts() finds something.
+      out.push({
+        key: 'approve', label: 'Approve', icon: <Check size={14} aria-hidden="true" />, disabled: reviewBusy === 'approve',
+        title: 'Mark this template approved so journeys can use it',
+        onSelect: () => {
+          const doubts = approvalDoubts(t);
+          if (doubts.length) setConfirmApprove({ template: t, doubts });
+          else void decideFor(t, 'approve');
+        },
+      });
+    }
     out.push({ key: 'delete', label: 'Delete', icon: <Trash2 size={14} aria-hidden="true" />, danger: true, disabled: deleting === t.id, onSelect: () => setConfirmDelete(t) });
     return out;
   };
@@ -981,6 +1018,20 @@ export default function Content() {
         confirmLabel="Delete"
         onConfirm={confirmAndDelete}
         onCancel={cancelDelete}
+      />
+
+      <ConfirmDialog
+        open={confirmApprove !== null}
+        title="Approve this template?"
+        description={confirmApprove ? (
+          <>
+            <p><b>{readableTitle(confirmApprove.template.name)}</b> can be approved, but have a look first:</p>
+            <ul>{confirmApprove.doubts.map(d => <li key={d}>{d}</li>)}</ul>
+          </>
+        ) : undefined}
+        confirmLabel="Approve anyway"
+        onConfirm={confirmAndApprove}
+        onCancel={cancelApprove}
       />
 
       {preview && (

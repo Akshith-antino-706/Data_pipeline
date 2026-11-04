@@ -13,6 +13,8 @@ export interface ContentTemplate {
   cta_text?: string;
   segment_label?: string;
   updated_at?: string;
+  /** WhatsApp/SMS only: the provider's (Gupshup/Meta/DLT) verdict — 'approved' before any send can go out. */
+  external_status?: string | null;
 }
 
 /** Contact row from GET /api/v3/test-sends/contacts. */
