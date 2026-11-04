@@ -354,6 +354,19 @@ describe('Journey detail', () => {
     expect(screen.getByTestId('journey-dates').textContent).toBe('Created Sun, 5 Jan 2025, 10:00 AM · Started Not yet');
   });
 
+  it('a step whose template is older than the preloaded list is fetched by id, not shown as "no template"', async () => {
+    // Preload returns only the newest templates; node n1 points at id 11, which is NOT among them.
+    vi.mocked(api.getTemplates).mockResolvedValue({ data: [{ id: 99, name: 'Newer tpl', subject: 'New', channel: 'email' }] });
+    vi.mocked(api.getTemplate).mockResolvedValue({ data: { id: 11, name: 'Welcome tpl', subject: 'Hi there', channel: 'email' } });
+    await openDetail();
+    fireEvent.click(within(stepsList()).getByRole('button', { name: /^Step 1:/ }));
+    const drawer = screen.getByRole('dialog', { name: 'Step details' });
+    expect(await within(drawer).findByText('Welcome tpl')).toBeTruthy();
+    expect(within(drawer).queryByText('No template set for this step')).toBeNull();
+    expect(api.getTemplate).toHaveBeenCalledTimes(1);
+    expect(api.getTemplate).toHaveBeenCalledWith('11');
+  });
+
   it('selecting a step with skipped people offers Retry skipped', async () => {
     vi.mocked(api.retryBlockedEntries).mockResolvedValue({ data: { retried: 4 } });
     await openDetail();

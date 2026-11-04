@@ -8,7 +8,7 @@ import {
   getJourneys, getJourney, enrollJourney,
   processJourney, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  getTemplates, getSegmentationTree, getSegmentCustomers,
+  getTemplates, getTemplate, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
@@ -815,6 +815,9 @@ export default function Journeys() {
   const [editNodeId, setEditNodeId] = useState<string | null>(null);
   const [allTemplates, setAllTemplates] = useState<Record<string, ContentTemplate[]>>({ email: [], whatsapp: [], sms: [] });
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  // Template ids already fetched one-by-one (or that failed) for nodes whose template is
+  // older than the preloaded "newest 50" — so a miss is never re-requested.
+  const fetchedTemplateIds = useRef<Set<string>>(new Set());
   // A template chosen through the picker's server search joins the known list for that channel,
   // so step names, variables and previews work for it exactly like for the newest 50.
   const addKnownTemplate = useCallback((t: TemplateOption, channel: string) => {
@@ -1200,6 +1203,42 @@ export default function Journeys() {
   }, [rawPathname, legacyIdParam]);
 
   const BLANK_NODE_FORM: NodeForm = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
+
+  // The preload is the newest 50 per channel, so a step pointing at an older template
+  // (edited months ago) would look like "no template set". Fetch any referenced email/SMS
+  // template that is missing from the preloaded list and add it, once.
+  useEffect(() => {
+    if (!templatesLoaded || !detail?.nodes) return;
+    const wanted: { ch: 'email' | 'sms'; id: string }[] = [];
+    for (const n of detail.nodes) {
+      if (n.type !== 'action' || !n.data) continue;
+      const ch = String(n.data.channel || '').toLowerCase();
+      const id = ch === 'email' ? n.data.emailTemplateId : ch === 'sms' ? n.data.smsTemplateId : null;
+      if (!id || (ch !== 'email' && ch !== 'sms')) continue;
+      const key = `${ch}:${id}`;
+      if (fetchedTemplateIds.current.has(key)) continue;
+      if ((allTemplates[ch] || []).some(t => String(t.id) === String(id))) continue;
+      fetchedTemplateIds.current.add(key);
+      wanted.push({ ch, id: String(id) });
+    }
+    if (!wanted.length) return;
+    void Promise.all(wanted.map(async w => {
+      try {
+        const res = await getTemplate(w.id) as ApiData<ContentTemplate>;
+        return res?.data ? { ch: w.ch, tpl: res.data } : null;
+      } catch { return null; }
+    })).then(found => {
+      const got = found.filter((f): f is { ch: 'email' | 'sms'; tpl: ContentTemplate } => f !== null);
+      if (!got.length) return;
+      setAllTemplates(prev => {
+        const next = { ...prev };
+        for (const { ch, tpl } of got) {
+          if (!(next[ch] || []).some(t => String(t.id) === String(tpl.id))) next[ch] = [...(next[ch] || []), tpl];
+        }
+        return next;
+      });
+    });
+  }, [templatesLoaded, detail, allTemplates]);
 
   const loadTemplates = async () => {
     if (templatesLoaded) return;
