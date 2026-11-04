@@ -84,6 +84,8 @@ export interface DailyOfferLabel {
   groups: SnapshotGroup[];
   products: SnapshotProduct[];
   feedGeneratedAt?: string;
+  /** Which subject opening was used: the AI one, or the rule-based fallback and why. */
+  subject?: { source: 'ai' | 'fallback'; reason: string | null; lead: string; standardLead: string };
   createdAt: string;
   checkedAt?: string;
   dropped?: string[];

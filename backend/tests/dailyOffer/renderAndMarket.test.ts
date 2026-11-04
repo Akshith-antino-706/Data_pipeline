@@ -74,7 +74,7 @@ test('money format', () => {
 // ── Template ──
 
 test('template: marker first, tokens in place, no {{…}} placeholders, footer kept', () => {
-  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 1);
+  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 4);
   const html = buildTemplate(pick);
   expect(html.startsWith(DAILY_OFFER_MARKER)).toBe(true);
   expect((html.match(/%%DO_PRICE:/g) || []).length).toBe(pick.count);
@@ -98,7 +98,7 @@ test('template: every market renders clean; India in ₹, UAE in AED, subject fi
 });
 
 test('template: a product without any price is caught before sending', () => {
-  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 5);
+  const pick = pickForLoopDay(sampleProducts().map(normalizeProduct), 2);
   const products = snap(pick);
   products[0] = { ...products[0], prices: { default: { price: 0, sale: 0 } } };
   const out = applyMarket({ html: buildTemplate(pick), subject: buildSubject(pick) }, products, { plan: 'AE', currency: 'AED' }, RATES);
@@ -111,6 +111,6 @@ test('template: names are HTML-escaped', () => {
   if (!c) throw new Error('fixture has no cruise');
   c.name = 'Fish & Chips <Cruise>';
   c.rank = -1;
-  const html = buildTemplate(pickForLoopDay(ps, 5));
+  const html = buildTemplate(pickForLoopDay(ps, 2));
   expect(html).toContain('Fish &amp; Chips &lt;Cruise&gt;');
 });

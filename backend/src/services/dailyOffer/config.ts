@@ -21,6 +21,7 @@ export interface DailyOfferConfig {
   retryUntil: string;
   checkAt: string;
   sendAt: string;
+  sendCheckAt: string;
   maxFxAgeHours: number;
 }
 
@@ -38,6 +39,7 @@ export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env): Daily
     retryUntil:     env.DAILY_OFFER_RETRY_UNTIL || '14:00',
     checkAt:        env.DAILY_OFFER_CHECK_AT || '15:45',
     sendAt:         env.DAILY_OFFER_SEND_AT || '16:00',
+    sendCheckAt:    env.DAILY_OFFER_SEND_CHECK_AT || '17:30',   // were any emails sent? else alert the team
     maxFxAgeHours:  int(env.DAILY_OFFER_MAX_FX_AGE_HOURS, 48),
   };
 }

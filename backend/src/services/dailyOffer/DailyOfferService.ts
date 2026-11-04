@@ -21,12 +21,14 @@ import type { ContentTemplateInput, ContentTemplateUpdate } from '../../types/se
 import type { CreateJourneyInput, JourneyFlowNode } from '../../types/journeyService.js';
 import { getDailyOfferConfig, dubaiDate, dubaiInstant, dubaiMinutes, hhmmToMinutes, type DailyOfferConfig } from './config.js';
 import { fetchFeed as fetchFeedDefault, FeedError, isUsable } from './feed.js';
-import { pickForLoopDay, nextLoopDay, LOOP } from './picker.js';
+import { pickForLoopDay, loopDayForDate, LOOP } from './picker.js';
 import { buildTemplate, buildSubject, applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
 import type {
   DailyOfferLabel, FetchFeedFn, OfferMarket, OfferPick, OfferProduct, PreviewMarketDef, PreviousPick,
   SnapshotGroup, SnapshotProduct,
 } from './types.js';
+import { suggestSubjectLead } from './aiSubject.js';
+import type { SuggestSubjectFn } from './aiSubject.js';
 
 /** The slice of the pg pool the service uses (injectable for tests). */
 export interface Queryable {
@@ -74,6 +76,11 @@ export type FinalCheckResult =
   | { status: 'skipped_earlier' | 'already_scheduled'; journeyId: number }
   | { status: 'scheduled'; journeyId: number; count: number; dropped: string[] }
   | { status: 'skipped'; reason: string; message: string; journeyId: number };
+
+export type SendCheckResult =
+  | { status: 'none' }
+  | { status: 'skipped_earlier' | 'sent'; journeyId: number }
+  | { status: 'not_sent'; journeyId: number; message: string };
 
 export interface TemplateRef { id: number | string; body?: string | null; subject?: string | null }
 
@@ -133,15 +140,17 @@ export function offerLabelOf(journey: Pick<OfferJourneyRow, 'nodes'> | null | un
 export default class DailyOfferService {
   db: Queryable;
   fetchFeed: FetchFeedFn;
+  suggestSubject: SuggestSubjectFn;
   config: DailyOfferConfig;
   private _services: OfferServices | null;
   log: Logger;
 
-  constructor({ db = dbDefault, fetchFeed = fetchFeedDefault, config = getDailyOfferConfig(), services = null, log = console }: {
-    db?: Queryable; fetchFeed?: FetchFeedFn; config?: DailyOfferConfig; services?: OfferServices | null; log?: Logger;
+  constructor({ db = dbDefault, fetchFeed = fetchFeedDefault, config = getDailyOfferConfig(), services = null, suggestSubject = suggestSubjectLead, log = console }: {
+    db?: Queryable; fetchFeed?: FetchFeedFn; config?: DailyOfferConfig; services?: OfferServices | null; suggestSubject?: SuggestSubjectFn; log?: Logger;
   } = {}) {
     this.db = db;
     this.fetchFeed = fetchFeed;
+    this.suggestSubject = suggestSubject;   // AI subject lead (aiSubject.js) — injectable for tests
     this.config = config;
     this._services = services;     // { ContentService, JourneyService } — injectable for tests
     this.log = log;
@@ -170,13 +179,13 @@ export default class DailyOfferService {
     return rows;
   }
 
-  /** Loop position + "previous" info for the picker, from journeys that actually sent. */
-  planToday(recent: OfferJourneyRow[]): { loopDay: number; previous: PreviousPick } {
+  /** Loop day from today's Dubai date + "previous" info for the picker, from journeys that actually sent. */
+  planToday(recent: OfferJourneyRow[], today: string): { loopDay: number; previous: PreviousPick } {
     const sent = recent
       .filter(j => STARTED.has(String(j.status)))
       .map(j => offerLabelOf(j)?.label)
       .filter((l): l is DailyOfferLabel => Boolean(l));
-    const loopDay = nextLoopDay(sent[0]?.loopDay);
+    const loopDay = loopDayForDate(today);
     const theme = LOOP.find(s => s.loopDay === loopDay)?.theme;
     const sameTheme = sent.find(l => l.theme === theme);
     const lastActivities = sent.find(l => l.theme === 'activities');
@@ -267,9 +276,13 @@ export default class DailyOfferService {
       const feed = await this.fetchFeed({
         url: this.config.feedUrl, timeoutMs: this.config.feedTimeoutMs, minRows: this.config.minFeedRows, now,
       });
-      const { loopDay, previous } = this.planToday(recent);
+      const { loopDay, previous } = this.planToday(recent, today);
       const pick = pickForLoopDay(feed.products, loopDay, previous);
       this.checkCount(pick);
+      // AI-written subject opening; the rule-based one when the AI call fails or breaks the rules.
+      const standardLead = pick.subjectLead;
+      const aiSubject = await this.suggestSubject(pick, { log: this.log });
+      pick.subjectLead = aiSubject.lead;
       const built = this.build(pick);
       this.testRender(built, fx.rates);
 
@@ -290,13 +303,14 @@ export default class DailyOfferService {
         groups: built.groups,
         products: built.products,
         feedGeneratedAt: feed.generatedAt,
+        subject: { source: aiSubject.source, reason: aiSubject.reason, lead: aiSubject.lead, standardLead },
         createdAt: now.toISOString(),
       };
       let journey: { journey_id: number };
       try {
         journey = await JourneyService.create({
           name,
-          description: `Automated daily offer (Day ${loopDay} of 8). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
+          description: `Automated daily offer (Day ${loopDay} of ${LOOP.length}). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
           segmentId: `custom:${this.config.segmentId}`,
           audience: 'all',
           journeyType: 'fixed',
@@ -399,6 +413,23 @@ export default class DailyOfferService {
       }).catch((e: Error) => this.log.error(`[DailyOffer] could not record skip reason: ${e.message}`));
       return { status: 'skipped', reason, message, journeyId: journey.journey_id };
     }
+  }
+
+  // ── Send check (17:30): did anything go out? ───────────────────────────
+
+  async runSendCheck({ now = new Date() }: { now?: Date } = {}): Promise<SendCheckResult> {
+    const today = dubaiDate(now);
+    const recent = await this.recentJourneys();
+    const journey = recent.find(j => offerLabelOf(j)?.label.date === today);
+    const found = journey ? offerLabelOf(journey) : null;
+    if (!journey || !found) return { status: 'none' };
+    if (found.label.status === 'skipped') return { status: 'skipped_earlier', journeyId: journey.journey_id };
+    const { rows } = await this.db.query('SELECT 1 FROM email_send_log WHERE journey_id = $1 LIMIT 1', [journey.journey_id]);
+    if (rows.length) return { status: 'sent', journeyId: journey.journey_id };
+    return {
+      status: 'not_sent', journeyId: journey.journey_id,
+      message: `No emails sent by ${this.config.sendCheckAt} Dubai (send time ${this.config.sendAt}; journey status "${journey.status ?? '?'}", audience ${journey.snapshot_count ?? '?'}).`,
+    };
   }
 
   // ── Preview (Templates page "View as") ─────────────────────────────────
