@@ -80,7 +80,8 @@ class GtmJourneyService {
   static async onEvent({ eventName, unifiedId, eventId, itemId }) {
     if (!eventName || !unifiedId) return;
     const { rows: journeys } = await db.query(
-      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience,
+              enrollment_mode, broadcast_cooldown_min
          FROM journey_flows
        WHERE status = 'active' AND journey_type = 'gtm'
          AND trigger_event IS NOT NULL
@@ -98,16 +99,29 @@ class GtmJourneyService {
     const itemKey = String(itemId ?? '_noitem');
     for (const j of journeys) {
       try {
+        // DELIVERY MODE: 'segment_broadcast' boards the whole segment, so the segment IS the
+        // audience and the triggering contact need not belong to it — the event is only the
+        // starting gun. 'per_user' (every existing journey) is unchanged below.
+        const broadcast = String(j.enrollment_mode || 'per_user') === 'segment_broadcast';
         // SEGMENT GUARD: the trigger event alone must NOT grant entry. A user only enters
         // if they ALSO belong to the journey's selected segment (+ audience). Without this,
         // any contact firing the trigger blasts into the journey regardless of who was
         // targeted (e.g. a 2-person test segment leaking emails to real customers).
-        if (!(await this._isSegmentMember(j, unifiedId))) continue;
+        if (!broadcast && !(await this._isSegmentMember(j, unifiedId))) continue;
         // Entry node + delay = leading wait from the trigger (PDF N1 +1h/+2h/+24h…).
         const triggerNode = (j.nodes || []).find(n => n.type === 'trigger');
         const firstStep = triggerNode ? this._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
         const firstNodeId = firstStep?.nodeId || (j.nodes || []).find(n => n.type === 'action')?.id || null;
         if (!firstNodeId) continue;
+        if (broadcast) {
+          // Cohort key = the event id, so this event boards everyone once and the NEXT
+          // event boards them again.
+          await ContinuousJourneyService.enterSegment({
+            journey: j, firstNodeId, itemId: String(eventId ?? itemKey), eventId,
+            entryDelayMs: firstStep ? firstStep.delayMs : 0,
+          });
+          continue;
+        }
         const id = await ContinuousJourneyService.enter({
           journeyId: j.journey_id, unifiedId, itemId: itemKey, eventId,
           firstNodeId, entryDelayMs: firstStep ? firstStep.delayMs : 0,
@@ -235,10 +249,13 @@ class GtmJourneyService {
     // Each GTM event can have its own template using ANY of the 60 master placeholder
     // keys; the universal resolver fills them all from contact + event + raw_payload +
     // ecommerce + generated URLs. Falls back to the bundled gtm-welcome.html if none.
-    const { rows: [jf] } = await db.query('SELECT nodes, edges, email_credential FROM journey_flows WHERE journey_id = $1', [journeyId]);
+    const { rows: [jf] } = await db.query('SELECT nodes, edges, email_credential, enrollment_mode FROM journey_flows WHERE journey_id = $1', [journeyId]);
     const nodes = jf?.nodes || [];
     // Per-journey email sender: 'giveaway' → the giveaway SMTP mailbox; anything else → default AWS.
     const emailCredential = jf?.email_credential || 'default';
+    // BROADCAST entries carry the EVENT id in item_id (the cohort key), not a product id —
+    // see the item-completeness gate below, which is the only place this is read.
+    const isBroadcast = String(jf?.enrollment_mode || 'per_user') === 'segment_broadcast';
     // Send the SPECIFIC node this job is for (multi-step); fall back to the first action node.
     const actionNode = (jobNodeId ? nodes.find(n => n.id === jobNodeId && n.type === 'action') : null)
       || nodes.find(n => n.type === 'action');
@@ -447,7 +464,14 @@ class GtmJourneyService {
     // Item-completeness gate — SAME condition as the WhatsApp node (isItemBased) so email and
     // WhatsApp always agree: for an item/product send, skip if ANY item field is empty
     // (name / price / image / currency / destination_city / url, or "NA"). Giveaway journeys exempt.
-    if (isItemBased(eventRow.event_name, itemId) && !gvRow) {
+    //
+    // BROADCAST journeys are exempt for the same reason giveaway ones are: the entry is not
+    // about a product. Its item_id is the triggering EVENT's id (the cohort key), which
+    // isItemBased() reads as "has an item" — so without this every broadcast send would be
+    // skipped as incomplete. And it SHOULD be skipped on the merits: the only product in
+    // scope belongs to whoever fired the event, who is typically not among the recipients —
+    // a broadcast announces something about the segment, not about one stranger's cart.
+    if (isItemBased(eventRow.event_name, itemId) && !gvRow && !isBroadcast) {
       const _iv = buildLiquidVars(ctx);
       const _missing = missingItemFields(_iv);
       if (_missing.length) {

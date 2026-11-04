@@ -793,7 +793,7 @@ export default function Journeys() {
   }, []);
 
   // ── Create journey form state ─────────────────────────────────
-  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm' });
+  const [createForm, setCreateForm] = useState({ name: '', description: '', segmentId: '', journeyType: 'fixed', triggerEvent: '', triggerFromDate: '', exitOnConversion: true, scheduledStartAt: '', testMode: false, testEmail: '', testWaitSec: 30, recommendationType: '', emailCredential: 'default', triggerSource: 'gtm', enrollmentMode: 'per_user', broadcastCooldownMin: 60 });
   const [creating, setCreating] = useState(false); // create-journey API in flight — keeps the modal open + shows a button loader
   const [createNodes, setCreateNodes] = useState([]);
   const [showCreateNodeForm, setShowCreateNodeForm] = useState(false);
@@ -1304,6 +1304,11 @@ export default function Journeys() {
         // Continuous journeys trigger on GTM events OR giveaway types — trigger_event holds both.
         triggerSource: createForm.journeyType === 'continuous' ? createForm.triggerSource : 'gtm',
         triggerEvent: createForm.journeyType === 'continuous' ? createForm.triggerEvent : null,
+        // Delivery mode — continuous only. 'segment_broadcast' sends one event to the WHOLE
+        // segment; 'per_user' (the default, and every pre-existing journey) sends only to
+        // whoever fired it. The cooldown caps how often a broadcast may repeat.
+        enrollmentMode: createForm.journeyType === 'continuous' ? (createForm.enrollmentMode || 'per_user') : 'per_user',
+        broadcastCooldownMin: createForm.broadcastCooldownMin ?? 60,
         // Continuous only: only enroll GTM events fired on/after this date (Dubai midnight).
         // Blank → backend defaults to journey creation time (no historical backfill).
         triggerFromDate: (createForm.journeyType === 'continuous' && createForm.triggerFromDate)
@@ -3977,7 +3982,10 @@ export default function Journeys() {
                           ? { label: 'Affiliate', color: '#a855f7', tint: 'rgba(168,85,247,0.12)', where: 'the affiliate portal',
                               types: ['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated'] }
                           : { label: 'Giveaway', color: '#f59e0b', tint: 'rgba(245,158,11,0.12)', where: 'the giveaway site',
-                              types: ['participation', 'eligible', 'winner', 'loser'] };
+                              // 'updated' is a LIFECYCLE event — an admin edited the giveaway. It names no
+                              // person, so it can only drive a journey in "Everyone in the segment" mode;
+                              // per-user has nobody to enrol. Warned about below the chips.
+                              types: ['participation', 'eligible', 'winner', 'loser', 'updated'] };
                         return (
                         <>
                           <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
@@ -4001,11 +4009,40 @@ export default function Journeys() {
                               );
                             })}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
-                            {createForm.triggerEvent
-                              ? <>A <strong>segment</strong> user who fires <strong>{createForm.triggerEvent.split(',').map(s => s.trim()).filter(Boolean).join(' / ')}</strong> on {feed.where} enters — one entry per event (fires N times → N sends).</>
-                              : <>Pick one or more {feed.label.toLowerCase()} types. Only <strong>segment members</strong> who fire the selected type enter the journey.</>}
-                          </div>
+                          {(() => {
+                            const picked    = (createForm.triggerEvent || '').split(',').map(s => s.trim()).filter(Boolean);
+                            const broadcast = (createForm.enrollmentMode || 'per_user') === 'segment_broadcast';
+                            const hasUpdated = picked.includes('updated');
+                            return (
+                              <>
+                                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
+                                  {picked.length
+                                    ? (broadcast
+                                        ? <>Each <strong>{picked.join(' / ')}</strong> event on {feed.where} sends to the <strong>whole segment</strong> — whoever triggered it need not be a member. Every new event sends again.</>
+                                        : <>A <strong>segment</strong> user who fires <strong>{picked.join(' / ')}</strong> on {feed.where} enters — one entry per event (fires N times → N sends).</>)
+                                    : <>Pick one or more {feed.label.toLowerCase()} types. Only <strong>segment members</strong> who fire the selected type enter the journey.</>}
+                                </div>
+                                {/* 'updated' fires when an ADMIN edits a giveaway (end date moved, status
+                                    changed). It names no person, so per-user mode has nobody to enrol and
+                                    the journey would sit at zero entries looking perfectly healthy. */}
+                                {hasUpdated && !broadcast && (
+                                  <div style={{ fontSize: 11, lineHeight: 1.5, marginTop: 8, padding: '8px 10px', borderRadius: 8,
+                                    border: '1px solid rgba(239,68,68,0.45)', background: 'rgba(239,68,68,0.10)', color: '#ef4444' }}>
+                                    <strong>&ldquo;updated&rdquo; needs &ldquo;Everyone in the segment&rdquo;.</strong> It fires when an admin edits the
+                                    giveaway — there is no person attached to it, so in per-user mode nobody is ever enrolled and this
+                                    journey will stay at zero entries.
+                                  </div>
+                                )}
+                                {hasUpdated && broadcast && (
+                                  <div style={{ fontSize: 11, lineHeight: 1.5, marginTop: 8, padding: '8px 10px', borderRadius: 8,
+                                    border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.10)', color: '#b45309' }}>
+                                    <strong>&ldquo;updated&rdquo; fires on every admin save</strong> of the giveaway, including a typo fix — each one
+                                    mails the whole segment. Set a sensible gap between broadcasts below.
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </>
                         );
                       })() : (
@@ -4024,6 +4061,51 @@ export default function Journeys() {
                           </div>
                         </>
                       )}
+                      {/* DELIVERY MODE — who does ONE event reach? Per-user (every journey
+                          before this field) enrols only the person who fired it, with the
+                          segment acting as a gate on them. Broadcast inverts it: the segment
+                          IS the audience and the trigger need not belong to it. */}
+                      <div style={{ marginTop: 12 }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                          Who does one event reach?
+                        </label>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {[{ k: 'per_user', label: 'Just that person' }, { k: 'segment_broadcast', label: 'Everyone in the segment' }].map(o => {
+                            const on = (createForm.enrollmentMode || 'per_user') === o.k;
+                            return (
+                              <button key={o.k} type="button"
+                                onClick={() => setCreateForm(f => ({ ...f, enrollmentMode: o.k }))}
+                                style={{ flex: 1, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                                  borderRadius: 8, textAlign: 'center', transition: 'all 0.15s',
+                                  border: `1px solid ${on ? '#10b981' : 'var(--border)'}`,
+                                  background: on ? 'rgba(16,185,129,0.12)' : 'var(--card)',
+                                  color: on ? '#10b981' : 'var(--text-secondary)' }}>
+                                {on ? '✓ ' : ''}{o.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6, lineHeight: 1.5 }}>
+                          {(createForm.enrollmentMode || 'per_user') === 'segment_broadcast'
+                            ? <>Every matching event sends to the <strong>whole segment</strong>, not just whoever triggered it — the segment size is the blast radius, and the trigger need not be in it. Each new event sends again. Use this for announcements, like a giveaway whose end date moved.</>
+                            : <>Only the person who fired the event enters, and only if they are in the segment. This is how every existing continuous journey behaves.</>}
+                        </div>
+                      </div>
+
+                      {(createForm.enrollmentMode || 'per_user') === 'segment_broadcast' && (
+                        <div style={{ marginTop: 12 }}>
+                          <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                            Minimum gap between broadcasts
+                          </label>
+                          <input type="number" min={0} className="form-input" style={{ width: 140 }}
+                            value={createForm.broadcastCooldownMin ?? 60}
+                            onChange={e => setCreateForm(f => ({ ...f, broadcastCooldownMin: e.target.value === '' ? 60 : Math.max(0, parseInt(e.target.value) || 0) }))} />
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6, lineHeight: 1.5 }}>
+                            Minutes. Guards against a frequent trigger mailing the whole segment over and over — events arriving inside the gap are logged and skipped. <strong>0 turns the guard off.</strong>
+                          </div>
+                        </div>
+                      )}
+
                       <div style={{ marginTop: 12 }}>
                         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
                           Trigger only for events on or after <span style={{ textTransform: 'none', fontWeight: 500, color: 'var(--text-tertiary)' }}>(optional)</span>

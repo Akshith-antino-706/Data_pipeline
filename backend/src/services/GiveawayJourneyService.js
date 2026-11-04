@@ -37,7 +37,8 @@ class GiveawayJourneyService {
     // affiliate 'joined' can never enrol someone into a giveaway journey or vice versa.
     const triggerSource = source === 'AFFILIATE' ? 'affiliate' : 'giveaway';
     const { rows: journeys } = await db.query(
-      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience,
+              enrollment_mode, broadcast_cooldown_min
          FROM journey_flows
         WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = $2
           AND trigger_event IS NOT NULL
@@ -54,15 +55,35 @@ class GiveawayJourneyService {
     let handled = 0;
     for (const j of journeys) {
       try {
+        // DELIVERY MODE: 'segment_broadcast' boards the whole segment, so the segment is the
+        // audience and the contact this event names need not belong to it.
+        const broadcast = String(j.enrollment_mode || 'per_user') === 'segment_broadcast';
         // SEGMENT GUARD (identical to GTM): the trigger alone must NOT grant entry — the
         // user must ALSO be in the journey's selected segment. No segment → nobody enters.
-        if (!(await GtmJourneyService._isSegmentMember(j, unifiedId))) continue;
+        if (!broadcast && !(await GtmJourneyService._isSegmentMember(j, unifiedId))) continue;
 
         // First node after the trigger + its leading delay (reused GTM walk).
         const triggerNode = (j.nodes || []).find(n => n.type === 'trigger');
         const firstStep = triggerNode ? GtmJourneyService._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
         const firstNodeId = firstStep?.nodeId || (j.nodes || []).find(n => n.type === 'action')?.id || null;
         if (!firstNodeId) continue;
+
+        if (broadcast) {
+          // Cohort key = the event id, so this event boards the segment once and the next
+          // one boards it again.
+          const n = await ContinuousJourneyService.enterSegment({
+            journey: j, firstNodeId, itemId: itemKey, eventId,
+            entryDelayMs: firstStep ? firstStep.delayMs : 0,
+          });
+          // Deliberately NOT counted in `handled`. That counter suppresses the producer's
+          // direct email to the person this event names, on the grounds that the journey is
+          // already mailing them — true per-user, false here: a broadcast goes to the
+          // SEGMENT, which need not contain them at all. Counting it would cost that person
+          // their participation email and give them nothing back, and if the cooldown
+          // blocked the fan-out it would suppress the only email anyone was going to get.
+          if (n) console.log(`[GiveawayJourney ${j.journey_id}] broadcast ${n} contact(s) @ ${firstNodeId} (${giveawayType})`);
+          continue;
+        }
 
         const id = await ContinuousJourneyService.enter({
           journeyId: j.journey_id, unifiedId, itemId: itemKey, eventId,
