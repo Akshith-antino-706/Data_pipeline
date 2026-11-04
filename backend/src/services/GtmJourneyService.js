@@ -493,6 +493,13 @@ class GtmJourneyService {
       prize_type: gvRow.prize_type || '', value: gvRow.value || '', rank: gvRow.rank ?? '',
       code: gvRow.code || '', offer: gvRow.offer || '', offer_code: gvRow.offer_code || '', expiry: gvRow.expiry || '',
       position: gvRow.position ?? '', points: gvRow.points ?? '',
+      // LIFECYCLE vars — an admin edited the giveaway. Read from raw_payload because these
+      // fields describe the giveaway itself and have no dedicated columns. Blank for every
+      // other feed, so one template set still serves all of them.
+      giveaway_status:   gvRow.raw_payload?.status ?? '',
+      giveaway_starts_at: gvRow.raw_payload?.startAt ?? '',
+      giveaway_ends_at:  gvRow.raw_payload?.endAt ?? '',
+      giveaway_changes:  Array.isArray(gvRow.raw_payload?.changes) ? gvRow.raw_payload.changes.join(', ') : '',
       // AFFILIATE vars — blank for giveaway rows, so one template set serves both feeds.
       // `code`/`expiry`/`value` above are already shared (coupon code, validUntil, discount).
       coupon_code: gvRow.code || '', coupon_id: gvRow.coupon_id || '',
