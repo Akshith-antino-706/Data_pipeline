@@ -18,7 +18,7 @@
 import amqp from 'amqplib';
 import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
-import { ingestGiveawayEvent } from './giveawayIngest.js';
+import { ingestGiveawayEvent, ingestLifecycleEvent } from './giveawayIngest.js';
 import { SendTrackService } from '../SendTrackService.js';   // log direct sends to email_send_log
 
 // The producer publishes `giveaway.email.<env>.<type>` (4 segments). A topic `*` matches exactly
@@ -59,11 +59,35 @@ const OTP_QUEUE   = process.env.OTP_QUEUE   || 'otp.send.prod';
 const OTP_BINDING = process.env.OTP_BINDING || 'phone.otp.prod.*';
 const OTP_ENABLED = process.env.OTP_ENABLED === 'true';
 
+// ── LIFECYCLE feed ─────────────────────────────────────────────────────────
+// `giveaway.lifecycle.<env>.<type>` on the same exchange, published whenever an admin SAVES a
+// giveaway. The payload describes the GIVEAWAY, not a person: no `to`, no subject, no body,
+// plus a `changes` array naming which fields moved.
+//
+// Until this queue existed the exchange matched these against nothing and DISCARDED them at
+// publish time — no queue, no DLQ, no counter, no trace. Capture begins at first connect;
+// everything published before that is unrecoverable.
+// ⚠️ Prod key only, for the same reason as AFF_BINDING: all four envs share this vhost.
+const LC_QUEUE   = process.env.LIFECYCLE_QUEUE   || 'giveaways.lifecycle.prod';
+const LC_BINDING = process.env.LIFECYCLE_BINDING || 'giveaway.lifecycle.prod.*';
+// Off by default. The queue is still bound and consumed so messages are captured and acked
+// rather than piling up behind an unconsumed binding; the flag gates PERSISTING and
+// ENROLLING — i.e. whether anyone actually gets mailed.
+const LC_ENABLED = process.env.GIVEAWAY_LIFECYCLE_ENABLED === 'true';
+
+// Which `changes[]` fields justify mailing a whole segment. The producer fires on EVERY save,
+// including a typo fix, and each one that gets through costs one email per segment member —
+// so the default is the single meaningful field. Set the var to an empty string to notify on
+// every edit.
+const NOTIFY_FIELDS = (process.env.GIVEAWAY_UPDATED_NOTIFY_FIELDS ?? 'endAt')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
 // Event types per source. A type outside its source's set is poison (ack + drop, never requeued).
 const TYPES_BY_SOURCE = {
   GIVEAWAY:  new Set(['participation', 'eligible', 'winner', 'loser']),
   AFFILIATE: new Set(['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated']),
   OTP:       new Set(['otp']),
+  LIFECYCLE: new Set(['updated']),
 };
 // The affiliate block that must accompany each type (it carries the event's actual data).
 const AFF_BLOCK_FOR_TYPE = {
@@ -75,14 +99,19 @@ const AFF_BLOCK_FOR_TYPE = {
 };
 
 /**
- * Source from the routing key's first segment — `affiliate.*` → AFFILIATE, `phone.*` → OTP,
- * anything else → GIVEAWAY. The OTP branch has to come before the fallback: lifecycle and OTP
- * keys would otherwise be treated as giveaway emails and rejected for having no `to.email`.
+ * Source from the routing key — `affiliate.*` → AFFILIATE, `phone.*` → OTP,
+ * `giveaway.lifecycle.*` → LIFECYCLE, anything else → GIVEAWAY.
+ *
+ * The lifecycle test must read the SECOND segment: those keys also start with `giveaway`,
+ * so a first-segment-only split classes them as GIVEAWAY and validate() then rejects every
+ * one of them twice over — `bad_type:updated`, then `invalid_email` — for failing an email
+ * contract they were never meant to satisfy.
  */
-function sourceFromRoutingKey(rk) {
-  const first = String(rk || '').split('.')[0].toLowerCase();
-  if (first === 'affiliate') return 'AFFILIATE';
-  if (first === 'phone')     return 'OTP';
+export function sourceFromRoutingKey(rk) {
+  const seg = String(rk || '').toLowerCase().split('.');
+  if (seg[0] === 'affiliate') return 'AFFILIATE';
+  if (seg[0] === 'phone')     return 'OTP';
+  if (seg[0] === 'giveaway' && seg[1] === 'lifecycle') return 'LIFECYCLE';
   return 'GIVEAWAY';
 }
 
@@ -102,7 +131,7 @@ function smtp() {
 }
 
 // ── §3 contract validation ──
-function validate(p, source = 'GIVEAWAY') {
+export function validate(p, source = 'GIVEAWAY') {
   if (!p || typeof p !== 'object')                return { ok: false, reason: 'not_an_object' };
   if (p.version !== 1)                             return { ok: false, reason: `unknown_version:${p.version}` };
   if (!p.id)                                       return { ok: false, reason: 'missing_id' };
@@ -110,6 +139,12 @@ function validate(p, source = 'GIVEAWAY') {
   if (!types.has(p.type))                          return { ok: false, reason: `bad_type:${p.type}` };
   // OTP messages are addressed by PHONE and carry no email, subject or body — so they must
   // return before the email contract below, which would otherwise reject every one of them.
+  // LIFECYCLE messages describe a GIVEAWAY, not a person — no recipient, subject or body.
+  // Like OTP, this must return before the email contract below, which rejects all of them.
+  if (source === 'LIFECYCLE') {
+    if (!p.giveawayId)                             return { ok: false, reason: 'missing_giveawayId' };
+    return { ok: true };
+  }
   if (source === 'OTP') {
     if (!p.to?.phone)                              return { ok: false, reason: 'missing_phone' };
     if (!p.code)                                   return { ok: false, reason: 'missing_code' };
@@ -171,7 +206,7 @@ async function handle(msg) {
     return _ch.ack(msg);
   }
 
-  const LABEL = { AFFILIATE: 'AffiliateMQ', OTP: 'OtpMQ', GIVEAWAY: 'GiveawayMQ' };
+  const LABEL = { AFFILIATE: 'AffiliateMQ', OTP: 'OtpMQ', GIVEAWAY: 'GiveawayMQ', LIFECYCLE: 'LifecycleMQ' };
   const tag = `[${LABEL[source] || 'GiveawayMQ'}] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
   // meta = light fields the toast uses; payload = parsed §3 message; raw = exact wire string.
   const meta = { id: p?.id ?? null, type: p?.type ?? null, source, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
@@ -204,6 +239,48 @@ async function handle(msg) {
     if (r.ok) console.log(`${tag} ✅ OTP sent wamid=${r.wamid ?? '-'}`);
     else      console.warn(`${tag} ⛔ OTP send failed: ${r.error}`);
     await record({ ...meta, outcome: r.ok ? 'otp_sent' : 'otp_failed', reason: r.error ?? null, wamid: r.wamid ?? null });
+    return _ch.ack(msg);
+  }
+
+  // 1a-bis. LIFECYCLE — an admin edited a giveaway. There is no recipient and no email to
+  // send, so this branch stores the event and hands it to the BROADCAST path, then stops. It
+  // must return before the dedupe/SMTP block below, which exists only to send the producer's
+  // own direct email (mirroring the AFFILIATE early return further down).
+  if (source === 'LIFECYCLE') {
+    if (!LC_ENABLED) {
+      console.log(`${tag} 🔕 GIVEAWAY_LIFECYCLE_ENABLED=false — captured, not acted on (changes=${JSON.stringify(p.changes ?? null)})`);
+      await record({ ...meta, outcome: 'lifecycle_disabled' });
+      return _ch.ack(msg);
+    }
+    // FIELD GATE — the producer fires on every save, and one event here costs one email per
+    // segment member. Fail CLOSED when `changes` is missing or unusable: we cannot tell what
+    // moved, and guessing wrong mails the entire segment.
+    if (NOTIFY_FIELDS.length) {
+      const changed = Array.isArray(p.changes) ? p.changes.map(String) : null;
+      const hit = changed ? changed.filter(f => NOTIFY_FIELDS.includes(f)) : [];
+      if (!hit.length) {
+        const why = changed ? `changes=[${changed.join(',')}] ∉ [${NOTIFY_FIELDS.join(',')}]` : 'no changes[] on the payload';
+        console.log(`${tag} 🔕 not a notifying edit (${why}) — stored only`);
+        try { await ingestLifecycleEvent(p); } catch (e) { console.error(`${tag} ⚠️ lifecycle ingest failed: ${e.message}`); }
+        await record({ ...meta, outcome: 'lifecycle_ignored', reason: why });
+        return _ch.ack(msg);
+      }
+      console.log(`${tag} 📣 notifying edit — changed [${changed.join(',')}], matched [${hit.join(',')}]`);
+    }
+
+    let cohort = 0;
+    try {
+      // Ingest FIRST: the broadcast email reads this row for {{ giveaway }}, {{ giveaway_ends_at }}…
+      await ingestLifecycleEvent(p);
+      const { default: GiveawayJourneyService } = await import('../GiveawayJourneyService.js');
+      cohort = await GiveawayJourneyService.onLifecycleEvent({
+        lifecycleType: p.type, giveawayId: p.giveawayId, eventId: p.id,
+      });
+    } catch (e) {
+      console.error(`${tag} ⚠️ lifecycle ingest/broadcast failed: ${e.message}`);
+    }
+    console.log(`${tag} ✅ lifecycle stored — broadcast to ${cohort} contact(s)`);
+    await record({ ...meta, outcome: 'lifecycle', journeys: cohort });
     return _ch.ack(msg);
   }
 
@@ -314,6 +391,11 @@ async function assertTopology(ch) {
   // while the consumer was down expires itself instead of sending a burst of dead codes.
   await ch.assertQueue(OTP_QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX, 'x-message-ttl': 600000 } });
   await ch.bindQueue(OTP_QUEUE, EXCHANGE, OTP_BINDING);
+  // Lifecycle feed — bound and consumed even when GIVEAWAY_LIFECYCLE_ENABLED is false, so the
+  // events are captured and acked instead of being silently discarded by the exchange (today's
+  // behaviour) or accumulating behind a binding nobody reads. The flag gates acting on them.
+  await ch.assertQueue(LC_QUEUE, { durable: true, arguments: { 'x-dead-letter-exchange': DLX } });
+  await ch.bindQueue(LC_QUEUE, EXCHANGE, LC_BINDING);
 }
 
 async function connect() {
@@ -339,9 +421,10 @@ async function connect() {
     await _ch.consume(QUEUE,     onMessage('GiveawayMQ'),  { noAck: false });
     await _ch.consume(AFF_QUEUE, onMessage('AffiliateMQ'), { noAck: false });
     await _ch.consume(OTP_QUEUE, onMessage('OtpMQ'),       { noAck: false });
+    await _ch.consume(LC_QUEUE,  onMessage('LifecycleMQ'), { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) + ${OTP_QUEUE} (bound ${OTP_BINDING}, otp=${OTP_ENABLED ? 'ENABLED' : 'log-only'}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) + ${OTP_QUEUE} (bound ${OTP_BINDING}, otp=${OTP_ENABLED ? 'ENABLED' : 'log-only'}) + ${LC_QUEUE} (bound ${LC_BINDING}, lifecycle=${LC_ENABLED ? `ENABLED, notify on [${NOTIFY_FIELDS.join(',') || 'EVERY edit'}]` : 'capture-only'}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     scheduleReconnect(`connect failed: ${err.message}`);
   }

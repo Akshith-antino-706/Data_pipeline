@@ -99,6 +99,71 @@ class GiveawayJourneyService {
     }
     return handled;
   }
+
+  /**
+   * LIFECYCLE entry — an admin edited a giveaway (`giveaway.lifecycle.<env>.updated`).
+   *
+   * Separate from onEvent because the two differ in the one thing onEvent is built around:
+   * there is NO PERSON here. The event describes the giveaway, so there is no unified_id to
+   * gate on a segment, and nothing to enrol per-user. The only coherent delivery is to the
+   * journey's segment as a whole.
+   *
+   * The consumer applies the changes[] field gate before calling this, so by the time we are
+   * here the edit is one worth announcing.
+   *
+   * @param {{ lifecycleType: string, giveawayId: string, eventId: string }} args
+   * @returns {Promise<number>} total contacts boarded across all matching journeys
+   */
+  static async onLifecycleEvent({ lifecycleType, giveawayId, eventId }) {
+    if (!lifecycleType || !eventId) return 0;
+
+    // Lifecycle events belong to the giveaway domain, so they drive journeys configured with
+    // trigger_source='giveaway' and the type in their trigger_event list (e.g. 'updated').
+    const { rows: journeys } = await db.query(
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience,
+              enrollment_mode, broadcast_cooldown_min
+         FROM journey_flows
+        WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = 'giveaway'
+          AND trigger_event IS NOT NULL
+          AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))
+          AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
+      [lifecycleType]
+    );
+    if (!journeys.length) return 0;
+
+    const { default: GtmJourneyService }        = await import('./GtmJourneyService.js');
+    const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+
+    let total = 0;
+    for (const j of journeys) {
+      try {
+        // A per-user journey cannot act on this: there is no person to enrol. Say so loudly
+        // rather than returning 0 silently — the journey would otherwise sit at zero entries
+        // looking perfectly healthy, which is the failure mode this whole feed exists to avoid.
+        if (String(j.enrollment_mode || 'per_user') !== 'segment_broadcast') {
+          console.warn(`[GiveawayLifecycle ${j.journey_id}] listens to '${lifecycleType}' but is per_user — a lifecycle event names nobody, so nobody can be enrolled. Set it to "Everyone in the segment".`);
+          continue;
+        }
+
+        const triggerNode = (j.nodes || []).find(n => n.type === 'trigger');
+        const firstStep = triggerNode ? GtmJourneyService._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
+        const firstNodeId = firstStep?.nodeId || (j.nodes || []).find(n => n.type === 'action')?.id || null;
+        if (!firstNodeId) continue;
+
+        // Cohort key = the producer's message id, which embeds updatedAt — so every edit is a
+        // distinct cohort and the same people are boarded again on the next qualifying change.
+        const n = await ContinuousJourneyService.enterSegment({
+          journey: j, firstNodeId, itemId: String(eventId), eventId,
+          entryDelayMs: firstStep ? firstStep.delayMs : 0,
+        });
+        total += n;
+        if (n) console.log(`[GiveawayLifecycle ${j.journey_id}] ${lifecycleType} on giveaway ${giveawayId} → broadcast ${n} contact(s) @ ${firstNodeId}`);
+      } catch (e) {
+        console.error(`[GiveawayLifecycle ${j.journey_id}] onLifecycleEvent failed: ${e.message}`);
+      }
+    }
+    return total;
+  }
 }
 
 export default GiveawayJourneyService;

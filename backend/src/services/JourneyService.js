@@ -910,6 +910,20 @@ class JourneyService {
     if (!segRows) return 0;
     const events = await this._gtmTriggerEvents(journey);
     const { sql, params } = segRows;
+    // BROADCAST: one event boards the WHOLE segment, so the planned size is the segment
+    // itself — who triggered what is irrelevant. Counting trigger events here would also
+    // report 0 for every giveaway/affiliate-sourced journey, whose events live in
+    // giveaway_affiliate_events, not gtm_events.
+    const isBroadcast = String(journey.enrollment_mode || 'per_user') === 'segment_broadcast';
+    if (isBroadcast) {
+      const { rows: [bc] } = await db.query(`
+        SELECT COUNT(*)::int AS n
+        FROM   (${sql}) seg
+        JOIN   unified_contacts uc ON uc.id = seg.id
+        WHERE  LOWER(COALESCE(uc.email_unsubscribe, '')) <> 'yes'
+      `, params);
+      return bc?.n ?? 0;
+    }
     if (!events.length) {
       // PER-USER mode (no GTM event) → one entry per segment user, minus unsubscribed.
       const { rows: [pc] } = await db.query(`

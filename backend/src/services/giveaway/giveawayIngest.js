@@ -140,4 +140,36 @@ export async function ingestGiveawayEvent(p, source = 'GIVEAWAY') {
   }
 }
 
-export default { ingestGiveawayEvent };
+/**
+ * Ingest one validated LIFECYCLE message (`giveaway.lifecycle.<env>.<type>`) — an admin
+ * edited a giveaway.
+ *
+ * Deliberately NOT ingestGiveawayEvent: that insert maps `value` / `code` / `offer` through
+ * per-feed ternaries across 51 columns, and a lifecycle payload fits neither feed's shape.
+ *
+ * Only the shared columns are written, plus `giveaway` (the title, so {{ giveaway }} resolves
+ * in the broadcast email) and the entire event in raw_payload — which is where changes[],
+ * status and endAt come from for the template vars. `unified_id` stays NULL: the event names
+ * no person. No contact is upserted for the same reason.
+ *
+ * Idempotent on the producer's message id, so a RabbitMQ redelivery stores nothing new and
+ * returns { stored: false }.
+ *
+ * @param {object} p validated §3 lifecycle message
+ * @returns {Promise<{ stored: boolean }>}
+ */
+export async function ingestLifecycleEvent(p) {
+  const res = await pool.query(
+    `INSERT INTO giveaway_affiliate_events
+       (id, version, type, source, tenant_id, giveaway_id, unified_id, giveaway, created_at, raw_payload)
+     VALUES ($1, $2, $3, 'LIFECYCLE', $4, $5, NULL, $6, $7, $8)
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      p.id, p.version ?? 1, p.type, String(p.tenantId ?? ''), p.giveawayId || null,
+      str(p.title), p.updatedAt || p.createdAt || null, JSON.stringify(p),
+    ]
+  );
+  return { stored: res.rowCount > 0 };
+}
+
+export default { ingestGiveawayEvent, ingestLifecycleEvent };
