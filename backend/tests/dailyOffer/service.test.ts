@@ -11,8 +11,8 @@ import type { ContentTemplateInput, ContentTemplateUpdate } from '../../src/type
 import type { CreateJourneyInput, JourneyFlowNode } from '../../src/types/journeyService.js';
 import { fullFeed } from './fixtures.js';
 
-const NINE_AM = new Date('2026-11-06T05:00:00Z');        // 09:00 Dubai — loop Day 4, Visa
-const CHECK = new Date('2026-11-06T11:45:00Z');          // 15:45 Dubai
+const NINE_AM = new Date('2026-11-07T05:00:00Z');        // 09:00 Dubai — loop Day 4, Visa
+const CHECK = new Date('2026-11-07T11:45:00Z');          // 15:45 Dubai
 const silent = { log() {}, warn() {}, error() {} };
 
 /** A saved template / journey in the in-memory world. */
@@ -109,12 +109,12 @@ test('names: ordinal dates', () => {
   expect(ordinalDate('2026-11-23')).toBe('23rd November');
 });
 
-test('create: first run makes the date\'s theme (6 Nov → Day 4, Visa) template + Draft journey with no start time', async () => {
+test('create: first run makes the date\'s theme (7 Nov → Day 4, Visa) template + Draft journey with no start time', async () => {
   const w = world();
   const res = await svc(w).runCreate({ now: NINE_AM });
   expect(res.status).toBe('created');
   if (res.status !== 'created') return;
-  expect(res.name).toBe('6th November - Visa Offers (Day 4)');
+  expect(res.name).toBe('7th November - Visa Offers (Day 4)');
   const j = w.state.journeys[0];
   expect(j.segmentId).toBe('custom:95');
   expect(j.scheduledStartAt).toBe(null);
@@ -138,16 +138,16 @@ test('create: runs again the same day → nothing new (no duplicate, no download
   expect(downloads).toBe(1);
 });
 
-test('create: the date decides the theme, whatever sent before (4 Nov → Cruises)', async () => {
-  const w = world({ journeys: [past(10, '2026-11-03', 5, 'cruise')] });
-  const res = await svc(w).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
-  expect(res.status === 'created' && res.name).toMatch(/^4th November - Cruises \(Day 2\)$/);
+test('create: the date decides the theme, whatever sent before (5 Nov → Cruises)', async () => {
+  const w = world({ journeys: [past(10, '2026-11-04', 5, 'cruise')] });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-05T05:00:00Z') });
+  expect(res.status === 'created' && res.name).toMatch(/^5th November - Cruises \(Day 2\)$/);
 });
 
 test('create: a skipped day does not shift the calendar (Draft journey does not count)', async () => {
   const w = world({ journeys: [
-    past(10, '2026-11-04', 2, 'cruise'),
-    past(11, '2026-11-05', 3, 'activities', 'draft', { status: 'skipped' }),
+    past(10, '2026-11-05', 2, 'cruise'),
+    past(11, '2026-11-06', 3, 'activities', 'draft', { status: 'skipped' }),
   ] });
   const res = await svc(w).runCreate({ now: NINE_AM });
   expect(res.status === 'created' && res.name).toMatch(/Visa Offers \(Day 4\)$/);
@@ -155,12 +155,12 @@ test('create: a skipped day does not shift the calendar (Draft journey does not 
 
 test('create: cruise skips the cruises sent in the last cruise email', async () => {
   const first = world();
-  await svc(first).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
+  await svc(first).runCreate({ now: new Date('2026-11-05T05:00:00Z') });
   const sentKeys = labelOf(first.state.journeys[0]).productKeys;
-  // Rates dated 3 hours before 8 Nov 09:00 Dubai, so they are fresh for that run.
-  const w = world({ journeys: [past(10, '2026-11-04', 2, 'cruise', 'completed', { productKeys: sentKeys })], fxAgeHours: 3 - 48 });
-  const res = await svc(w).runCreate({ now: new Date('2026-11-08T05:00:00Z') });
-  expect(res.status === 'created' && res.name).toMatch(/^8th November - Cruises \(Day 6\)$/);
+  // Rates dated 3 hours before 9 Nov 09:00 Dubai, so they are fresh for that run.
+  const w = world({ journeys: [past(10, '2026-11-05', 2, 'cruise', 'completed', { productKeys: sentKeys })], fxAgeHours: 3 - 48 });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-09T05:00:00Z') });
+  expect(res.status === 'created' && res.name).toMatch(/^9th November - Cruises \(Day 6\)$/);
   const next = labelOf(w.state.journeys[w.state.journeys.length - 1]).productKeys;
   expect(next.filter(k => sentKeys.includes(k)).length).toBe(0);
 });
@@ -195,7 +195,7 @@ test('final check: passes → start time set to 4 PM Dubai, prices refreshed', a
   const res = await s.runFinalCheck({ now: CHECK });
   expect(res.status, 'message' in res ? res.message : '').toBe('scheduled');
   const j = w.state.journeys[0];
-  expect(j.scheduled_start_at).toBe('2026-11-06T12:00:00.000Z');   // 16:00 Dubai
+  expect(j.scheduled_start_at).toBe('2026-11-07T12:00:00.000Z');   // 16:00 Dubai
   expect(labelOf(j).status).toBe('scheduled');
   // Runs again → no change.
   expect((await s.runFinalCheck({ now: CHECK })).status).toBe('already_scheduled');
@@ -316,8 +316,8 @@ test('subject: AI unavailable → standard subject, reason recorded', async () =
 });
 
 test('send check: scheduled journey with no sends → not_sent; with sends → sent', async () => {
-  const day = (sent: number[]) => world({ journeys: [past(10, '2026-11-06', 4, 'visa', 'active')], sentJourneys: sent });
-  const at = new Date('2026-11-06T13:30:00Z');   // 17:30 Dubai
+  const day = (sent: number[]) => world({ journeys: [past(10, '2026-11-07', 4, 'visa', 'active')], sentJourneys: sent });
+  const at = new Date('2026-11-07T13:30:00Z');   // 17:30 Dubai
   const quiet = await svc(day([])).runSendCheck({ now: at });
   expect(quiet.status).toBe('not_sent');
   if (quiet.status !== 'not_sent') return;
@@ -327,8 +327,8 @@ test('send check: scheduled journey with no sends → not_sent; with sends → s
 });
 
 test('send check: no journey today, or one already skipped → nothing to check', async () => {
-  const at = new Date('2026-11-06T13:30:00Z');
+  const at = new Date('2026-11-07T13:30:00Z');
   expect((await svc(world()).runSendCheck({ now: at })).status).toBe('none');
-  const skipped = world({ journeys: [past(11, '2026-11-06', 4, 'visa', 'draft', { status: 'skipped' })] });
+  const skipped = world({ journeys: [past(11, '2026-11-07', 4, 'visa', 'draft', { status: 'skipped' })] });
   expect((await svc(skipped).runSendCheck({ now: at })).status).toBe('skipped_earlier');
 });

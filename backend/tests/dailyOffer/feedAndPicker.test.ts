@@ -68,13 +68,13 @@ test('feed: unusable products — unavailable, no image, zero price', () => {
 
 // ── Loop ──
 
-test('loop: the Dubai date decides the day — Holiday, Cruise, Activities, Visa from 3 Nov 2026', () => {
+test('loop: the Dubai date decides the day — Holiday, Cruise, Activities, Visa from 4 Nov 2026', () => {
   const theme = (d: string): string => LOOP[loopDayForDate(d) - 1].theme;
-  expect(['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-30'].map(theme))
+  expect(['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-12-01'].map(theme))
     .toEqual(['holiday_multi', 'cruise', 'activities', 'visa', 'holiday_single', 'visa']);
-  expect(loopDayForDate('2026-11-03')).toBe(1);
-  expect(loopDayForDate('2026-11-27'), 'wraps after 24 days').toBe(1);
-  expect(loopDayForDate('2026-11-02'), 'dates before the start count backwards').toBe(24);
+  expect(loopDayForDate('2026-11-04')).toBe(1);
+  expect(loopDayForDate('2026-11-28'), 'wraps after 24 days').toBe(1);
+  expect(loopDayForDate('2026-11-03'), 'dates before the start count backwards').toBe(24);
 });
 
 test('loop: holiday style alternates and visa ranks walk 1–7, 8–14, 15–21 across the 24 days', () => {
