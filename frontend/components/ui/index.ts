@@ -13,6 +13,8 @@ export type { ToggleProps, CheckboxProps } from './Toggle';
 export { Table } from './Table';
 export type { TableProps } from './Table';
 export { EmptyState, ErrorState, Skeleton } from './States';
+export { ScopedEmptyState } from './ScopedEmptyState';
+export type { ScopedEmptyStateProps } from './ScopedEmptyState';
 export type { EmptyStateProps, ErrorStateProps, SkeletonProps } from './States';
 export { ConfirmDialog } from './ConfirmDialog';
 export type { ConfirmDialogProps } from './ConfirmDialog';

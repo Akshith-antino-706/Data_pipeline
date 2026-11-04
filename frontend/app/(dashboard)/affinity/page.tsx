@@ -13,7 +13,7 @@ import {
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { CONTACT_TYPES } from '@/lib/contactTypes';
 import {
-  Button, Card, Checkbox, Chip, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton, StatusChip, Table, Tabs, buttonClass,
+  Button, Card, Checkbox, Chip, EmptyState, ErrorState, Input, PageHeader, ScopedEmptyState, Select, Skeleton, StatusChip, Table, Tabs, buttonClass,
 } from '@/components/ui';
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
@@ -583,7 +583,7 @@ export default function AffinityPage() {
 
             {listError && <div className={s.statusErr} role="alert">{listError}</div>}
             {listLoading && list.customers.length === 0 ? <TableSkeleton /> : list.customers.length === 0 ? (
-              <Card><EmptyState title={`No customers booked ${periodLabel?.toLowerCase()}${search ? ' matching the search' : ''} with these filters.`} /></Card>
+              <Card><ScopedEmptyState title={`No customers booked ${periodLabel?.toLowerCase()}${search ? ' matching the search' : ''} with these filters.`} searching={Boolean(search)} noun="customers" /></Card>
             ) : (
               <div style={{ opacity: listLoading ? 0.6 : 1 }}>
                 <Table label="Customers" className={s.table}>

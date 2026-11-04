@@ -9,7 +9,7 @@ import { getSegmentationTree, recomputeSegmentation, refreshSegmentationSnapshot
 import CreateSegmentModal from './CreateSegmentModal';
 import { comboToSlug } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
-import { PageHeader, Button, Input, Chip, StatusChip, Table, EmptyState, ErrorState, Skeleton, ConfirmDialog } from '@/components/ui';
+import { PageHeader, Button, Input, Chip, StatusChip, Table, EmptyState, ErrorState, ScopedEmptyState, Skeleton, ConfirmDialog } from '@/components/ui';
 import { SegmentPager } from '@/components/ui/SegmentPager';
 import { SegmentBars, type SegmentBarRow } from '@/components/ui/SegmentBars';
 import { segmentStatusMeta, tierLabel, geoLabel } from '@/components/ui/SegmentStatus';
@@ -388,7 +388,13 @@ export default function CustomerSegmentation() {
               </div>
             </div>
             {customSegments.length === 0 ? (
-              <EmptyState title={customQ ? `No segments match “${customQ}”` : 'No segments with this status'} description={customQ ? 'Try a different name.' : undefined} />
+              <ScopedEmptyState
+                title={customQ ? `No segments match “${customQ}”` : 'No segments with this status'}
+                searching={customFiltered}
+                noun="segments"
+                onWidened={() => setCustomPage(1)}
+                description={customQ ? 'Try a different name.' : undefined}
+              />
             ) : (
               <div className={customLoading ? s.dimmed : undefined}>
                 <Table label="Custom segments" style={{ minWidth: 760 }}>

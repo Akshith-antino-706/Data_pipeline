@@ -83,6 +83,20 @@ function Copyable({ text, children, className }: { text: string | null | undefin
   );
 }
 
+/** "Copy all" for the details drawer — every field as text, with a brief "Copied" confirmation. */
+function CopyAllButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch { /* clipboard unavailable */ }
+  };
+  return (
+    <Button variant="ghost" size="sm" aria-label={done ? 'Copied all details' : 'Copy all details'} title="Copy every field as text" onClick={copy}>
+      {done ? <Check size={14} /> : <Copy size={14} />}
+      <span>{done ? 'Copied' : 'Copy all'}</span>
+    </Button>
+  );
+}
+
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -177,17 +191,24 @@ function DetailDrawer({ selected, onClose }: { selected: Selected; onClose: () =
       ['Clicked', fmtDate(selected.row.clickedAt)],
     ];
 
+  // Every filled-in field as "Label: value" lines — handy for pasting into a ticket or chat.
+  const allText = fields.filter(([, v]) => v !== '—').map(([k, v]) => `${k}: ${v}`).join('\n');
+
   return (
     <aside className={styles.drawer} role="dialog" aria-modal="false" aria-label="Message details" data-log-drawer="">
       <div className={styles.drawerHead}>
         <h2>Message details</h2>
-        <Button variant="ghost" size="sm" aria-label="Close details" onClick={onClose}><X size={16} /></Button>
+        <div className={styles.drawerActions}>
+          <CopyAllButton text={allText} />
+          <Button variant="ghost" size="sm" aria-label="Close details" onClick={onClose}><X size={16} /></Button>
+        </div>
       </div>
       <dl className={styles.fields}>
         {fields.map(([k, v]) => (
           <div key={k} className={styles.fieldRow}>
             <dt>{k}</dt>
-            <dd>{v}</dd>
+            {/* Each value copies on its own; placeholders ("—") get no button. */}
+            <dd><Copyable text={v === '—' ? null : v}>{v}</Copyable></dd>
           </div>
         ))}
       </dl>

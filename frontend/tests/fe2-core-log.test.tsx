@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import * as api from '@/lib/api';
 import LogPage from '@/app/(dashboard)/log/page';
 
@@ -328,6 +328,31 @@ describe('Send Log page', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('details drawer: each field copies on its own, and "Copy all" copies every filled field', async () => {
+    sendLog(ROWS, 2);
+    unified(MSGS, 2);
+    const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(<LogPage />);
+    fireEvent.click(await screen.findByText('Alice'));
+    const dlg = await screen.findByRole('dialog', { name: 'Message details' });
+    // One field on its own.
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Copy Welcome' }));   // the Template field
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Welcome'));
+    // Placeholders get no copy button.
+    expect(within(dlg).queryByRole('button', { name: 'Copy —' })).toBeNull();
+    // Copy all: "Label: value" lines, placeholders left out.
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Copy all details' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    const all = writeText.mock.calls[1][0];
+    expect(all).toContain('Channel: Email');
+    expect(all).toContain('Subject: Hello');
+    expect(all).toContain('Template: Welcome');
+    expect(all).toContain('Email: alice@x.com');
+    expect(all).not.toMatch(/: —$/m);
+    expect(await within(dlg).findByRole('button', { name: 'Copied all details' })).toBeTruthy();
   });
 
   it('highlights the open row, switches rows live and closes on an outside click', async () => {

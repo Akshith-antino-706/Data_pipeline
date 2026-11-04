@@ -9,12 +9,21 @@ import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
 
 vi.mock('@/lib/api');
 
-const nav = vi.hoisted(() => ({ push: vi.fn<(href: string) => void>() }));
+// The page keeps search / sort / page / filters in the URL and reads them back, so the
+// fake router must behave like a browser: a replace() updates what useSearchParams returns.
+const nav = vi.hoisted(() => ({
+  push: vi.fn<(href: string) => void>(),
+  search: new URLSearchParams(),
+}));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: nav.push, replace: nav.push, back: () => {}, prefetch: () => {}, refresh: () => {} }),
+  useRouter: () => ({
+    push: nav.push,
+    replace: (href: string) => { nav.push(href); nav.search = new URLSearchParams(href.split('?')[1] ?? ''); },
+    back: () => {}, prefetch: () => {}, refresh: () => {},
+  }),
   useParams: () => ({}),
-  usePathname: () => '/campaigns',
-  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => '/contacts',
+  useSearchParams: () => nav.search,
 }));
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>,
@@ -29,6 +38,7 @@ beforeEach(() => {
     if (vi.isMockFunction(fn)) fn.mockResolvedValue({});
   }
   nav.push.mockReset();
+  nav.search = new URLSearchParams();
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network disabled in tests'))));
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -188,5 +198,38 @@ describe('Contacts list page (extra coverage)', () => {
     fireEvent.click(screen.getByText('Create contact'));
     await screen.findByText('Duplicate email');
     expect(screen.getByRole('dialog', { name: 'Add contact' })).toBeTruthy();
+  });
+
+  it('a slow earlier request cannot flash "No contacts found" over a newer one', async () => {
+    // First call (page load) is slow and empty; the search that follows answers fast with a row.
+    let finishFirst: (v: unknown) => void = () => {};
+    asMock('getUnifiedContacts')
+      .mockImplementationOnce(() => new Promise(res => { finishFirst = res; }))
+      .mockResolvedValueOnce({ data: [rows[0]], total: 1, totalPages: 1 });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText('Name, email or phone'), { target: { value: 'ann' } });
+    fireEvent.click(screen.getByText('Search'));
+    await screen.findByText('Ann');
+    // Now the stale first reply lands — it must be ignored.
+    finishFirst({ data: [], total: 0, totalPages: 1 });
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.getByText('Ann')).toBeTruthy();
+    expect(screen.queryByText(/No contacts found/)).toBeNull();
+  });
+
+  it('empty search under one audience says so and offers to search all audiences', async () => {
+    try { localStorage.setItem('business-type', 'B2B'); } catch { /* ignore */ }
+    mockOk('getUnifiedContacts', { data: [], total: 0, totalPages: 1 });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText('Name, email or phone'), { target: { value: 'kishor' } });
+    fireEvent.click(screen.getByText('Search'));
+    await screen.findByText('No contacts found for "kishor".');
+    expect(bodyText()).toContain('Only B2B contacts were searched');
+    expect(bodyText()).toContain('may be in another audience');
+    expect(lastContactsCall()).toMatchObject({ search: 'kishor', businessType: 'B2B' });
+    fireEvent.click(screen.getByRole('button', { name: 'Search all audiences' }));
+    await waitFor(() => expect(lastContactsCall().businessType).toBeUndefined());
+    expect(lastContactsCall()).toMatchObject({ search: 'kishor', page: 1 });
+    expect(bodyText()).not.toContain('Only B2B contacts were searched');
   });
 });

@@ -9,7 +9,7 @@ import hotToast from 'react-hot-toast';
 import { deleteJourney } from '@/lib/api';
 import { useUrlState } from '@/lib/useUrlState';
 import {
-  Button, buttonClass, Card, Chip, StatusChip, ConfirmDialog, EmptyState, ErrorState, PageHeader, Select, Skeleton, Table, Tabs,
+  Button, buttonClass, Card, Chip, StatusChip, ConfirmDialog, EmptyState, ErrorState, PageHeader, ScopedEmptyState, Select, Skeleton, Table, Tabs,
 } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import type { JourneyNode, JourneySummary } from '@/types/f1Journeys';
@@ -325,9 +325,12 @@ export default function JourneyList({
             action={<Link href="/journeys/new" className={buttonClass('primary')}><Plus size={16} aria-hidden="true" /> Create journey</Link>}
           />
         ) : (
-          <EmptyState
+          <ScopedEmptyState
             icon={<Search size={20} />}
             title="No journeys match your filters"
+            searching
+            noun="journeys"
+            onWidened={() => setPage(1)}
             description="Try another status, search term or filter."
             action={<Button size="sm" onClick={clearFilters}>Clear filters</Button>}
           />

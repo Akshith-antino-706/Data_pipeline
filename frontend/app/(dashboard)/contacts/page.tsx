@@ -11,7 +11,7 @@ const CONTACT_TYPE_TONES: Record<string, ChipTone> = { B2C: 'info', B2B: 'gold',
 import { Search, Plus, SlidersHorizontal, X, Eye, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Loader2 } from 'lucide-react';
 import type { FormEvent } from 'react';
 import type { QueryParams, UnifiedStats } from '@/types/api';
-import { Button, Card, Chip, ConfirmDialog, Field, Input, PageHeader, Select, Skeleton, Table, EmptyState } from '@/components/ui';
+import { Button, Card, Chip, ConfirmDialog, Field, Input, PageHeader, Select, Skeleton, Table, ScopedEmptyState } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import { ContactStatusChip } from '@/components/ui/ContactStatusChip';
 import { ContactFilterPanel, EMPTY_FILTERS, describeFilter, type ContactFilterKey, type ContactFilterState, type FilterOptions } from './ContactFilters';
@@ -128,7 +128,13 @@ function UnifiedContacts() {
   const updateFilter = (key: ContactFilterKey, value: string) => { setFilters(f => ({ ...f, [key]: value })); setPage(1); };
   const clearFilters = () => { setFilters(EMPTY_FILTERS); setPage(1); };
 
+  // Requests can overlap (type a search, then change the sort; or the saved audience
+  // scope arriving just after the first load). Only the latest request may fill the
+  // table or end the loading state — an older reply that lands later is ignored, so
+  // the page never flashes "No contacts found" for a search that is still running.
+  const requestSeq = useRef(0);
   const loadContacts = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     try {
       const params: QueryParams = { page, limit, sortBy, sortDir };
@@ -136,14 +142,21 @@ function UnifiedContacts() {
       if (search) params.search = search;
       (Object.entries(filters) as [string, string][]).forEach(([k, v]) => { if (v) params[k] = v; });
       const res = await getUnifiedContacts(params) as ContactsListResponse;
+      if (seq !== requestSeq.current) return;
       setContacts(res.data || []);
       setTotal(res.total || 0);
       setTotalPages(res.totalPages || 1);
-    } catch (err) { showToast((err as Error).message); }
-    finally { setLoading(false); }
+    } catch (err) {
+      if (seq !== requestSeq.current) return;
+      showToast((err as Error).message);
+    } finally {
+      if (seq === requestSeq.current) setLoading(false);
+    }
   }, [page, limit, search, sortBy, sortDir, filters, businessType]);
 
-  useEffect(() => { loadContacts(); }, [loadContacts]);
+  // Wait for the saved audience scope (B2C / B2B / Affiliate) before the first load,
+  // so the page doesn't fetch the wrong audience and then fetch again.
+  useEffect(() => { if (scopeReady) loadContacts(); }, [loadContacts, scopeReady]);
   useEffect(() => {
     // Stats + filter options both scope to the current B2C / B2B / Affiliate selection
     const btParam = businessType === 'All' ? {} : { businessType };
@@ -344,9 +357,12 @@ function UnifiedContacts() {
               ))
             ) : contacts.length === 0 ? (
               <tr><td colSpan={COLS} style={{ padding: 0 }}>
-                <EmptyState
+                <ScopedEmptyState
                   title={`No contacts found${search ? ` for "${search}"` : ''}.`}
-                  description={activeFilterCount > 0 ? `Audience is ${businessType} with ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}.` : undefined}
+                  searching={Boolean(search) || activeFilterCount > 0}
+                  noun="contacts"
+                  onWidened={() => setPage(1)}
+                  description={activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} applied.` : undefined}
                   action={(activeFilterCount > 0 || search) ? (
                     <Button size="sm" onClick={() => { clearFilters(); if (search) clearSearch(); }}>Clear filters</Button>
                   ) : undefined}

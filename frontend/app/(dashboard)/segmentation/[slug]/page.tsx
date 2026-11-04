@@ -7,7 +7,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { getSegmentCustomers, getUnifiedContact } from '@/lib/api';
 import { slugToCombo } from '@/lib/segmentSlug';
 import { useBusinessType } from '@/context/BusinessTypeContext';
-import { PageHeader, Chip, Button, Input, Table, EmptyState, Skeleton } from '@/components/ui';
+import { PageHeader, Chip, Button, Input, Table, EmptyState, ScopedEmptyState, Skeleton } from '@/components/ui';
 import { SegmentStat } from '@/components/ui/SegmentStat';
 import { SegmentPager } from '@/components/ui/SegmentPager';
 import { SegmentContactModal, fmtAED, type SegmentContactView } from '@/components/ui/SegmentContactModal';
@@ -178,7 +178,7 @@ export default function SegmentDetailPage() {
           <SegmentPager page={page} totalPages={customers?.totalPages || 0} onPage={goPage} />
         </>
       ) : (
-        <EmptyState title="No customers found" description={search ? 'Try a different search.' : undefined} />
+        <ScopedEmptyState title="No customers found" searching={Boolean(search)} noun="customers" description={search ? 'Try a different search.' : undefined} />
       )}
 
       <SegmentContactModal contact={userDetail} loading={userDetailLoading} onClose={closeUserDetail} />
