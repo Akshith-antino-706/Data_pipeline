@@ -54,3 +54,12 @@ test('alert: no recipients → nothing sent', async () => {
   expect(n).toBe(0);
   expect(calls).toBe(0);
 });
+
+test('alert: uses the daily email head — logo with its dark-mode swap, no customer footer', async () => {
+  const { alertHtml } = await import('../../src/services/dailyOffer/alert.js');
+  const html = alertHtml({ date: '2026-11-04', stage: 'create', reason: 'x', message: 'y', segmentId: 86 });
+  expect(html).toContain('class="logo-light"');
+  expect(html).toContain('raynatourslogo-dark');
+  expect(html).not.toContain('unsubscribe');
+  expect(html).not.toContain('PROMO_SECTIONS');
+});

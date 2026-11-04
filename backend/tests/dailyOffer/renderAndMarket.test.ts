@@ -114,3 +114,34 @@ test('template: names are HTML-escaped', () => {
   const html = buildTemplate(pickForLoopDay(ps, 2));
   expect(html).toContain('Fish &amp; Chips &lt;Cruise&gt;');
 });
+
+// ── Dark mode (team reference template) ──
+
+test('dark mode: white logo swaps in, hidden from Outlook desktop', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  expect(html).toContain('class="logo-light" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png"');
+  expect(html).toContain('raynatourslogo-dark');
+  // The dark logo sits inside an Outlook-desktop exclusion and starts hidden.
+  expect(html).toMatch(/<!--\[if !mso\]><!-->\s*<div class="logo-dark" style="display:none;[^"]*mso-hide:all;/);
+});
+
+test('dark mode: white Trustpilot and Tripadvisor badges next to the normal ones', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  expect(html.match(/class="badge-light"/g)).toHaveLength(4);       // 3 Trustpilot + Tripadvisor
+  expect(html.match(/class="badge-dark"/g)).toHaveLength(3);
+  expect(html.match(/class="badge-dark-block"/g)).toHaveLength(1);
+  for (const img of ['trustpilot-excellent-white', 'trustpilot-based-on-reviews-white', 'trustpilot-logo-white', 'tripadvisor-lockup-white']) {
+    expect(html, img).toContain(img);
+  }
+});
+
+test('dark mode: swap rules for prefers-color-scheme and Outlook.com / Outlook apps ([data-ogsc])', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  const darkBlock = html.slice(html.indexOf('@media (prefers-color-scheme:dark){'));
+  for (const rule of ['.logo-light{display:none !important;}', '.badge-light{display:none !important;}', '.badge-dark{display:inline-block !important;}', '.dm-foot{background-color:#080808 !important}']) {
+    expect(darkBlock, rule).toContain(rule);
+  }
+  for (const rule of ['[data-ogsc] .logo-light{display:none !important;}', '[data-ogsc] .badge-dark{display:inline-block !important;}', '[data-ogsc] .badge-dark-block{display:block !important;}']) {
+    expect(html, rule).toContain(rule);
+  }
+});
