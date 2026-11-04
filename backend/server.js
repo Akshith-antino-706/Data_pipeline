@@ -342,6 +342,17 @@ app.post('/api/v3/migrate-department-groups', async (_, res) => {
   }
 });
 
+// Continuous journey delivery mode: enrollment_mode + broadcast cooldown columns.
+// MUST be applied before deploying the code that reads enrollment_mode.
+app.post('/api/v3/migrate-enrollment-mode', async (_, res) => {
+  try {
+    await runMigrationFile('120_journey_enrollment_mode.sql');
+    res.json({ success: true, message: 'journey enrollment_mode + broadcast cooldown migration (120) succeeded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/v3/migrate-segments', async (_, res) => {
   try {
     await runMigrationFile('012_lifecycle_winback_segmentation.sql');
