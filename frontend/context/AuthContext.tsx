@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { AuthData, AuthUser } from '@/types/api';
+import { loginUrlForCurrentPage } from '@/lib/loginNext';
 
 export interface AuthContextValue {
   user: AuthUser | null;
@@ -97,8 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { /* ignore */ }
 
     setAuth(null);
-    // Hard-navigate to the login screen (replace so the authed page isn't left in history).
-    if (typeof window !== 'undefined') window.location.replace('/login');
+    // Hard-navigate to the login screen (replace so the authed page isn't left in history),
+    // remembering this page so signing back in returns here.
+    if (typeof window !== 'undefined') window.location.replace(loginUrlForCurrentPage());
   }, []);
 
   // Auto-logout after 30 minutes of inactivity. Any user interaction resets the timer;

@@ -2,6 +2,7 @@ import type {
   Id, QueryParams, JsonBody, ApiEnvelope, AuthData,
   UnifiedStats, SourcesBreakdown, SendLogPage, GiveawayLog,
 } from '@/types/api';
+import { loginUrlForCurrentPage } from './loginNext';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -19,7 +20,7 @@ function getToken(): string | null {
 function clearAuthAndRedirect(): void {
   try { localStorage.removeItem(AUTH_KEY); } catch { /* ignore */ }
   if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-    window.location.href = '/login';
+    window.location.href = loginUrlForCurrentPage();
   }
 }
 

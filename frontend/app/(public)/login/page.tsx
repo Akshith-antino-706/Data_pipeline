@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, Loader, Eye, EyeOff, Mail, Lock, Route, Send, BarChart3 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui';
+import { safeNext } from '@/lib/loginNext';
 import s from '../auth.module.css';
 
 /** What the workspace does — product description only, no figures. */
@@ -19,14 +20,16 @@ const FEATURES = [
 export default function LoginPage() {
   const { isAuthenticated, login } = useAuth();
   const router = useRouter();
+  // Where to go after signing in: the page the user was sent here from, else the dashboard.
+  const afterLogin = safeNext(useSearchParams().get('next'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) router.replace('/dashboard');
-  }, [isAuthenticated, router]);
+    if (isAuthenticated) router.replace(afterLogin);
+  }, [isAuthenticated, router, afterLogin]);
 
   if (isAuthenticated) return null;
 
@@ -42,7 +45,7 @@ export default function LoginPage() {
     try {
       await login(email, password);
       toast.success('Welcome back!');
-      router.replace('/dashboard');
+      router.replace(afterLogin);
     } catch (err) {
       toast.error((err as Error).message || 'Login failed. Please try again.');
     } finally {

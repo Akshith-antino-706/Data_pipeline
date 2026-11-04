@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { LEADS_ACCESS_COOKIE, readLeadsAccessCookie } from './lib/leadsAccess';
+import { loginUrlFor } from './lib/loginNext';
 
 const PUBLIC_PATHS = ['/', '/login', '/landing', '/leads', '/leads-access', '/rayna-logo.webp', '/favicon.ico', '/icon.svg', '/apple-icon.png'];
 
@@ -39,8 +40,8 @@ export async function middleware(request: NextRequest) {
   }
 
   if (!hasAuth) {
-    const loginUrl = new URL('/login', request.url);
-    return NextResponse.redirect(loginUrl);
+    // Remember the page asked for, so /login can send the user back there afterwards.
+    return NextResponse.redirect(new URL(loginUrlFor(`${pathname}${request.nextUrl.search}`), request.url));
   }
 
   return NextResponse.next();

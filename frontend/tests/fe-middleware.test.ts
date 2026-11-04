@@ -24,10 +24,12 @@ describe('middleware: auth gate', () => {
     }
   });
 
-  it('redirects unauthenticated dashboard routes to /login', async () => {
+  it('redirects unauthenticated dashboard routes to /login, remembering the page in ?next=', async () => {
     for (const p of ['/dashboard', '/contacts/12', '/loginx', '/landingpage']) {
       const res = await middleware(req(p));
-      expect(location(res), p).toBe(`${ORIGIN}/login`);
+      // /dashboard is where login lands anyway, so it is not carried as ?next=.
+      const expected = p === '/dashboard' ? `${ORIGIN}/login` : `${ORIGIN}/login?next=${encodeURIComponent(p)}`;
+      expect(location(res), p).toBe(expected);
     }
   });
 
@@ -89,7 +91,7 @@ describe('middleware: leads access', () => {
   });
 
   it('/leadsx is not treated as a leads path (goes to login)', async () => {
-    expect(location(await middleware(req('/leadsx')))).toBe(`${ORIGIN}/login`);
+    expect(location(await middleware(req('/leadsx')))).toBe(`${ORIGIN}/login?next=%2Fleadsx`);
   });
 });
 

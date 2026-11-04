@@ -48,9 +48,29 @@ test.describe('login', () => {
     expect(api.calls).toEqual([]);
   });
 
-  test('protected page redirects to /login when signed out', async ({ page, api }) => {
+  test('protected page redirects to /login when signed out, remembering the page', async ({ page, api }) => {
     void api;
     await page.goto('/contacts');
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page).toHaveURL(/\/login\?next=%2Fcontacts$/);
+  });
+
+  test('signing in from a deep link lands back on that page, query included', async ({ page }) => {
+    await page.goto('/journeys/11?tab=flow');
+    await expect(page).toHaveURL(/\/login\?next=/);
+    await page.getByLabel('Email').fill('e2e@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('correct-horse');
+    await page.getByRole('button', { name: 'Sign In' }).click();
+
+    await expect(page).toHaveURL(/\/journeys\/11\?tab=flow$/);
+    await expect(page.getByText('Welcome Series')).toBeVisible();
+  });
+
+  test('a ?next= pointing off-site is ignored — the dashboard is used instead', async ({ page }) => {
+    await page.goto('/login?next=https%3A%2F%2Fevil.example%2Fphish');
+    await expect(page.getByRole('button', { name: 'Sign In' })).toBeEnabled();
+    await page.getByLabel('Email').fill('e2e@example.com');
+    await page.getByLabel('Password', { exact: true }).fill('correct-horse');
+    await page.getByRole('button', { name: 'Sign In' }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
   });
 });
