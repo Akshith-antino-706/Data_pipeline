@@ -12,7 +12,16 @@ import { getDailyOfferConfig, dubaiDate, dubaiMinutes, hhmmToMinutes } from './c
 import DailyOfferService from './DailyOfferService.js';
 import { alertFor, alertRecipients, sendFailureAlert } from './alert.js';
 
-export function registerDailyOfferCrons(cron, { env = process.env, log = console } = {}) {
+/**
+ * Test hooks (makeService, sendAlert, now) default to the real service, the real alert
+ * email and the real clock.
+ */
+export function registerDailyOfferCrons(cron, {
+  env = process.env, log = console,
+  makeService = (config) => new DailyOfferService({ config }),
+  sendAlert = sendFailureAlert,
+  now = () => new Date(),
+} = {}) {
   const config = getDailyOfferConfig(env);
   if (!config.enabled) {
     log.log('[Cron] Daily offer email: OFF (set DAILY_OFFER_ENABLED=true to enable)');
@@ -21,16 +30,16 @@ export function registerDailyOfferCrons(cron, { env = process.env, log = console
   let running = false;
   const alerted = new Set();      // Dubai dates already reported — at most one alert per day
   const alert = async (stage, info) => {
-    const date = dubaiDate();
+    const date = dubaiDate(now());
     if (!info || alerted.has(date)) return;
     alerted.add(date);
-    await sendFailureAlert({ date, stage, segmentId: config.segmentId, env, log, ...info });
+    await sendAlert({ date, stage, segmentId: config.segmentId, env, log, ...info });
   };
   const guarded = (name, fn, opts = () => ({})) => async () => {
     if (running) { log.warn(`[Cron:DailyOffer] ${name} skipped — another run is in progress`); return; }
     running = true;
     try {
-      const res = await fn(new DailyOfferService({ config }));
+      const res = await fn(makeService(config));
       log.log(`[Cron:DailyOffer] ${name}: ${JSON.stringify(res)}`);
       await alert(name, alertFor(name, res, opts()));
     } catch (err) {
@@ -45,7 +54,7 @@ export function registerDailyOfferCrons(cron, { env = process.env, log = console
   const from = hhmmToMinutes(config.createAt);
   const until = hhmmToMinutes(config.retryUntil);
   cron.schedule('*/30 * * * *', async () => {
-    const m = dubaiMinutes();
+    const m = dubaiMinutes(now());
     if (m < from || m > until) return;
     // The last attempt of the day is the one whose failure means no email today.
     await guarded('create', svc => svc.runCreate(), () => ({ lastTry: m + 30 > until }))();

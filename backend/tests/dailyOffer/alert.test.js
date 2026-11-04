@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertFor, alertRecipients, sendFailureAlert } from '../../src/services/dailyOffer/alert.js';
+import { alertFor, alertRecipients, alertHtml, sendFailureAlert } from '../../src/services/dailyOffer/alert.js';
 
 const silent = { log() {}, warn() {}, error() {} };
 
@@ -53,4 +53,12 @@ test('alert: no recipients → nothing sent', async () => {
   const n = await sendFailureAlert({ date: '2026-11-04', stage: 'create', reason: 'x', message: 'y', segmentId: 86, send: async () => { calls += 1; return { success: true }; }, env: {}, log: silent });
   assert.equal(n, 0);
   assert.equal(calls, 0);
+});
+
+test('alert: uses the daily email head — logo with its dark-mode swap, no customer footer', async () => {
+  const html = alertHtml({ date: '2026-11-04', stage: 'create', reason: 'x', message: 'y', segmentId: 86 });
+  assert.ok((html).includes('class="logo-light"'), `missing: ${'class="logo-light"'}`);
+  assert.ok((html).includes('raynatourslogo-dark'), `missing: ${'raynatourslogo-dark'}`);
+  assert.ok(!(html).includes('unsubscribe'));
+  assert.ok(!(html).includes('PROMO_SECTIONS'));
 });

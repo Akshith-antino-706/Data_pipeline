@@ -106,3 +106,34 @@ test('template: names are HTML-escaped', () => {
   const html = buildTemplate(pickForLoopDay(ps, 2));
   assert.ok(html.includes('Fish &amp; Chips &lt;Cruise&gt;'));
 });
+
+// ── Dark mode (team reference template) ──
+
+test('dark mode: white logo swaps in, hidden from Outlook desktop', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  assert.ok((html).includes('class="logo-light" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png"'), `missing: ${'class="logo-light" src="https://d2cazmkfw8kdtj.cloudfront.net/assets/Images/AGT-06437/raynatourslogo.png"'}`);
+  assert.ok((html).includes('raynatourslogo-dark'), `missing: ${'raynatourslogo-dark'}`);
+  // The dark logo sits inside an Outlook-desktop exclusion and starts hidden.
+  assert.match(html, /<!--\[if !mso\]><!-->\s*<div class="logo-dark" style="display:none;[^"]*mso-hide:all;/);
+});
+
+test('dark mode: white Trustpilot and Tripadvisor badges next to the normal ones', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  assert.equal((html.match(/class="badge-light"/g)).length, 4);       // 3 Trustpilot + Tripadvisor
+  assert.equal((html.match(/class="badge-dark"/g)).length, 3);
+  assert.equal((html.match(/class="badge-dark-block"/g)).length, 1);
+  for (const img of ['trustpilot-excellent-white', 'trustpilot-based-on-reviews-white', 'trustpilot-logo-white', 'tripadvisor-lockup-white']) {
+    assert.ok((html).includes(img), img);
+  }
+});
+
+test('dark mode: swap rules for prefers-color-scheme and Outlook.com / Outlook apps ([data-ogsc])', () => {
+  const html = buildTemplate(pickForLoopDay(sampleProducts().map(normalizeProduct), 2));
+  const darkBlock = html.slice(html.indexOf('@media (prefers-color-scheme:dark){'));
+  for (const rule of ['.logo-light{display:none !important;}', '.badge-light{display:none !important;}', '.badge-dark{display:inline-block !important;}', '.dm-foot{background-color:#080808 !important}']) {
+    assert.ok((darkBlock).includes(rule), rule);
+  }
+  for (const rule of ['[data-ogsc] .logo-light{display:none !important;}', '[data-ogsc] .badge-dark{display:inline-block !important;}', '[data-ogsc] .badge-dark-block{display:block !important;}']) {
+    assert.ok((html).includes(rule), rule);
+  }
+});
