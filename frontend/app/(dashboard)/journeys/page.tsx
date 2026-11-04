@@ -8,7 +8,7 @@ import {
   getJourneys, getJourney, enrollJourney,
   processJourney, aiFlowSuggest, getJourneyAnalytics,
   getJourneyCampaignAnalytics, createJourney, updateJourney, deleteJourney,
-  getTemplates, getTemplate, getSegmentationTree, getSegmentCustomers,
+  getTemplates, getSegmentationTree, getSegmentCustomers,
   getCustomSegments, getCustomSegmentCustomers, startJourney, pauseJourney,
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
@@ -40,7 +40,7 @@ import type { LucideIcon } from 'lucide-react';
 import { nodeLabel } from '@/lib/nodeLabel';
 import type {
   NodeForm, JourneyNode, JourneyEdge, ContentTemplate, JourneySummary, JourneyDetail, CampaignData, CampaignRow,
-  JourneyAnalytics, QueueCounts, TimelineItem, JourneyEntry, FlowSuggestions, PreviewTemplateState, ApiData, TplId, NodeStat, CreateForm, EntryStats, NodeCampaign, NodeFireTimes
+  JourneyAnalytics, QueueCounts, TimelineItem, JourneyEntry, FlowSuggestions, PreviewTemplateState, ApiData, NodeStat, CreateForm, EntryStats, NodeCampaign, NodeFireTimes
 } from '@/types/f1Journeys';
 
 // ── Constants ──────────────────────────────────────────────────
@@ -304,6 +304,32 @@ function SearchableTemplateSelect({ templates, value, onChange, channel = 'email
   const [remote, setRemote] = useState<TemplateOption[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [seen, setSeen] = useState<Record<string, TemplateOption>>({});
+  // Infinite scroll. Page 1 is the seed — the parent's newest 50 when browsing, or the
+  // server search below when typing — so paging starts at 2 and resets whenever the
+  // channel or the query changes.
+  const [morePages, setMorePages] = useState<TemplateOption[]>([]);
+  const [nextPage, setNextPage] = useState(2);
+  const [exhausted, setExhausted] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => { setMorePages([]); setNextPage(2); setExhausted(false); }, [query, channel]);
+
+  const loadMore = async () => {
+    if (exhausted || loadingMore || searching) return;
+    setLoadingMore(true);
+    const s = query.trim();
+    try {
+      const res = await getTemplates({
+        fields: 'light', channel, limit: TEMPLATE_SEARCH_LIMIT, page: nextPage, ...(s ? { search: s } : {}),
+      }) as ApiData<TemplateOption[]>;
+      const rows = res?.data || [];
+      setMorePages(prev => [...prev, ...rows]);
+      setNextPage(n => n + 1);
+      setSeen(prev => { const next = { ...prev }; rows.forEach(r => { next[String(r.id)] = r; }); return next; });
+      if (rows.length < TEMPLATE_SEARCH_LIMIT) setExhausted(true);
+    } catch { setExhausted(true); }
+    finally { setLoadingMore(false); }
+  };
+
   useEffect(() => {
     const q = query.trim();
     if (!q) { setRemote(null); setSearching(false); return; }
@@ -345,14 +371,23 @@ function SearchableTemplateSelect({ templates, value, onChange, channel = 'email
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {
-    if (!q) return templates;
-    if (remote) return remote;
-    // While the server search is in flight, show local matches so the list doesn't blank.
-    return templates.filter(t => {
-      const hay = `${t.name || ''} ${secondaryFor(t) || ''}`.toLowerCase();
-      return hay.includes(q) || String(t.id).includes(q);
-    });
-  }, [templates, q, remote, channel]);
+    const seed = !q ? templates
+      : remote ? remote
+      // While the server search is in flight, show local matches so the list doesn't blank.
+      : templates.filter(t => {
+        const hay = `${t.name || ''} ${secondaryFor(t) || ''}`.toLowerCase();
+        return hay.includes(q) || String(t.id).includes(q);
+      });
+    if (!morePages.length) return seed;
+    // Pages can overlap the seed (both are newest-first), so de-dupe by id, order kept.
+    const out: TemplateOption[] = [];
+    const ids = new Set<string>();
+    for (const t of [...seed, ...morePages]) {
+      const k = String(t.id);
+      if (!ids.has(k)) { ids.add(k); out.push(t); }
+    }
+    return out;
+  }, [templates, q, remote, channel, morePages]);
 
   const pick = (t: TemplateOption | null) => {
     if (t) { setSeen(prev => ({ ...prev, [String(t.id)]: t })); if (!templates.some(x => String(x.id) === String(t.id))) onPicked?.(t, channel); }
@@ -427,16 +462,25 @@ function SearchableTemplateSelect({ templates, value, onChange, channel = 'email
                 style={{ border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 11 }}>clear</button>
             )}
           </div>
-          <div ref={listRef} style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
+          <div ref={listRef}
+            onScroll={e => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 64) void loadMore(); }}
+            style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 && (
               <div style={{ padding: '16px 10px', fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center' }}>
                 {searching ? 'Searching…' : templates.length === 0 && !q ? `No ${channel} templates found` : `No templates match “${query}”`}
               </div>
             )}
             {filtered.map((t, i) => row(t, i))}
+            {filtered.length > 0 && !exhausted && (
+              <div style={{ padding: '8px 10px', fontSize: 11, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                {loadingMore ? 'Loading more…' : 'Scroll for more'}
+              </div>
+            )}
           </div>
           <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', justifyContent: 'space-between' }}>
-            <span>{q ? (searching ? 'Searching the server…' : `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`) : `Newest ${templates.length} · type to search all`}</span>
+            <span>{q
+              ? (searching ? 'Searching the server…' : `${filtered.length} match${filtered.length === 1 ? '' : 'es'}${exhausted ? '' : ' · scroll for more'}`)
+              : `${filtered.length} loaded${exhausted ? '' : ' · scroll for more'} · type to search all`}</span>
             <span>↑↓ navigate · ↵ select · esc close</span>
           </div>
         </div>
@@ -1157,53 +1201,6 @@ export default function Journeys() {
   }, [rawPathname, legacyIdParam]);
 
   const BLANK_NODE_FORM: NodeForm = { type: 'action', channel: 'email', label: '', message: '', waitDays: 1, goalType: 'booking', condition: 'booked', track: 'all', emailTemplateId: null, whatsappTemplateId: null, smsTemplateId: null, restChannel: 'email', restTemplateId: null, waChannelId: null, waChannelName: null, waTemplateId: null, waTemplateName: null, rcsTemplateCode: null, rcsTemplateName: null, rcsTemplateType: null, sendHour: null, templateVariables: {} };
-
-  // Variables that are auto-populated from contact data — don't show inputs for these
-  // Only filter vars that are purely auto-filled internals — never shown as user inputs.
-  // first_name, full_name, cta_url etc. are intentionally kept OUT so users can fill them.
-  const SYSTEM_VARS = new Set(['email', 'phone', 'country', 'city', 'company', 'segment', 'utm_link', 'unsubscribe_link',
-    // filled per contact from their bookings (backend/src/services/affinityVars.js)
-    'product_affinity_1', 'product_affinity_2', 'product_affinity_3', 'service_affinity_1', 'service_affinity_2', 'service_affinity_3']);
-
-  // Returns the custom (non-system) variable names for a given template.
-  // Always parses from body HTML (the ground truth) — the variables DB column can be stale.
-  // Placeholders auto-filled from the triggering GTM event — never shown as inputs.
-  const GTM_AUTO_VARS = new Set(['event_id', 'raw_payload', 'event_name', 'event_time', 'page_url', 'item_name', 'customer_name', 'cta_url']);
-  // Variables for a template: the picker rows no longer carry bodies, so they come from the
-  // `variables` column when the template declares them, otherwise from a one-off fetch of the
-  // full template (cached per id) — never from a truncated list body.
-  const [tplVarsById, setTplVarsById] = useState<Record<string, string[]>>({});
-  const varsFromBody = (body: string | undefined) => [...new Set([...(body || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))];
-  const ensureTemplateVars = useCallback((templateId: TplId | null | undefined) => {
-    if (!templateId) return;
-    const key = String(templateId);
-    setTplVarsById(prev => {
-      if (prev[key]) return prev;
-      (getTemplate(templateId) as Promise<ApiData<ContentTemplate>>)
-        .then(res => {
-          const t = res?.data;
-          const declared = Array.isArray(t?.variables) ? (t!.variables as unknown[]).filter((v): v is string => typeof v === 'string') : [];
-          setTplVarsById(p => ({ ...p, [key]: declared.length ? declared : varsFromBody(t?.body) }));
-        })
-        .catch(() => setTplVarsById(p => ({ ...p, [key]: [] })));
-      return prev;
-    });
-  }, []);
-  useEffect(() => { ensureTemplateVars(nodeForm.emailTemplateId); }, [nodeForm.emailTemplateId, ensureTemplateVars]);
-  useEffect(() => { ensureTemplateVars(nodeForm.smsTemplateId); }, [nodeForm.smsTemplateId, ensureTemplateVars]);
-  useEffect(() => { ensureTemplateVars(nodeForm.restTemplateId); }, [nodeForm.restTemplateId, ensureTemplateVars]);
-
-  const getTemplateCustomVars = (templateId: TplId | undefined, channel: string) => {
-    if (!templateId) return [];
-    const list = allTemplates[channel] || [];
-    const tpl = list.find(t => String(t.id) === String(templateId));
-    const declared = Array.isArray(tpl?.variables) ? (tpl!.variables as unknown[]).filter((v): v is string => typeof v === 'string') : [];
-    const vars = declared.length ? declared : (tplVarsById[String(templateId)] ?? varsFromBody(tpl?.body));
-    // GTM event template (e.g. welcome_gtm_event) → all fields come from the event,
-    // so show NO manual input boxes.
-    if (vars.some(v => ['event_id', 'raw_payload', 'event_name', 'event_time'].includes(v))) return [];
-    return vars.filter(v => !SYSTEM_VARS.has(v) && !GTM_AUTO_VARS.has(v));
-  };
 
   const loadTemplates = async () => {
     if (templatesLoaded) return;
@@ -3456,35 +3453,6 @@ export default function Journeys() {
                         onChange={m => setNodeForm(f => ({ ...f, rcsTemplateCode: m.rcsTemplateCode, rcsTemplateName: m.rcsTemplateName, rcsTemplateType: m.rcsTemplateType, templateVariables: {} }))}
                       />
                     )}
-                  {/* ── Dynamic Template Variables ── */}
-                  {(() => {
-                    const tplId = nodeForm.channel === 'email' ? nodeForm.emailTemplateId
-                      : nodeForm.channel === 'whatsapp' ? nodeForm.whatsappTemplateId
-                      : nodeForm.smsTemplateId;
-                    const vars = getTemplateCustomVars(tplId, nodeForm.channel);
-                    if (vars.length === 0) return null;
-                    return (
-                      <div style={{ marginTop: 12, padding: '12px', background: 'rgba(59,130,246,0.04)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: '#3B82F6', marginBottom: 10, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                          Template Variables
-                        </div>
-                        {vars.map(v => (
-                          <div key={v} style={{ marginBottom: 8 }}>
-                            <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.05em', display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>
-                              {v.replace(/_/g, ' ')}
-                            </label>
-                            <input
-                              className="form-input"
-                              placeholder={`Enter ${v.replace(/_/g, ' ')}…`}
-                              value={nodeForm.templateVariables?.[v] || ''}
-                              onChange={e => setNodeForm(f => ({ ...f, templateVariables: { ...(f.templateVariables || {}), [v]: e.target.value } }))}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
-
                   {/* ── Send Hour (Dubai time) ── */}
                   <div style={{ marginTop: 12 }}>
                     <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', letterSpacing: '0.06em', display: 'block', marginBottom: 6, textTransform: 'uppercase' }}>
@@ -3801,7 +3769,6 @@ export default function Journeys() {
               emailTemplates={allTemplates.email || []}
               smsTemplates={allTemplates.sms || []}
               dynamicSections={DYNAMIC_SECTIONS}
-              getCustomVars={getTemplateCustomVars}
               onNeedTemplates={loadTemplates}
               TemplateSelect={TemplateSelectWithCache}
               onPreview={n => {

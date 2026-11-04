@@ -41,7 +41,6 @@ export interface NodeEditorProps {
   emailTemplates: EditorTemplate[];
   smsTemplates: EditorTemplate[];
   dynamicSections: Record<string | number, string[]>;
-  getCustomVars: (templateId: TplId | undefined, channel: string) => string[];
   /** Lazy-load the template lists the first time the form opens. */
   onNeedTemplates: () => void;
   onPreview: (node: NodeForm) => void;
@@ -291,7 +290,7 @@ function Group({ legend, children }: { legend: string; children: ReactNode }) {
 }
 
 function NodeFields(p: NodeFieldsProps) {
-  const { mode, draft, setDraft, name, errors, continuous, emailTemplates, smsTemplates, dynamicSections, getCustomVars, TemplateSelect } = p;
+  const { mode, draft, setDraft, name, errors, continuous, emailTemplates, smsTemplates, dynamicSections, TemplateSelect } = p;
   const f = draft.form;
   const uid = useId();
   const set = (fn: (n: NodeForm) => NodeForm, touch?: string) =>
@@ -300,8 +299,6 @@ function NodeFields(p: NodeFieldsProps) {
   // The edit form always cleared template variables on a template change; the add form only did for email.
   const clearVars = mode === 'edit';
 
-  const tplId = f.channel === 'email' ? f.emailTemplateId : f.channel === 'whatsapp' ? f.whatsappTemplateId : f.smsTemplateId;
-  const vars = f.type === 'action' ? getCustomVars(tplId, f.channel) : [];
   const sections = f.channel === 'email' && f.emailTemplateId != null ? dynamicSections[String(f.emailTemplateId)] : undefined;
   const generated = !draft.named;
   const tplErr = errors.template;
@@ -425,21 +422,6 @@ function NodeFields(p: NodeFieldsProps) {
                 }), 'template')}
               />
               {errNode(tplErr, `${uid}-tplerr`)}
-            </div>
-          )}
-
-          {vars.length > 0 && (
-            <div className={styles.subCard}>
-              <span className="ui-label">Template variables</span>
-              <span className="ui-help">Filled into the template for every contact.</span>
-              {vars.map(v => (
-                <Field key={v} label={v.replace(/_/g, ' ')}>
-                  {c => (
-                    <Input {...c} placeholder={`Enter ${v.replace(/_/g, ' ')}…`} value={f.templateVariables?.[v] || ''}
-                      onChange={e => { const val = e.target.value; set(n => ({ ...n, templateVariables: { ...(n.templateVariables || {}), [v]: val } })); }} />
-                  )}
-                </Field>
-              ))}
             </div>
           )}
 
