@@ -39,8 +39,9 @@ export const LOOP = Array.from({ length: 24 }, (_, i) => {
 });
 
 // Loop day 1 falls on this Dubai date; every other date counts from it.
-// 2026-11-03 → Holidays, so 2026-11-04 is Cruises (the agreed November calendar).
-export const LOOP_START_DATE = '2026-11-03';
+// 2026-11-04 → Holidays, so 2026-11-05 is Cruises (the agreed November calendar; the
+// 3 Nov cruise mail went to testers only, so the real run starts on Holidays).
+export const LOOP_START_DATE = '2026-11-04';
 
 // UAE, USA, Schengen — matched by page link so a rename in the feed doesn't break them.
 export const FIXED_VISA_SLUGS = ['dubai-visa', 'usa-visa', 'schengen-visa'];

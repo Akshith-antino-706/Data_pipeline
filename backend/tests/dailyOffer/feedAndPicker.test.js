@@ -56,13 +56,13 @@ test('feed: unusable products — unavailable, no image, zero price', () => {
 
 // ── Loop ──
 
-test('loop: the Dubai date decides the day — Holiday, Cruise, Activities, Visa from 3 Nov 2026', () => {
+test('loop: the Dubai date decides the day — Holiday, Cruise, Activities, Visa from 4 Nov 2026', () => {
   const theme = (d) => LOOP[loopDayForDate(d) - 1].theme;
-  assert.deepEqual(['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-30'].map(theme),
+  assert.deepEqual(['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-12-01'].map(theme),
     ['holiday_multi', 'cruise', 'activities', 'visa', 'holiday_single', 'visa']);
-  assert.equal(loopDayForDate('2026-11-03'), 1);
-  assert.equal(loopDayForDate('2026-11-27'), 1, 'wraps after 24 days');
-  assert.equal(loopDayForDate('2026-11-02'), 24, 'dates before the start count backwards');
+  assert.equal(loopDayForDate('2026-11-04'), 1);
+  assert.equal(loopDayForDate('2026-11-28'), 1, 'wraps after 24 days');
+  assert.equal(loopDayForDate('2026-11-03'), 24, 'dates before the start count backwards');
 });
 
 test('loop: holiday style alternates and visa ranks walk 1–7, 8–14, 15–21 across the 24 days', () => {

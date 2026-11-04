@@ -5,8 +5,8 @@ import { getDailyOfferConfig } from '../../src/services/dailyOffer/config.js';
 import { validateFeed } from '../../src/services/dailyOffer/feed.js';
 import { fullFeed } from './fixtures.js';
 
-const NINE_AM = new Date('2026-11-06T05:00:00Z');        // 09:00 Dubai — loop Day 4, Visa
-const CHECK = new Date('2026-11-06T11:45:00Z');          // 15:45 Dubai
+const NINE_AM = new Date('2026-11-07T05:00:00Z');        // 09:00 Dubai — loop Day 4, Visa
+const CHECK = new Date('2026-11-07T11:45:00Z');          // 15:45 Dubai
 const silent = { log() {}, warn() {}, error() {} };
 
 /** In-memory stand-ins for the database and the two services the job uses. */
@@ -75,11 +75,11 @@ test('names: ordinal dates', () => {
   assert.equal(ordinalDate('2026-11-23'), '23rd November');
 });
 
-test('create: first run makes the date\'s theme (6 Nov → Day 4, Visa) template + Draft journey with no start time', async () => {
+test('create: first run makes the date\'s theme (7 Nov → Day 4, Visa) template + Draft journey with no start time', async () => {
   const w = world();
   const res = await svc(w).runCreate({ now: NINE_AM });
   assert.equal(res.status, 'created');
-  assert.equal(res.name, '6th November - Visa Offers (Day 4)');
+  assert.equal(res.name, '7th November - Visa Offers (Day 4)');
   const j = w.state.journeys[0];
   assert.equal(j.segmentId, 'custom:95');
   assert.equal(j.scheduledStartAt, null);
@@ -103,16 +103,16 @@ test('create: runs again the same day → nothing new (no duplicate, no download
   assert.equal(downloads, 1);
 });
 
-test('create: the date decides the theme, whatever sent before (4 Nov → Cruises)', async () => {
-  const w = world({ journeys: [past(10, '2026-11-03', 5, 'cruise')] });
-  const res = await svc(w).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
-  assert.match(res.name, /^4th November - Cruises \(Day 2\)$/);
+test('create: the date decides the theme, whatever sent before (5 Nov → Cruises)', async () => {
+  const w = world({ journeys: [past(10, '2026-11-04', 5, 'cruise')] });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-05T05:00:00Z') });
+  assert.match(res.name, /^5th November - Cruises \(Day 2\)$/);
 });
 
 test('create: a skipped day does not shift the calendar (Draft journey does not count)', async () => {
   const w = world({ journeys: [
-    past(10, '2026-11-04', 2, 'cruise'),
-    past(11, '2026-11-05', 3, 'activities', 'draft', { status: 'skipped' }),
+    past(10, '2026-11-05', 2, 'cruise'),
+    past(11, '2026-11-06', 3, 'activities', 'draft', { status: 'skipped' }),
   ] });
   const res = await svc(w).runCreate({ now: NINE_AM });
   assert.match(res.name, /Visa Offers \(Day 4\)$/);
@@ -120,12 +120,12 @@ test('create: a skipped day does not shift the calendar (Draft journey does not 
 
 test('create: cruise skips the cruises sent in the last cruise email', async () => {
   const first = world();
-  await svc(first).runCreate({ now: new Date('2026-11-04T05:00:00Z') });
+  await svc(first).runCreate({ now: new Date('2026-11-05T05:00:00Z') });
   const sentKeys = first.state.journeys[0].nodes[1].data.dailyOffer.productKeys;
-  // Rates dated 3 hours before 8 Nov 09:00 Dubai, so they are fresh for that run.
-  const w = world({ journeys: [past(10, '2026-11-04', 2, 'cruise', 'completed', { productKeys: sentKeys })], fxAgeHours: 3 - 48 });
-  const res = await svc(w).runCreate({ now: new Date('2026-11-08T05:00:00Z') });
-  assert.match(res.name, /^8th November - Cruises \(Day 6\)$/);
+  // Rates dated 3 hours before 9 Nov 09:00 Dubai, so they are fresh for that run.
+  const w = world({ journeys: [past(10, '2026-11-05', 2, 'cruise', 'completed', { productKeys: sentKeys })], fxAgeHours: 3 - 48 });
+  const res = await svc(w).runCreate({ now: new Date('2026-11-09T05:00:00Z') });
+  assert.match(res.name, /^9th November - Cruises \(Day 6\)$/);
   const next = w.state.journeys.at(-1).nodes[1].data.dailyOffer.productKeys;
   assert.equal(next.filter(k => sentKeys.includes(k)).length, 0);
 });
@@ -159,7 +159,7 @@ test('final check: passes → start time set to 4 PM Dubai, prices refreshed', a
   const res = await s.runFinalCheck({ now: CHECK });
   assert.equal(res.status, 'scheduled', res.message);
   const j = w.state.journeys[0];
-  assert.equal(j.scheduled_start_at, '2026-11-06T12:00:00.000Z');   // 16:00 Dubai
+  assert.equal(j.scheduled_start_at, '2026-11-07T12:00:00.000Z');   // 16:00 Dubai
   assert.equal(j.nodes[1].data.dailyOffer.status, 'scheduled');
   // Runs again → no change.
   assert.equal((await s.runFinalCheck({ now: CHECK })).status, 'already_scheduled');
@@ -276,8 +276,8 @@ test('subject: AI unavailable → standard subject, reason recorded', async () =
 });
 
 test('send check: scheduled journey with no sends → not_sent; with sends → sent', async () => {
-  const day = (sent) => world({ journeys: [past(10, '2026-11-06', 4, 'visa', 'active')], sentJourneys: sent });
-  const at = new Date('2026-11-06T13:30:00Z');   // 17:30 Dubai
+  const day = (sent) => world({ journeys: [past(10, '2026-11-07', 4, 'visa', 'active')], sentJourneys: sent });
+  const at = new Date('2026-11-07T13:30:00Z');   // 17:30 Dubai
   const quiet = await svc(day([])).runSendCheck({ now: at });
   assert.equal(quiet.status, 'not_sent');
   assert.equal(quiet.journeyId, 10);
@@ -286,8 +286,8 @@ test('send check: scheduled journey with no sends → not_sent; with sends → s
 });
 
 test('send check: no journey today, or one already skipped → nothing to check', async () => {
-  const at = new Date('2026-11-06T13:30:00Z');
+  const at = new Date('2026-11-07T13:30:00Z');
   assert.equal((await svc(world()).runSendCheck({ now: at })).status, 'none');
-  const skipped = world({ journeys: [past(11, '2026-11-06', 4, 'visa', 'draft', { status: 'skipped' })] });
+  const skipped = world({ journeys: [past(11, '2026-11-07', 4, 'visa', 'draft', { status: 'skipped' })] });
   assert.equal((await svc(skipped).runSendCheck({ now: at })).status, 'skipped_earlier');
 });
