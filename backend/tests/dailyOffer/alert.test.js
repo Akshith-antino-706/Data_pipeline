@@ -18,6 +18,7 @@ test('alert: create only alerts on the last attempt of the day', () => {
   assert.equal(alertFor('create', { status: 'exists' }, { lastTry: true }), null);
 });
 
+
 test('alert: final check alerts when skipped or when no journey exists; not when scheduled', () => {
   assert.equal(alertFor('final check', { status: 'skipped', reason: 'audience_empty', message: 'x', journeyId: 7 }).journeyId, 7);
   assert.equal(alertFor('final check', { status: 'none' }).reason, 'no_journey');
