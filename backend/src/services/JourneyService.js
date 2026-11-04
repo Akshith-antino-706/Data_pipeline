@@ -1119,7 +1119,7 @@ class JourneyService {
     await this._refreshStamp(jid, { _exit: new Date().toISOString() });
   }
 
-  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate, recommendationType, emailCredential, triggerSource }) {
+  static async create({ name, description, segmentId, strategyId, nodes, edges, goalType, goalValue, createdBy, audience, exitOnConversion, scheduledStartAt, testMode, testEmail, testWaitSec, journeyType, triggerEvent, triggerFromDate, recommendationType, emailCredential, triggerSource, enrollmentMode, broadcastCooldownMin }) {
     // Parse custom segment format "custom:ID"
     let stdSegmentId = null;
     let customSegmentId = null;
@@ -1156,11 +1156,21 @@ class JourneyService {
     // (both RabbitMQ feeds). Anything unrecognised falls back to 'gtm'.
     const trigSource = ['gtm', 'giveaway', 'affiliate'].includes(triggerSource) ? triggerSource : 'gtm';
 
+    // DELIVERY MODE — only a CONTINUOUS journey can broadcast: one event reaching the
+    // WHOLE segment; anything else (and every fixed journey) stays per-user, which is how
+    // every journey created before this field behaved.
+    const enrollMode = (jType === 'gtm' && enrollmentMode === 'segment_broadcast') ? 'segment_broadcast' : 'per_user';
+    // A broadcast journey with no segment would enrol nobody and look healthy doing it.
+    if (enrollMode === 'segment_broadcast' && !customSegmentId && !stdSegmentId) {
+      throw new Error('A broadcast journey needs a segment — that segment is its audience.');
+    }
+    const cooldown = Number.isFinite(Number(broadcastCooldownMin)) ? Math.max(0, Math.trunc(Number(broadcastCooldownMin))) : 60;
+
     const { rows: [journey] } = await db.query(`
-      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source, enrollment_mode, broadcast_cooldown_min)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       RETURNING *
-    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null), recType, emailCred, trigSource]);
+    `, [name, description, stdSegmentId, customSegmentId, strategyId, JSON.stringify(nodes || []), JSON.stringify(edges || []), goalType, goalValue, createdBy, audience || 'all', exitOnConversion !== false, scheduledStartAt || null, testMode || false, testEmail || null, testWaitSec || 30, jType, trigEvent, (jType === 'gtm' ? (triggerFromDate || null) : null), recType, emailCred, trigSource, enrollMode, cooldown]);
 
     // ── Snapshot segment users at creation time (NORMAL journeys only) ──────
     // GTM journeys are event-triggered (no snapshot) — users enter when they fire
@@ -1205,7 +1215,7 @@ class JourneyService {
   static async update(journeyId, fields) {
     const sets = [];
     const params = [journeyId];
-    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date', recommendation_type: 'recommendation_type', email_credential: 'email_credential', trigger_source: 'trigger_source' };
+    const allowed = { name: 'name', description: 'description', segment_id: 'segment_id', custom_segment_id: 'custom_segment_id', nodes: 'nodes', edges: 'edges', status: 'status', goal_type: 'goal_type', goal_value: 'goal_value', audience: 'audience', exit_on_conversion: 'exit_on_conversion', scheduled_start_at: 'scheduled_start_at', test_mode: 'test_mode', test_email: 'test_email', test_interval_min: 'test_interval_min', journey_type: 'journey_type', trigger_event: 'trigger_event', trigger_from_date: 'trigger_from_date', recommendation_type: 'recommendation_type', email_credential: 'email_credential', trigger_source: 'trigger_source', enrollment_mode: 'enrollment_mode', broadcast_cooldown_min: 'broadcast_cooldown_min' };
 
     for (const [key, col] of Object.entries(allowed)) {
       if (fields[key] !== undefined) {

@@ -43,6 +43,71 @@ class ContinuousJourneyService {
   }
 
   /**
+   * BROADCAST ENTRY — put the journey's WHOLE SEGMENT onto the belt in one statement.
+   *
+   * This is `enter()`'s one-to-many twin, used when enrollment_mode='segment_broadcast'.
+   * The segment is the audience, not a gate: whoever triggered the event is irrelevant and
+   * need not be a member.
+   *
+   * `itemId` is the EVENT id, shared by the whole cohort, so the UNIQUE
+   * (journey, user, item) constraint makes a redelivery of the same event a no-op while a
+   * NEW event boards everyone again — which is what "re-send on every qualifying event" means.
+   *
+   * Set-based on purpose: _isSegmentMember costs one round-trip per contact, fine for a
+   * single-person event but thousands of queries for a large segment. One INSERT…SELECT is
+   * a single statement at any size and keeps the ON CONFLICT guarantee.
+   *
+   * Returns the number of contacts actually boarded (0 when the cooldown blocks it, the
+   * journey has no segment, or everyone was already on this cohort).
+   *
+   * @param {{ journey: object, firstNodeId: string, itemId: string|number,
+   *           eventId?: string|number|null, entryDelayMs?: number }} args
+   * @returns {Promise<number>}
+   */
+  static async enterSegment({ journey, firstNodeId, itemId, eventId = null, entryDelayMs = 0 }) {
+    if (!journey?.journey_id || !firstNodeId) return 0;
+    const jid = journey.journey_id;
+
+    // COOLDOWN, claimed atomically: the UPDATE only matches when the window has passed, so
+    // two events arriving together can never both fan out. 0 disables it.
+    const cooldown = Number.isFinite(Number(journey.broadcast_cooldown_min)) ? Number(journey.broadcast_cooldown_min) : 60;
+    const { rowCount } = await db.query(
+      `UPDATE journey_flows SET last_broadcast_at = NOW()
+        WHERE journey_id = $1
+          AND (last_broadcast_at IS NULL OR last_broadcast_at <= NOW() - ($2 || ' minutes')::interval)`,
+      [jid, String(Math.max(0, cooldown))]
+    );
+    if (!rowCount) {
+      console.log(`[Broadcast ${jid}] skipped — inside the ${cooldown}-minute cooldown`);
+      return 0;
+    }
+
+    // Same segment SQL the fixed engine's fan-out uses, so membership means the same thing
+    // everywhere. No segment → null → nobody is mailed (the J193 guard).
+    const { default: JourneyService } = await import('./JourneyService.js');
+    const segRows = await JourneyService._journeySegmentRows(journey).catch(() => null);
+    if (!segRows) {
+      console.warn(`[Broadcast ${jid}] no segment — nobody enrolled`);
+      return 0;
+    }
+
+    const { sql, params } = segRows;
+    const n = params.length;
+    const fireAt = new Date(Date.now() + Math.max(0, entryDelayMs));
+    const { rows } = await db.query(
+      `INSERT INTO gtm_journey_entries
+         (journey_id, unified_id, item_id, current_node_id, status, entered_at, next_fire_at, last_event_id)
+       SELECT $${n + 1}, m.id, $${n + 2}, $${n + 3}, 'active', NOW(), $${n + 4}, $${n + 5}
+         FROM (${sql}) m
+       ON CONFLICT (journey_id, unified_id, item_id) DO NOTHING
+       RETURNING unified_id`,
+      [...params, jid, String(itemId), firstNodeId, fireAt, eventId ?? null]
+    );
+    console.log(`[Broadcast ${jid}] enrolled ${rows.length} contact(s) @ ${firstNodeId} (cohort ${itemId})`);
+    return rows.length;
+  }
+
+  /**
    * PROGRESSION CRON (every 1 min). Fire all due rows of active continuous journeys:
    * re-check exit, then enqueue the current node's send job. Advancing happens in the
    * worker after a successful send (so failures retry without skipping a node).
