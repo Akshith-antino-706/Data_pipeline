@@ -7,7 +7,8 @@
     "dev": "node --watch server.js",
     "giveaway:consumer": "node src/giveaway-consumer.js",
     "watch:giveaway": "node scripts/watch-giveaway.mjs",
-    "test:daily-offer": "node --expose-gc --test tests/dailyOffer/"
+    "test:daily-offer": "node --expose-gc --test tests/dailyOffer/",
+    "test:email-encoding": "node --test tests/emailEncoding/"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",

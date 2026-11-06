@@ -8,6 +8,7 @@
  */
 
 import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import { asciiSafeHtml } from '../../utils/asciiSafeHtml.js';
 
 const DEFAULT_API_URL  = 'http://95.211.169.194/apis/aws/send/index.php';
 const DEFAULT_FROM     = 'Rayna Tours <explore@promotions.raynatours.com>';
@@ -45,7 +46,9 @@ export class ChatheadEmailChannel {
       from:         fromAddress || fromEmail(),
       subject,
       destinations: [to],
-      body:         html,
+      // ASCII-only body: the relay's MIME message may not say UTF-8, and some mail apps then
+      // misread raw ₹/€/£/emoji (₹ shows as "â‚¹"). Character references show right everywhere.
+      body:         asciiSafeHtml(html),
       campaign_id:  campaignId(),
     };
 
