@@ -354,6 +354,20 @@ async function processEmail(job) {
     }
   }
 
+  
+  // ── Per-recipient product / trip name ──
+  // Mirrors the continuous engine. A segment-based send has no triggering event either, so
+  // ITEM_NAME is blank and the name must come from the rayna_* booking. Handled in BOTH
+  // engines so a template carrying %%TRIP_NAME%% can never ship the raw sentinel depending
+  // on which journey type happens to send it. The includes() guard keeps the extra query
+  // off every template that doesn't use it.
+  if (html && html.includes('%%TRIP_NAME%%')) {
+    const { buildTripName } = await import('../../utils/tripName.js');
+    const tripName = await buildTripName(d.customerId).catch(() => 'your recent booking');
+    html = html.split('%%TRIP_NAME%%').join(tripName);
+    console.log(`[Worker:email]   trip name for customer=${d.customerId}: "${tripName}"`);
+  }
+
   // ── Daily offer email: per-recipient prices (mobile country → market + currency) ──
   // Only daily-offer templates start with the marker, so this is skipped for every
   // other journey. An email that can't be fully priced is never sent.
