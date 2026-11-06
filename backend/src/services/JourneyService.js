@@ -865,16 +865,21 @@ class JourneyService {
       const evts = [...new Set(journey.trigger_event.split(',').map(s => s.trim()).filter(Boolean))];
       if (evts.length) return evts;
     }
-    if (journey.custom_segment_id) {
-      const seg = await CustomSegmentService.getById(journey.custom_segment_id).catch(() => null);
-      const evts = [];
-      for (const c of (seg?.conditions || [])) {
-        if (c.gtmEvent) evts.push(c.gtmEvent);                       // { gtmEvent: 'add_to_cart' }
-        if (Array.isArray(c.gtmEvents)) evts.push(...c.gtmEvents);   // { gtmEvents: ['add_to_cart'] }
-      }
-      const cleaned = [...new Set(evts.filter(Boolean))];
-      if (cleaned.length) return cleaned;
-    }
+    // NOTE (6 Nov 2026): trigger events are NO LONGER inferred from the segment's gtm
+    // conditions. That inference treated a segment FILTER ("people who ever purchased")
+    // as a journey TRIGGER, so any per-user journey whose segment mentioned a gtm event
+    // was silently reclassified as event-triggered. Consequences were invisible but total:
+    // _gtmFanout and _gtmSnapshotCount took the per-item branch (and _GTM_EXIT_SQL then
+    // excluded everyone, giving 0 entries), and dailyContinuousReEnroll SKIPPED the
+    // journey entirely — so its segment never refreshed.
+    //
+    // It also contradicted the create form, which states: "No event → one entry per
+    // segment user".
+    //
+    // Blast radius checked before removal: 9 segments carry gtm conditions, 3 journeys use
+    // them (496, 500, 512), and ALL THREE set trigger_event explicitly — so they return
+    // from the branch above and never reached this code. Zero journeys changed behaviour.
+    // trigger_event is now the single source of truth.
     // No GTM event configured (dropdown left blank, segment has no gtm condition):
     // PER-USER mode → one entry per segment user (not per item).
     return [];
