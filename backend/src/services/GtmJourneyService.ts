@@ -562,6 +562,25 @@ class GtmJourneyService {
       }
     }
 
+    // ── Per-recipient PRODUCT / TRIP NAME (%%TRIP_NAME%%) ──
+    // placeholderResolver's ITEM_NAME comes from the triggering GTM event, so it is blank on
+    // every per-user journey (trigger_event = NULL). Prefer the event's own item name when
+    // there IS one, else fall back to the most recent completed booking in rayna_*. Same
+    // sentinel pattern and same "latest trip" definition as the review link above, so the
+    // product named in the copy matches the trip the review link points at.
+    // ADDITIVE: only templates containing %%TRIP_NAME%% reach this.
+    if ((html && html.includes('%%TRIP_NAME%%')) || String(subject || '').includes('%%TRIP_NAME%%')) {
+      const evItem = String(eventRow?.raw_payload?.itemName || '').trim();
+      let tripName = evItem;
+      if (!tripName) {
+        const { buildTripName } = await import('../utils/tripName.js');
+        tripName = await buildTripName(c.id).catch(() => 'your recent booking');
+      }
+      html = String(html).split('%%TRIP_NAME%%').join(tripName);
+      subject = String(subject || '').split('%%TRIP_NAME%%').join(tripName);
+      console.log(`[GtmJourney ${journeyId}] trip name uid=${c.id}: "${tripName}" (${evItem ? 'from event' : 'from booking'})`);
+    }
+
     // ── AI recommendation injection + allowlist gate — additive. Existing
     //    GTM journeys have recommendation_type = NULL → this whole block is
     //    skipped. When set, REC_JOURNEY_ALLOWLIST decides delivery. ──
