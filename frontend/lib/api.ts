@@ -3,6 +3,7 @@ import type {
   UnifiedStats, SourcesBreakdown, SendLogPage, GiveawayLog,
 } from '@/types/api';
 import { loginUrlForCurrentPage } from './loginNext';
+import type { SearchContactRow, SearchJourneyRow, SearchListResponse, SearchSegmentRow, SearchTemplateRow } from '@/types/globalSearch';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -444,6 +445,21 @@ export async function downloadReportCSV(table: string, from: string, to: string)
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   saveBlob(await res.blob(), `${table}_${from}_to_${to}.csv`);
 }
+
+// ── Global search (top bar, ⌘K) ─────────────────────────────
+// Small, cancellable look-ups for the search box: a few rows per list, newest first.
+// `scope` is the audience switch (B2C/B2B/Affiliate); 'All' or empty searches everyone.
+const GLOBAL_SEARCH_LIMIT = 5;
+const scoped = (scope: string | undefined): [string, string][] => (scope && scope !== 'All' ? [['businessType', scope]] : []);
+
+export const globalSearchJourneys = (q: string, scope: string | undefined, signal?: AbortSignal) =>
+  request<SearchListResponse<SearchJourneyRow>>(`/api/v3/journeys?${toQuery([['q', q], ['light', '1'], ['page', 1], ['limit', GLOBAL_SEARCH_LIMIT], ...scoped(scope)])}`, { signal });
+export const globalSearchTemplates = (q: string, signal?: AbortSignal) =>
+  request<SearchListResponse<SearchTemplateRow>>(`/api/v2/content/templates?${toQuery([['search', q], ['fields', 'light'], ['page', 1], ['limit', GLOBAL_SEARCH_LIMIT]])}`, { signal });
+export const globalSearchSegments = (q: string, signal?: AbortSignal) =>
+  request<SearchListResponse<SearchSegmentRow>>(`/api/v3/custom-segments?${toQuery([['q', q], ['page', 1], ['limit', GLOBAL_SEARCH_LIMIT]])}`, { signal });
+export const globalSearchContacts = (q: string, scope: string | undefined, signal?: AbortSignal) =>
+  request<SearchListResponse<SearchContactRow>>(`/api/v3/unified-contacts?${toQuery([['search', q], ['page', 1], ['limit', GLOBAL_SEARCH_LIMIT], ...scoped(scope)])}`, { signal });
 
 // ── Unified Contacts ─────────────────────────────────────────
 export const getUnifiedContacts = (params: QueryParams = {}) => {

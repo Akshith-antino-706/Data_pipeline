@@ -7,7 +7,7 @@ import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
 import {
   Home, Users, Target, History, Heart, MessageSquare, GitBranch, FileText, BarChart3,
-  Globe, Code, Download, Activity, Gauge, ClipboardList, BookOpen, Menu, Search, Sun, Moon, LogOut,
+  Globe, Code, Download, Activity, Gauge, ClipboardList, BookOpen, Menu, Sun, Moon, LogOut,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -15,6 +15,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { RequireAuth } from './require-auth';
 import { SCOPES } from '@/lib/contactTypes';
+import { GlobalSearch } from '@/components/search/GlobalSearch';
 
 interface NavItem { href: string; icon: LucideIcon; label: string }
 interface NavGroup { label: string; items: NavItem[] }
@@ -66,6 +67,8 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 const ALL_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
+// Menu pages offered by the top bar search ("Go to …").
+const SEARCH_PAGES = ALL_ITEMS.map(({ href, label }) => ({ href, label }));
 
 // Most-specific match wins, so /journeys/dashboard doesn't also light up /journeys.
 function activeItem(pathname: string): NavItem | undefined {
@@ -215,11 +218,7 @@ function Topbar({ title, onOpenMenu }: { title: string; onOpenMenu: () => void }
         <img src="/rayna-logo.webp" alt="Rayna Tours" />
       </Link>
       {title && <h2 className="shell-title">{title}</h2>}
-      <div className="shell-search" aria-disabled="true" title="Global search is coming soon">
-        <Search size={16} aria-hidden="true" />
-        <span>Search (coming soon)</span>
-        <span className="shell-kbd" aria-hidden="true">⌘K</span>
-      </div>
+      <GlobalSearch pages={SEARCH_PAGES} />
       <AudienceSwitch />
       <div className="shell-actions">
         <button
