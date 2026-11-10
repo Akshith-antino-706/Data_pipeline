@@ -81,7 +81,7 @@ describe('DailyBillingSync.upsertRecords / upsertBatch', () => {
     expect(sql).toContain('ON CONFLICT (service_id, bill_serial)');
     expect(sql).not.toMatch(/service_id = EXCLUDED|bill_serial = EXCLUDED/);
     expect(sql).toContain('updated_date = NOW()');
-    expect(params).toHaveLength(15);
+    expect(params).toHaveLength(18);
     expect(params![0]).toBe('');            // bill_serial
     expect(params![5]).toBe('2026-01-02');  // travel_date
     expect(params![7]).toBe(0);             // selling_price
@@ -93,9 +93,9 @@ describe('DailyBillingSync.upsertRecords / upsertBatch', () => {
     const r = await DailyBillingSync.upsertRecords(Array.from({ length: 501 }, (_, i) => rec({ BillSerial: i })));
     expect(m.clientQuery).toHaveBeenCalledTimes(2);
     const [sql1, p1] = m.clientQuery.mock.calls[0]!;
-    expect(p1).toHaveLength(500 * 15);
-    expect(sql1).toContain('$7500)');
-    expect(m.clientQuery.mock.calls[1]![1]).toHaveLength(15);
+    expect(p1).toHaveLength(500 * 18);
+    expect(sql1).toContain('$9000)');
+    expect(m.clientQuery.mock.calls[1]![1]).toHaveLength(18);
     expect(r).toEqual({ rayna_tours: 501 });
   });
 
@@ -109,7 +109,7 @@ describe('DailyBillingSync.upsertRecords / upsertBatch', () => {
   // aborting the whole daily sync. No in-batch dedupe (DailyBillingSync.ts:126-142).
   it('dedupes rows with the same conflict key inside a batch', async () => {
     await DailyBillingSync.upsertRecords([rec({ BillSerial: 1, ServiceId: 9 }), rec({ BillSerial: 1, ServiceId: 9, SellingPrice: '20' })]);
-    expect(m.clientQuery.mock.calls[0]![1]).toHaveLength(15);
+    expect(m.clientQuery.mock.calls[0]![1]).toHaveLength(18);
   });
 });
 

@@ -102,6 +102,11 @@ export interface BillingApiRecord {
   Guest_Email?: string | null;
   Guest_Age?: string | number | null;
   BookingDate?: string | null;
+  TravelEndDate?: string | null;
+  /** Saved as customer_type, e.g. "Online B2B UAE". */
+  BusinessProviderCategory?: string | null;
+  /** Saved as booking_source, e.g. "B2B Dubai". */
+  ProfitCenterName?: string | null;
 }
 
 export interface CountryCodeInfo {

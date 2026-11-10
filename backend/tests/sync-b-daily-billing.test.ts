@@ -99,7 +99,7 @@ describe('DailyBillingSync.upsertRecords', () => {
     const out = await DailyBillingSync.upsertRecords(records);
     expect(out).toEqual({ rayna_tours: 1001 });
     expect(m.transaction).toHaveBeenCalledTimes(3);
-    const sizes = m.clientQuery.mock.calls.map(([, p]) => (p ?? []).length / 15);
+    const sizes = m.clientQuery.mock.calls.map(([, p]) => (p ?? []).length / 18);
     expect(sizes).toEqual([500, 500, 1]);
   });
 
@@ -110,7 +110,7 @@ describe('DailyBillingSync.upsertRecords', () => {
     const [sql, params] = m.clientQuery.mock.calls[0]!;
     expect(sql).toContain('ON CONFLICT (service_id, bill_serial)');
     expect(sql).not.toMatch(/service_id = EXCLUDED|bill_serial = EXCLUDED/);
-    expect(params).toHaveLength(15);
+    expect(params).toHaveLength(18);
     expect(params![5]).toBe('2026-05-01');
     expect(params![7]).toBe(0);
     expect(params![9]).toBe('Ann');
