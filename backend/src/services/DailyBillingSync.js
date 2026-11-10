@@ -24,7 +24,11 @@ const COLUMNS = [
   'bill_serial', 'bill_no', 'bill_type', 'is_b2b', 'service_id',
   'travel_date', 'service_name', 'selling_price', 'is_cancel', 'guest_name',
   'nationality', 'guest_contact', 'guest_email', 'guest_age', 'booking_date',
+  'travel_end_date', 'customer_type', 'booking_source',
 ];
+
+// Filled on older rows by the 1 Sep CSV load. A blank from the API must never wipe them.
+const KEEP_IF_BLANK = new Set(['travel_end_date', 'customer_type', 'booking_source']);
 
 const BATCH_SIZE = 500;
 
@@ -32,7 +36,19 @@ function getTable(billType) {
   return TABLE_MAP[(billType || '').trim().toLowerCase()] || 'rayna_others';
 }
 
-function mapRow(r) {
+// '' or whitespace → null, so a missing value stays NULL instead of an empty string.
+function textOrNull(v) {
+  const s = String(v ?? '').replace(/\0/g, '');
+  return s.trim() === '' ? null : s;
+}
+
+// "2026-11-13T00:00:00" → "2026-11-13"; anything that isn't a date → null (the column is DATE).
+function dateOrNull(v) {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v ?? '').trim());
+  return m ? m[1] : null;
+}
+
+export function mapRow(r) {
   return {
     bill_serial:   String(r.BillSerial ?? ''),
     bill_no:       String(r.BillNo ?? ''),
@@ -49,6 +65,9 @@ function mapRow(r) {
     guest_email:   r.Guest_Email ?? '',
     guest_age:     String(r.Guest_Age ?? ''),
     booking_date:  r.BookingDate ?? '',
+    travel_end_date: dateOrNull(r.TravelEndDate),
+    customer_type:   textOrNull(r.BusinessProviderCategory),
+    booking_source:  textOrNull(r.ProfitCenterName),
   };
 }
 
@@ -148,7 +167,9 @@ class DailyBillingSync {
     if (rows.length === 0) return;
 
     const updateCols = COLUMNS.filter(c => c !== 'service_id' && c !== 'bill_serial');
-    const updateSet = updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ');
+    const updateSet = updateCols.map(c => (KEEP_IF_BLANK.has(c)
+      ? `${c} = COALESCE(EXCLUDED.${c}, ${tableName}.${c})`
+      : `${c} = EXCLUDED.${c}`)).join(', ');
 
     const values = [];
     const valueClauses = rows.map((row, rowIdx) => {
