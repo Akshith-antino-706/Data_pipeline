@@ -11,6 +11,7 @@ import type { ChatheadTemplateBody, ChatheadTemplateButton, ChatheadTemplatePayl
 import type { SendBroadcastResult } from '../types/servicesChatHead.js';
 import type { U2ChBroadcastBody, U2ChRegisterBody, U2ChDataFileBody, U2ChTestSendBody, U2DataFileRow } from '../types/u2Routes.js';
 import { clampInt } from '../utils/validate.js';
+import { buildCarouselCards } from '../utils/waCarousel.js';
 
 const router = express.Router();
 
@@ -41,6 +42,83 @@ router.get('/templates', async (req: QueryRequest, res: Response) => {
     const r = await fetch(`${CH_BASE}/account/templates/list/?c=${CLIENT}&channel=${encodeURIComponent(channel as string)}`);
     const j = await r.json() as { data?: unknown[] };
     res.json({ success: true, data: j.data || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: (err as Error).message });
+  }
+});
+
+// GET /api/v3/chathead/templates/all?channel=40 — approved templates for the channel PLUS
+// recent templates that are not approved yet (pending / rejected / paused).
+// ChatHead's templates/list only returns APPROVED templates, and has no call that lists the
+// rest, so they are found by ID: any recent ID missing from every channel's approved list,
+// plus a short probe above the newest ID, is looked up with templates/status. ChatHead does
+// not say which channel an unapproved template belongs to, so those come back as one
+// channel-less group. Read-only; the scan is cached for 5 minutes.
+const SCAN_WINDOW = parseInt(process.env.WA_TPL_SCAN_WINDOW || '200', 10);
+const SCAN_TTL_MS = 5 * 60 * 1000;
+interface OtherTemplate { id: string; meta_status: string; meta_category: string | null; label?: string }
+interface ChListJson extends ChatheadJson { data?: { id: string | number }[] }
+interface ChStatusJson extends ChatheadJson { data?: { meta_status?: string; meta_category?: string } }
+let _otherTplCache: { at: number; data: OtherTemplate[] } | null = null;
+
+const chJson = async <T extends ChatheadJson = ChatheadJson>(url: string, init?: RequestInit): Promise<T> => {
+  const r = await fetch(url, init);
+  return parseChatHeadJson((await r.text()).replace(/^\uFEFF/, '')) as T;
+};
+const tplStatus = (id: number | string) => chJson<ChStatusJson>(`${CH_BASE}/account/templates/status/index.php?c=${CLIENT}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ c: CLIENT, app_key: APP_KEY, template_id: id }),
+}).catch(() => null);
+const tplLabel = async (id: number | string): Promise<string> => {
+  try {
+    const r = await fetch(`${CH_ACCOUNT_BASE}/template_content/show`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ c: CLIENT, id: String(id), app_key: APP_KEY, formate: 'html' }).toString(),
+    });
+    const text = (await r.text()).replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    return text.startsWith('{') ? '' : text.slice(0, 70);
+  } catch { return ''; }
+};
+
+async function scanUnapprovedTemplates(): Promise<OtherTemplate[]> {
+  if (_otherTplCache && Date.now() - _otherTplCache.at < SCAN_TTL_MS) return _otherTplCache.data;
+  const { data: channels = [] } = await chJson<ChListJson>(`${CH_BASE}/account/channels/list/?c=${CLIENT}`);
+  const lists = await Promise.all(channels.map(ch =>
+    chJson<ChListJson>(`${CH_BASE}/account/templates/list/?c=${CLIENT}&channel=${encodeURIComponent(ch.id)}`).then(j => j.data || []).catch(() => [])));
+  const approved = new Set(lists.flat().map(t => Number(t.id)));
+  const maxId = Math.max(0, ...approved);
+
+  const found: OtherTemplate[] = [];
+  const check = async (id: number): Promise<boolean> => {
+    const s = await tplStatus(id);
+    if (s?.status !== 'success' || !s.data) return false;              // deleted / never existed
+    found.push({ id: String(id), meta_status: s.data.meta_status || 'UNKNOWN', meta_category: s.data.meta_category || null });
+    return true;
+  };
+  const gaps: number[] = [];
+  for (let id = Math.max(1, maxId - SCAN_WINDOW + 1); id <= maxId; id++) if (!approved.has(id)) gaps.push(id);
+  await Promise.all(gaps.map(check));
+  // Newer than the newest approved one: stop after 3 IDs in a row that don't exist.
+  for (let id = maxId + 1, misses = 0; misses < 3 && id <= maxId + 25; id++) misses = (await check(id)) ? 0 : misses + 1;
+
+  const rows = found.filter(t => String(t.meta_status).toUpperCase() !== 'APPROVED');
+  await Promise.all(rows.map(async t => { t.label = await tplLabel(t.id); }));
+  rows.sort((a, b) => Number(b.id) - Number(a.id));
+  _otherTplCache = { at: Date.now(), data: rows };
+  return rows;
+}
+
+router.get('/templates/all', async (req: QueryRequest, res: Response) => {
+  const channel = req.query.channel;
+  if (!channel) return res.status(400).json({ success: false, error: 'channel is required' });
+  try {
+    if (req.query.refresh === '1') _otherTplCache = null;
+    const [list, other] = await Promise.all([
+      chJson<ChListJson>(`${CH_BASE}/account/templates/list/?c=${CLIENT}&channel=${encodeURIComponent(channel as string)}`),
+      scanUnapprovedTemplates(),
+    ]);
+    const approved = (list.data || []).map(t => ({ ...t, meta_status: 'APPROVED' }));
+    res.json({ success: true, data: { approved, other } });
   } catch (err) {
     res.status(500).json({ success: false, error: (err as Error).message });
   }
@@ -340,7 +418,7 @@ function parseChatHeadJson(raw: string): ChatheadJson {
 }
 
 const TPL_CATEGORIES: (string | undefined)[] = ['utility', 'marketing', 'authentication'];
-const TPL_FORMATS: (string | undefined)[]    = ['text', 'media_image', 'media_document', 'media_video'];
+const TPL_FORMATS: (string | undefined)[]    = ['text', 'media_image', 'media_document', 'media_video', 'carousel'];
 const BTN_TYPES: (string | undefined)[]      = ['quick_reply', 'call_to_action', 'url_dynamic', 'OTP'];
 
 router.post('/templates/create', async (req: QueryRequest<ChatheadTemplateBody | undefined>, res: Response) => {
@@ -352,10 +430,12 @@ router.post('/templates/create', async (req: QueryRequest<ChatheadTemplateBody |
     if (!TPL_CATEGORIES.includes(b.category))      return res.status(400).json({ success: false, error: `category must be one of: ${TPL_CATEGORIES.join(', ')}` });
 
     const isAuth = b.category === 'authentication';
+    // Carousel: media + buttons live on the cards (utils/waCarousel.js), not at the top level.
+    const isCarousel = !isAuth && b.formate === 'carousel';
     if (!isAuth) {
       if (!TPL_FORMATS.includes(b.formate))        return res.status(400).json({ success: false, error: `formate must be one of: ${TPL_FORMATS.join(', ')}` });
       if (!b.body || !String(b.body).trim())       return res.status(400).json({ success: false, error: 'body is required' });
-      if (b.formate !== 'text' && !b.media_file)   return res.status(400).json({ success: false, error: `media_file (URL) is required for formate=${b.formate}` });
+      if (!isCarousel && b.formate !== 'text' && !b.media_file) return res.status(400).json({ success: false, error: `media_file (URL) is required for formate=${b.formate}` });
     }
 
     // buttons — validate each by its type/sub_type/otp_type; trim stray whitespace in value/text
@@ -402,9 +482,15 @@ router.post('/templates/create', async (req: QueryRequest<ChatheadTemplateBody |
       payload.formate = b.formate;
       payload.body = stripEmoji(b.body);
       if (b.body_examples && typeof b.body_examples === 'object') payload.body_examples = b.body_examples;
-      if (b.footer_text) payload.footer_text = stripEmoji(b.footer_text);
-      if (b.formate !== 'text') payload.media_file = b.media_file;
-      if (buttons.length) payload.buttons = buttons.map(bt => ({ ...bt, ...(bt.text ? { text: stripEmoji(bt.text) } : {}) }));
+      if (isCarousel) {
+        const built = buildCarouselCards(b, stripEmoji);
+        if (built.error) return res.status(400).json({ success: false, error: built.error });
+        payload.cards = built.cards;
+      } else {
+        if (b.footer_text) payload.footer_text = stripEmoji(b.footer_text);
+        if (b.formate !== 'text') payload.media_file = b.media_file;
+        if (buttons.length) payload.buttons = buttons.map(bt => ({ ...bt, ...(bt.text ? { text: stripEmoji(bt.text) } : {}) }));
+      }
     }
 
     // URL MUST end in /index.php — otherwise ChatHead 200s with an empty body (silent drop).
