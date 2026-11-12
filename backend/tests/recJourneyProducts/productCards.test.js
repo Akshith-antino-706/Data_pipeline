@@ -19,10 +19,14 @@ mock.module(new URL('../../src/config/database.js', import.meta.url).href, {
   exports: { default: fakeDb, query: fakeQuery, transaction: async () => { throw new Error('no db in tests'); } },
 });
 
-// Cached recommendations per user, as getForUser would return them.
+// Cached recommendations per user, as getForUser would return them. No bookings and
+// nothing to build here — the resolver's own order is covered in resolver.test.js.
 const CACHE = new Map();
 mock.module(new URL('../../src/services/RecommendationRankingService.js', import.meta.url).href, {
-  exports: { getForUser: async ({ unifiedId }) => CACHE.get(unifiedId) || null },
+  exports: { getForUser: async ({ unifiedId }) => CACHE.get(unifiedId) || null, computeForUser: async () => null },
+});
+mock.module(new URL('../../src/services/BookingLookupService.js', import.meta.url).href, {
+  exports: { findFor: async () => null },
 });
 
 const { expandProductsBlockForUser, countRenderedProducts, MIN_REC_PRODUCTS } =

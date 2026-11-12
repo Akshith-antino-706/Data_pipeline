@@ -309,12 +309,14 @@ export const MIN_REC_PRODUCTS = 3;
 
 /**
  * Expand only the {{#products}}…{{/products}} block for one recipient.
- * Returns { html, productsUsed, source, fromCache }. Other placeholders are untouched.
+ * Products come from RecommendationResolver (saved picks for the current booking,
+ * else built now; city → country → Dubai). Returns { html, productsUsed, source,
+ * fromCache }. Other placeholders are untouched.
  */
 export async function expandProductsBlockForUser({ templateHtml, unifiedId, recommendationType, market: marketOverride = null } = {}) {
   if (!templateHtml) throw new Error('templateHtml is required');
-  const { getForUser } = await import('./RecommendationRankingService.js');
-  const cached = unifiedId && recommendationType ? await getForUser({ unifiedId, recommendationType }) : null;
+  const { resolveRecProductsForUser } = await import('./RecommendationResolver.js');
+  const picked = unifiedId && recommendationType ? await resolveRecProductsForUser({ unifiedId, recommendationType }) : null;
 
   let market = marketOverride;
   if (!market) {
@@ -325,12 +327,12 @@ export async function expandProductsBlockForUser({ templateHtml, unifiedId, reco
     market = resolveMarket(contact || {});
   }
 
-  const products = await hydrateProducts(cached?.productIds || [], market);
+  const products = await hydrateProducts(picked?.productIds || [], market);
   return {
     html: _expandProductsBlock(templateHtml, products),
     productsUsed: products,
-    source: cached?.source || 'no_cached_row',
-    fromCache: !!cached,
+    source: picked ? `${picked.recommendationType}:${picked.source}` : 'none',
+    fromCache: !!picked?.productIds?.length && !String(picked.source).startsWith('built_now'),
   };
 }
 
