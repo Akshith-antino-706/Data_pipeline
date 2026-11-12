@@ -194,7 +194,6 @@ describe('Data Pipeline page', () => {
     expect(api.getRaynaSyncStatus).not.toHaveBeenCalled();
     expect(api.triggerRaynaSync).not.toHaveBeenCalled();
     expect(api.triggerRaynaSyncEndpoint).not.toHaveBeenCalled();
-    expect(api.refreshBookingMapping).not.toHaveBeenCalled();
   });
 
   describe('Status center', () => {

@@ -6,7 +6,7 @@ interface FirstMsgResult { id: number; wa_id: string; msg: string | null }
 
 /**
  * Fetches the first message for each chat conversation from ChatHead API
- * and updates chats.first_msg_text + customer_master.first_msg_text
+ * and updates chats.first_msg_text
  *
  * API: GET https://chathead.io/apis/wa/first_msg/?from={wa_id}&to={receiver}
  * Returns: { status: "success", msg: "..." }

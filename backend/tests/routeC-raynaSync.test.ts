@@ -203,17 +203,6 @@ describe('GET /mapping-stats', () => {
 });
 
 describe('POST endpoints', () => {
-  it('refresh-mapping runs the mapping SQL via the mocked query', async () => {
-    const r = await call('/refresh-mapping', 'POST');
-    expect(r.status).toBe(200);
-    expect(mockQuery).toHaveBeenCalledTimes(1);
-    expect(mockQuery.mock.calls[0][0].length).toBeGreaterThan(0);
-  });
-  it('refresh-mapping query failure → 500', async () => {
-    mockQuery.mockRejectedValue(new Error('pg'));
-    expect((await call('/refresh-mapping', 'POST')).status).toBe(500);
-  });
-
   for (const ep of ['ingest', 'ingest-dedup'] as const) {
     const svcFn = ep === 'ingest' ? rayna.ingestRecords : rayna.ingestRecordsDedup;
     it(`${ep}: empty body / object / empty array → 400`, async () => {

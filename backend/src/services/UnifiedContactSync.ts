@@ -7,32 +7,6 @@ import { query } from '../config/database.js';
 export default class UnifiedContactSync {
 
   /**
-   * Sync new contacts from contacts_raw that aren't in unified_contacts yet
-   */
-  static async syncNewContacts() {
-    const { rowCount } = await query(`
-      INSERT INTO unified_contacts (email_key, email, phone, phone_key, name, company_name, city, country, contact_type, sources, first_seen_at)
-      SELECT DISTINCT ON (LOWER(TRIM(cr.email)))
-        LOWER(TRIM(cr.email)), cr.email, cr.mobile,
-        CASE WHEN cr.mobile IS NOT NULL AND LENGTH(REGEXP_REPLACE(cr.mobile, '[^0-9]', '', 'g')) >= 7
-             AND RIGHT(REGEXP_REPLACE(cr.mobile, '[^0-9]', '', 'g'), 10) !~ '^0+$'
-             AND TRIM(cr.mobile) NOT IN ('0','00','000','NA','N/A','na')
-             THEN RIGHT(REGEXP_REPLACE(cr.mobile, '[^0-9]', '', 'g'), 10) END,
-        NULLIF(TRIM(cr.name), ''), NULLIF(TRIM(cr.company_name), ''), NULLIF(TRIM(cr.city), ''), NULLIF(TRIM(cr.country), ''),
-        cr.contact_type, 'contacts', cr.created_at
-      FROM contacts_raw cr
-      LEFT JOIN unified_contacts uc ON uc.email_key = LOWER(TRIM(cr.email))
-      WHERE cr.email IS NOT NULL AND TRIM(cr.email) != '' AND uc.unified_id IS NULL
-      ORDER BY LOWER(TRIM(cr.email)),
-        (CASE WHEN cr.name IS NOT NULL AND TRIM(cr.name) NOT IN ('N/A','NA','') THEN 1 ELSE 0 END +
-         CASE WHEN cr.company_name IS NOT NULL THEN 1 ELSE 0 END) DESC
-      ON CONFLICT DO NOTHING
-    `);
-    console.log(`[UnifiedSync] New contacts added: ${rowCount}`);
-    return rowCount;
-  }
-
-  /**
    * Sync new chat customers + update chat counts for existing
    */
   static async syncChats() {
@@ -1048,7 +1022,6 @@ export default class UnifiedContactSync {
     console.log('[UnifiedSync] Starting incremental sync...');
 
     const chatContacts = await this.refreshChatContacts();
-    const contacts = await this.syncNewContacts();
     const chats = await this.syncChats();
     const rayna = await this.syncRaynaBookings();
     const newRayna = await this.syncNewRaynaContacts();
@@ -1065,6 +1038,6 @@ export default class UnifiedContactSync {
     const duration = ((Date.now() - start) / 1000).toFixed(1);
     console.log(`[UnifiedSync] Done in ${duration}s`);
 
-    return { chatContacts, contacts, chats, rayna, newRayna, crmBookings, unsub, ga4gtm, newGTM, relinked, raynaUsers, segments, occasions, classified, duration };
+    return { chatContacts, chats, rayna, newRayna, crmBookings, unsub, ga4gtm, newGTM, relinked, raynaUsers, segments, occasions, classified, duration };
   }
 }

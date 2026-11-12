@@ -131,18 +131,9 @@ export interface EnrichmentUpdates {
   [field: string]: string | null | undefined;
 }
 
-export interface EnrichmentLog {
-  field: string;
-  old: string | null;
-  new: string;
-  source: string;
-  confidence: number;
-}
-
 export interface Enrichment {
   email: string;
   updates: EnrichmentUpdates;
-  logs: EnrichmentLog[];
 }
 
 /** One GA4 row from BigQuery; BQ DATE/TIMESTAMP values arrive as { value } wrappers. */

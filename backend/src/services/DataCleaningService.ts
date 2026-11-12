@@ -164,7 +164,6 @@ export class DataCleaningService {
 
     for (const row of rows) {
       const updates: EnrichmentUpdates = {};
-      const logs = [];
 
       // 1. Clean phone
       const phoneRaw = row.phone || row.mobile || row.whatsapp_id;
@@ -172,13 +171,11 @@ export class DataCleaningService {
       if (phoneData && !row.phone_clean) {
         updates.phone_clean = phoneData.cleaned;
         updates.phone_country_code = phoneData.countryCode;
-        logs.push({ field: 'phone_clean', old: row.phone, new: phoneData.cleaned, source: 'normalization', confidence: 0.95 });
       }
 
       // 2. Infer nationality from phone country code (if missing)
       if (!row.nationality && phoneData && phoneData.countryInfo) {
         updates.nationality = phoneData.countryInfo.nationality;
-        logs.push({ field: 'nationality', old: null, new: phoneData.countryInfo.nationality, source: 'country_code', confidence: 0.7 });
       }
 
       // 3. Infer gender from name (if missing)
@@ -186,7 +183,6 @@ export class DataCleaningService {
         const gender = DataCleaningService.inferGender(row.full_name);
         if (gender) {
           updates.gender = gender;
-          logs.push({ field: 'gender', old: null, new: gender, source: 'name_inference', confidence: 0.65 });
         }
       }
 
@@ -196,14 +192,14 @@ export class DataCleaningService {
       updates.enrichment_score = (filled / fields.length).toFixed(2);
 
       if (Object.keys(updates).length > 1) { // more than just enrichment_score
-        enrichments.push({ email: row.email, updates, logs });
+        enrichments.push({ email: row.email, updates });
         enriched++;
       }
     }
 
     // Batch update
     await transaction(async (client) => {
-      for (const { email, updates, logs } of enrichments) {
+      for (const { email, updates } of enrichments) {
         const setClauses = [];
         const values = [];
         let i = 1;
@@ -217,15 +213,6 @@ export class DataCleaningService {
           `UPDATE customer_segments SET ${setClauses.join(', ')} WHERE email = $${i}`,
           values
         );
-
-        // Log enrichments
-        for (const log of logs) {
-          await client.query(
-            `INSERT INTO enrichment_log (customer_email, field_name, old_value, new_value, source, confidence)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [email, log.field, log.old, log.new, log.source, log.confidence]
-          );
-        }
       }
     });
 

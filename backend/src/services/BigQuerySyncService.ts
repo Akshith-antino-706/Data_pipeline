@@ -318,7 +318,7 @@ class BigQuerySyncService {
 
   static async getSyncStatus() {
     const { rows } = await query(
-      "SELECT * FROM sync_metadata WHERE table_name IN ('ga4_events', 'mysql_tickets', 'mysql_chats', 'mysql_travel_data', 'mysql_contacts') ORDER BY table_name"
+      "SELECT * FROM sync_metadata WHERE table_name IN ('ga4_events', 'mysql_travel_data') ORDER BY table_name"
     );
 
     const { rows: [ga4Stats] } = await query(`

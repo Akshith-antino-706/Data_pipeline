@@ -220,22 +220,21 @@ export default function SystemArchitecture() {
           <strong>The full rebuild truncates and re-creates the table.</strong> Never run it on production during the day, and never while journeys are sending. The audit lists removing or locking these rebuild endpoints as a priority.
         </Callout>
 
-        <h4 style={{ marginTop: 20 }}>3.3 UnifiedContactSync.run() — the 14 steps, in order</h4>
+        <h4 style={{ marginTop: 20 }}>3.3 UnifiedContactSync.run() — the 13 steps, in order</h4>
         <Tbl headers={['#', 'Step', 'What it does']} rows={[
           ['1', 'refreshChatContacts', 'Aggregate raw chats by WhatsApp id into chat_contacts (totals, first/last chat)'],
-          ['2', 'syncNewContacts', 'Insert new CRM contacts by email_key (never overwrites an existing person)'],
-          ['3', 'syncChats', 'Insert chat-only people by phone_key, then refresh chat counts on existing ones'],
-          ['4', 'syncRaynaBookings', 'Refresh booking counts, dates and revenue from the six rayna_* tables'],
-          ['5', 'syncNewRaynaContacts', 'Create people who booked but had no contact yet'],
-          ['6', 'syncCRMBookings', 'Booking columns that come from the CRM'],
-          ['7', 'syncUnsubscribed', 'Apply email opt-outs'],
-          ['8', 'syncGA4GTM', 'Link website events to people and update event counts'],
-          ['9', 'syncNewGTMContacts', 'Create people first seen on the website (email or phone captured)'],
-          ['10', 'relinkRawTables', 'Stamp the new unified_id back onto chats, rayna_* and event rows'],
-          ['11', 'syncRaynaContactsToUsers', 'Keep the users view in step with contacts'],
-          ['12', 'computeSegments', 'booking_status, product_tier, geography, is_indian, segment label'],
-          ['13', 'computeOccasions', 'Enter / exit people for upcoming holidays by country'],
-          ['14', 'classifyUserContactTypes', 'B2C / B2B / Affiliate from departments and registrations'],
+          ['2', 'syncChats', 'Insert chat-only people by phone_key, then refresh chat counts on existing ones'],
+          ['3', 'syncRaynaBookings', 'Refresh booking counts, dates and revenue from the six rayna_* tables'],
+          ['4', 'syncNewRaynaContacts', 'Create people who booked but had no contact yet'],
+          ['5', 'syncCRMBookings', 'Booking columns that come from the CRM'],
+          ['6', 'syncUnsubscribed', 'Apply email opt-outs'],
+          ['7', 'syncGA4GTM', 'Link website events to people and update event counts'],
+          ['8', 'syncNewGTMContacts', 'Create people first seen on the website (email or phone captured)'],
+          ['9', 'relinkRawTables', 'Stamp the new unified_id back onto chats, rayna_* and event rows'],
+          ['10', 'syncRaynaContactsToUsers', 'Keep the users view in step with contacts'],
+          ['11', 'computeSegments', 'booking_status, product_tier, geography, is_indian, segment label'],
+          ['12', 'computeOccasions', 'Enter / exit people for upcoming holidays by country'],
+          ['13', 'classifyUserContactTypes', 'B2C / B2B / Affiliate from departments and registrations'],
         ]} />
 
         <h4 style={{ marginTop: 20 }}>3.4 Other columns kept fresh by crons</h4>
@@ -247,7 +246,7 @@ export default function SystemArchitecture() {
           ['top 3 services / products (user_affinity_top3)', 'BookingAffinityService.build', '4:30 AM daily'],
         ]} />
 
-        <p><strong>Key files:</strong> <M>backend/src/services/UnifiedContactSync.ts</M> (the 14 steps), <M>UnifiedContactService.ts</M> (every read the UI makes: list, detail, stats, segmentation tree), <M>UnifiedContactBuilder.ts</M> (full rebuild), <M>ContactEnrichmentService.ts</M>.</p>
+        <p><strong>Key files:</strong> <M>backend/src/services/UnifiedContactSync.ts</M> (the 13 steps), <M>UnifiedContactService.ts</M> (every read the UI makes: list, detail, stats, segmentation tree), <M>UnifiedContactBuilder.ts</M> (full rebuild), <M>ContactEnrichmentService.ts</M>.</p>
       </Section>
 
       {/* ══════════════════════════════════════════════════════════ */}
@@ -555,7 +554,7 @@ export default function SystemArchitecture() {
           ['/api/v3/journeys', 'journeys.ts', 'CRUD, /:id/entries, /:id/timeline, /:id/start|pause|stop, /:id/test-send, /analytics/table, /process'],
           ['/api/v3/utm', 'utm.ts', 'Links (paged), /track/:token, user links'],
           ['/api/v3/gtm', 'gtm.ts', '/snippet, /datalayer, /tracking-bundle, /events, /analytics'],
-          ['/api/v3/rayna-sync', 'raynaSync.ts', 'GET /status, /mapping-stats (Status center); POST /trigger, /daily-sync, /ingest, /rebuild-contacts, /refresh-mapping (write — restrict)'],
+          ['/api/v3/rayna-sync', 'raynaSync.ts', 'GET /status, /mapping-stats (Status center); POST /trigger, /daily-sync, /ingest, /rebuild-contacts (write — restrict)'],
           ['/api/v3/mysql-sync, /api/v3/sync', 'mysqlSync.ts, sync.ts', 'Sync status and manual triggers'],
           ['/api/v3/daily-report', 'dailyReport.ts', 'Report data and downloads'],
           ['/api/v3/affinity, /booking-affinity, /products', 'productAffinity.ts, bookingAffinity.ts, products.ts', 'Recommendations, booking interests (summary, top-products, customers, CSV), catalogue'],

@@ -103,29 +103,7 @@ CREATE TABLE IF NOT EXISTS customer_segments (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. Ensure mysql_contacts has country and created_at columns (needed by contacts_raw view)
-DO $$
-BEGIN
-  ALTER TABLE mysql_contacts ADD COLUMN IF NOT EXISTS country TEXT;
-  ALTER TABLE mysql_contacts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
-EXCEPTION WHEN undefined_table THEN
-  NULL;
-END $$;
-
--- 6. contacts_raw view — normalized view over mysql_contacts for UnifiedContactSync
-CREATE OR REPLACE VIEW contacts_raw AS
-SELECT
-  id,
-  contact_type,
-  name,
-  company_name,
-  email,
-  mobile,
-  city,
-  country,
-  created_at,
-  updated_at
-FROM mysql_contacts;
+-- 5–6. (removed 2026-11-11: mysql_contacts columns + contacts_raw view — table dropped, never populated)
 
 -- 7. mv_segmentation_tree materialized view — pre-aggregated segment counts for dashboard
 DO $$

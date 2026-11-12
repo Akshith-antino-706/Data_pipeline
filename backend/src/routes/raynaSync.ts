@@ -280,21 +280,6 @@ router.get('/mapping-stats', async (req, res) => {
   }
 });
 
-// POST /api/v3/rayna-sync/refresh-mapping — re-run booking ↔ customer mapping
-router.post('/refresh-mapping', async (_req, res) => {
-  try {
-    const { readFile } = await import('fs/promises');
-    const { join, dirname } = await import('path');
-    const { fileURLToPath } = await import('url');
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const sql = await readFile(join(__dirname, '../migrations/026_booking_customer_mapping.sql'), 'utf8');
-    await query(sql);
-    res.json({ success: true, message: 'Booking ↔ Customer mapping refreshed' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
-  }
-});
-
 // POST /api/v3/rayna-sync/ingest — ingest billing records (JSON array)
 // Body: [ { BillSerial, BillNo, BillType, ... }, ... ]
 router.post('/ingest', async (req, res) => {

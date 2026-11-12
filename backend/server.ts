@@ -486,40 +486,13 @@ app.post('/api/v3/migrate-sync', async (_, res) => {
 app.post('/api/v3/migrate-mysql', async (_, res) => {
   try {
     await runMigrationFile('021_fresh_mysql_tables.sql');
-    res.json({ success: true, message: 'Fresh MySQL sync tables migration (021) succeeded — contacts, tickets, chats, departments' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
-  }
-});
-
-app.post('/api/v3/migrate-rename-columns', async (_, res) => {
-  try {
-    await runMigrationFile('022_rename_columns.sql');
-    res.json({ success: true, message: 'Column rename migration (022) succeeded — source_type→department_name, t_to→department_name, wa_id→customer_no, receiver→department_number' });
+    res.json({ success: true, message: 'Fresh MySQL sync tables migration (021) succeeded — departments, department emails' });
   } catch (err) {
     res.status(500).json({ success: false, error: (err as Error).message });
   }
 });
 
 // migrate-rayna-sync removed — old ACICO API tables replaced with new billing schema
-
-app.post('/api/v3/migrate-booking-map', async (_, res) => {
-  try {
-    await runMigrationFile('026_booking_customer_mapping.sql');
-    res.json({ success: true, message: 'Booking ↔ Customer mapping migration (026) succeeded — phone + email matching' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
-  }
-});
-
-app.post('/api/v3/migrate-chat-columns', async (_, res) => {
-  try {
-    await runMigrationFile('027_add_chat_timestamp_columns.sql');
-    res.json({ success: true, message: 'Added last_in, last_out, last_msg columns to mysql_chats' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: (err as Error).message });
-  }
-});
 
 // ── Email Tracking (Open Pixel + Click Redirect) ──────────
 // 1x1 pixel for open tracking

@@ -126,7 +126,7 @@ describe('DataCleaningService.enrichAllCustomers', () => {
     expect(clientQuery).not.toHaveBeenCalled();
   });
 
-  it('builds a parameterised UPDATE and enrichment_log inserts', async () => {
+  it('builds a parameterised UPDATE per enriched customer', async () => {
     const evilEmail = "x@y.com'; DROP TABLE customer_segments; --";
     mq.mockResolvedValueOnce(res([
       { email: evilEmail, full_name: 'Priya Shah', phone: '+91 98765 43210', mobile: null, whatsapp_id: null, country: null, nationality: null, gender: null, phone_clean: null },
@@ -140,13 +140,7 @@ describe('DataCleaningService.enrichAllCustomers', () => {
     expect(updSql).toBe('UPDATE customer_segments SET phone_clean = $1, phone_country_code = $2, nationality = $3, gender = $4, enrichment_score = $5 WHERE email = $6');
     expect(updSql).not.toContain('DROP');
     expect(updParams).toEqual(['+919876543210', '91', 'Indian', 'female', '0.80', evilEmail]);
-
-    const logs = clientQuery.mock.calls.slice(1);
-    expect(logs).toHaveLength(3);
-    for (const [sql] of logs) expect(sql).toMatch(/INSERT INTO enrichment_log/);
-    expect(logs[0][1]).toEqual([evilEmail, 'phone_clean', '+91 98765 43210', '+919876543210', 'normalization', 0.95]);
-    expect(logs[1][1]).toEqual([evilEmail, 'nationality', null, 'Indian', 'country_code', 0.7]);
-    expect(logs[2][1]).toEqual([evilEmail, 'gender', null, 'female', 'name_inference', 0.65]);
+    expect(clientQuery).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to mobile then whatsapp_id for the phone', async () => {

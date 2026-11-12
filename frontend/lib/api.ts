@@ -378,7 +378,6 @@ export const getMappingStats = (params: QueryParams = {}, opts: { fresh?: boolea
 };
 export const triggerRaynaSync = () => request('/api/v3/rayna-sync/trigger', { method: 'POST' });
 export const triggerRaynaSyncEndpoint = (ep: string) => request(`/api/v3/rayna-sync/trigger/${ep}`, { method: 'POST' });
-export const refreshBookingMapping = () => request('/api/v3/rayna-sync/refresh-mapping', { method: 'POST' });
 
 // ── V3 Migrations ───────────────────────────────────────────
 export const runV3MigrateAll = () => request('/api/v3/migrate-all', { method: 'POST' });

@@ -83,11 +83,6 @@ describe('UnifiedContactBuilder', () => {
 
 // ─────────────────────────── UnifiedContactSync ───────────────────────────
 describe('UnifiedContactSync', () => {
-  it('syncNewContacts returns rowCount', async () => {
-    m.query.mockResolvedValueOnce({ rows: [], rowCount: 12 });
-    await expect(UnifiedContactSync.syncNewContacts()).resolves.toBe(12);
-  });
-
   it('syncChats returns inserted + updated', async () => {
     m.query.mockResolvedValueOnce({ rows: [], rowCount: 2 }).mockResolvedValueOnce({ rows: [], rowCount: 5 });
     await expect(UnifiedContactSync.syncChats()).resolves.toEqual({ newChats: 2, updated: 5 });
@@ -148,7 +143,7 @@ describe('UnifiedContactSync', () => {
   });
 
   it('run calls every step in order and returns their results', async () => {
-    const steps = ['refreshChatContacts', 'syncNewContacts', 'syncChats', 'syncRaynaBookings', 'syncNewRaynaContacts',
+    const steps = ['refreshChatContacts', 'syncChats', 'syncRaynaBookings', 'syncNewRaynaContacts',
       'syncCRMBookings', 'syncUnsubscribed', 'syncGA4GTM', 'syncNewGTMContacts', 'relinkRawTables',
       'syncRaynaContactsToUsers', 'computeSegments', 'computeOccasions', 'classifyUserContactTypes'] as const;
     const order: string[] = [];
@@ -163,7 +158,7 @@ describe('UnifiedContactSync', () => {
 
   it('run stops at the first failing step', async () => {
     vi.spyOn(UnifiedContactSync, 'refreshChatContacts').mockRejectedValue(new Error('chat fail'));
-    const next = vi.spyOn(UnifiedContactSync, 'syncNewContacts');
+    const next = vi.spyOn(UnifiedContactSync, 'syncChats');
     await expect(UnifiedContactSync.run()).rejects.toThrow('chat fail');
     expect(next).not.toHaveBeenCalled();
   });
