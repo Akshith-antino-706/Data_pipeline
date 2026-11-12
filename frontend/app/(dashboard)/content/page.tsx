@@ -10,6 +10,7 @@ import {
 } from '@/lib/api';
 import WhatsAppTestSend from './WhatsAppTestSend';
 import CreateWhatsAppTemplate from './CreateWhatsAppTemplate';
+import WhatsAppTemplateLookup from './WhatsAppTemplateLookup';
 import SmsTestSend from './SmsTestSend';
 import RcsTestSend from './RcsTestSend';
 import {
@@ -1763,7 +1764,7 @@ export default function Content() {
             </div>
           </>
         )}
-        {toolTab === 'whatsapp' && (<><CreateWhatsAppTemplate /><WhatsAppTestSend /></>)}
+        {toolTab === 'whatsapp' && (<><CreateWhatsAppTemplate /><WhatsAppTemplateLookup /><WhatsAppTestSend /></>)}
         {toolTab === 'sms' && <SmsTestSend />}
         {toolTab === 'rcs' && <RcsTestSend />}
       </Card>

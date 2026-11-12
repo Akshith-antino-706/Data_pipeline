@@ -182,3 +182,32 @@ export interface InjectPerUserArgs {
   vars?: RecoTemplateVars;
   market?: MarketResolution | null;
 }
+
+/** expandProductsBlockForUser — fills only the {{#products}} block for one recipient. */
+export interface ExpandProductsArgs {
+  templateHtml?: string;
+  unifiedId?: string | number;
+  recommendationType?: string;
+  market?: MarketResolution | null;
+}
+
+export interface ExpandedProductsBlock {
+  html: string;
+  productsUsed: HydratedProduct[];
+  /** `<rec type>:<source>`, e.g. `on_trip:claude` or `future_trip:built_now:fallback`; 'none' when nothing was picked. */
+  source: string;
+  /** true when saved picks were used (nothing built at send time). */
+  fromCache: boolean;
+}
+
+/** RecommendationResolver result — the product ids an email uses and where they came from. */
+export interface ResolvedRecProducts {
+  productIds: number[];
+  /** The type the ids belong to (may differ from the journey's type after a fallback). */
+  recommendationType: string;
+  /** Saved row's source, `built_now:<source>`, or 'none'. */
+  source: string;
+}
+
+/** A card as countRenderedProducts reads it. */
+export type RenderedProductCard = Pick<HydratedProduct, 'product_name' | 'product_image'>;

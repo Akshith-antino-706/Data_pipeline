@@ -612,6 +612,9 @@ export const createWhatsAppTemplate = (payload: JsonBody) =>
 export const getWhatsAppTemplateStatus = (templateId: Id) =>
   request('/api/v3/chathead/templates/status', { method: 'POST', body: JSON.stringify({ template_id: templateId }) });
 export const getWhatsAppTemplates = (channel: string) => request(`/api/v3/chathead/templates?channel=${encodeURIComponent(channel)}`);
+// Approved templates for the channel + recent not-approved ones (pending/rejected, channel unknown)
+export const getWhatsAppTemplatesAll = (channel: string, { refresh = false }: { refresh?: boolean } = {}) =>
+  request(`/api/v3/chathead/templates/all?channel=${encodeURIComponent(channel)}${refresh ? '&refresh=1' : ''}`);
 export const previewWhatsAppTemplate = (id: Id) => request(`/api/v3/chathead/templates/${encodeURIComponent(id)}/preview`);
 // ── SMS (Gupshup) test send ──
 export const getSmsConfig    = () => request('/api/v3/gupshup/sms/config');

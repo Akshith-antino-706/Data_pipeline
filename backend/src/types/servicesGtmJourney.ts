@@ -125,8 +125,3 @@ export interface GiveawayEventRow {
   points?: string | number | null;
 }
 
-/** Optional diagnostics some injectPerUserProducts branches return. */
-export interface InjectedRecMeta {
-  source?: string;
-  fromCache?: boolean;
-}

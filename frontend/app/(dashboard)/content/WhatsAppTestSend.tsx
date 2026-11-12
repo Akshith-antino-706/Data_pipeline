@@ -17,7 +17,7 @@ import { getWhatsAppChannels, getWhatsAppTemplates, whatsAppTestSend, previewWha
  * as-is, after stripping anything executable — the content is first-party
  * (our own ChatHead account) but we still don't trust it enough to run scripts.
  */
-function sanitizePreviewHtml(raw: unknown): string {
+export function sanitizePreviewHtml(raw: unknown): string {
   if (!raw) return '';
   return String(raw)
     .replace(/<\/?(script|style|iframe|object|embed|link|meta|form)\b[^>]*>/gi, '')
@@ -30,7 +30,7 @@ function sanitizePreviewHtml(raw: unknown): string {
 }
 
 /** True if the HTML has any visible text or an image (vs. an empty shell). */
-function hasVisibleContent(html: string): boolean {
+export function hasVisibleContent(html: string): boolean {
   if (!html) return false;
   if (/<img\b/i.test(html)) return true;
   return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim().length > 0;
