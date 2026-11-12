@@ -9,7 +9,8 @@
     "watch:giveaway": "node scripts/watch-giveaway.mjs",
     "test:daily-offer": "node --expose-gc --test tests/dailyOffer/",
     "test:email-encoding": "node --test tests/emailEncoding/",
-    "test:daily-billing-sync": "node --test tests/dailyBillingSync/"
+    "test:daily-billing-sync": "node --test tests/dailyBillingSync/",
+    "test:rec-journey-products": "node --experimental-test-module-mocks --test tests/recJourneyProducts/"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
