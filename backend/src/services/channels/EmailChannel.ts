@@ -1,0 +1,265 @@
+/**
+ * Email Channel — supports SendGrid API or SMTP via Nodemailer
+ *
+ * Env vars:
+ *   EMAIL_PROVIDER     – 'sendgrid' | 'smtp' (default: 'smtp')
+ *   SENDGRID_API_KEY   – SendGrid API key (if provider = sendgrid)
+ *   SMTP_HOST          – SMTP server hostname (e.g. smtp.office365.com)
+ *   SMTP_PORT          – SMTP server port (587 for TLS, 465 for SSL)
+ *   SMTP_USER          – SMTP username / email
+ *   SMTP_PASS          – SMTP password
+ *   SMTP_SECURE        – 'true' for port 465 SSL, 'false' for STARTTLS (default: false)
+ *   EMAIL_FROM         – Default sender email
+ *   EMAIL_FROM_NAME    – Default sender name
+ */
+
+import nodemailer from 'nodemailer';
+import { query } from '../../config/database.js';
+import { isEmailAllowed } from '../../utils/emailAllowlist.js';
+import type { Transporter } from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport/index.js';
+import type { EmailSendArgs, EmailSendResult, SendGridErrorResponse, SendGridWebhookEvent } from '../../types/channels.js';
+
+let _transporter: Transporter<SMTPTransport.SentMessageInfo> | null = null;
+
+// 5-minute in-memory cache for isBlocked — unsubscribe list changes rarely
+const _blockCache = new Map<string, { blocked: boolean; expiresAt: number }>(); // email → { blocked: bool, expiresAt: number }
+const BLOCK_CACHE_TTL = 5 * 60 * 1000;
+
+function getTransporter(): Transporter<SMTPTransport.SentMessageInfo> | null {
+  if (_transporter) return _transporter;
+
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587');
+  const secure = process.env.SMTP_SECURE === 'true';
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  if (!host || !user || !pass) {
+    console.warn('[EMAIL] SMTP not fully configured — emails will be simulated');
+    return null;
+  }
+
+  _transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+    tls: {
+      ciphers: 'SSLv3',
+      rejectUnauthorized: false,
+    },
+  });
+
+  // Verify connection on first use
+  _transporter.verify()
+    .then(() => console.log(`[EMAIL] SMTP connected: ${host}:${port} as ${user}`))
+    .catch((err: Error) => console.error(`[EMAIL] SMTP verify failed: ${err.message}`));
+
+  return _transporter;
+}
+
+const isProduction = (): boolean => process.env.NODE_ENV === 'production';
+
+function notConfigured(error: string): EmailSendResult {
+  console.error(`[EMAIL] Not sent: ${error}`);
+  return { success: false, error, provider: 'none' };
+}
+
+export class EmailChannel {
+
+  static get config() {
+    return {
+      provider: process.env.EMAIL_PROVIDER || 'smtp',
+      sendgridKey: process.env.SENDGRID_API_KEY,
+      fromEmail: process.env.EMAIL_FROM || 'marketing@raynatours.com',
+      fromName: process.env.EMAIL_FROM_NAME || 'Rayna Tours',
+    };
+  }
+
+  /** Check if email is unsubscribed or hard bounced (cached 5 min) */
+  static async isBlocked(email: string | null | undefined): Promise<boolean> {
+    if (!email) return true;
+    const key = email.toLowerCase().trim();
+    const cached = _blockCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.blocked;
+
+    const { rows } = await query(
+      `SELECT 1 FROM unsubscribed WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) AND (unsubscribe = 1 OR hard_bounces::int > 0) LIMIT 1`,
+      [email]
+    );
+    const blocked = rows.length > 0;
+    _blockCache.set(key, { blocked, expiresAt: Date.now() + BLOCK_CACHE_TTL });
+    return blocked;
+  }
+
+  /** Send a single email */
+  static async send({ to, subject, html, text, replyTo }: EmailSendArgs): Promise<EmailSendResult> {
+    // WELCOME_EMAILS allow-list gate — only configured addresses may receive mail.
+    // Disabled when WELCOME_EMAILS is unset/empty (allows all). Universal backstop:
+    // every send path that reaches this transport is validated here.
+    if (!isEmailAllowed(to)) {
+      console.log(`[EMAIL] Skipped — ${to} not in WELCOME_EMAILS allow-list`);
+      return { success: false, skipped: true, reason: 'not_in_allowlist', provider: 'allowlist' };
+    }
+
+    // Block unsubscribed / hard bounced emails
+    if (await this.isBlocked(to)) {
+      console.log(`[EMAIL] Blocked (unsubscribed/bounced) → ${to}`);
+      return { success: false, blocked: true, reason: 'unsubscribed or hard bounced', provider: 'none' };
+    }
+
+    const { provider, sendgridKey } = this.config;
+
+    // SendGrid path
+    if (provider === 'sendgrid' && sendgridKey) {
+      return this._sendViaSendGrid({ to, subject, html, text, replyTo });
+    }
+    // SendGrid selected without a key used to fall through to a simulated "success", so mail
+    // silently went nowhere. Outside development that is now a real failure.
+    if (provider === 'sendgrid' && isProduction()) {
+      return notConfigured('SENDGRID_API_KEY is not set (EMAIL_PROVIDER=sendgrid)');
+    }
+
+    // SMTP path
+    if (provider === 'smtp') {
+      return this._sendViaSMTP({ to, subject, html, text, replyTo });
+    }
+
+    // Simulated send (fallback for development)
+    console.log(`[EMAIL] Simulated → To: ${to} | Subject: ${subject}`);
+    return {
+      success: true,
+      simulated: true,
+      externalId: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      provider: 'simulated',
+    };
+  }
+
+  /** Send via SMTP using Nodemailer */
+  static async _sendViaSMTP({ to, subject, html, text, replyTo }: EmailSendArgs): Promise<EmailSendResult> {
+    const { fromEmail, fromName } = this.config;
+    const transporter = getTransporter();
+
+    if (!transporter) {
+      // In production a missing SMTP config must fail loudly instead of pretending to send.
+      if (isProduction()) return notConfigured('SMTP is not configured (SMTP_HOST / SMTP_USER / SMTP_PASS)');
+      // Fall back to simulated if SMTP not configured (development only)
+      console.log(`[EMAIL] SMTP not configured — simulating → To: ${to}`);
+      return {
+        success: true,
+        simulated: true,
+        externalId: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        provider: 'simulated',
+      };
+    }
+
+    try {
+      const info = await transporter.sendMail({
+        from: `"${fromName}" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+        ...(text && { text }),
+        ...(replyTo && { replyTo }),
+      });
+
+      console.log(`[EMAIL] Sent via SMTP → To: ${to} | MessageId: ${info.messageId}`);
+      return {
+        success: true,
+        externalId: info.messageId,
+        provider: 'smtp',
+      };
+    } catch (err) {
+      console.error(`[EMAIL] SMTP send failed → To: ${to} | Error: ${(err as Error).message}`);
+      return {
+        success: false,
+        error: (err as Error).message,
+        provider: 'smtp',
+      };
+    }
+  }
+
+  /** Send via SendGrid API */
+  static async _sendViaSendGrid({ to, subject, html, text, replyTo }: EmailSendArgs): Promise<EmailSendResult> {
+    const { sendgridKey, fromEmail, fromName } = this.config;
+
+    const body = {
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: fromEmail, name: fromName },
+      subject,
+      content: [
+        ...(text ? [{ type: 'text/plain', value: text }] : []),
+        { type: 'text/html', value: html },
+      ],
+      ...(replyTo && { reply_to: { email: replyTo } }),
+      tracking_settings: {
+        click_tracking: { enable: true },
+        open_tracking: { enable: true },
+      },
+    };
+
+    try {
+      const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sendgridKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 202) {
+        const messageId = res.headers.get('x-message-id');
+        return {
+          success: true,
+          externalId: messageId || `sg_${Date.now()}`,
+          provider: 'sendgrid',
+        };
+      }
+
+      const errData: SendGridErrorResponse = await (res.json() as Promise<SendGridErrorResponse>).catch(() => ({}));
+      return {
+        success: false,
+        error: errData.errors?.[0]?.message || `HTTP ${res.status}`,
+        providerResponse: errData,
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** Send bulk emails (batch) — auto-filters unsubscribed */
+  static async sendBulk(messages: EmailSendArgs[]): Promise<Array<EmailSendResult & { to: string }>> {
+    const results: Array<EmailSendResult & { to: string }> = [];
+    for (const msg of messages) {
+      const result = await this.send(msg);
+      results.push({ to: msg.to, ...result });
+    }
+    return results;
+  }
+
+  /** Filter a list of emails, removing unsubscribed/bounced */
+  static async filterBlockedEmails(emails: string[]): Promise<string[]> {
+    if (!emails.length) return [];
+    const { rows } = await query<{ email: string }>(
+      `SELECT LOWER(TRIM(email)) as email FROM unsubscribed WHERE unsubscribe = 1 OR hard_bounces::int > 0`
+    );
+    const blocked = new Set(rows.map(r => r.email));
+    return emails.filter(e => !blocked.has(e.toLowerCase().trim()));
+  }
+
+  /** Parse SendGrid webhook event */
+  static parseWebhook(events: SendGridWebhookEvent[]) {
+    return events.map(event => ({
+      externalId: event.sg_message_id,
+      email: event.email,
+      event: event.event,
+      timestamp: event.timestamp,
+      url: event.url,
+      reason: event.reason,
+      ip: event.ip,
+      userAgent: event.useragent,
+    }));
+  }
+}

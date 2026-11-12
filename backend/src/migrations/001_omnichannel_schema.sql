@@ -211,21 +211,7 @@ CREATE TABLE IF NOT EXISTS campaign_analytics (
 CREATE INDEX IF NOT EXISTS idx_analytics_campaign ON campaign_analytics (campaign_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_hour ON campaign_analytics (hour_bucket DESC);
 
--- ── 6. DATA ENRICHMENT LOG ──────────────────────────────────
--- Track all enrichment operations for audit
-CREATE TABLE IF NOT EXISTS enrichment_log (
-    id              BIGSERIAL           PRIMARY KEY,
-    customer_email  TEXT                NOT NULL,
-    field_name      TEXT                NOT NULL,       -- 'gender', 'nationality', 'phone_clean', etc.
-    old_value       TEXT,
-    new_value       TEXT,
-    source          TEXT                NOT NULL,       -- 'country_code', 'name_inference', 'api:apollo', etc.
-    confidence      NUMERIC(3,2),                      -- 0.00-1.00
-    created_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_enrichment_customer ON enrichment_log (customer_email);
-CREATE INDEX IF NOT EXISTS idx_enrichment_field ON enrichment_log (field_name);
+-- ── 6. (removed 2026-11-11: enrichment_log table — dropped, never populated)
 
 -- ── 7. AI OPTIMIZATION LOG ──────────────────────────────────
 -- Track AI suggestions and actions

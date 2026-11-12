@@ -1,0 +1,60 @@
+.page { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+.filter { padding: 12px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; flex-wrap: wrap; background: var(--sunken); padding: 3px; border-radius: 8px; gap: 2px; }
+.segBtn { border: 0 !important; }
+.dates { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dateLabel { font-size: 13px; font-weight: 600; color: var(--ink2); }
+.dateInput { width: auto; height: 32px; }
+.help { font-size: 12px; color: var(--ink3); }
+.note { font-size: 13px; color: var(--ink2); margin: 0; }
+
+.errorCard { border-color: var(--bad); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.errorText { color: var(--bad); font-size: 14px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.kpiCard { padding: 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kpi { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.2; overflow-wrap: anywhere; }
+.kpiSmall { font-size: 16px; font-weight: 700; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.group { display: flex; flex-direction: column; gap: 12px; }
+.groupHead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.groupTitle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.groupTitle h2 { font-size: 16px; font-weight: 700; margin: 0; }
+.groupSales { font-size: 14px; font-weight: 700; color: var(--ok); font-variant-numeric: tabular-nums; }
+
+.sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+.source { padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sourceEmpty { opacity: 0.6; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.rowsNum { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink3); }
+.stats b { display: block; font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; font-weight: 600; }
+.actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.active { background: var(--gold-soft) !important; border-color: var(--gold) !important; color: var(--gold-ink) !important; }
+
+.preview { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.previewHead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.previewHead h2 { font-size: 16px; font-weight: 700; margin: 0; }
+.tableWrap { overflow: auto; max-height: 520px; border: 1px solid var(--line); border-radius: 8px; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { position: sticky; top: 0; text-align: left; font-size: 12px; font-weight: 600; color: var(--ink3); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--surface); }
+.tbl td { padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.tbl tr:hover td { background: var(--sunken); }
+.idx { color: var(--ink3); text-align: center; width: 44px; }
+.nil { color: var(--ink3); }
+
+.toast { position: fixed; bottom: 24px; right: 24px; z-index: 999; padding: 12px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; max-width: 360px; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); }
+.toastOk { background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok); }
+.toastBad { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad); }
+
+.spin { animation: reportSpin 1s linear infinite; }
+@keyframes reportSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  .kpi { font-size: 24px; }
+  .sources { grid-template-columns: 1fr; }
+  .toast { left: 16px; right: 16px; bottom: 16px; max-width: none; }
+  .dateInput { flex: 1 1 130px; }
+}

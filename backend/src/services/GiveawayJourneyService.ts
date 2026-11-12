@@ -1,0 +1,171 @@
+/**
+ * GiveawayJourneyService — real-time entry into continuous "giveaway" / "affiliate" journeys.
+ *
+ * Mirror of GtmJourneyService.onEvent, but the trigger is an event TYPE from the RabbitMQ
+ * feed instead of a GTM event name:
+ *   giveaway  → participation | eligible | winner | loser
+ *   affiliate → joined | coupon_assigned | commission_assigned | link_generated | card_offer_generated
+ *
+ * A journey here = journey_type='gtm', trigger_source='giveaway' OR 'affiliate',
+ *   trigger_event='winner' (or a comma list like 'winner,loser').
+ * The source is matched too, so the two feeds can safely share event-type names.
+ *
+ * Segment-gated (same as GTM): a user enters ONLY if they belong to the journey's
+ * selected segment AND fired the giveaway type. Fan-out key = the giveaway eventId
+ * (unique per message), so a user who fires 'winner' 10 times gets 10 entries → 10 sends.
+ *
+ * Reuses GtmJourneyService._isSegmentMember / _nextStep and ContinuousJourneyService.enter,
+ * so the whole downstream engine (progression cron, send, advance) is unchanged.
+ */
+import db from '../config/database.js';
+import type { GiveawayEventInput, GiveawayLifecycleInput } from '../types/services_C.js';
+import type { JourneyNode } from '../types/queueJobs.js';
+import type { GtmJourneyFlowRow } from '../types/servicesGtmJourney.js';
+
+class GiveawayJourneyService {
+  /**
+   * @param {{ giveawayType: string, unifiedId: number|string, eventId: string }} args
+   */
+  /**
+   * Returns the number of giveaway journeys this contact is HANDLED by (active journey for this
+   * type + segment member). The consumer uses this to decide whether to ALSO send the producer's
+   * direct email: when ≥1 journey handles the contact, the journey owns the email and the direct
+   * send is skipped (no duplicate). Eligibility is used (not "newly-created entry") so the count
+   * is stable across RabbitMQ redeliveries.
+   */
+  static async onEvent({ giveawayType, unifiedId, eventId, source = 'GIVEAWAY' }: GiveawayEventInput) {
+    if (!giveawayType || !unifiedId) return 0;
+
+    // One code path, two feeds: a journey subscribes to its own source only, so an
+    // affiliate 'joined' can never enrol someone into a giveaway journey or vice versa.
+    const triggerSource = source === 'AFFILIATE' ? 'affiliate' : 'giveaway';
+    const { rows: journeys } = await db.query<GtmJourneyFlowRow>(
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience,
+              enrollment_mode, broadcast_cooldown_min
+         FROM journey_flows
+        WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = $2
+          AND trigger_event IS NOT NULL
+          AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))
+          AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
+      [giveawayType, triggerSource]
+    );
+    if (!journeys.length) return 0;
+
+    const { default: GtmJourneyService }       = await import('./GtmJourneyService.js');
+    const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+    const itemKey = String(eventId ?? '_noitem');   // unique per giveaway event → per-event fan-out
+
+    let handled = 0;
+    for (const j of journeys) {
+      try {
+        // DELIVERY MODE: 'segment_broadcast' boards the whole segment, so the segment is the
+        // audience and the contact this event names need not belong to it.
+        const broadcast = String(j.enrollment_mode || 'per_user') === 'segment_broadcast';
+        // SEGMENT GUARD (identical to GTM): the trigger alone must NOT grant entry — the
+        // user must ALSO be in the journey's selected segment. No segment → nobody enters.
+        if (!broadcast && !(await GtmJourneyService._isSegmentMember(j, unifiedId))) continue;
+
+        // First node after the trigger + its leading delay (reused GTM walk).
+        const triggerNode = (j.nodes || []).find((n: JourneyNode) => n.type === 'trigger');
+        const firstStep = triggerNode ? GtmJourneyService._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
+        const firstNodeId = firstStep?.nodeId || (j.nodes || []).find((n: JourneyNode) => n.type === 'action')?.id || null;
+        if (!firstNodeId) continue;
+
+        if (broadcast) {
+          // Cohort key = the event id, so this event boards the segment once and the next
+          // one boards it again.
+          const n = await ContinuousJourneyService.enterSegment({
+            journey: j, firstNodeId, itemId: itemKey, eventId,
+            entryDelayMs: firstStep ? firstStep.delayMs : 0,
+          });
+          // Deliberately NOT counted in `handled`. That counter suppresses the producer's
+          // direct email to the person this event names, on the grounds that the journey is
+          // already mailing them — true per-user, false here: a broadcast goes to the
+          // SEGMENT, which need not contain them at all. Counting it would cost that person
+          // their participation email and give them nothing back, and if the cooldown
+          // blocked the fan-out it would suppress the only email anyone was going to get.
+          if (n) console.log(`[GiveawayJourney ${j.journey_id}] broadcast ${n} contact(s) @ ${firstNodeId} (${giveawayType})`);
+          continue;
+        }
+
+        const id = await ContinuousJourneyService.enter({
+          journeyId: j.journey_id, unifiedId, itemId: itemKey, eventId,
+          firstNodeId, entryDelayMs: firstStep ? firstStep.delayMs : 0,
+        });
+        // The contact is eligible for this journey → it owns the email (whether `id` is a new
+        // entry or null because an idempotent re-entry already existed).
+        handled++;
+        if (id) console.log(`[GiveawayJourney ${j.journey_id}] entered uid=${unifiedId} event=${itemKey} @ ${firstNodeId} delay=${Math.round((firstStep?.delayMs||0)/1000)}s (${giveawayType})`);
+      } catch (e) {
+        console.error(`[GiveawayJourney ${j.journey_id}] onEvent failed: ${(e as Error).message}`);
+      }
+    }
+    return handled;
+  }
+
+  /**
+   * LIFECYCLE entry — an admin edited a giveaway (`giveaway.lifecycle.<env>.updated`).
+   *
+   * Separate from onEvent because the two differ in the one thing onEvent is built around:
+   * there is NO PERSON here. The event describes the giveaway, so there is no unified_id to
+   * gate on a segment, and nothing to enrol per-user. The only coherent delivery is to the
+   * journey's segment as a whole.
+   *
+   * The consumer applies the changes[] field gate before calling this, so by the time we are
+   * here the edit is one worth announcing.
+   *
+   * Returns the total contacts boarded across all matching journeys.
+   */
+  static async onLifecycleEvent({ lifecycleType, giveawayId, eventId }: GiveawayLifecycleInput): Promise<number> {
+    if (!lifecycleType || !eventId) return 0;
+
+    // Lifecycle events belong to the giveaway domain, so they drive journeys configured with
+    // trigger_source='giveaway' and the type in their trigger_event list (e.g. 'updated').
+    const { rows: journeys } = await db.query<GtmJourneyFlowRow>(
+      `SELECT journey_id, nodes, edges, custom_segment_id, segment_id, audience,
+              enrollment_mode, broadcast_cooldown_min
+         FROM journey_flows
+        WHERE status = 'active' AND journey_type = 'gtm' AND trigger_source = 'giveaway'
+          AND trigger_event IS NOT NULL
+          AND $1 = ANY(string_to_array(replace(trigger_event, ' ', ''), ','))
+          AND (trigger_from_date IS NULL OR trigger_from_date <= NOW())`,
+      [lifecycleType]
+    );
+    if (!journeys.length) return 0;
+
+    const { default: GtmJourneyService }        = await import('./GtmJourneyService.js');
+    const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+
+    let total = 0;
+    for (const j of journeys) {
+      try {
+        // A per-user journey cannot act on this: there is no person to enrol. Say so loudly
+        // rather than returning 0 silently — the journey would otherwise sit at zero entries
+        // looking perfectly healthy, which is the failure mode this whole feed exists to avoid.
+        if (String(j.enrollment_mode || 'per_user') !== 'segment_broadcast') {
+          console.warn(`[GiveawayLifecycle ${j.journey_id}] listens to '${lifecycleType}' but is per_user — a lifecycle event names nobody, so nobody can be enrolled. Set it to "Everyone in the segment".`);
+          continue;
+        }
+
+        const triggerNode = (j.nodes || []).find((n: JourneyNode) => n.type === 'trigger');
+        const firstStep = triggerNode ? GtmJourneyService._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
+        const firstNodeId = firstStep?.nodeId || (j.nodes || []).find((n: JourneyNode) => n.type === 'action')?.id || null;
+        if (!firstNodeId) continue;
+
+        // Cohort key = the producer's message id, which embeds updatedAt — so every edit is a
+        // distinct cohort and the same people are boarded again on the next qualifying change.
+        const n = await ContinuousJourneyService.enterSegment({
+          journey: j, firstNodeId, itemId: String(eventId), eventId,
+          entryDelayMs: firstStep ? firstStep.delayMs : 0,
+        });
+        total += n;
+        if (n) console.log(`[GiveawayLifecycle ${j.journey_id}] ${lifecycleType} on giveaway ${giveawayId} → broadcast ${n} contact(s) @ ${firstNodeId}`);
+      } catch (e) {
+        console.error(`[GiveawayLifecycle ${j.journey_id}] onLifecycleEvent failed: ${(e as Error).message}`);
+      }
+    }
+    return total;
+  }
+}
+
+export default GiveawayJourneyService;
