@@ -294,7 +294,9 @@ export interface JourneyDetailOverviewProps {
   clickedByNode: Record<string, number>;
   /** True once the delivery report (sent / opened / clicked per step) has loaded. */
   deliveryLoaded: boolean;
-  /** People the journey could not send to, by reason and step — null until loaded. */
+  /** True while the delivery report is being fetched. */
+  deliveryLoading?: boolean;
+  /** People the journey could not send to, by reason and step — undefined while loading, null when it failed. */
   notSent?: JourneyNotSent | null;
   queueStats: Record<string, QueueCounts> | null;
   timeline: TimelineItem[] | null;
@@ -548,10 +550,10 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
         <p className={styles.minor}>
           <span title="Asked to stop getting messages.">{'Unsubscribed '}<b>{fmtCount(unsubCount)}</b>{unsubPct !== null && ` (${unsubPct}%)`}</span>
           <span aria-hidden="true" className={styles.sep}>·</span>
-          <span title="Messages that could not be delivered." className={failedBad ? styles.bad : undefined}>{'Messages that failed '}<b>{fmtCount(p.failedTotal)}</b></span>
+          <span title="Messages that could not be delivered." className={failedBad ? styles.bad : undefined}>{'Messages that failed '}<b>{!p.deliveryLoaded && p.deliveryLoading ? 'Loading…' : fmtCount(p.failedTotal)}</b></span>
           <span aria-hidden="true" className={styles.sep}>·</span>
           <span title={p.notSent && p.notSent.total > 0 ? reasonSummary(p.notSent.byReason) : 'People the journey could not send to (daily email limit, no email address, no products, …).'}>
-            {'Not sent '}<b>{fmtCount(p.notSent ? p.notSent.total : null)}</b>
+            {'Not sent '}<b>{p.notSent === undefined ? 'Loading…' : fmtCount(p.notSent ? p.notSent.total : null)}</b>
             {p.notSent && p.notSent.total > 0 && (
               <> <a href={`/log?channel=email&status=not_sent&journey=${p.journeyId}`} className={styles.minorLink}>see who</a></>
             )}

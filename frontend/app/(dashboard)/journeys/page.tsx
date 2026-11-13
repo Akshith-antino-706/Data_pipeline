@@ -787,7 +787,9 @@ export default function Journeys() {
   const [analytics, setAnalytics] = useState<JourneyAnalytics | null>(null);
   const [campaignData, setCampaignData] = useState<CampaignData | null>(null);
   const [nodeConversions, setNodeConversions] = useState<Record<string, { converted?: number }> | null>(null);
-  const [notSent, setNotSent] = useState<JourneyNotSent | null>(null);
+  // undefined = not asked / loading, null = failed, object = loaded
+  const [notSent, setNotSent] = useState<JourneyNotSent | null | undefined>(undefined);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('analytics'); // tool shown on the detail's Advanced tab
@@ -1061,12 +1063,13 @@ export default function Journeys() {
 
   const _fetchNodeAnalytics = async (id: number | null) => {
     setNodeAnalyticsLoading(true);
+    setDeliveryLoading(true);
     try {
       // Each number shows as soon as its own call returns — the full analytics call can
       // take 20 s on a big journey, and the cheap ones (delivery, not-sent) shouldn't wait for it.
       await Promise.allSettled([
         (getJourneyAnalytics(id!) as Promise<ApiData<JourneyAnalytics | null>>).then(r => setAnalytics(r?.data ?? null)).catch(() => setAnalytics(null)),
-        (getJourneyCampaignAnalytics(id!) as Promise<ApiData<CampaignData | null>>).then(r => setCampaignData(r?.data ?? null)).catch(() => setCampaignData(null)),
+        (getJourneyCampaignAnalytics(id!) as Promise<ApiData<CampaignData | null>>).then(r => setCampaignData(r?.data ?? null)).catch(() => setCampaignData(null)).finally(() => setDeliveryLoading(false)),
         (getJourneyNodeConversions(id!) as Promise<ApiData<Record<string, { converted?: number }> | null>>).then(r => setNodeConversions(r?.data ?? null)).catch(() => setNodeConversions(null)),
         getJourneyNotSent(id!).then(r => setNotSent(r?.data ?? null)).catch(() => setNotSent(null)),
       ]);
@@ -1109,7 +1112,7 @@ export default function Journeys() {
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
-    setNotSent(null);
+    setNotSent(undefined);
     setNodeConversions(null);
     setSuggestions(null);
     setActiveTab('analytics');
@@ -1881,6 +1884,7 @@ export default function Journeys() {
             openedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.opened || 0]))}
             clickedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.clicked || 0]))}
             deliveryLoaded={campaignData !== null}
+            deliveryLoading={deliveryLoading}
             notSent={notSent}
             queueStats={queueStats}
             timeline={timeline}
