@@ -1062,16 +1062,14 @@ export default function Journeys() {
   const _fetchNodeAnalytics = async (id: number | null) => {
     setNodeAnalyticsLoading(true);
     try {
-      const [a, cd, nc, ns] = await Promise.allSettled([
-        getJourneyAnalytics(id!).catch(() => ({ data: null })) as Promise<ApiData<JourneyAnalytics | null>>,
-        getJourneyCampaignAnalytics(id!).catch(() => ({ data: null })) as Promise<ApiData<CampaignData | null>>,
-        getJourneyNodeConversions(id!).catch(() => ({ data: null })) as Promise<ApiData<Record<string, { converted?: number }> | null>>,
-        getJourneyNotSent(id!).catch(() => ({ data: null })) as Promise<{ data: JourneyNotSent | null }>,
+      // Each number shows as soon as its own call returns — the full analytics call can
+      // take 20 s on a big journey, and the cheap ones (delivery, not-sent) shouldn't wait for it.
+      await Promise.allSettled([
+        (getJourneyAnalytics(id!) as Promise<ApiData<JourneyAnalytics | null>>).then(r => setAnalytics(r?.data ?? null)).catch(() => setAnalytics(null)),
+        (getJourneyCampaignAnalytics(id!) as Promise<ApiData<CampaignData | null>>).then(r => setCampaignData(r?.data ?? null)).catch(() => setCampaignData(null)),
+        (getJourneyNodeConversions(id!) as Promise<ApiData<Record<string, { converted?: number }> | null>>).then(r => setNodeConversions(r?.data ?? null)).catch(() => setNodeConversions(null)),
+        getJourneyNotSent(id!).then(r => setNotSent(r?.data ?? null)).catch(() => setNotSent(null)),
       ]);
-      if (a.status === 'fulfilled')  setAnalytics(a.value?.data ?? null);
-      if (cd.status === 'fulfilled') setCampaignData(cd.value?.data ?? null);
-      if (nc.status === 'fulfilled') setNodeConversions(nc.value?.data ?? null);
-      if (ns.status === 'fulfilled') setNotSent(ns.value?.data ?? null);
       setNodeAnalyticsLoaded(true);
     } finally {
       setNodeAnalyticsLoading(false);
