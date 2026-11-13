@@ -87,8 +87,8 @@ function cardImage(url) {
   return `https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_600,h_400,g_auto,q_60,f_jpg,fl_progressive/${url}`;
 }
 
-function card(p) {
-  const href = esc(p.url);
+function card(p, links = null) {
+  const href = esc(links?.productUrl || p.url);
   return `<div class="col" style="display:inline-block;width:100%;max-width:250px;vertical-align:top;">
 <div style="padding:0 6px 12px 6px;">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#FFFFFF;border:1px solid #ECECEC;border-radius:10px;overflow:hidden;" class="dm-box">
@@ -107,11 +107,11 @@ ${p.subtitle ? `<p class="ff-b dm-sub" style="margin:0 0 10px;font-size:11.5px;l
 </div>`;
 }
 
-function cardGrid(products) {
+function cardGrid(products, links = null) {
   const rows = [];
   for (let i = 0; i < products.length; i += 2) rows.push(products.slice(i, i + 2));
   const body = rows.map(pair => pair.map((p, j) =>
-    `<!--[if mso]><td width="50%" valign="top" style="padding:0 ${j ? 0 : 6}px 12px ${j ? 6 : 0}px;"><![endif]-->\n${card(p)}\n<!--[if mso]></td><![endif]-->`
+    `<!--[if mso]><td width="50%" valign="top" style="padding:0 ${j ? 0 : 6}px 12px ${j ? 6 : 0}px;"><![endif]-->\n${card(p, links)}\n<!--[if mso]></td><![endif]-->`
   ).join('\n')).join('\n<!--[if mso]></tr><tr><![endif]-->\n');
   return `<tr><td class="px dm-cardbg" style="padding:22px 38px 6px 38px;background-color:#FFFFFF;">
 <div style="font-size:0;text-align:center;">
@@ -138,8 +138,8 @@ function hero(pick) {
 </td></tr>`;
 }
 
-function ctaRow(theme) {
-  const c = CTA[theme] || CTA.holiday_multi;
+function ctaRow(theme, links = null) {
+  const c = links ? { url: links.ctaUrl, label: links.ctaLabel } : (CTA[theme] || CTA.holiday_multi);
   return `<tr><td class="px dm-cardbg" style="padding:30px 38px 34px 38px;background-color:#FFFFFF;">
 <!--[if mso]>
 <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${c.url}" style="height:54px;v-text-anchor:middle;width:524px;" arcsize="11%" strokecolor="#000000" fillcolor="#000000">
@@ -156,13 +156,27 @@ export function buildSubject(pick) {
   return `${pick.subjectLead} – from %%DO_FROM%%`;
 }
 
-/** Full template HTML (prices as tokens). */
-export function buildTemplate(pick) {
-  const sections = pick.groups.map(g => sectionHeader(g.title, g.subtitle) + '\n' + cardGrid(g.products)).join('\n');
+/**
+ * Full template HTML (prices as tokens). `links` (B2B) replaces every product link and the
+ * button with the portal link: { productUrl, ctaUrl, ctaLabel }. null = the feed's product pages.
+ */
+export function buildTemplate(pick, links = null) {
+  const sections = pick.groups.map(g => sectionHeader(g.title, g.subtitle) + '\n' + cardGrid(g.products, links)).join('\n');
   const head = EMAIL_HEAD
     .replace('%%DO_TITLE%%', esc(`${pick.subjectLead} – from `) + '%%DO_FROM%%')
     .replace('%%DO_PREHEADER%%', esc(`${pick.themeName}: ${pick.count} offers, prices from `) + '%%DO_FROM%%');
-  return `${DAILY_OFFER_MARKER}\n${head}\n${hero(pick)}\n${sections}\n${ctaRow(pick.theme)}\n${EMAIL_FOOT}`;
+  return `${DAILY_OFFER_MARKER}\n${head}\n${hero(pick)}\n${sections}\n${ctaRow(pick.theme, links)}\n${links ? footerWithoutPromos() : EMAIL_FOOT}`;
+}
+
+/**
+ * The footer without the consumer promo blocks (weekly giveaways, affiliate programme):
+ * the B2B emails sent by hand never carried them, only the trust badges and the footer.
+ */
+function footerWithoutPromos() {
+  const start = EMAIL_FOOT.indexOf('<!--PROMO_SECTIONS_START-->');
+  const end = EMAIL_FOOT.indexOf('<!--PROMO_SECTIONS_END-->');
+  if (start < 0 || end < 0) return EMAIL_FOOT;
+  return EMAIL_FOOT.slice(0, start) + EMAIL_FOOT.slice(end + '<!--PROMO_SECTIONS_END-->'.length);
 }
 
 /** The compact product snapshot stored on the journey node (only what send time needs). */

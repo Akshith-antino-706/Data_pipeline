@@ -8,6 +8,12 @@
  *                                   everything → set scheduled_start_at = 4 PM. The
  *                                   existing per-minute auto-start cron sends it.
  *
+ * The same class runs the B2B email (config.audience === 'b2b'): it copies the B2C
+ * journey of the same day — same products, prices and subject — with every link pointing
+ * at the B2B portal, then has its own final check and (earlier) send time. Each audience
+ * only ever sees its own journeys (todayJourney), and B2B days never influence the B2C
+ * product rotation (planToday).
+ *
  * Anything wrong → that day's email is NOT sent and the reason is logged (and written
  * into the journey description when a journey exists). Fail-safe: a journey without a
  * start time never sends.
@@ -16,7 +22,7 @@
  * (1 template + 1 journey); the product snapshot lives in the journey's email node.
  */
 import dbDefault from '../../config/database.js';
-import { getDailyOfferConfig, dubaiDate, dubaiInstant, dubaiMinutes, hhmmToMinutes } from './config.js';
+import { getDailyOfferConfig, audienceOf, dubaiDate, dubaiInstant, dubaiMinutes, hhmmToMinutes } from './config.js';
 import { fetchFeed as fetchFeedDefault, FeedError, isUsable } from './feed.js';
 import { pickForLoopDay, loopDayForDate, LOOP } from './picker.js';
 import { buildTemplate, buildSubject, applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
@@ -85,9 +91,28 @@ export default class DailyOfferService {
     return rows;
   }
 
-  /** Loop day from today's Dubai date + "previous" info for the picker, from journeys that actually sent. */
+  /** This audience's journey for a Dubai date, or undefined. */
+  todayJourney(recent, today) {
+    return recent.find(j => {
+      const label = offerLabelOf(j)?.label;
+      return label?.date === today && audienceOf(label) === this.config.audience;
+    });
+  }
+
+  /** The B2C journey of a Dubai date (what the B2B email copies), or undefined. */
+  b2cJourneyFor(recent, today) {
+    return recent.find(j => {
+      const label = offerLabelOf(j)?.label;
+      return label?.date === today && audienceOf(label) === 'b2c';
+    });
+  }
+
+  /**
+   * Loop day from today's Dubai date + "previous" info for the picker, from B2C journeys
+   * that actually sent (B2B copies B2C, so it never shifts the rotation).
+   */
   async planToday(recent, today) {
-    const sent = recent.filter(j => STARTED.has(j.status) && offerLabelOf(j));
+    const sent = recent.filter(j => STARTED.has(j.status) && offerLabelOf(j) && audienceOf(offerLabelOf(j).label) === 'b2c');
     const loopDay = loopDayForDate(today);
     const theme = LOOP.find(s => s.loopDay === loopDay).theme;
     const sameTheme = sent.map(j => offerLabelOf(j).label).find(l => l.theme === theme);
@@ -136,7 +161,7 @@ export default class DailyOfferService {
 
   /** Template HTML, subject and the node snapshot for a pick. */
   build(pick) {
-    const html = buildTemplate(pick);
+    const html = buildTemplate(pick, this.config.links);
     const subject = buildSubject(pick);
     const products = pick.groups.flatMap(g => g.products).map(p => ({ key: p.key, name: p.name, prices: p.prices }));
     const groups = pick.groups.map(g => ({ title: g.title, subtitle: g.subtitle, keys: g.products.map(p => p.key) }));
@@ -161,13 +186,40 @@ export default class DailyOfferService {
     }
   }
 
+  /**
+   * B2B: the day's pick copied from the B2C journey — its groups and product keys, with
+   * the products themselves taken fresh from the feed (names, images, prices as of now)
+   * and its subject lead. Throws SkipError while B2C has no journey for the day yet (the
+   * create job retries), or when B2C's day was already marked as not sent.
+   */
+  mirrorPick(recent, today, feed) {
+    const src = this.b2cJourneyFor(recent, today);
+    if (!src) throw new SkipError('waiting_for_b2c', 'The B2C email for today has not been created yet');
+    const { label } = offerLabelOf(src);
+    if (label.status === 'skipped') throw new SkipError('b2c_skipped', `The B2C email for today was not sent (${label.skipReason || 'skipped'}), so there is nothing to copy`);
+    const fresh = new Map(feed.products.filter(isUsable).map(p => [p.key, p]));
+    const groups = (label.groups || [])
+      .map(g => ({ title: g.title, subtitle: g.subtitle, products: g.keys.map(k => fresh.get(k)).filter(Boolean) }))
+      .filter(g => g.products.length);
+    const flat = groups.flatMap(g => g.products);
+    return {
+      pick: {
+        loopDay: label.loopDay, theme: label.theme, themeName: label.themeName,
+        subjectLead: label.subject?.lead || label.themeName,
+        groups, productKeys: flat.map(p => p.key), count: flat.length, activityCursor: label.activityCursor ?? null,
+      },
+      source: src,
+    };
+  }
+
   // ── 9 AM: create ───────────────────────────────────────────────────────
 
   async runCreate({ now = new Date() } = {}) {
     const today = dubaiDate(now);
+    const b2b = this.config.audience === 'b2b';
     try {
       const recent = await this.recentJourneys();
-      const existing = recent.find(j => offerLabelOf(j)?.label.date === today);
+      const existing = this.todayJourney(recent, today);
       if (existing) return { status: 'exists', journeyId: existing.journey_id };
 
       await this.checkSegment();
@@ -177,17 +229,29 @@ export default class DailyOfferService {
       const feed = await this.fetchFeed({
         url: this.config.feedUrl, timeoutMs: this.config.feedTimeoutMs, minRows: this.config.minFeedRows, now,
       });
-      const { loopDay, previous } = await this.planToday(recent, today);
-      const pick = pickForLoopDay(feed.products, loopDay, previous);
-      this.checkCount(pick);
-      // AI-written subject opening; the rule-based one when the AI call fails or breaks the rules.
-      const standardLead = pick.subjectLead;
-      const aiSubject = await this.suggestSubject(pick, { log: this.log });
-      pick.subjectLead = aiSubject.lead;
+      let pick, aiSubject, standardLead, mirrorOf = null;
+      if (b2b) {
+        // Same products and subject as the B2C email of the day; only the links differ.
+        const m = this.mirrorPick(recent, today, feed);
+        pick = m.pick;
+        mirrorOf = m.source.journey_id;
+        this.checkCount(pick);
+        standardLead = pick.subjectLead;
+        aiSubject = { lead: pick.subjectLead, source: 'mirror', reason: null };
+      } else {
+        const { loopDay, previous } = await this.planToday(recent, today);
+        pick = pickForLoopDay(feed.products, loopDay, previous);
+        this.checkCount(pick);
+        // AI-written subject opening; the rule-based one when the AI call fails or breaks the rules.
+        standardLead = pick.subjectLead;
+        aiSubject = await this.suggestSubject(pick, { log: this.log });
+        pick.subjectLead = aiSubject.lead;
+      }
+      const loopDay = pick.loopDay;
       const built = this.build(pick);
       this.testRender(built, fx.rates);
 
-      const name = `${ordinalDate(today)} - ${pick.themeName} (Day ${loopDay})`;
+      const name = `${ordinalDate(today)} - ${pick.themeName} (Day ${loopDay})${b2b ? ' - B2B' : ''}`;
       const { ContentService, JourneyService } = await this.services();
       const template = await ContentService.create({
         name, channel: 'email', subject: built.subject, body: built.html, createdBy: CREATED_BY,
@@ -206,12 +270,15 @@ export default class DailyOfferService {
         feedGeneratedAt: feed.generatedAt,
         subject: { source: aiSubject.source, reason: aiSubject.reason, lead: aiSubject.lead, standardLead },
         createdAt: now.toISOString(),
+        ...(b2b ? { audience: 'b2b', mirrorOf } : {}),
       };
       let journey;
       try {
         journey = await JourneyService.create({
           name,
-          description: `Automated daily offer (Day ${loopDay} of ${LOOP.length}). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
+          description: b2b
+            ? `Automated daily offer for B2B (copy of journey ${mirrorOf}, links to ${this.config.links.ctaUrl}). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`
+            : `Automated daily offer (Day ${loopDay} of ${LOOP.length}). Sends at ${this.config.sendAt} Dubai after the ${this.config.checkAt} final check.`,
           segmentId: `custom:${this.config.segmentId}`,
           audience: 'all',
           journeyType: 'fixed',
@@ -232,11 +299,11 @@ export default class DailyOfferService {
         await ContentService.delete(template.id).catch(() => {});
         throw err;
       }
-      this.log.log(`[DailyOffer] Created "${name}" — template ${template.id}, journey ${journey.journey_id}, ${pick.count} products`);
+      this.log.log(`[DailyOffer${b2b ? ':B2B' : ''}] Created "${name}" — template ${template.id}, journey ${journey.journey_id}, ${pick.count} products`);
       return { status: 'created', journeyId: journey.journey_id, templateId: template.id, name, count: pick.count };
     } catch (err) {
       const reason = err instanceof SkipError || err instanceof FeedError ? err.reason : 'error';
-      this.log.warn(`[DailyOffer] ${today} not created (${reason}): ${err.message}`);
+      this.log.warn(`[DailyOffer${b2b ? ':B2B' : ''}] ${today} not created (${reason}): ${err.message}`);
       return { status: 'skipped', reason, message: err.message };
     }
   }
@@ -246,7 +313,7 @@ export default class DailyOfferService {
   async runFinalCheck({ now = new Date() } = {}) {
     const today = dubaiDate(now);
     const recent = await this.recentJourneys();
-    const journey = recent.find(j => offerLabelOf(j)?.label.date === today);
+    const journey = this.todayJourney(recent, today);
     if (!journey) return { status: 'none', message: 'No daily offer journey for today' };
     const { node, label } = offerLabelOf(journey);
     if (label.status === 'skipped') return { status: 'skipped_earlier', journeyId: journey.journey_id };
@@ -317,7 +384,7 @@ export default class DailyOfferService {
   async runSendCheck({ now = new Date() } = {}) {
     const today = dubaiDate(now);
     const recent = await this.recentJourneys();
-    const journey = recent.find(j => offerLabelOf(j)?.label.date === today);
+    const journey = this.todayJourney(recent, today);
     if (!journey) return { status: 'none' };
     const { label } = offerLabelOf(journey);
     if (label.status === 'skipped') return { status: 'skipped_earlier', journeyId: journey.journey_id };

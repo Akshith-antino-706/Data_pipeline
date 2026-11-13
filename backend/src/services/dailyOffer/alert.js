@@ -50,7 +50,7 @@ export function alertFor(stage, result, { lastTry = false } = {}) {
  * Alert body in the daily email's own format — same head (logo, fonts, dark mode) and black
  * footer band, without the promo blocks, review badges or unsubscribe link of a customer email.
  */
-export function alertHtml({ date, stage, reason, message, journeyId = null, segmentId }) {
+export function alertHtml({ date, stage, reason, message, journeyId = null, segmentId, audience = 'b2c' }) {
   const row = (k, v, last = false) => `<tr><td class="ff-b dm-label dm-rule" style="padding:10px 14px 10px 0;${last ? '' : 'border-bottom:1px solid #ECECEC;'}font-size:12px;line-height:18px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;white-space:nowrap;vertical-align:top;">${k}</td><td class="ff-b dm-strong dm-rule" style="padding:10px 0;${last ? '' : 'border-bottom:1px solid #ECECEC;'}font-size:14px;line-height:20px;color:#000;">${v}</td></tr>`;
   const rows = [
     ['Date', esc(ordinalDate(date))],
@@ -58,10 +58,10 @@ export function alertHtml({ date, stage, reason, message, journeyId = null, segm
     ['Reason', esc(reason)],
     ['Details', esc(message)],
     ...(journeyId ? [['Journey', `#${esc(journeyId)}`]] : []),
-    ['Audience', `Segment ${esc(segmentId)}`],
+    ['Audience', `${audience === 'b2b' ? 'B2B · ' : ''}Segment ${esc(segmentId)}`],
   ];
   const head = EMAIL_HEAD
-    .replace('%%DO_TITLE%%', 'Daily offer email not sent')
+    .replace('%%DO_TITLE%%', `Daily offer email${audience === 'b2b' ? ' (B2B)' : ''} not sent`)
     .replace('%%DO_PREHEADER%%', esc(`${ordinalDate(date)}: ${reason}`));
   return `${head}
 <tr><td class="px dm-cardbg" style="padding:26px 38px 6px 38px;background-color:#FFFFFF;text-align:center;">
@@ -89,11 +89,11 @@ ${rows.map(([k, v], i) => row(k, v, i === rows.length - 1)).join('\n')}
 }
 
 /** Email every team inbox about a failed day. Returns how many were sent. */
-export async function sendFailureAlert({ date, stage, reason, message, journeyId = null, segmentId, send = sendJourneyEmail, env = process.env, log = console }) {
+export async function sendFailureAlert({ date, stage, reason, message, journeyId = null, segmentId, audience = 'b2c', send = sendJourneyEmail, env = process.env, log = console }) {
   const to = alertRecipients(env);
   if (!to.length) { log.warn('[DailyOffer] failure alert not sent — no DAILY_OFFER_ALERT_EMAILS / EMAIL_CAP_BYPASS_EMAILS'); return 0; }
-  const subject = `⚠️ Daily offer email not sent — ${ordinalDate(date)}`;
-  const html = alertHtml({ date, stage, reason, message, journeyId, segmentId });
+  const subject = `⚠️ Daily offer email${audience === 'b2b' ? ' (B2B)' : ''} not sent — ${ordinalDate(date)}`;
+  const html = alertHtml({ date, stage, reason, message, journeyId, segmentId, audience });
   let sent = 0;
   for (const email of to) {
     try {
@@ -104,6 +104,6 @@ export async function sendFailureAlert({ date, stage, reason, message, journeyId
       log.warn(`[DailyOffer] failure alert to ${email} failed: ${e.message}`);
     }
   }
-  log.log(`[DailyOffer] failure alert (${stage}: ${reason}) sent to ${sent}/${to.length}`);
+  log.log(`[DailyOffer${audience === 'b2b' ? ':B2B' : ''}] failure alert (${stage}: ${reason}) sent to ${sent}/${to.length}`);
   return sent;
 }
