@@ -44,4 +44,11 @@ describe('DailyBillingSync — travel_end_date, customer_type, booking_source', 
     expect(sql).toMatch(/guest_name = EXCLUDED\.guest_name/);   // other columns still overwrite as before
     expect(params.slice(-3)).toEqual(['2026-11-13', 'Online B2B UAE', 'B2B Dubai']);
   });
+
+  it('Guest_Email is trimmed — a trailing line break, tab or space never reaches the contact', () => {
+    expect(mapRow({ ...apiRecord, Guest_Email: 'guest@gmail.com\n' }).guest_email).toBe('guest@gmail.com');
+    expect(mapRow({ ...apiRecord, Guest_Email: ' \tguest@gmail.com \r\n' }).guest_email).toBe('guest@gmail.com');
+    expect(mapRow({ ...apiRecord, Guest_Email: null }).guest_email).toBe('');
+    expect(mapRow({ BillSerial: 3, ServiceId: 12, SellingPrice: '0' }).guest_email).toBe('');
+  });
 });

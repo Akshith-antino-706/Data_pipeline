@@ -133,7 +133,10 @@ async function sendViaSmtp({ credential, prefix, to, subject, html, unifiedId }:
  * Send a journey email through the transport selected by `emailCredential`.
  * An unknown credential falls back to the default AWS channel rather than failing the send.
  */
-export async function sendJourneyEmail({ emailCredential, to, subject, html, unifiedId = null }: JourneyEmailArgs): Promise<EmailSendResult> {
+export async function sendJourneyEmail({ emailCredential, to: rawTo, subject, html, unifiedId = null }: JourneyEmailArgs): Promise<EmailSendResult> {
+  // A stored address can carry a stray line break or space (see DailyBillingSync.cleanEmail);
+  // the relay rejects it, so every retry failed. Trim before any transport sees it.
+  const to = String(rawTo ?? '').trim();
   if (isSmtpCredential(emailCredential)) {
     return sendViaSmtp({ credential: emailCredential, prefix: SMTP_CREDENTIALS[emailCredential], to, subject, html, unifiedId });
   }
