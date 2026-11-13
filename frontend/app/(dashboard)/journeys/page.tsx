@@ -13,7 +13,7 @@ import {
   previewTemplate as fetchTemplatePreview, getJourneyEntries,
   getJourneyQueueCounts, retryBlockedEntries, getJourneyTimeline,
   getJourneyNodeConversions, previewJourneyNodeEmail,
-  getWhatsAppChannels, getWhatsAppTemplates, getJourneySnapshotStatus
+  getWhatsAppChannels, getWhatsAppTemplates, getJourneySnapshotStatus, getJourneyNotSent
 } from '@/lib/api';
 import WhatsAppTemplatePicker from './WhatsAppTemplatePicker';
 import RcsTemplatePicker from './RcsTemplatePicker';
@@ -42,6 +42,7 @@ import type {
   NodeForm, JourneyNode, JourneyEdge, ContentTemplate, JourneySummary, JourneyDetail, CampaignData, CampaignRow,
   JourneyAnalytics, QueueCounts, TimelineItem, JourneyEntry, FlowSuggestions, PreviewTemplateState, ApiData, NodeStat, CreateForm, EntryStats, NodeCampaign, NodeFireTimes
 } from '@/types/f1Journeys';
+import type { JourneyNotSent } from '@/types/api';
 
 // ── Constants ──────────────────────────────────────────────────
 const JOURNEYS_PATH = '/journeys';
@@ -786,6 +787,7 @@ export default function Journeys() {
   const [analytics, setAnalytics] = useState<JourneyAnalytics | null>(null);
   const [campaignData, setCampaignData] = useState<CampaignData | null>(null);
   const [nodeConversions, setNodeConversions] = useState<Record<string, { converted?: number }> | null>(null);
+  const [notSent, setNotSent] = useState<JourneyNotSent | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('analytics'); // tool shown on the detail's Advanced tab
@@ -1060,14 +1062,16 @@ export default function Journeys() {
   const _fetchNodeAnalytics = async (id: number | null) => {
     setNodeAnalyticsLoading(true);
     try {
-      const [a, cd, nc] = await Promise.allSettled([
+      const [a, cd, nc, ns] = await Promise.allSettled([
         getJourneyAnalytics(id!).catch(() => ({ data: null })) as Promise<ApiData<JourneyAnalytics | null>>,
         getJourneyCampaignAnalytics(id!).catch(() => ({ data: null })) as Promise<ApiData<CampaignData | null>>,
         getJourneyNodeConversions(id!).catch(() => ({ data: null })) as Promise<ApiData<Record<string, { converted?: number }> | null>>,
+        getJourneyNotSent(id!).catch(() => ({ data: null })) as Promise<{ data: JourneyNotSent | null }>,
       ]);
       if (a.status === 'fulfilled')  setAnalytics(a.value?.data ?? null);
       if (cd.status === 'fulfilled') setCampaignData(cd.value?.data ?? null);
       if (nc.status === 'fulfilled') setNodeConversions(nc.value?.data ?? null);
+      if (ns.status === 'fulfilled') setNotSent(ns.value?.data ?? null);
       setNodeAnalyticsLoaded(true);
     } finally {
       setNodeAnalyticsLoading(false);
@@ -1107,6 +1111,7 @@ export default function Journeys() {
     setDetail(null);
     setAnalytics(null);
     setCampaignData(null);
+    setNotSent(null);
     setNodeConversions(null);
     setSuggestions(null);
     setActiveTab('analytics');
@@ -1878,6 +1883,7 @@ export default function Journeys() {
             openedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.opened || 0]))}
             clickedByNode={Object.fromEntries(actionNodes.map((n, i) => [n.id, nodeChartData[i]?.clicked || 0]))}
             deliveryLoaded={campaignData !== null}
+            notSent={notSent}
             queueStats={queueStats}
             timeline={timeline}
             entries={journeyEntries}

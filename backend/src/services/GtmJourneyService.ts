@@ -664,6 +664,9 @@ class GtmJourneyService {
     const _cap = await reserveSend({ unifiedId: c.id, email: recipientEmail });
     if (!_cap.allowed) {
       console.log(`[GtmJourney ${journeyId}] FREQUENCY CAPPED uid=${c.id} count=${_cap.count} — skip + advance`);
+      // Recorded in journey_skip_log (continuous entries can't go in journey_events), so the
+      // journey page and the Send Log's "Not sent" view can count and list it.
+      SkipLogService.record({ journeyId, channel: 'email', eventRow, itemId, itemName: recipientEmail, missing: ['FREQUENCY_CAPPED'], contact: c });
       if (entryId) {
         const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
         await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});

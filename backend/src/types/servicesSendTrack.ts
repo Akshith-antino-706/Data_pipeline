@@ -104,3 +104,36 @@ export interface UtmLogFilters {
   dateFrom?: string;
   dateTo?: string;
 }
+
+/** Filters for the "not sent" log (journey_events action_blocked + journey_skip_log). */
+export interface NotSentLogFilters {
+  page?: number;
+  limit?: number;
+  email?: string;
+  journeyId?: string | number;
+  nodeId?: string;
+  reason?: string;
+}
+
+/** One person a journey could not send to, with the recorded reason. */
+export interface NotSentRow {
+  id: string;
+  source: 'event' | 'skip';
+  unified_id: number | null;
+  email: string | null;
+  contact_name: string | null;
+  journey_id: number | null;
+  node_id: string | null;
+  channel: string | null;
+  reason: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface NotSentPage {
+  rows: NotSentRow[];
+  total: number;
+  page: number;
+  limit: number;
+  capped: boolean;
+}

@@ -15,7 +15,7 @@ import type {
   JourneyNodeStatsRow, JourneyNodeDistribution, JourneyNodeUserStats, JourneyNodeAnalyticsRow,
   GtmExitDistRow, JourneyActionJob, RankingFetchFn, RankingFetchResult, RankingCacheEntry,
   DayHtmlResult, CreateJourneyInput, SnapshotEntriesArgs,
-  JourneyFlowGraph, JourneyForecastItem, JourneyRunningGroup,
+  JourneyFlowGraph, JourneyForecastItem, JourneyRunningGroup, JourneyNotSent,
 } from '../types/journeyService.js';
 import type { U1SubjectHtmlRow, U1JourneyListRow, U1GtmFanoutRow, U1NodeCampaignRow, U1StrategyRow, U1EntryNodeRow, U1ActiveEntryRow, U1NodeStatsRollupRow, U1JourneyEntryListRow, U1JourneyCampaignRow, U1EnrollmentRow, U1DueEntryRow, U1NodeSendAggRow } from '../types/u1JourneyService.js';
 
@@ -3875,6 +3875,40 @@ class JourneyService {
    *        metrics + scheduled counts to a single day. Omit for all-time.
    * Returns { journeyId, name, status, date, nodes: [...] }.
    */
+  /**
+   * How many people this journey could not send to, by reason and by node — from
+   * journey_events (fixed journeys: action_blocked with details.reason) plus
+   * journey_skip_log (continuous journeys: missing_keys). No sends are counted here;
+   * the Send Log's "Not sent" view lists the people behind these numbers.
+   */
+  static async getJourneyNotSent(journeyId: JourneyId): Promise<JourneyNotSent> {
+    const [ev, sk] = await Promise.all([
+      db.query<{ node_id: string; reason: string; n: number }>(`
+        SELECT node_id, COALESCE(details->>'reason', 'blocked') AS reason, COUNT(*)::int AS n
+        FROM journey_events
+        WHERE journey_id = $1 AND event_type = 'action_blocked'
+        GROUP BY node_id, COALESCE(details->>'reason', 'blocked')`, [journeyId]),
+      db.query<{ reason: string; n: number }>(`
+        SELECT LOWER(COALESCE(missing_keys, 'skipped')) AS reason, COUNT(*)::int AS n
+        FROM journey_skip_log WHERE journey_id = $1 GROUP BY 1`, [journeyId]),
+    ]);
+    const byReason: Record<string, number> = {};
+    const byNode: Record<string, { total: number; byReason: Record<string, number> }> = {};
+    let total = 0;
+    for (const r of ev.rows) {
+      total += r.n;
+      byReason[r.reason] = (byReason[r.reason] || 0) + r.n;
+      const node = byNode[r.node_id] ?? (byNode[r.node_id] = { total: 0, byReason: {} });
+      node.total += r.n;
+      node.byReason[r.reason] = (node.byReason[r.reason] || 0) + r.n;
+    }
+    for (const r of sk.rows) {
+      total += r.n;
+      byReason[r.reason] = (byReason[r.reason] || 0) + r.n;
+    }
+    return { total, byReason, byNode };
+  }
+
   static async getJourneyNodeBreakdown(journeyId: JourneyId, dateStr?: string | null) {
     const { rows: [jf] } = await db.query<Pick<JourneyFlowRow, 'journey_id' | 'name' | 'status' | 'nodes' | 'node_statuses'>>(
       `SELECT journey_id, name, status, nodes, node_statuses FROM journey_flows WHERE journey_id = $1`,
