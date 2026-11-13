@@ -47,6 +47,10 @@ function dateOrNull(v) {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v ?? '').trim());
   return m ? m[1] : null;
 }
+// The API sometimes sends Guest_Email with a trailing line break or spaces. Postgres TRIM()
+// only strips spaces, so a "\n" survived into unified_contacts.email and every send to that
+// contact failed. JS trim() also removes line breaks and tabs.
+function cleanEmail(v) { return String(v ?? '').replace(/\0/g, '').trim(); }
 
 export function mapRow(r) {
   return {
@@ -62,7 +66,7 @@ export function mapRow(r) {
     guest_name:    r.Guest_Name ?? '',
     nationality:   r.Nationality ?? '',
     guest_contact: r.Guest_Contact ?? '',
-    guest_email:   r.Guest_Email ?? '',
+    guest_email:   cleanEmail(r.Guest_Email),
     guest_age:     String(r.Guest_Age ?? ''),
     booking_date:  r.BookingDate ?? '',
     travel_end_date: dateOrNull(r.TravelEndDate),

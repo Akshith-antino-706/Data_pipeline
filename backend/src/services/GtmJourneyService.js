@@ -18,6 +18,9 @@ import { getAffinityVars, usesAffinity } from './affinityVars.js';
 import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Failed send attempts at one node before the entry is exited instead of retried again. */
+const MAX_SEND_FAILURES = 3;
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
 
 /**
@@ -695,8 +698,45 @@ class GtmJourneyService {
     } else {
       releaseSend({ unifiedId: c.id, email: recipientEmail }); // failed send doesn't consume a slot
       await SendTrackService.markFailed(logId, { error: res?.error || 'unknown', provider: res?.provider || null, durationMs: ms }).catch(() => {});
+
+      // ── Stop a send that keeps failing ──
+      // processDue re-claims an entry that hasn't advanced within 10 min, so a send that can
+      // never succeed (e.g. an address the relay rejects) retried forever — 3 BullMQ attempts
+      // every 10 min. After MAX_SEND_FAILURES failed attempts at this node, exit the entry.
+      if (await this._exitAfterRepeatedFailures({ unifiedId: c.id, journeyId, nodeId, entryId, error: res?.error })) return;
       throw new Error(res?.error || 'gtm journey send failed'); // let BullMQ retry
     }
+  }
+
+  /**
+   * After MAX_SEND_FAILURES failed sends at this node, exit the entry (exit_reason
+   * 'send_failed') so it stops being re-claimed and retried. Returns true when exited.
+   */
+  static async _exitAfterRepeatedFailures({ unifiedId, journeyId, nodeId, entryId, error }) {
+    if (!entryId) return false;
+    const failures = await this._sendFailures({ unifiedId, journeyId, nodeId, entryId });
+    if (failures < MAX_SEND_FAILURES) return false;
+    await db.query(
+      `UPDATE gtm_journey_entries SET status='exited', exit_reason='send_failed', next_fire_at=NULL, updated_at=NOW() WHERE id=$1 AND status='active'`,
+      [entryId]
+    );
+    console.warn(`[GtmJourney ${journeyId}] uid=${unifiedId} entry=${entryId} — ${failures} failed sends at ${nodeId}, entry exited (send_failed): ${error || 'unknown'}`);
+    return true;
+  }
+
+  /**
+   * Failed send attempts for this entry at this node since it entered the journey
+   * (email_send_log, via idx_esl_unified_id). A DB error counts as 0 — retrying is the
+   * old behaviour, never a reason to drop a recipient.
+   */
+  static async _sendFailures({ unifiedId, journeyId, nodeId, entryId }) {
+    const { rows: [r] } = await db.query(
+      `SELECT COUNT(*)::int AS n FROM email_send_log
+        WHERE unified_id = $1 AND journey_id = $2 AND node_id = $3 AND status = 'failed'
+          AND created_at >= (SELECT entered_at FROM gtm_journey_entries WHERE id = $4)`,
+      [unifiedId, journeyId, nodeId, entryId]
+    ).catch(() => ({ rows: [] }));
+    return r?.n || 0;
   }
 }
 
