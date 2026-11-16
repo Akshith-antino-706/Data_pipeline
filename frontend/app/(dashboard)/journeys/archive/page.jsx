@@ -11,9 +11,9 @@
 
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import {
-  Archive, RefreshCw, ChevronRight, ChevronDown, Download, Loader2, Info, Search, X, ArrowRight,
+  Archive, RefreshCw, ChevronRight, ChevronDown, Download, Loader2, Info, Search, X, ArrowRight, Eye, AlertTriangle,
 } from 'lucide-react';
-import { getArchivedJourneys, getArchivedJourney, getArchivedTableDownload } from '@/lib/api';
+import { getArchivedJourneys, getArchivedJourney, getArchivedTableDownload, getArchivedNodeEmail } from '@/lib/api';
 
 const fmt = (n) => (n == null ? '—' : (Number(n) || 0).toLocaleString('en-US'));
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
@@ -61,6 +61,8 @@ const nodeCaption = (n) => {
   return [d.channel, d.sendHour && `@ ${d.sendHour}`].filter(Boolean).join(' ');
 };
 
+const isEmailNode = (n) => n.type === 'action' && (n.data?.channel || 'email').toLowerCase() === 'email';
+
 const TYPE_COLORS = { trigger: '#8b5cf6', action: '#3b82f6', wait: '#f59e0b', condition: '#14b8a6' };
 
 const COLS = [
@@ -82,6 +84,93 @@ function metric(row, key) {
   return fmt(row[key]);
 }
 
+// Preview of the email one node sent — template subject/HTML as archived, the subjects actually
+// sent with dates, and a warning when the template was edited after the node's last send.
+// The HTML renders in a sandboxed iframe (no scripts, no same-origin access).
+function NodeEmailModal({ journeyId, node, onClose }) {
+  const [state, setState] = useState({ loading: true });
+  const [view, setView] = useState('html');
+
+  useEffect(() => {
+    getArchivedNodeEmail(journeyId, node.id)
+      .then(res => setState({ loading: false, data: res.data }))
+      .catch(e => setState({ loading: false, error: e.message }));
+  }, [journeyId, node.id]);
+
+  const d = state.data;
+  const t = d?.template;
+  const html = d?.stored_email?.html || t?.html_body || t?.body || '';
+  const subject = d?.stored_email?.subject || d?.subjects?.[0]?.subject || t?.html_subject_line || t?.subject || '—';
+  const editedAfter = t && d?.last_sent_at && new Date(t.html_updated_at || t.updated_at) > new Date(d.last_sent_at);
+  const label = { fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.3, fontWeight: 700 };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} className="card"
+        style={{ width: 'min(980px, 100%)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden', background: 'var(--card)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+          <Eye size={16} color="#8b5cf6" />
+          <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+            {node.data?.label || node.id} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>· {node.id}{d?.send_hour ? ` · @ ${d.send_hour}` : ''}</span>
+          </div>
+          <button onClick={onClose} style={{ marginLeft: 'auto', border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}><X size={18} /></button>
+        </div>
+
+        {state.loading && <div style={{ padding: 24, color: 'var(--text-tertiary)' }}><Loader2 size={14} className="spin" style={{ verticalAlign: -2, marginRight: 6 }} /> Loading email from archive…</div>}
+        {state.error && <div style={{ padding: 24, color: '#ef4444' }}>{state.error}</div>}
+
+        {d && (
+          <div style={{ overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+              <div><div style={label}>Template</div><div style={{ color: 'var(--text-primary)' }}>{t ? `${t.name} #${t.id}` : (d.template_id ? `#${d.template_id} (not found)` : '—')}</div></div>
+              <div><div style={label}>Emails sent</div><div style={{ color: 'var(--text-primary)' }}>{fmt(d.emails)}</div></div>
+              <div><div style={label}>Sent on</div><div style={{ color: 'var(--text-primary)' }}>{d.first_sent_at ? `${fmtDate(d.first_sent_at)}${fmtDate(d.last_sent_at) !== fmtDate(d.first_sent_at) ? ` → ${fmtDate(d.last_sent_at)}` : ''}` : '—'}</div></div>
+              <div><div style={label}>Template last edited</div><div style={{ color: 'var(--text-primary)' }}>{t ? fmtDate(t.html_updated_at || t.updated_at) : '—'}</div></div>
+            </div>
+
+            {d.stored_email ? (
+              <div style={{ fontSize: 12, color: '#22c55e' }}><Info size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Exact email as sent (frozen at send time).</div>
+            ) : editedAfter ? (
+              <div style={{ fontSize: 12, padding: '8px 10px', borderRadius: 8, background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+                <AlertTriangle size={13} style={{ verticalAlign: -2, marginRight: 6 }} />
+                This template was edited after this node&apos;s last send — the preview shows the newer version, not exactly what was sent. The subjects below are what was actually sent.
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}><Info size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Template as sent; personal fields ({'{{ … }}'}) were filled per contact at send time.</div>
+            )}
+
+            <div>
+              <div style={label}>Subject{d.subjects?.length > 1 ? 's sent' : ''}</div>
+              {d.subjects?.length ? d.subjects.map((s, i) => (
+                <div key={i} style={{ display: 'flex', gap: 12, fontSize: 13, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ flex: 1, color: 'var(--text-primary)' }}>{s.subject || '—'}</span>
+                  <span style={{ color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{fmt(s.emails)} · {fmtDate(s.first_sent_at)}</span>
+                </div>
+              )) : <div style={{ color: 'var(--text-primary)' }}>{subject}</div>}
+            </div>
+
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['html', 'source'].map(v => (
+                <button key={v} onClick={() => setView(v)} style={{ padding: '5px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: '1px solid var(--border)', background: view === v ? 'var(--bg-secondary)' : 'transparent', color: 'var(--text-primary)', fontWeight: view === v ? 700 : 400 }}>
+                  {v === 'html' ? 'Preview' : 'HTML source'}
+                </button>
+              ))}
+            </div>
+            {!html ? (
+              <div style={{ color: 'var(--text-tertiary)' }}>No HTML stored for this template.</div>
+            ) : view === 'html' ? (
+              <iframe title="Email preview" sandbox="" srcDoc={html}
+                style={{ width: '100%', height: '60vh', border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }} />
+            ) : (
+              <pre style={{ maxHeight: '60vh', overflow: 'auto', fontSize: 11.5, padding: 12, borderRadius: 8, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{html}</pre>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function JourneyArchivePage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -90,6 +179,7 @@ export default function JourneyArchivePage() {
   const [month, setMonth] = useState('');
   const [expanded, setExpanded] = useState({});
   const [downloading, setDownloading] = useState(null);
+  const [preview, setPreview] = useState(null);   // { journeyId, node }
 
   const load = useCallback(async (fresh) => {
     setLoading(true);
@@ -187,6 +277,7 @@ export default function JourneyArchivePage() {
               <tr>
                 <th style={{ ...th, textAlign: 'left', width: 40 }}>#</th>
                 <th style={{ ...th, textAlign: 'left' }}>Node</th>
+                <th style={{ ...th, textAlign: 'center' }} title="Preview the email this node sent">Email</th>
                 {COLS.filter(c => c.key !== 'booked').map(c => <th key={c.key} style={th} title={c.tip}>{c.label}</th>)}
               </tr>
             </thead>
@@ -198,6 +289,15 @@ export default function JourneyArchivePage() {
                     <td style={{ ...td, textAlign: 'left', color: 'var(--text-tertiary)' }}>{i + 1}</td>
                     <td style={{ ...td, textAlign: 'left' }}>
                       {n.data?.label || n.id} <span style={{ color: 'var(--text-tertiary)' }}>({nodeCaption(n)})</span>
+                    </td>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      {isEmailNode(n) && (
+                        <button onClick={() => setPreview({ journeyId: d.journey_id, node: n })} disabled={!d.has_templates}
+                          title={d.has_templates ? 'Preview the email this node sent' : 'Email templates not archived for this journey yet (added by the next archive run)'}
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text-tertiary)', cursor: d.has_templates ? 'pointer' : 'not-allowed', opacity: d.has_templates ? 1 : 0.4 }}>
+                          <Eye size={14} />
+                        </button>
+                      )}
                     </td>
                     {COLS.filter(c => c.key !== 'booked').map(c => <td key={c.key} style={td}>{metric(s, c.key)}</td>)}
                   </tr>
@@ -311,6 +411,8 @@ export default function JourneyArchivePage() {
           </table>
         </div>
       )}
+
+      {preview && <NodeEmailModal journeyId={preview.journeyId} node={preview.node} onClose={() => setPreview(null)} />}
 
       <style jsx>{`
         .spin { animation: spin 1s linear infinite; }

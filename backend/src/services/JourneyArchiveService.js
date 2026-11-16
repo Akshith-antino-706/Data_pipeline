@@ -15,12 +15,13 @@
 import zlib from 'zlib';
 import { Transform } from 'stream';
 import { to as copyTo } from 'pg-copy-streams';
-import { S3Client, ListObjectsV2Command, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import pool from '../config/database.js';
 
 const BUCKET = () => process.env.ARCHIVE_S3_BUCKET || 'rayna-journey-archive-022278165625';
 const MANIFEST_RE = /^journeys\/completed_month=\d{4}-\d{2}\/journey_id=(\d+)\/manifest\.json$/;
+const TEMPLATES_FILE = 'email_templates.json.gz';
 const COPY_TIMEOUT = '600s';          // per chunk; a cold 750k-row email node took ~160s
 const DUBAI_MS = 4 * 3600 * 1000;
 
@@ -58,18 +59,22 @@ async function readOnly(fn, timeout = '60s') {
   }
 }
 
-async function archivedJourneyIds() {
-  const ids = new Set();
+// Archived journeys: journey_id → { dir, hasTemplates } (a journey counts once its manifest exists).
+async function archivedJourneys() {
+  const out = new Map();
+  const templates = new Set();
   let token;
   do {
     const page = await s3().send(new ListObjectsV2Command({ Bucket: BUCKET(), Prefix: 'journeys/', ContinuationToken: token }));
     for (const o of page.Contents || []) {
       const m = MANIFEST_RE.exec(o.Key);
-      if (m) ids.add(Number(m[1]));
+      if (m) out.set(Number(m[1]), { dir: o.Key.slice(0, -'manifest.json'.length) });
+      if (o.Key.endsWith(`/${TEMPLATES_FILE}`)) templates.add(o.Key.slice(0, -TEMPLATES_FILE.length));
     }
     token = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (token);
-  return ids;
+  for (const v of out.values()) v.hasTemplates = templates.has(v.dir);
+  return out;
 }
 
 async function candidateJourneys(cfg) {
@@ -160,6 +165,86 @@ async function exportTable(key, table, chunks) {
 const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
 const csvCell = (v) => (v == null ? '' : /[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
 
+/**
+ * The emails each node sent, for the archive screen's preview (eye button):
+ *  - templates: the content_templates row of every email node's template (+ its linked
+ *    email_html_templates row) as it stands NOW — templates are personalised per contact at
+ *    send time, so the template itself is what can be kept. updated_at is kept so the screen
+ *    can warn when a template was edited after the journey's last send.
+ *  - nodes: per email node — template id, the frozen rendered email if journey_node_emails has
+ *    one (exact HTML sent), and the subjects actually sent with counts and first/last send time.
+ * Written as one gzipped JSON next to the tables.
+ */
+async function exportEmailTemplates(j, dir) {
+  const jid = Number(j.journey_id);
+  const emailNodes = (j.nodes || []).filter(n => n.type === 'action' && (n.data?.channel || 'email').toLowerCase() === 'email');
+  const tidByNode = Object.fromEntries(emailNodes.map(n => [n.id, parseInt(n.data?.emailTemplateId ?? n.data?.templateId) || null]));
+  const tids = [...new Set(Object.values(tidByNode).filter(Boolean))];
+
+  const templates = !tids.length ? [] : (await readOnly(c => c.query(
+    `SELECT ct.id, ct.name, ct.channel, ct.status, ct.subject, ct.body, ct.body_plain, ct.version,
+            ct.html_template_id, ct.created_at, ct.updated_at,
+            eht.name AS html_name, eht.html_body, eht.subject_line AS html_subject_line,
+            eht.engine AS html_engine, eht.updated_at AS html_updated_at
+       FROM content_templates ct
+       LEFT JOIN email_html_templates eht ON eht.id = ct.html_template_id
+      WHERE ct.id = ANY($1)`, [tids]))).rows;
+  const stored = (await readOnly(c => c.query(
+    'SELECT node_id, template_id, subject, html, source, created_at FROM journey_node_emails WHERE journey_id = $1', [jid]))).rows;
+  // Subjects can be personalised, so keep the 5 most-sent per node plus node totals.
+  const sends = (await readOnly(c => c.query(
+    `SELECT node_id, subject, emails, first_sent_at, last_sent_at, node_emails, node_first_sent_at, node_last_sent_at
+       FROM (SELECT node_id, subject, COUNT(*)::int AS emails, MIN(sent_at) AS first_sent_at, MAX(sent_at) AS last_sent_at,
+                    SUM(COUNT(*)) OVER (PARTITION BY node_id)::int AS node_emails,
+                    MIN(MIN(sent_at)) OVER (PARTITION BY node_id) AS node_first_sent_at,
+                    MAX(MAX(sent_at)) OVER (PARTITION BY node_id) AS node_last_sent_at,
+                    ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY COUNT(*) DESC) AS rn
+               FROM email_send_log
+              WHERE journey_id = $1 AND sent_at IS NOT NULL
+              GROUP BY node_id, subject) s
+      WHERE rn <= 5 ORDER BY node_id, emails DESC`, [jid]), COPY_TIMEOUT)).rows;
+
+  const nodes = {};
+  for (const n of emailNodes) {
+    const s = sends.filter(r => r.node_id === n.id);
+    const st = stored.find(r => r.node_id === n.id);
+    nodes[n.id] = {
+      label: n.data?.label || n.id,
+      template_id: tidByNode[n.id],
+      send_hour: n.data?.sendHour || null,
+      emails: s[0]?.node_emails ?? 0,
+      first_sent_at: s[0]?.node_first_sent_at ?? null,
+      last_sent_at: s[0]?.node_last_sent_at ?? null,
+      subjects: s.map(r => ({ subject: r.subject, emails: r.emails, first_sent_at: r.first_sent_at, last_sent_at: r.last_sent_at })),
+      stored_email: st ? { subject: st.subject, html: st.html, source: st.source, created_at: st.created_at } : null,
+    };
+  }
+  const doc = {
+    journey_id: jid,
+    exported_at: new Date().toISOString(),
+    templates: Object.fromEntries(templates.map(t => [t.id, t])),
+    nodes,
+  };
+  const body = zlib.gzipSync(Buffer.from(JSON.stringify(doc)));
+  await s3().send(new PutObjectCommand({ Bucket: BUCKET(), Key: `${dir}${TEMPLATES_FILE}`, Body: body, ContentType: 'application/gzip' }));
+  return { gz_bytes: body.length, templates: templates.length, nodes: emailNodes.length };
+}
+
+// Add the templates file to a journey archived before it existed, and note it in the manifest.
+async function backfillEmailTemplates(jid, dir) {
+  const { rows: [j] } = await readOnly(c => c.query(
+    'SELECT journey_id, name, nodes, edges FROM journey_flows WHERE journey_id = $1', [jid]));
+  if (!j) throw new Error('journey no longer in journey_flows');
+  const res = await exportEmailTemplates(j, dir);
+  const out = await s3().send(new GetObjectCommand({ Bucket: BUCKET(), Key: `${dir}manifest.json` }));
+  const manifest = JSON.parse(await out.Body.transformToString());
+  manifest.extras = { ...(manifest.extras || {}), email_templates: { ...res, backfilled_at: new Date().toISOString() } };
+  await s3().send(new PutObjectCommand({
+    Bucket: BUCKET(), Key: `${dir}manifest.json`, Body: JSON.stringify(manifest, null, 2), ContentType: 'application/json',
+  }));
+  return res;
+}
+
 const ARCHIVE_TABLES = ['journey_flows', 'custom_segments', 'journey_node_stats', 'unsubscribe_log', 'journey_entries',
   'journey_events', 'email_send_log', 'whatsapp_send_log', 'sms_send_log'];
 const PER_NODE = new Set(['journey_events', 'email_send_log']);
@@ -192,6 +277,9 @@ async function exportJourney(j, lastSent, emailCounts, log) {
     log(`  ${table}: ${res.rows} rows, ${res.gz_bytes} bytes gz`);
   }
 
+  const templatesRes = await exportEmailTemplates(j, dir);
+  log(`  email templates: ${templatesRes.templates} template(s) for ${templatesRes.nodes} email node(s), ${templatesRes.gz_bytes} bytes gz`);
+
   const { rows: cols } = await readOnly(c => c.query(
     `SELECT table_name, ordinal_position, column_name, data_type FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = ANY($1) ORDER BY 1, 2`, [ARCHIVE_TABLES]));
@@ -208,6 +296,7 @@ async function exportJourney(j, lastSent, emailCounts, log) {
     completed_month: month,
     duration_ms: Date.now() - started,
     tables,
+    extras: { email_templates: templatesRes },
   };
   await s3().send(new PutObjectCommand({
     Bucket: BUCKET(), Key: `${dir}manifest.json`, Body: JSON.stringify(manifest, null, 2), ContentType: 'application/json',
@@ -227,9 +316,9 @@ export async function runJourneyArchive(opts = {}, log = (m) => console.log(`[Jo
   _running = true;
   const cfg = { ...archiveConfig(), ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
   const started = Date.now();
-  const summary = { dryRun: cfg.dryRun, minAgeDays: cfg.minAgeDays, archived: [], failed: [], tooRecent: [], wouldArchive: [] };
+  const summary = { dryRun: cfg.dryRun, minAgeDays: cfg.minAgeDays, archived: [], failed: [], tooRecent: [], wouldArchive: [], templatesBackfilled: [] };
   try {
-    const done = await archivedJourneyIds();
+    const done = await archivedJourneys();
     let list = (await candidateJourneys(cfg)).filter(j => !done.has(Number(j.journey_id)));
     if (cfg.journeyId) list = list.filter(j => Number(j.journey_id) === Number(cfg.journeyId));
     summary.alreadyArchived = done.size;
@@ -263,11 +352,28 @@ export async function runJourneyArchive(opts = {}, log = (m) => console.log(`[Jo
         console.error(`[JourneyArchive] ✗ #${j.journey_id} failed: ${err.message} (no manifest written — retried next run)`);
       }
     }
+
+    // Journeys archived before the templates file existed (e.g. #267) get it added — small reads
+    // plus one per-node subject summary, within the same per-run limits.
+    const missing = [...done].filter(([id, v]) => !v.hasTemplates && (!cfg.journeyId || id === Number(cfg.journeyId)));
+    for (const [id, v] of missing) {
+      if (summary.templatesBackfilled.length >= cfg.maxPerRun) break;
+      if (Date.now() - started > cfg.maxMinutes * 60000) break;
+      if (cfg.dryRun) { log(`would add email templates to archived #${id}`); summary.templatesBackfilled.push({ journey_id: id, dryRun: true }); continue; }
+      try {
+        const r = await backfillEmailTemplates(id, v.dir);
+        summary.templatesBackfilled.push({ journey_id: id, templates: r.templates, nodes: r.nodes });
+        log(`✓ #${id} email templates added: ${r.templates} template(s), ${r.nodes} email node(s)`);
+      } catch (err) {
+        summary.failed.push({ journey_id: id, error: `templates: ${err.message}` });
+        console.error(`[JourneyArchive] ✗ #${id} templates backfill failed: ${err.message} (retried next run)`);
+      }
+    }
   } finally {
     _running = false;
     summary.seconds = Math.round((Date.now() - started) / 1000);
   }
-  log(`done in ${summary.seconds}s — archived ${summary.archived.length}, would archive ${summary.wouldArchive.length}, failed ${summary.failed.length}, too recent ${summary.tooRecent.length}`);
+  log(`done in ${summary.seconds}s — archived ${summary.archived.length}, would archive ${summary.wouldArchive.length}, templates added ${summary.templatesBackfilled.length}, failed ${summary.failed.length}, too recent ${summary.tooRecent.length}`);
   return summary;
 }
 

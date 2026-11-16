@@ -164,6 +164,7 @@ export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analyt
 // Journey archive — completed journeys exported to S3 (read-only; never hits the DB)
 export const getArchivedJourneys = (fresh) => request(`/api/v3/journey-archive${fresh ? '?fresh=1' : ''}`);
 export const getArchivedJourney = (id) => request(`/api/v3/journey-archive/${id}`);
+export const getArchivedNodeEmail = (id, nodeId) => request(`/api/v3/journey-archive/${id}/nodes/${encodeURIComponent(nodeId)}/email`);
 export const getArchivedTableDownload = (id, table) => request(`/api/v3/journey-archive/${id}/download/${encodeURIComponent(table)}`);
 export const getJourney = (id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });

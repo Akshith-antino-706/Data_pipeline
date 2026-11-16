@@ -171,7 +171,24 @@ router.get('/:id', async (req, res, next) => {
     const ref = await findRef(parseInt(req.params.id));
     if (!ref) return res.status(404).json({ success: false, error: 'Journey not found in archive' });
     const { dir: _d, ...j } = await getJourney(ref);
-    res.json({ success: true, data: j });
+    res.json({ success: true, data: { ...j, has_templates: !!j.manifest?.extras?.email_templates } });
+  } catch (err) { next(err); }
+});
+
+// The email one node sent: its template (subject + HTML, as archived), the frozen rendered email
+// when the journey had one, and the subjects actually sent with counts and send dates.
+router.get('/:id/nodes/:nodeId/email', async (req, res, next) => {
+  try {
+    const ref = await findRef(parseInt(req.params.id));
+    if (!ref) return res.status(404).json({ success: false, error: 'Journey not found in archive' });
+    const j = await getJourney(ref);
+    const doc = await memo(`templates:${ref.journeyId}:${ref.month}`,
+      () => getObject(`${j.dir}email_templates.json.gz`).then(JSON.parse).catch(() => null));
+    if (!doc) return res.status(404).json({ success: false, error: 'Email templates are not archived for this journey yet' });
+    const node = doc.nodes?.[req.params.nodeId];
+    if (!node) return res.status(404).json({ success: false, error: 'Not an email node of this journey' });
+    const template = node.template_id ? doc.templates?.[node.template_id] || null : null;
+    res.json({ success: true, data: { node_id: req.params.nodeId, ...node, template, archived_at: doc.exported_at } });
   } catch (err) { next(err); }
 });
 
