@@ -161,6 +161,10 @@ export const getJourneyAnalyticsTable = (status) => request(`/api/v3/journeys/an
 export const getJourneyAnalyticsNodes = (id, date) => request(`/api/v3/journeys/analytics/${id}/nodes${date ? `?date=${date}` : ''}`);
 export const refreshJourneyAnalytics  = (id) => request(`/api/v3/journeys/analytics/${id}/refresh`, { method: 'POST' });
 export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analytics/regenerate-qa', { method: 'POST' });
+// Journey archive — completed journeys exported to S3 (read-only; never hits the DB)
+export const getArchivedJourneys = (fresh) => request(`/api/v3/journey-archive${fresh ? '?fresh=1' : ''}`);
+export const getArchivedJourney = (id) => request(`/api/v3/journey-archive/${id}`);
+export const getArchivedTableDownload = (id, table) => request(`/api/v3/journey-archive/${id}/download/${encodeURIComponent(table)}`);
 export const getJourney = (id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
 // Progress of the background audience build kicked off by createJourney — 'building' | 'done' | 'failed'.
