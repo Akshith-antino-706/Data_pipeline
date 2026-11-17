@@ -246,8 +246,8 @@ async function handle(msg) {
     try {
       const r = await applyOtpVerified(p);
       if (!r.matched) console.log(`${tag} ⚠️ no contact with email <${r.email}> — nothing updated`);
-      else if (!r.updated.length) console.log(`${tag} ✅ <${r.email}> already has mobile=${mobile} (${r.matched} contact(s)) — no change`);
-      else console.log(`${tag} ✅ mobile=${mobile} set on ${r.updated.length}/${r.matched} contact(s) <${r.email}>: ${r.updated.map(u => `#${u.id} (was ${u.old_mobile ?? 'empty'})`).join(', ')}`);
+      else if (!r.updated.length) console.log(`${tag} ✅ <${r.email}> already has mobile=${mobile} country=${r.country ?? '?'} (${r.matched} contact(s)) — no change`);
+      else console.log(`${tag} ✅ mobile=${mobile} country=${r.country ?? 'unparsed, kept'} set on ${r.updated.length}/${r.matched} contact(s) <${r.email}>: ${r.updated.map(u => `#${u.id} (was ${u.old_mobile ?? 'empty'} / ${u.old_country ?? 'empty'})`).join(', ')}`);
       await record({ ...meta, outcome: !r.matched ? 'verified_no_contact' : r.updated.length ? 'verified_updated' : 'verified_unchanged', updated: r.updated.length });
       return _ch.ack(msg);
     } catch (e) {
