@@ -502,6 +502,7 @@ class GtmJourneyService {
       giveaway_status:   gvRow.raw_payload?.status ?? '',
       giveaway_starts_at: gvRow.raw_payload?.startAt ?? '',
       giveaway_ends_at:  gvRow.raw_payload?.endAt ?? '',
+      giveaway_slug:     gvRow.raw_payload?.slug ?? '',   // giveaway page: /giveaways/browse/<slug>
       giveaway_changes:  Array.isArray(gvRow.raw_payload?.changes) ? gvRow.raw_payload.changes.join(', ') : '',
       // AFFILIATE vars — blank for giveaway rows, so one template set serves both feeds.
       // `code`/`expiry`/`value` above are already shared (coupon code, validUntil, discount).
