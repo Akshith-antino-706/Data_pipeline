@@ -68,7 +68,7 @@ const hrefs = (html) => [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]);
 test('config: B2B profile is off by default and reads its own DAILY_OFFER_B2B_* values', () => {
   const off = getDailyOfferConfig({ DAILY_OFFER_ENABLED: 'true' }, 'b2b');
   assert.equal(off.enabled, false);
-  assert.equal(getDailyOfferConfig({ DAILY_OFFER_B2B_ENABLED: 'true' }, 'b2b').segmentId, 95);   // trial inboxes until the team switches it to 87
+  assert.equal(getDailyOfferConfig({ DAILY_OFFER_B2B_ENABLED: 'true' }, 'b2b').segmentId, 87);   // real B2B segment by default; DAILY_OFFER_B2B_SEGMENT_ID=95 for trial inboxes
   const on = getDailyOfferConfig(ON_BOTH, 'b2b');
   assert.equal(on.enabled, true);
   assert.equal(on.audience, 'b2b');

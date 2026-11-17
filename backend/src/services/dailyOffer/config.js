@@ -29,9 +29,9 @@ export function getDailyOfferConfig(env = process.env, audience = 'b2c') {
       ...shared,
       audience:       'b2b',
       enabled:        env.DAILY_OFFER_B2B_ENABLED === 'true',
-      // custom_segments.id — 95 = "B2C Testing Email Users" (trial inboxes, the default until the
-      // team has checked the daily B2B email); 87 = "B2B - Subscribed Users Only" for the real send.
-      segmentId:      int(env.DAILY_OFFER_B2B_SEGMENT_ID, 95),
+      // custom_segments.id — 87 = "B2B - Subscribed Users Only" (the real send, default since
+      // 2026-11-17); 95 = "B2C Testing Email Users" (trial inboxes) via DAILY_OFFER_B2B_SEGMENT_ID.
+      segmentId:      int(env.DAILY_OFFER_B2B_SEGMENT_ID, 87),
       // The B2B email copies the B2C journey of the same day, so it is created after it:
       // attempts at :15 / :45 from createAt until retryUntil, waiting while B2C has no journey yet.
       createAt:       env.DAILY_OFFER_B2B_CREATE_AT || '09:15',
