@@ -7,7 +7,7 @@ const BATCH_SIZE = 1000;
 const CLAUDE_BATCH = 50;
 
 // Country name mapping from ISO 2-letter code
-const COUNTRY_NAMES = {
+export const COUNTRY_NAMES = {
   IN: 'India', AE: 'UAE', SA: 'Saudi Arabia', US: 'United States', GB: 'United Kingdom',
   CA: 'Canada', AU: 'Australia', DE: 'Germany', FR: 'France', IT: 'Italy', ES: 'Spain',
   NL: 'Netherlands', BE: 'Belgium', CH: 'Switzerland', AT: 'Austria', SE: 'Sweden',
