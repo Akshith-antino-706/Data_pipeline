@@ -117,7 +117,10 @@ async function sendViaSmtp({ credential, prefix, to, subject, html, unifiedId })
  * An unknown credential falls back to the default AWS channel rather than failing the send.
  * @param {{ emailCredential?: string, to: string, subject: string, html: string }} args
  */
-export async function sendJourneyEmail({ emailCredential, to, subject, html, unifiedId = null }) {
+export async function sendJourneyEmail({ emailCredential, to: rawTo, subject, html, unifiedId = null }) {
+  // A stored address can carry a stray line break or space (see DailyBillingSync.cleanEmail);
+  // the relay rejects it, so every retry failed. Trim before any transport sees it.
+  const to = String(rawTo ?? '').trim();
   const prefix = SMTP_CREDENTIALS[emailCredential];
   if (prefix) {
     return sendViaSmtp({ credential: emailCredential, prefix, to, subject, html, unifiedId });

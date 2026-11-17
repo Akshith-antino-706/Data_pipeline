@@ -42,3 +42,10 @@ test('upsert writes the 3 columns and keeps existing values when the API sends a
   assert.match(sql, /guest_name = EXCLUDED\.guest_name/);   // other columns still overwrite as before
   assert.deepEqual(params.slice(-3), ['2026-11-13', 'Online B2B UAE', 'B2B Dubai']);
 });
+
+test('Guest_Email is trimmed — a trailing line break, tab or space never reaches the contact', () => {
+  assert.equal(mapRow({ ...apiRecord, Guest_Email: 'guest@gmail.com\n' }).guest_email, 'guest@gmail.com');
+  assert.equal(mapRow({ ...apiRecord, Guest_Email: ' \tguest@gmail.com \r\n' }).guest_email, 'guest@gmail.com');
+  assert.equal(mapRow({ ...apiRecord, Guest_Email: null }).guest_email, '');
+  assert.equal(mapRow({ BillSerial: 3, ServiceId: 12, SellingPrice: '0' }).guest_email, '');
+});

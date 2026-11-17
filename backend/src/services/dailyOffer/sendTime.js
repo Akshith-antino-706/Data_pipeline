@@ -11,6 +11,7 @@ import db from '../../config/database.js';
 import { getRates } from '../../utils/currency.js';
 import { resolveMarketByMobileCountry } from '../../utils/marketPlan.js';
 import { applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
+import { audienceOf } from './config.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const _cache = new Map();   // `${journeyId}|${nodeId}|${plan}|${currency}|${checkedAt}` → { at, html, subject }
@@ -28,7 +29,8 @@ export async function personalizeDailyOffer({ html, subject, label, customerId }
   const { rows: [c] } = await db.query('SELECT mobile_country FROM unified_contacts WHERE id = $1', [customerId]);
   const market = resolveMarketByMobileCountry(c?.mobile_country);
   const rates = await getRates();
-  const key = `${label.date}|${label.loopDay}|${market.plan}|${market.currency}|${label.checkedAt || label.createdAt}`;
+  // B2C and B2B share date + loop day, so the audience is part of the key.
+  const key = `${audienceOf(label)}|${label.date}|${label.loopDay}|${market.plan}|${market.currency}|${label.checkedAt || label.createdAt}`;
   const hit = _cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { html: hit.html, subject: hit.subject, market };
 

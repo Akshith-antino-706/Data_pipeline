@@ -18,6 +18,9 @@ import { getAffinityVars, usesAffinity } from './affinityVars.js';
 import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Failed send attempts at one node before the entry is exited instead of retried again. */
+const MAX_SEND_FAILURES = 3;
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
 
 /**
@@ -531,6 +534,54 @@ class GtmJourneyService {
       link: pay.link || {}, cardOffer: pay.cardOffer || {},
     } : null;
 
+    // ── AI recommendation journeys (recommendation_type set) — additive. Every other
+    //    journey has recommendation_type = NULL and skips this block entirely. ──
+    // REC_JOURNEY_ALLOWLIST decides delivery. The {{#products}} cards are filled HERE, on
+    // the raw template and BEFORE the general fill below: that fill blanks every key it
+    // doesn't know — including {{product_image}}, {{product_name}}, {{product_url}} — so
+    // filling the cards after it produced empty cards.
+    let recProducts = null;   // set only when the template has a product block
+    {
+      const { rows: [jf] } = await db.query(
+        `SELECT recommendation_type, trigger_event, trigger_source FROM journey_flows WHERE journey_id = $1`,
+        [journeyId]
+      ).catch(() => ({ rows: [] }));
+      if (jf?.recommendation_type) {
+        const { expandProductsBlockForUser, isRecipientAllowedForRec } = await import('./RecommendationRenderer.js');
+        if (!isRecipientAllowedForRec(c.email)) {
+          console.log(`[GtmJourney ${journeyId}] REC ALLOWLIST BLOCKED — ${c.email} not in REC_JOURNEY_ALLOWLIST (type=${jf.recommendation_type}). Skipping send + advancing.`);
+          if (entryId) {
+            const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+            await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
+          }
+          return;
+        }
+        if (tplBody.includes('{{#products}}')) {
+          // MARKET PRICING RULE: per-user local-currency pricing applies ONLY to pure CONTINUOUS
+          // journeys (no gtm/giveaway trigger event selected). When a trigger event IS selected
+          // (gtm or giveaway), product-card prices stay default-plan AED — consistent with the
+          // event values placeholderResolver renders — so the email never mixes currencies.
+          const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim())
+                              || jf.trigger_source === 'giveaway' || jf.trigger_source === 'affiliate';
+          const marketOverride = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
+          recProducts = [];
+          try {
+            const filled = await expandProductsBlockForUser({
+              templateHtml:       tplBody,
+              unifiedId:          c.id,
+              recommendationType: jf.recommendation_type,
+              market:             marketOverride,   // gtm/giveaway-triggered → {default, AED}; continuous → null (per-user market)
+            });
+            tplBody = filled.html;
+            recProducts = filled.productsUsed;
+            console.log(`[GtmJourney ${journeyId}] AI recs filled → type=${jf.recommendation_type} products=${recProducts.length} source=${filled.source} fromCache=${filled.fromCache}`);
+          } catch (recErr) {
+            console.warn(`[GtmJourney ${journeyId}] AI rec fill failed: ${recErr.message}`);
+          }
+        }
+      }
+    }
+
     // Liquid templates (contain {% … %}) render via LiquidRenderer with the full items[]
     // array so {% for item in items %} shows every cart product; plain {{KEY}}-only
     // templates keep the regex resolver (items[0] scalars only).
@@ -575,53 +626,24 @@ class GtmJourneyService {
       console.log(`[GtmJourney ${journeyId}] trip name uid=${c.id}: "${tripName}" (${evItem ? 'from event' : 'from booking'})`);
     }
 
-    // ── AI recommendation injection + allowlist gate — additive. Existing
-    //    GTM journeys have recommendation_type = NULL → this whole block is
-    //    skipped. When set, REC_JOURNEY_ALLOWLIST decides delivery. ──
-    let recAllowlistBlocked = false;
-    try {
-      const { rows: [jf] } = await db.query(
-        `SELECT recommendation_type, trigger_event, trigger_source FROM journey_flows WHERE journey_id = $1`,
-        [journeyId]
-      );
-      if (jf?.recommendation_type) {
-        const { injectPerUserProducts, isRecipientAllowedForRec } = await import('./RecommendationRenderer.js');
-        // MARKET PRICING RULE: per-user local-currency pricing applies ONLY to pure CONTINUOUS
-        // journeys (no gtm/giveaway trigger event selected). When a trigger event IS selected
-        // (gtm or giveaway), product-card prices stay default-plan AED — consistent with the
-        // event values placeholderResolver renders — so the email never mixes currencies.
-        const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim())
-                            || jf.trigger_source === 'giveaway' || jf.trigger_source === 'affiliate';
-        const marketOverride = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
-        if (!isRecipientAllowedForRec(c.email)) {
-          console.log(`[GtmJourney ${journeyId}] REC ALLOWLIST BLOCKED — ${c.email} not in REC_JOURNEY_ALLOWLIST (type=${jf.recommendation_type}). Skipping send + advancing.`);
-          recAllowlistBlocked = true;
-        } else if (html && html.includes('{{#products}}')) {
-          const injected = await injectPerUserProducts({
-            templateHtml:       html,
-            unifiedId:          c.id,
-            recommendationType: jf.recommendation_type,
-            vars: { customer_name: c.name || '' },
-            market:             marketOverride,   // gtm/giveaway-triggered → {default, AED}; continuous → null (per-user market)
-          });
-          if (injected?.html) {
-            html = injected.html;
-            console.log(`[GtmJourney ${journeyId}] AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
-          }
+    // ── Recommendation emails: never send without real product cards ──
+    // The product cards were filled before the general fill (see recProducts above). If the
+    // template has a product block but fewer than MIN_REC_PRODUCTS cards really made it into
+    // the email (no cached recs, products missing, injection error), skip + advance — an
+    // email with an empty product section is worse than no email. Runs before the frequency
+    // cap so a skipped send doesn't use up the recipient's daily allowance.
+    if (recProducts) {
+      const { countRenderedProducts, MIN_REC_PRODUCTS } = await import('./RecommendationRenderer.js');
+      const rendered = countRenderedProducts(html, recProducts);
+      if (rendered < MIN_REC_PRODUCTS) {
+        console.log(`[GtmJourney ${journeyId}] uid=${c.id} only ${rendered} product card(s) (need ${MIN_REC_PRODUCTS}) — email skipped`);
+        SkipLogService.record({ journeyId, channel: 'email', eventRow, itemId, itemName: '', missing: ['RECOMMENDED_PRODUCTS'] });
+        if (entryId) {
+          const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
+          await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
         }
+        return;
       }
-    } catch (recErr) {
-      console.warn(`[GtmJourney ${journeyId}] AI rec injection failed (falling back): ${recErr.message}`);
-    }
-
-    // If the recipient was blocked by REC_JOURNEY_ALLOWLIST, don't send — but
-    // still advance the entry so the journey doesn't spin on this user.
-    if (recAllowlistBlocked) {
-      if (entryId) {
-        const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
-        await ContinuousJourneyService.advance(entryId, journeyId, nodeId).catch(() => {});
-      }
-      return;
     }
 
     const recipientEmail = c.email;
@@ -677,8 +699,45 @@ class GtmJourneyService {
     } else {
       releaseSend({ unifiedId: c.id, email: recipientEmail }); // failed send doesn't consume a slot
       await SendTrackService.markFailed(logId, { error: res?.error || 'unknown', provider: res?.provider || null, durationMs: ms }).catch(() => {});
+
+      // ── Stop a send that keeps failing ──
+      // processDue re-claims an entry that hasn't advanced within 10 min, so a send that can
+      // never succeed (e.g. an address the relay rejects) retried forever — 3 BullMQ attempts
+      // every 10 min. After MAX_SEND_FAILURES failed attempts at this node, exit the entry.
+      if (await this._exitAfterRepeatedFailures({ unifiedId: c.id, journeyId, nodeId, entryId, error: res?.error })) return;
       throw new Error(res?.error || 'gtm journey send failed'); // let BullMQ retry
     }
+  }
+
+  /**
+   * After MAX_SEND_FAILURES failed sends at this node, exit the entry (exit_reason
+   * 'send_failed') so it stops being re-claimed and retried. Returns true when exited.
+   */
+  static async _exitAfterRepeatedFailures({ unifiedId, journeyId, nodeId, entryId, error }) {
+    if (!entryId) return false;
+    const failures = await this._sendFailures({ unifiedId, journeyId, nodeId, entryId });
+    if (failures < MAX_SEND_FAILURES) return false;
+    await db.query(
+      `UPDATE gtm_journey_entries SET status='exited', exit_reason='send_failed', next_fire_at=NULL, updated_at=NOW() WHERE id=$1 AND status='active'`,
+      [entryId]
+    );
+    console.warn(`[GtmJourney ${journeyId}] uid=${unifiedId} entry=${entryId} — ${failures} failed sends at ${nodeId}, entry exited (send_failed): ${error || 'unknown'}`);
+    return true;
+  }
+
+  /**
+   * Failed send attempts for this entry at this node since it entered the journey
+   * (email_send_log, via idx_esl_unified_id). A DB error counts as 0 — retrying is the
+   * old behaviour, never a reason to drop a recipient.
+   */
+  static async _sendFailures({ unifiedId, journeyId, nodeId, entryId }) {
+    const { rows: [r] } = await db.query(
+      `SELECT COUNT(*)::int AS n FROM email_send_log
+        WHERE unified_id = $1 AND journey_id = $2 AND node_id = $3 AND status = 'failed'
+          AND created_at >= (SELECT entered_at FROM gtm_journey_entries WHERE id = $4)`,
+      [unifiedId, journeyId, nodeId, entryId]
+    ).catch(() => ({ rows: [] }));
+    return r?.n || 0;
   }
 }
 

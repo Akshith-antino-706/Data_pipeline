@@ -294,4 +294,56 @@ export function isRecipientAllowedForRec(email) {
   return !!email && REC_ALLOWLIST.has(String(email).trim().toLowerCase());
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Send-time product block — fill ONLY the {{#products}} cards, nothing else
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// injectPerUserProducts() also blanks every leftover {{var}}, so it has to run
+// AFTER the general placeholder fill — and that fill (placeholderResolver) blanks
+// the {{product_*}} keys it doesn't know, so the cards came out empty. This
+// helper expands the product cards on the RAW template and leaves every other
+// placeholder for the normal fill that runs after it.
+
+/** A recommendation email is only sent with at least this many complete product cards. */
+export const MIN_REC_PRODUCTS = 3;
+
+/**
+ * Expand only the {{#products}}…{{/products}} block for one recipient.
+ * Products come from RecommendationResolver (saved picks for the current booking,
+ * else built now; city → country → Dubai). Returns { html, productsUsed, source,
+ * fromCache }. Other placeholders are untouched.
+ */
+export async function expandProductsBlockForUser({ templateHtml, unifiedId, recommendationType, market: marketOverride = null } = {}) {
+  if (!templateHtml) throw new Error('templateHtml is required');
+  const { resolveRecProductsForUser } = await import('./RecommendationResolver.js');
+  const picked = unifiedId && recommendationType ? await resolveRecProductsForUser({ unifiedId, recommendationType }) : null;
+
+  let market = marketOverride;
+  if (!market) {
+    const { resolveMarket } = await import('../utils/marketPlan.js');
+    const { rows: [contact] } = await db.query(
+      'SELECT country, mobile_country, is_indian, market_plan, currency_code FROM unified_contacts WHERE id = $1', [unifiedId]
+    ).catch(() => ({ rows: [] }));
+    market = resolveMarket(contact || {});
+  }
+
+  const products = await hydrateProducts(picked?.productIds || [], market);
+  return {
+    html: _expandProductsBlock(templateHtml, products),
+    productsUsed: products,
+    source: picked ? `${picked.recommendationType}:${picked.source}` : 'none',
+    fromCache: !!picked?.productIds?.length && !String(picked.source).startsWith('built_now'),
+  };
+}
+
+/**
+ * How many product cards really made it into the final email: the product has a
+ * name and an image, and that image is in the HTML. A card whose fields were
+ * blanked (or a block that was dropped) doesn't count.
+ */
+export function countRenderedProducts(html, products) {
+  if (!html || !Array.isArray(products)) return 0;
+  return products.filter(p => p?.product_name && p?.product_image && html.includes(p.product_image)).length;
+}
+
 export default renderRecommendationEmail;

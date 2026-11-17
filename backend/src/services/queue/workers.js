@@ -404,6 +404,7 @@ async function processEmail(job) {
   //    Also enforces REC_JOURNEY_ALLOWLIST — if set, recipients not on the list
   //    have their send SKIPPED (not just downgraded). Safety switch for test-only
   //    rollout.
+  let recBlock = false, recProducts = [];
   try {
     const { rows: [jf] } = await db.query(
       `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
@@ -438,6 +439,7 @@ async function processEmail(job) {
       }
 
       if (html && html.includes('{{#products}}')) {
+        recBlock = true;
         const injected = await injectPerUserProducts({
           templateHtml:       html,
           unifiedId:          d.customerId,
@@ -449,13 +451,27 @@ async function processEmail(job) {
         });
         if (injected?.html) {
           html = injected.html;
+          recProducts = injected.productsUsed || [];
           console.log(`[Worker:email]   AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
         }
       }
     }
   } catch (recErr) {
     console.warn(`[Worker:email]   AI rec injection failed (falling back to un-injected html): ${recErr.message}`);
-    // Fall through — html stays as-is, send proceeds without rec cards.
+    // Fall through — the product check below decides whether it can still be sent.
+  }
+
+  // ── Recommendation emails: never send without real product cards ──
+  // The template has a product block but fewer than MIN_REC_PRODUCTS cards really made it
+  // into the email (no cached recs, card fields already blanked by the node render, or an
+  // injection error) → skip + advance, the same way the allowlist block does.
+  if (recBlock) {
+    const { countRenderedProducts, MIN_REC_PRODUCTS } = await import('../RecommendationRenderer.js');
+    const rendered = countRenderedProducts(html, recProducts);
+    if (rendered < MIN_REC_PRODUCTS) {
+      console.log(`[Worker:email]   only ${rendered} product card(s) (need ${MIN_REC_PRODUCTS}) for entry=${d.entryId} — send skipped + advancing entry.`);
+      return _logAndAdvance(d, 'action_blocked', { reason: 'rec_no_products', rendered }, false);
+    }
   }
 
   // ── Inject click/open tracking ──
