@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "next dev",
+    "dev:dev": "NEXT_PUBLIC_API_URL=http://localhost:3002 next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

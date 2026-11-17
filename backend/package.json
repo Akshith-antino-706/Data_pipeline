@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "start:dev": "node server.js dotenv_config_path=.env.dev",
+    "dev:dev": "node --watch server.js dotenv_config_path=.env.dev",
     "giveaway:consumer": "node src/giveaway-consumer.js",
     "watch:giveaway": "node scripts/watch-giveaway.mjs",
     "test:daily-offer": "node --expose-gc --test tests/dailyOffer/",
