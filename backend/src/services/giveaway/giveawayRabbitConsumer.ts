@@ -26,8 +26,9 @@ import type {
 import nodemailer from 'nodemailer';
 import { getConnection } from '../queue/index.js';   // reuse ioredis for idempotency
 import { ingestGiveawayEvent, ingestLifecycleEvent } from './giveawayIngest.js';
-import { SendTrackService } from '../SendTrackService.js';
-import type { OtpSendResult } from './otpSend.js';   // log direct sends to email_send_log
+import { SendTrackService } from '../SendTrackService.js';   // log direct sends to email_send_log
+import type { OtpSendResult } from './otpSend.js';
+import { applyOtpVerified, normalizePhone, isValidPhoneDigits } from './otpVerified.js';
 
 // The producer publishes `giveaway.email.<env>.<type>` (4 segments). A topic `*` matches exactly
 // ONE segment, so the old `giveaway.email.*` matched nothing and the exchange silently dropped
@@ -66,6 +67,10 @@ const AFF_BINDING = process.env.AFFILIATE_BINDING || 'affiliate.email.prod.*';
 const OTP_QUEUE   = process.env.OTP_QUEUE   || 'otp.send.prod';
 const OTP_BINDING = process.env.OTP_BINDING || 'phone.otp.prod.*';
 const OTP_ENABLED = process.env.OTP_ENABLED === 'true';
+// `phone.otp.<env>.verified` arrives on the same queue (the binding is `phone.otp.prod.*`) once a
+// user confirms a code: it carries phone + email, and we store the phone on the contact found by
+// that email (see otpVerified.js). Its own flag — off = log what would change, write nothing.
+const OTP_VERIFIED_UPDATE_ENABLED = process.env.OTP_VERIFIED_UPDATE_ENABLED === 'true';
 
 // ── LIFECYCLE feed ─────────────────────────────────────────────────────────
 // `giveaway.lifecycle.<env>.<type>` on the same exchange, published whenever an admin SAVES a
@@ -94,7 +99,7 @@ const NOTIFY_FIELDS = (process.env.GIVEAWAY_UPDATED_NOTIFY_FIELDS ?? 'endAt')
 const TYPES_BY_SOURCE: Record<GiveawayFeedSource, ReadonlySet<string>> = {
   GIVEAWAY:  new Set<GiveawayType>(['participation', 'eligible', 'winner', 'loser']),
   AFFILIATE: new Set<AffiliateType>(['joined', 'coupon_assigned', 'commission_assigned', 'link_generated', 'card_offer_generated']),
-  OTP:       new Set(['otp']),
+  OTP:       new Set(['otp', 'verified']),
   LIFECYCLE: new Set<LifecycleType>(['updated']),
 };
 // The affiliate block that must accompany each type (it carries the event's actual data).
@@ -152,6 +157,11 @@ export function validate(p: GiveawayMessage | null | undefined, source: Giveaway
     if (!p.giveawayId)                             return { ok: false, reason: 'missing_giveawayId' };
     return { ok: true };
   }
+  if (source === 'OTP' && p.type === 'verified') {
+    if (!isValidPhoneDigits(normalizePhone(p.phone))) return { ok: false, reason: 'invalid_phone' };
+    if (!p.email || !EMAIL_RE.test(String(p.email).trim())) return { ok: false, reason: 'invalid_email' };
+    return { ok: true };
+  }
   // OTP messages are addressed by PHONE and carry no email, subject or body — so they must
   // return before the email contract below, which would otherwise reject every one of them.
   if (source === 'OTP') {
@@ -201,6 +211,7 @@ interface GiveawayMqEvent {
   type?: string | null;
   source?: GiveawayFeedSource;
   journeys?: number;
+  updated?: number;   // OTP verified: contacts whose mobile changed
   email?: string | null;
   name?: string | null;
   subject?: string | null;
@@ -237,7 +248,7 @@ async function handle(msg: ConsumeMessage, ch: Channel): Promise<void> {
   const LABEL: Record<GiveawayFeedSource, string> = { AFFILIATE: 'AffiliateMQ', OTP: 'OtpMQ', GIVEAWAY: 'GiveawayMQ', LIFECYCLE: 'LifecycleMQ' };
   const tag = `[${LABEL[source]}] id=${p?.id ?? '?'} type=${p?.type ?? '?'}`;
   // meta = light fields the toast uses; payload = parsed §3 message; raw = exact wire string.
-  const meta = { id: p?.id ?? null, type: p?.type ?? null, source, email: p?.to?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
+  const meta = { id: p?.id ?? null, type: p?.type ?? null, source, email: p?.to?.email ?? p?.email ?? null, name: p?.to?.name ?? null, subject: p?.subject ?? null, payload: p ?? null, raw };
 
   // 1. contract validation → poison acked + logged, NEVER requeued
   const v = validate(p, source);
@@ -251,6 +262,31 @@ async function handle(msg: ConsumeMessage, ch: Channel): Promise<void> {
   // contact), no giveaway_affiliate_events row, no journey entry. The journey named by
   // OTP_JOURNEY_ID supplies the channel + template only. Always ack — a verification code is
   // worthless by the time a retry would land, and the queue's x-message-ttl expires the rest.
+  // 1a-verified. The user confirmed their code → store the verified phone on their contact.
+  // Idempotent (rows already holding the number are skipped). A DB failure goes to the DLQ
+  // (never requeued) so the update can be replayed; everything else is acked.
+  if (source === 'OTP' && p.type === 'verified') {
+    const mobile = normalizePhone(p.phone);
+    if (!OTP_VERIFIED_UPDATE_ENABLED) {
+      console.log(`${tag} 🔕 OTP_VERIFIED_UPDATE_ENABLED=false — would set mobile=${mobile} for <${p.email}>`);
+      await record({ ...meta, outcome: 'verified_disabled' });
+      return ch.ack(msg);
+    }
+    try {
+      const r = await applyOtpVerified(p);
+      if (!r.matched) console.log(`${tag} ⚠️ no contact with email <${r.email}> — nothing updated`);
+      else if (!r.updated.length) console.log(`${tag} ✅ <${r.email}> already has mobile=${mobile} country=${r.country ?? '?'} (${r.matched} contact(s)) — no change`);
+      else console.log(`${tag} ✅ mobile=${mobile} country=${r.country ?? 'unparsed, kept'} set on ${r.updated.length}/${r.matched} contact(s) <${r.email}>: ${r.updated.map(u => `#${u.id} (was ${u.old_mobile ?? 'empty'} / ${u.old_country ?? 'empty'})`).join(', ')}`);
+      await record({ ...meta, outcome: !r.matched ? 'verified_no_contact' : r.updated.length ? 'verified_updated' : 'verified_unchanged', updated: r.updated.length });
+      return ch.ack(msg);
+    } catch (e) {
+      const message = (e as Error).message;
+      console.error(`${tag} ❌ verified update failed: ${message} — nack→DLQ`);
+      await record({ ...meta, outcome: 'verified_failed', reason: message });
+      return ch.nack(msg, false, false);
+    }
+  }
+
   if (source === 'OTP') {
     if (!OTP_ENABLED) {
       console.log(`${tag} 🔕 OTP_ENABLED=false — not sending (phone=${p?.to?.phone ?? '?'})`);
@@ -461,7 +497,7 @@ async function connect() {
     await ch.consume(LC_QUEUE,  onMessage('LifecycleMQ'), { noAck: false });
 
     _reconnectMs = 1000;
-    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) + ${OTP_QUEUE} (bound ${OTP_BINDING}, otp=${OTP_ENABLED ? 'ENABLED' : 'log-only'}) + ${LC_QUEUE} (bound ${LC_BINDING}, lifecycle=${LC_ENABLED ? `ENABLED, notify on [${NOTIFY_FIELDS.join(',') || 'EVERY edit'}]` : 'capture-only'}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
+    console.log(`[GiveawayMQ] connected (conn="${CONN_NAME}") — consuming ${QUEUE} (bound ${BINDING}) + ${AFF_QUEUE} (bound ${AFF_BINDING}) + ${OTP_QUEUE} (bound ${OTP_BINDING}, otp=${OTP_ENABLED ? 'ENABLED' : 'log-only'}, verified→mobile=${OTP_VERIFIED_UPDATE_ENABLED ? 'ENABLED' : 'log-only'}) + ${LC_QUEUE} (bound ${LC_BINDING}, lifecycle=${LC_ENABLED ? `ENABLED, notify on [${NOTIFY_FIELDS.join(',') || 'EVERY edit'}]` : 'capture-only'}) prefetch=${PREFETCH} send=${SEND_ENABLED ? 'ENABLED' : 'log-only'}`);
   } catch (err) {
     // connect() can succeed and createChannel/assertTopology fail — close that connection
     // so each retry doesn't leak one (CloudAMQP caps connections).

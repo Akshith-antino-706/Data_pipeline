@@ -218,6 +218,11 @@ export async function downloadJourneyAnalyticsCsv(status?: string, opts: Journey
 export const getJourneyAnalyticsNodes = (id: Id, date?: string) => request(`/api/v3/journeys/analytics/${id}/nodes${date ? `?date=${date}` : ''}`);
 export const refreshJourneyAnalytics  = (id: Id) => request(`/api/v3/journeys/analytics/${id}/refresh`, { method: 'POST' });
 export const regenerateJourneyQaReports = () => request('/api/v3/journeys/analytics/regenerate-qa', { method: 'POST' });
+// Journey archive — completed journeys exported to S3 (read-only; never hits the DB)
+export const getArchivedJourneys = (fresh?: boolean) => request(`/api/v3/journey-archive${fresh ? '?fresh=1' : ''}`);
+export const getArchivedJourney = (id: Id) => request(`/api/v3/journey-archive/${id}`);
+export const getArchivedNodeEmail = (id: Id, nodeId: string) => request(`/api/v3/journey-archive/${id}/nodes/${encodeURIComponent(nodeId)}/email`);
+export const getArchivedTableDownload = (id: Id, table: string) => request(`/api/v3/journey-archive/${id}/download/${encodeURIComponent(table)}`);
 export const getJourney = (id: Id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data: JsonBody) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
 // Progress of the background audience build kicked off by createJourney — 'building' | 'done' | 'failed'.

@@ -8,7 +8,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Home, Users, Target, History, Heart, MessageSquare, GitBranch, FileText, BarChart3,
   Globe, Code, Download, Activity, Gauge, ClipboardList, BookOpen, Menu, Sun, Moon, LogOut,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, Archive,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -47,6 +47,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Insights',
     items: [
       { href: '/journeys/analytics', icon: BarChart3, label: 'Performance' },
+      { href: '/journeys/archive', icon: Archive, label: 'Journey archive' },
       // Hidden from the menu for now (page kept at /campaigns). Uncomment to bring it back.
       // { href: '/campaigns', icon: Megaphone, label: 'Campaign results' },
       { href: '/utm', icon: Globe, label: 'Website & links' },

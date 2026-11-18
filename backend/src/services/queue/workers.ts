@@ -25,6 +25,7 @@ import type {
   JourneySendJobData, JourneyWorkers, WelcomeJobData,
 } from '../../types/queueJobs.js';
 import type { PlaceholderAffinity } from '../../types/utilsPlaceholder.js';
+import type { HydratedProduct } from '../../types/productsReco.js';
 import { getConnection } from './index.js';
 import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
@@ -59,7 +60,7 @@ interface HtmlTemplateIdRow { html_template_id: number | null }
 interface HasActiveRow { has_active: boolean }
 interface HasAnyRow { has_any: boolean }
 /** Shape returned by RecommendationRenderer.injectPerUserProducts that this file reads. */
-interface InjectedProductsResult { html?: string; productsUsed?: unknown[]; source?: string; fromCache?: boolean }
+interface InjectedProductsResult { html?: string; productsUsed?: HydratedProduct[]; source?: string; fromCache?: boolean }
 /** JourneyService.calculateNextFireAt as invoked here (third arg passed by _logAndAdvance). */
 interface NextFireAtCalculator {
   calculateNextFireAt(node: JourneyNode | undefined, fromTime: Date, testIntervalMin?: number | null): ReturnType<typeof JourneyService.calculateNextFireAt>;
@@ -442,6 +443,7 @@ async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
   //    Also enforces REC_JOURNEY_ALLOWLIST — if set, recipients not on the list
   //    have their send SKIPPED (not just downgraded). Safety switch for test-only
   //    rollout.
+  let recBlock = false, recProducts: HydratedProduct[] = [];
   try {
     const { rows: [jf] } = await (db as Pool).query<RecommendationTypeRow>(
       `SELECT recommendation_type FROM journey_flows WHERE journey_id = $1`,
@@ -476,6 +478,7 @@ async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
       }
 
       if (html && html.includes('{{#products}}')) {
+        recBlock = true;
         const injected: InjectedProductsResult = await injectPerUserProducts({
           templateHtml:       html,
           unifiedId:          d.customerId,
@@ -487,13 +490,27 @@ async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
         } as Parameters<typeof injectPerUserProducts>[0]);
         if (injected?.html) {
           html = injected.html;
+          recProducts = injected.productsUsed || [];
           console.log(`[Worker:email]   AI recs injected → type=${jf.recommendation_type} products=${injected.productsUsed?.length || 0} source=${injected.source} fromCache=${injected.fromCache}`);
         }
       }
     }
   } catch (recErr) {
     console.warn(`[Worker:email]   AI rec injection failed (falling back to un-injected html): ${(recErr as Error).message}`);
-    // Fall through — html stays as-is, send proceeds without rec cards.
+    // Fall through — the product check below decides whether it can still be sent.
+  }
+
+  // ── Recommendation emails: never send without real product cards ──
+  // The template has a product block but fewer than MIN_REC_PRODUCTS cards really made it
+  // into the email (no cached recs, card fields already blanked by the node render, or an
+  // injection error) → skip + advance, the same way the allowlist block does.
+  if (recBlock) {
+    const { countRenderedProducts, MIN_REC_PRODUCTS } = await import('../RecommendationRenderer.js');
+    const rendered = countRenderedProducts(html, recProducts);
+    if (rendered < MIN_REC_PRODUCTS) {
+      console.log(`[Worker:email]   only ${rendered} product card(s) (need ${MIN_REC_PRODUCTS}) for entry=${d.entryId} — send skipped + advancing entry.`);
+      return _logAndAdvance(d, 'action_blocked', { reason: 'rec_no_products', rendered }, false);
+    }
   }
 
   // ── Inject click/open tracking ──

@@ -84,12 +84,16 @@ export interface DailyOfferLabel {
   groups: SnapshotGroup[];
   products: SnapshotProduct[];
   feedGeneratedAt?: string;
-  /** Which subject opening was used: the AI one, or the rule-based fallback and why. */
-  subject?: { source: 'ai' | 'fallback'; reason: string | null; lead: string; standardLead: string };
+  /** Which subject opening was used: the AI one, the rule-based fallback and why, or (B2B) the B2C one copied. */
+  subject?: { source: 'ai' | 'fallback' | 'mirror'; reason: string | null; lead: string; standardLead: string };
   createdAt: string;
   checkedAt?: string;
   dropped?: string[];
   skipReason?: string;
+  /** 'b2b' for the B2B copy; rows written before the B2B job have none (= b2c). */
+  audience?: 'b2c' | 'b2b';
+  /** B2B: the B2C journey this email was copied from. */
+  mirrorOf?: number;
 }
 
 /** A market to price for: feed plan + display currency. */

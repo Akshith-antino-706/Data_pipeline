@@ -55,6 +55,7 @@ import authRouter from './src/routes/auth.js';
 import { apiAuthGate, requireRole } from './src/middleware/auth.js';
 import customSegmentsRouter from './src/routes/customSegments.js';
 import overviewRouter from './src/routes/overview.js';
+import journeyArchiveRouter from './src/routes/journeyArchive.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
 
@@ -165,6 +166,7 @@ app.use('/api/v3/giveaways', giveawaysRouter);
 app.use('/api/v3/chat-leads', chatLeadsRouter);
 app.use('/api/v3/custom-segments', customSegmentsRouter);
 app.use('/api/v3/overview', overviewRouter);
+app.use('/api/v3/journey-archive', journeyArchiveRouter);
 
 // ── Health check ────────────────────────────────────────────
 app.get('/api/health', async (_, res) => {
@@ -1145,6 +1147,24 @@ cron.schedule(process.env.JOURNEY_STATS_CRON || '*/30 * * * *', async () => {
   }
 }, { timezone: 'Asia/Dubai', noOverlap: true });
 console.log('[Cron] Journey analytics rollup scheduled: every 30 min (Asia/Dubai)');
+
+// ── Journey archive export — copies completed fixed journeys (last email ≥ N days old) to
+//    S3 for the Journey Archive screen. COPY ONLY: read-only on the DB, never deletes.
+//    22:15 Dubai = after the evening send wave, before the 00:30 nightly batch; :15 avoids
+//    the :00/:30 analytics rollup. OFF unless JOURNEY_ARCHIVE_EXPORT_ENABLED=true;
+//    JOURNEY_ARCHIVE_DRY_RUN (default true) only logs what it would copy. ──
+{
+  const { archiveConfig, runJourneyArchive } = await import('./src/services/JourneyArchiveService.js');
+  const cfg = archiveConfig();
+  if (cfg.enabled) {
+    const schedule = process.env.JOURNEY_ARCHIVE_CRON || '15 22 * * *';
+    cron.schedule(schedule, () => runJourneyArchive().catch(err => console.error('[Cron:JourneyArchive] Error:', err.message)),
+      { timezone: 'Asia/Dubai' });
+    console.log(`[Cron] Journey archive export scheduled: "${schedule}" Asia/Dubai — ${cfg.dryRun ? 'DRY RUN' : 'LIVE copy'}, min age ${cfg.minAgeDays}d, max ${cfg.maxPerRun}/run`);
+  } else {
+    console.log('[Cron] Journey archive export: OFF (set JOURNEY_ARCHIVE_EXPORT_ENABLED=true to enable)');
+  }
+}
 
 // ── Startup env validation — fail fast in production ──
 // Catches missing TRACKING_BASE_URL before workers send emails with localhost

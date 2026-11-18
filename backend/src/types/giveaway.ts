@@ -106,6 +106,10 @@ export interface GiveawayMessage {
   // ── OTP feed (`phone.otp.<env>.send`) ──
   code?: string | number;
   expiresAt?: string;
+  // ── OTP verified (`phone.otp.<env>.verified`) — the confirmed phone + the user's email ──
+  phone?: string;
+  email?: string;
+  verifiedAt?: string;
   // ── LIFECYCLE feed (`giveaway.lifecycle.<env>.<type>`) — describes the giveaway, not a person ──
   title?: string;
   updatedAt?: string;

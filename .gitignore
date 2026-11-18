@@ -6,6 +6,8 @@ dashboard/node_modules/
 dist/
 .env
 .env.*
+backend/.env.dev
+!backend/.env.dev.example
 service-account.json
 *.pem
 backend/cert.pem
