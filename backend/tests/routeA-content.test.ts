@@ -63,7 +63,7 @@ describe('GET /templates', () => {
     await call('GET', '/templates?fields=light&channel=sms&limit=5000');
     expect(m.cs.getAll).toHaveBeenCalledWith({ channel: 'sms', status: undefined, search: undefined, page: 1, limit: 200, fields: 'light' });
     await call('GET', '/templates?fields=everything');
-    expect(m.cs.getAll).toHaveBeenLastCalledWith(expect.not.objectContaining({ fields: expect.anything() }));
+    expect(m.cs.getAll).toHaveBeenLastCalledWith(expect.not.objectContaining({ fields: expect.anything() as unknown }));
   });
   it('passes an injection search string through unchanged (service must bind it)', async () => {
     m.cs.getAll.mockResolvedValue({});

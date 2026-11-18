@@ -44,11 +44,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      # TypeScript files are linted strictly (no `any`). The .jsx pages still being converted
-      # have pre-existing lint errors, so they're linted without failing the job until then.
+      # Every page is TypeScript now, linted strictly (no `any`).
       - run: npx eslint "**/*.{ts,tsx}"
-      - run: npx eslint "**/*.{js,jsx}"
-        continue-on-error: true
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

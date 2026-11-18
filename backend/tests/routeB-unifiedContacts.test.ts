@@ -195,7 +195,7 @@ describe('stats / filters / tree', () => {
   });
   it('stats ?quick=1 runs the light version only (own cache key)', async () => {
     m.svc.getQuickStats.mockResolvedValue({ total_contacts: 5, conversations_7d: 1 });
-    const body = await (await get('/stats?quick=1&cached=1&businessType=B2C')).json();
+    const body: unknown = await (await get('/stats?quick=1&cached=1&businessType=B2C')).json();
     expect(body).toEqual({ success: true, data: { total_contacts: 5, conversations_7d: 1 } });
     expect(m.cached).toHaveBeenCalledWith('contacts:stats:quick:B2C', expect.any(Function), 600);
     expect(m.svc.getStats).not.toHaveBeenCalled();
@@ -325,10 +325,10 @@ describe('GET /:id/journeys', () => {
     const body = await (await get('/u1/journeys?page=2&limit=10')).json() as { data: unknown[]; total: number; page: number; totalPages: number };
     expect(body).toMatchObject({ total: 44, page: 2, totalPages: 5 });
     expect(body.data).toHaveLength(2);
-    const list = m.query.mock.calls.find(([sql]) => sql.includes('ORDER BY je.entered_at'));
+    const list = m.query.mock.calls.find(([sql]) => String(sql).includes('ORDER BY je.entered_at'));
     expect(list?.[0]).toContain('LIMIT $2 OFFSET $3');
     expect(list?.[1]).toEqual(['u1', 10, 10]);
-    const nodes = m.query.mock.calls.find(([sql]) => sql.includes('FROM email_send_log'));
+    const nodes = m.query.mock.calls.find(([sql]) => String(sql).includes('FROM email_send_log'));
     expect(nodes?.[0]).toContain('journey_id = ANY($2::int[])');
     expect(nodes?.[1]).toEqual(['u1', [7, 9]]);
   });
@@ -336,7 +336,7 @@ describe('GET /:id/journeys', () => {
   it('?q searches name or #id and ?engagement filters by this contact\'s email outcome, both parameterised', async () => {
     m.query.mockResolvedValue({ rows: [] });
     await get('/u1/journeys?page=1&q=%23328&engagement=opened');
-    const list = m.query.mock.calls.find(([sql]) => sql.includes('ORDER BY je.entered_at'));
+    const list = m.query.mock.calls.find(([sql]) => String(sql).includes('ORDER BY je.entered_at'));
     expect(list?.[0]).toContain('jf.name ILIKE $2 OR jf.journey_id::text = $3');
     expect(list?.[0]).toContain('e.opened_at IS NOT NULL');
     expect(list?.[1]).toEqual(['u1', '%328%', '328', 10, 0]);
@@ -355,7 +355,7 @@ describe('GET /:id/journeys', () => {
     m.query.mockResolvedValue({ rows: [] });
     const body = await (await get('/u1/journeys')).json() as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(['data', 'success']);
-    expect(m.query.mock.calls.some(([sql]) => sql.includes('COUNT(*)::text AS total'))).toBe(false);
+    expect(m.query.mock.calls.some(([sql]) => String(sql).includes('COUNT(*)::text AS total'))).toBe(false);
   });
 });
 
@@ -372,7 +372,7 @@ describe('GET /:id/activity', () => {
     expect(body).toMatchObject({ total: 43, totalPages: 2, kinds: { message: 40, booking: 3 } });
     expect(body.items[0]).toMatchObject({ title: 'Sent email “Dubai holiday packages”', sub: '21st October - Dubai Packages', dateOnly: false });
     expect(body.items[1]).toMatchObject({ title: 'Booked Desert safari — AED 640', sub: 'Tour · Bill B1 · travel 05/10/2026', dateOnly: true });
-    const pageQ = m.query.mock.calls.find(([sql]) => sql.includes('ORDER BY at DESC'));
+    const pageQ = m.query.mock.calls.find(([sql]) => String(sql).includes('ORDER BY at DESC'));
     expect(pageQ?.[0]).toContain('LIMIT $2 OFFSET $3');
     expect(pageQ?.[1]).toEqual(['u1', 30, 30]);
   });
@@ -380,7 +380,7 @@ describe('GET /:id/activity', () => {
     m.query.mockImplementation((sql: string) => sql.includes('GROUP BY kind') ? Promise.resolve({ rows: [{ kind: 'website', n: '5' }, { kind: 'message', n: '9' }] }) : Promise.resolve({ rows: [] }));
     const body = await (await get('/u1/activity?kind=website')).json() as { total: number };
     expect(body.total).toBe(5);
-    const pageQ = m.query.mock.calls.find(([sql]) => sql.includes('ORDER BY at DESC'));
+    const pageQ = m.query.mock.calls.find(([sql]) => String(sql).includes('ORDER BY at DESC'));
     expect(pageQ?.[0]).toContain('AND kind = $4');
     expect(pageQ?.[1]).toEqual(['u1', 30, 0, 'website']);
     m.query.mockClear();
@@ -390,7 +390,7 @@ describe('GET /:id/activity', () => {
   it('every activity statement is a SELECT and 500s on DB error', async () => {
     m.query.mockResolvedValue({ rows: [] });
     await get('/u1/activity');
-    for (const [sql] of m.query.mock.calls) expect(/^\s*SELECT/i.test(sql)).toBe(true);
+    for (const [sql] of m.query.mock.calls) expect(/^\s*SELECT/i.test(String(sql))).toBe(true);
     m.query.mockRejectedValue(new Error('x'));
     expect((await get('/u1/activity')).status).toBe(500);
   });

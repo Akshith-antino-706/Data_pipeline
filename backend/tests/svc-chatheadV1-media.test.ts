@@ -6,7 +6,7 @@ vi.mock('../src/config/database.js', () => ({ default: { query: mockQuery }, que
 import { ChatHeadV1Service } from '../src/services/ChatHeadV1Service.js';
 
 type Row = Record<string, string>;
-const savedRows = (): Row[] => JSON.parse(String(mockQuery.mock.calls.at(-1)?.[1]?.[2] ?? '[]')) as Row[];
+const savedRows = (): Row[] => JSON.parse(String((mockQuery.mock.calls.at(-1)?.[1] as unknown[] | undefined)?.[2] ?? '[]')) as Row[];
 const htmlResponse = (body: string) => Promise.resolve(new Response(body, { status: 200 }));
 
 beforeEach(() => {
@@ -29,7 +29,7 @@ describe('ChatHeadV1Service header image', () => {
 
   it('still accepts a bare filename and falls back to the site image', async () => {
     await ChatHeadV1Service.buildAndSaveDataFile([{ phone: '971505671946' }], 'b.data');
-    expect(mockQuery.mock.calls.at(-1)?.[1]?.[0]).toBe('b.data');
+    expect((mockQuery.mock.calls.at(-1)?.[1] as unknown[] | undefined)?.[0]).toBe('b.data');
     expect(savedRows()[0]?.img).toMatch(/\/rayna-og\.jpg$/);
   });
 

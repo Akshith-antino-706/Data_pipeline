@@ -1158,7 +1158,7 @@ console.log('[Cron] Journey analytics rollup scheduled: every 30 min (Asia/Dubai
   const cfg = archiveConfig();
   if (cfg.enabled) {
     const schedule = process.env.JOURNEY_ARCHIVE_CRON || '15 22 * * *';
-    cron.schedule(schedule, () => runJourneyArchive().catch(err => console.error('[Cron:JourneyArchive] Error:', err.message)),
+    cron.schedule(schedule, () => runJourneyArchive().catch((err: Error) => console.error('[Cron:JourneyArchive] Error:', err.message)),
       { timezone: 'Asia/Dubai' });
     console.log(`[Cron] Journey archive export scheduled: "${schedule}" Asia/Dubai — ${cfg.dryRun ? 'DRY RUN' : 'LIVE copy'}, min age ${cfg.minAgeDays}d, max ${cfg.maxPerRun}/run`);
   } else {
