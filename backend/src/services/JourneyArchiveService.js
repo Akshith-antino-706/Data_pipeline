@@ -24,6 +24,11 @@ const MANIFEST_RE = /^journeys\/completed_month=\d{4}-\d{2}\/journey_id=(\d+)\/m
 const TEMPLATES_FILE = 'email_templates.json.gz';
 const COPY_TIMEOUT = '600s';          // per chunk; a cold 750k-row email node took ~160s
 const DUBAI_MS = 4 * 3600 * 1000;
+const LAST_SENT_TIMEOUT = '30s';
+
+// journey_id → time of its last failure. In memory: a restart (deploy) clears it, which only
+// means one more attempt. Keeps a journey that keeps failing from using up every night's run.
+const _failedAt = new Map();
 
 let _s3;
 const s3 = () => (_s3 ||= new S3Client({ region: process.env.ARCHIVE_S3_REGION || 'eu-north-1' }));
@@ -36,6 +41,15 @@ export function archiveConfig(env = process.env) {
     maxPerRun:   Math.max(1, parseInt(env.JOURNEY_ARCHIVE_MAX_PER_RUN || '5', 10)),
     maxMinutes:  Math.max(5, parseInt(env.JOURNEY_ARCHIVE_MAX_MINUTES || '90', 10)),
     includeTest: env.JOURNEY_ARCHIVE_INCLUDE_TEST === 'true',
+    // Journeys with more emails than this are skipped (logged as too big) — copying one that size
+    // would hold the DB for hours. Raise it to archive a specific big journey on purpose.
+    maxEmails:   Math.max(1, parseInt(env.JOURNEY_ARCHIVE_MAX_EMAILS || '3000000', 10)),
+    // A journey that failed is not tried again for this long, so it can't use up every night's run.
+    retryHours:  Math.max(1, parseInt(env.JOURNEY_ARCHIVE_RETRY_HOURS || '72', 10)),
+    // Big tables copied at the same time, each on its own READ ONLY connection (1 = one by one).
+    parallel:    Math.min(3, Math.max(1, parseInt(env.JOURNEY_ARCHIVE_PARALLEL || '3', 10))),
+    // gzip level: 1 is ~3× faster than 6 for files ~25% bigger (S3 cost stays negligible).
+    gzipLevel:   Math.min(9, Math.max(1, parseInt(env.JOURNEY_ARCHIVE_GZIP_LEVEL || '1', 10))),
   };
 }
 
@@ -111,29 +125,47 @@ const nodeCounts = (table, jid) => readOnly(async c =>
     .rows.map(r => ({ node_id: r.node_id, n: Number(r.n) })), '300s');
 
 // Last email of the journey = max(sent_at) on the last node (in flow order) that sent emails.
-async function lastSentAt(j, emailCounts) {
+//
+// A plain MAX(sent_at) lets Postgres walk the sent_at index backwards from TODAY until it meets this
+// journey — tens of millions of rows for an old journey, so it hit the 5-min timeout every night
+// (#242, #245, #268, #307). `sent_at + interval '0'` stops that shortcut and enable_seqscan = off
+// keeps it off a full-table scan, so it reads only this node's rows via idx_esl_journey_node.
+// Still bounded to LAST_SENT_TIMEOUT: past it, the journey's completion time is used instead — safe,
+// because a fixed journey sends nothing after it completes, and candidates are already completed
+// at least minAgeDays ago. Only the archive month can differ (completion vs. last send).
+async function lastSentAt(j, emailCounts, log = () => {}) {
   const withRows = new Set(emailCounts.filter(r => r.node_id && r.n > 0).map(r => r.node_id));
   const lastNode = flowOrder(j.nodes, j.edges).filter(id => withRows.has(id)).pop();
   if (!lastNode) return j.updated_at;                      // no emails (WA/SMS-only) → completion time
-  const { rows: [r] } = await readOnly(c => c.query(
-    'SELECT MAX(sent_at) AS last FROM email_send_log WHERE journey_id = $1 AND node_id = $2', [j.journey_id, lastNode]
-  ), '300s');
-  return r?.last || j.updated_at;
+  try {
+    const { rows: [r] } = await readOnly(async c => {
+      await c.query('SET LOCAL enable_seqscan = off');
+      return c.query(
+        `SELECT MAX(sent_at + interval '0') AS last FROM email_send_log WHERE journey_id = $1 AND node_id = $2`,
+        [j.journey_id, lastNode]);
+    }, LAST_SENT_TIMEOUT);
+    return r?.last || j.updated_at;
+  } catch (err) {
+    if (err.code !== '57014') throw err;                   // 57014 = statement timeout
+    log(`  #${j.journey_id}: last-send lookup over ${LAST_SENT_TIMEOUT} on ${lastNode} — using completion time ${new Date(j.updated_at).toISOString()}`);
+    return j.updated_at;
+  }
 }
 
 const dubaiMonth = (ts) => new Date(new Date(ts).getTime() + DUBAI_MS).toISOString().slice(0, 7);
 
 // Stream every chunk of one table into ONE gzipped CSV in S3. Each chunk is its own COPY in its
 // own READ ONLY transaction (short snapshots); only the first chunk writes the header row.
-async function exportTable(key, table, chunks) {
+async function exportTable(key, table, chunks, { gzipLevel = 1, tap = null } = {}) {
+  const t0 = Date.now();
   let bytes = 0;
   const counter = new Transform({ transform(buf, _e, cb) { bytes += buf.length; cb(null, buf); } });
-  const gzip = zlib.createGzip({ level: 6 });
+  const gzip = zlib.createGzip({ level: gzipLevel });
   gzip.on('error', () => {}); counter.on('error', () => {});   // surfaced via upload / COPY instead
   gzip.pipe(counter);
   const upload = new Upload({
     client: s3(), params: { Bucket: BUCKET(), Key: key, Body: counter, ContentType: 'application/gzip' },
-    partSize: 8 * 1024 * 1024, queueSize: 2,
+    partSize: 16 * 1024 * 1024, queueSize: 4,
   });
   const done = upload.done();
   // If the upload dies mid-table, abort the running COPY instead of letting it stall on backpressure.
@@ -147,6 +179,7 @@ async function exportTable(key, table, chunks) {
           `COPY (SELECT * FROM ${table} WHERE ${chunks[i]}) TO STDOUT WITH (FORMAT csv, HEADER ${i === 0})`));
         stream.on('error', reject);
         stream.on('end', () => resolve(stream.rowCount));
+        if (tap) stream.on('data', buf => tap.push(buf));
         stream.pipe(gzip, { end: false });
       })]), COPY_TIMEOUT);
     }
@@ -159,7 +192,66 @@ async function exportTable(key, table, chunks) {
   }
   const head = await s3().send(new HeadObjectCommand({ Bucket: BUCKET(), Key: key }));
   if (head.ContentLength !== bytes) throw new Error(`${table}: S3 size ${head.ContentLength} ≠ streamed ${bytes}`);
-  return { rows, gz_bytes: bytes };
+  return { rows, gz_bytes: bytes, seconds: Math.round((Date.now() - t0) / 1000) };
+}
+
+/**
+ * Reads the CSV that COPY streams for email_send_log and keeps, per (node, subject), the email
+ * count and first/last sent_at — the "subjects sent" summary of the archive preview — so it no
+ * longer needs its own second read of email_send_log. Rows without sent_at are ignored, as in
+ * the query it replaces. Fed raw COPY output (header row first, RFC 4180 quoting).
+ */
+class SubjectTally {
+  constructor() {
+    this.cols = null; this.field = ''; this.row = []; this.quoted = false; this.pendingQuote = false;
+    this.groups = new Map();   // node_id → Map(subject → { emails, first, last }) (times in ms)
+  }
+  push(buf) {
+    const text = buf.toString('utf8');
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (this.quoted) {
+        if (this.pendingQuote) {
+          this.pendingQuote = false;
+          if (c === '"') { this.field += '"'; continue; }
+          this.quoted = false;                          // closing quote: fall through to c
+        } else if (c === '"') { this.pendingQuote = true; continue; }
+        else { this.field += c; continue; }
+      }
+      if (c === '"') this.quoted = true;
+      else if (c === ',') { this.row.push(this.field); this.field = ''; }
+      else if (c === '\n') { this.row.push(this.field); this.field = ''; this._row(this.row); this.row = []; }
+      else if (c !== '\r') this.field += c;
+    }
+  }
+  _row(row) {
+    if (!this.cols) { this.cols = { node: row.indexOf('node_id'), subject: row.indexOf('subject'), sent: row.indexOf('sent_at') }; return; }
+    const sentText = row[this.cols.sent];
+    if (!sentText) return;
+    const sent = Date.parse(sentText.replace(' ', 'T').replace(/([+-]\d\d)$/, '$1:00'));
+    const node = row[this.cols.node]; const subject = row[this.cols.subject] || null;
+    let bySubject = this.groups.get(node);
+    if (!bySubject) this.groups.set(node, bySubject = new Map());
+    const g = bySubject.get(subject);
+    if (!g) bySubject.set(subject, { emails: 1, first: sent, last: sent });
+    else { g.emails++; if (sent < g.first) g.first = sent; if (sent > g.last) g.last = sent; }
+  }
+  /** Same rows the old SQL returned: top 5 subjects per node + node totals. */
+  rows() {
+    const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
+    const out = [];
+    for (const [node_id, bySubject] of this.groups) {
+      const all = [...bySubject.entries()].map(([subject, g]) => ({ subject, ...g })).sort((a, b) => b.emails - a.emails);
+      const node_emails = all.reduce((n, g) => n + g.emails, 0);
+      const node_first = Math.min(...all.map(g => g.first));
+      const node_last = Math.max(...all.map(g => g.last));
+      for (const g of all.slice(0, 5)) {
+        out.push({ node_id, subject: g.subject, emails: g.emails, first_sent_at: iso(g.first), last_sent_at: iso(g.last),
+          node_emails, node_first_sent_at: iso(node_first), node_last_sent_at: iso(node_last) });
+      }
+    }
+    return out;
+  }
 }
 
 const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
@@ -175,7 +267,7 @@ const csvCell = (v) => (v == null ? '' : /[",\n\r]/.test(String(v)) ? `"${String
  *    one (exact HTML sent), and the subjects actually sent with counts and first/last send time.
  * Written as one gzipped JSON next to the tables.
  */
-async function exportEmailTemplates(j, dir) {
+async function exportEmailTemplates(j, dir, sendRows = null) {
   const jid = Number(j.journey_id);
   const emailNodes = (j.nodes || []).filter(n => n.type === 'action' && (n.data?.channel || 'email').toLowerCase() === 'email');
   const tidByNode = Object.fromEntries(emailNodes.map(n => [n.id, parseInt(n.data?.emailTemplateId ?? n.data?.templateId) || null]));
@@ -191,8 +283,9 @@ async function exportEmailTemplates(j, dir) {
       WHERE ct.id = ANY($1)`, [tids]))).rows;
   const stored = (await readOnly(c => c.query(
     'SELECT node_id, template_id, subject, html, source, created_at FROM journey_node_emails WHERE journey_id = $1', [jid]))).rows;
-  // Subjects can be personalised, so keep the 5 most-sent per node plus node totals.
-  const sends = (await readOnly(c => c.query(
+  // Subjects can be personalised, so keep the 5 most-sent per node plus node totals. The full
+  // export passes them in (tallied from its email_send_log copy); the backfill still queries.
+  const sends = sendRows || (await readOnly(c => c.query(
     `SELECT node_id, subject, emails, first_sent_at, last_sent_at, node_emails, node_first_sent_at, node_last_sent_at
        FROM (SELECT node_id, subject, COUNT(*)::int AS emails, MIN(sent_at) AS first_sent_at, MAX(sent_at) AS last_sent_at,
                     SUM(COUNT(*)) OVER (PARTITION BY node_id)::int AS node_emails,
@@ -248,8 +341,9 @@ async function backfillEmailTemplates(jid, dir) {
 const ARCHIVE_TABLES = ['journey_flows', 'custom_segments', 'journey_node_stats', 'unsubscribe_log', 'journey_entries',
   'journey_events', 'email_send_log', 'whatsapp_send_log', 'sms_send_log'];
 const PER_NODE = new Set(['journey_events', 'email_send_log']);
+const BIG_TABLES = new Set(['journey_entries', 'journey_events', 'email_send_log']);
 
-async function exportJourney(j, lastSent, emailCounts, log) {
+async function exportJourney(j, lastSent, emailCounts, log, cfg = archiveConfig()) {
   const started = Date.now();
   const jid = Number(j.journey_id);
   if (!Number.isInteger(jid)) throw new Error(`bad journey id ${j.journey_id}`);
@@ -257,7 +351,8 @@ async function exportJourney(j, lastSent, emailCounts, log) {
   const dir = `journeys/completed_month=${month}/journey_id=${jid}/`;
   const tables = {};
 
-  for (const table of ARCHIVE_TABLES) {
+  const tally = new SubjectTally();
+  const exportOne = async (table) => {
     let chunks; let expected;
     if (PER_NODE.has(table)) {
       const counts = table === 'email_send_log' ? emailCounts : await nodeCounts(table, jid);
@@ -269,15 +364,20 @@ async function exportJourney(j, lastSent, emailCounts, log) {
       chunks = [`journey_id = ${jid}`];
     }
     if (!chunks.length) chunks = ['false'];                 // header-only file
-    const res = await exportTable(`${dir}${table}.csv.gz`, table, chunks);
+    const res = await exportTable(`${dir}${table}.csv.gz`, table, chunks,
+      { gzipLevel: cfg.gzipLevel, tap: table === 'email_send_log' ? tally : null });
     // Rows are never deleted from these tables, but late events (opens, unsubscribes) can still
     // be inserted between the count and the COPY — so the copy may hold more, never fewer.
     if (expected != null && res.rows < expected) throw new Error(`${table}: copied ${res.rows} < counted ${expected}`);
     tables[table] = res;
-    log(`  ${table}: ${res.rows} rows, ${res.gz_bytes} bytes gz`);
-  }
+    log(`  ${table}: ${res.rows} rows, ${res.gz_bytes} bytes gz, ${res.seconds}s`);
+  };
+  // The big tables run side by side (cfg.parallel at a time); the small ones one by one.
+  const big = ARCHIVE_TABLES.filter(t => BIG_TABLES.has(t));
+  for (const t of ARCHIVE_TABLES.filter(t => !BIG_TABLES.has(t))) await exportOne(t);
+  for (let i = 0; i < big.length; i += cfg.parallel) await Promise.all(big.slice(i, i + cfg.parallel).map(exportOne));
 
-  const templatesRes = await exportEmailTemplates(j, dir);
+  const templatesRes = await exportEmailTemplates(j, dir, tally.rows());
   log(`  email templates: ${templatesRes.templates} template(s) for ${templatesRes.nodes} email node(s), ${templatesRes.gz_bytes} bytes gz`);
 
   const { rows: cols } = await readOnly(c => c.query(
@@ -316,7 +416,7 @@ export async function runJourneyArchive(opts = {}, log = (m) => console.log(`[Jo
   _running = true;
   const cfg = { ...archiveConfig(), ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
   const started = Date.now();
-  const summary = { dryRun: cfg.dryRun, minAgeDays: cfg.minAgeDays, archived: [], failed: [], tooRecent: [], wouldArchive: [], templatesBackfilled: [] };
+  const summary = { dryRun: cfg.dryRun, minAgeDays: cfg.minAgeDays, archived: [], failed: [], tooRecent: [], tooBig: [], backedOff: [], wouldArchive: [], templatesBackfilled: [] };
   try {
     const done = await archivedJourneys();
     let list = (await candidateJourneys(cfg)).filter(j => !done.has(Number(j.journey_id)));
@@ -328,10 +428,21 @@ export async function runJourneyArchive(opts = {}, log = (m) => console.log(`[Jo
     for (const j of list) {
       if (summary.archived.length + summary.wouldArchive.length >= cfg.maxPerRun) break;
       if (Date.now() - started > cfg.maxMinutes * 60000) { log(`time budget of ${cfg.maxMinutes} min reached — stopping`); break; }
+      const failedAt = _failedAt.get(Number(j.journey_id));
+      if (failedAt && !cfg.journeyId && Date.now() - failedAt < cfg.retryHours * 3600000) {
+        summary.backedOff.push({ journey_id: j.journey_id, failed_at: new Date(failedAt).toISOString() });
+        continue;
+      }
       const t0 = Date.now();
       try {
         const emailCounts = await nodeCounts('email_send_log', j.journey_id);
-        const last = await lastSentAt(j, emailCounts);
+        const total = emailCounts.reduce((s, r) => s + r.n, 0);
+        if (total > cfg.maxEmails) {
+          summary.tooBig.push({ journey_id: j.journey_id, emails: total });
+          log(`skip #${j.journey_id} "${j.name}" — ${total} emails is over JOURNEY_ARCHIVE_MAX_EMAILS (${cfg.maxEmails})`);
+          continue;
+        }
+        const last = await lastSentAt(j, emailCounts, log);
         const ageDays = (Date.now() - new Date(last).getTime()) / 86400000;
         if (ageDays < cfg.minAgeDays) {
           summary.tooRecent.push({ journey_id: j.journey_id, last_sent_at: last });
@@ -344,12 +455,14 @@ export async function runJourneyArchive(opts = {}, log = (m) => console.log(`[Jo
           continue;
         }
         log(`archiving #${j.journey_id} "${j.name}" (last send ${new Date(last).toISOString()}, ${emails} emails)`);
-        const m = await exportJourney(j, last, emailCounts, log);
+        const m = await exportJourney(j, last, emailCounts, log, cfg);
         summary.archived.push({ journey_id: j.journey_id, month: m.completed_month, seconds: Math.round((Date.now() - t0) / 1000) });
+        _failedAt.delete(Number(j.journey_id));
         log(`✓ #${j.journey_id} archived to ${m.completed_month} in ${Math.round((Date.now() - t0) / 1000)}s`);
       } catch (err) {
         summary.failed.push({ journey_id: j.journey_id, error: err.message });
-        console.error(`[JourneyArchive] ✗ #${j.journey_id} failed: ${err.message} (no manifest written — retried next run)`);
+        _failedAt.set(Number(j.journey_id), Date.now());
+        console.error(`[JourneyArchive] ✗ #${j.journey_id} failed: ${err.message} (no manifest written — retried after ${cfg.retryHours}h)`);
       }
     }
 
@@ -373,7 +486,7 @@ export async function runJourneyArchive(opts = {}, log = (m) => console.log(`[Jo
     _running = false;
     summary.seconds = Math.round((Date.now() - started) / 1000);
   }
-  log(`done in ${summary.seconds}s — archived ${summary.archived.length}, would archive ${summary.wouldArchive.length}, templates added ${summary.templatesBackfilled.length}, failed ${summary.failed.length}, too recent ${summary.tooRecent.length}`);
+  log(`done in ${summary.seconds}s — archived ${summary.archived.length}, would archive ${summary.wouldArchive.length}, templates added ${summary.templatesBackfilled.length}, failed ${summary.failed.length}, too recent ${summary.tooRecent.length}, too big ${summary.tooBig.length}, backed off ${summary.backedOff.length}`);
   return summary;
 }
 
