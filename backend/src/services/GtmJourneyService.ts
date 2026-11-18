@@ -8,7 +8,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import { renderTemplate, renderSubject, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 import SkipLogService from './SkipLogService.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
@@ -607,7 +607,7 @@ class GtmJourneyService {
     const _subjTpl = tplSubject || 'Welcome to Rayna Tours 🌴';
     let subject = /\{%/.test(_subjTpl) || /\{\{[^}]*\./.test(_subjTpl)
       ? await LiquidRenderer.render(_subjTpl, liquidVars)
-      : fillGv(renderTemplate(_subjTpl, ctx));
+      : fillGv(renderSubject(_subjTpl, ctx));
 
     // Per-recipient review link (post-trip templates carry the %%REVIEW_URL%% sentinel).
     // placeholderResolver leaves it untouched, so swap it here for a feedback link

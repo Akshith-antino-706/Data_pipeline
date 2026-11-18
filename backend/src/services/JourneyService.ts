@@ -24,6 +24,13 @@ const __dirname  = path.dirname(__filename);
 const MAIL_TEMPLATES_DIR = path.resolve(__dirname, '..', '..', '..', 'mail_templates');
 
 // Cache rankings for 1 hour so Claude is called once per batch, not once per email
+/**
+ * An error the user caused (bad input, wrong state) rather than a server fault. The status
+ * makes the API error handler pass the message through to the screen — 5xx messages are
+ * hidden there, so a plain Error would reach the user as "Internal server error".
+ */
+const userError = (message: string, status = 400): Error & { status: number } => Object.assign(new Error(message), { status });
+
 const _rankingCache = new Map<string, RankingCacheEntry>();
 // Tracks the source ('claude' | 'fallback' | ...) of the most recent ranking fetch
 // in this render. Read by getDailyAITemplate immediately after renderDayHtml (the
@@ -1274,14 +1281,14 @@ class JourneyService {
     const enrollMode = (jType === 'gtm' && enrollmentMode === 'segment_broadcast') ? 'segment_broadcast' : 'per_user';
     // A broadcast journey with no segment would enrol nobody and look healthy doing it.
     if (enrollMode === 'segment_broadcast' && !customSegmentId && !stdSegmentId) {
-      throw new Error('A broadcast journey needs a segment — that segment is its audience.');
+      throw userError('A broadcast journey needs a segment — that segment is its audience.');
     }
     const cooldown = Number.isFinite(Number(broadcastCooldownMin)) ? Math.max(0, Math.trunc(Number(broadcastCooldownMin))) : 60;
 
     // Reject graphs whose edges point at nodes that don't exist.
     const nodeIds = new Set((nodes || []).map(n => String(n.id)));
     const badEdge = (edges || []).find(e => !nodeIds.has(String(e.source)) || !nodeIds.has(String(e.target)));
-    if (badEdge) throw new Error(`Invalid journey graph: edge ${badEdge.source} -> ${badEdge.target} references an unknown node`);
+    if (badEdge) throw userError(`Invalid journey graph: edge ${badEdge.source} -> ${badEdge.target} references an unknown node`);
 
     const { rows: [journey] } = await db.query<JourneyFlowRow>(`
       INSERT INTO journey_flows (name, description, segment_id, custom_segment_id, strategy_id, nodes, edges, goal_type, goal_value, created_by, audience, exit_on_conversion, scheduled_start_at, test_mode, test_email, test_interval_min, journey_type, trigger_event, trigger_from_date, recommendation_type, email_credential, trigger_source, enrollment_mode, broadcast_cooldown_min)
@@ -1384,7 +1391,7 @@ class JourneyService {
   /** Add a node + edge from `afterNodeId` → newNode. If afterNodeId is null/undefined, append to end. */
   static async addNode(journeyId: JourneyId, node: JourneyFlowNode, afterNodeId: string | null = null) {
     const j = await this.getById(journeyId);
-    if (!j) throw new Error('Journey not found');
+    if (!j) throw userError('Journey not found', 404);
     const nodes = Array.isArray(j.nodes) ? j.nodes : [];
     const edges = Array.isArray(j.edges) ? j.edges : [];
 
@@ -1402,7 +1409,7 @@ class JourneyService {
   /** Update a single node's fields (type, channel, templateId, waitDays, label, etc.). */
   static async updateNode(journeyId: JourneyId, nodeId: string, patch: Partial<JourneyFlowNode>) {
     const j = await this.getById(journeyId);
-    if (!j) throw new Error('Journey not found');
+    if (!j) throw userError('Journey not found', 404);
     const nodes = (j.nodes || []).map(n =>
       n.id === nodeId ? { ...n, ...patch, data: { ...(n.data || {}), ...(patch.data || {}) } } : n
     );
@@ -1412,7 +1419,7 @@ class JourneyService {
   /** Delete a node and stitch edges around it (previous node's edges re-point to this node's targets). */
   static async deleteNode(journeyId: JourneyId, nodeId: string) {
     const j = await this.getById(journeyId);
-    if (!j) throw new Error('Journey not found');
+    if (!j) throw userError('Journey not found', 404);
     const nodes = (j.nodes || []).filter(n => n.id !== nodeId);
     const incoming = (j.edges || []).filter(e => e.target === nodeId).map(e => e.source);
     const outgoing = (j.edges || []).filter(e => e.source === nodeId).map(e => e.target);
@@ -1577,7 +1584,7 @@ class JourneyService {
     const { rows: [journey] } = await db.query<JourneyFlowRow>(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
-    if (!journey) throw new Error('Journey not found');
+    if (!journey) throw userError('Journey not found', 404);
 
     const startNodeId = journey.nodes?.[0]?.id || 'node_0';
 
@@ -1647,7 +1654,7 @@ class JourneyService {
     const { rows: [journey] } = await db.query<JourneyFlowRow>(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
-    if (!journey || (!journey.segment_id && !journey.custom_segment_id)) throw new Error('Journey has no segment');
+    if (!journey || (!journey.segment_id && !journey.custom_segment_id)) throw userError('Journey has no segment');
 
     let audienceFilter = '';
     if (journey.audience === 'indian')      audienceFilter = 'AND uc.is_indian = true';
@@ -1729,7 +1736,7 @@ class JourneyService {
     const { rows: [journey] } = await db.query<JourneyFlowRow>(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
-    if (!journey) throw new Error('Journey not found');
+    if (!journey) throw userError('Journey not found', 404);
 
     // ── GTM journeys are EVENT-TRIGGERED only — never engine-processed. ──
     // They have no snapshot/refresh entries and must never run through the normal
@@ -3200,22 +3207,22 @@ class JourneyService {
     const { rows: [journey] } = await db.query<JourneyFlowRow>(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
-    if (!journey) throw new Error('Journey not found');
-    if (journey.status === 'active') throw new Error('Journey is already active');
+    if (!journey) throw userError('Journey not found', 404);
+    if (journey.status === 'active') throw userError('Journey is already active', 409);
 
     // The audience is built in the background after create (see create()). Starting
     // mid-build would launch on a PARTIAL snapshot — the entry count would be non-zero,
     // so the "no users snapshotted" check below would wave it through.
     const snapState = Number(journey.snapshot_count);
-    if (snapState === -1) throw new Error('Audience is still being built for this journey — please wait a moment and try again.');
-    if (snapState === -2) throw new Error('Audience build failed for this journey. Re-save its segment to rebuild it.');
+    if (snapState === -1) throw userError('Audience is still being built for this journey — please wait a moment and try again.', 409);
+    if (snapState === -2) throw userError('Audience build failed for this journey. Re-save its segment to rebuild it.');
 
     const nodes = journey.nodes || [];
-    if (nodes.length === 0) throw new Error('Journey has no nodes — add at least one node before starting');
+    if (nodes.length === 0) throw userError('Journey has no nodes — add at least one node before starting');
 
     // ── Validate scheduled_start_at hasn't passed (skip when called from auto-start cron) ──
     if (!skipScheduleValidation && !manual && journey.scheduled_start_at && new Date(journey.scheduled_start_at) < new Date()) {
-      throw new Error('Journey start date and time has already passed. Please update the start date before starting.');
+      throw userError('Journey start date and time has already passed. Please update the start date before starting.');
     }
 
     // ── GTM journey: segment-based, like a normal journey, but each user gets the
@@ -3241,7 +3248,7 @@ class JourneyService {
       [journeyId]
     );
     if (parseInt(snapshotCount) === 0) {
-      throw new Error('No users snapshotted for this journey. Please select a segment with users.');
+      throw userError('No users snapshotted for this journey. Please select a segment with users.');
     }
 
     // 1. Set status to 'active'. Manual start clears scheduled_start_at so the
@@ -3304,7 +3311,7 @@ class JourneyService {
     const { rows: [journey] } = await db.query<JourneyFlowRow>(
       'SELECT * FROM journey_flows WHERE journey_id = $1', [journeyId]
     );
-    if (!journey) throw new Error('Journey not found');
+    if (!journey) throw userError('Journey not found', 404);
 
     const newStatus = journey.status === 'paused' ? 'active' : 'paused';
 
@@ -3474,7 +3481,7 @@ class JourneyService {
       'SELECT journey_id, nodes, edges, status, scheduled_start_at FROM journey_flows WHERE journey_id = $1',
       [journeyId]
     );
-    if (!journey) throw new Error('Journey not found');
+    if (!journey) throw userError('Journey not found', 404);
 
     const nodes = journey.nodes || [];
 

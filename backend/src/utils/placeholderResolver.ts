@@ -226,7 +226,7 @@ function buildValues(ctx: PlaceholderContext = {}): PlaceholderValues {
  * Replace every {{KEY}} in `html` with its resolved, HTML-escaped value.
  * Unknown / empty keys → blank (never leak a literal {{KEY}}).
  */
-export function renderTemplate(html: string | null | undefined, ctx: PlaceholderContext = {}): string {
+export function renderTemplate(html: string | null | undefined, ctx: PlaceholderContext = {}, { escape = true }: { escape?: boolean } = {}): string {
   if (!html) return '';
   const values = buildValues(ctx);
   const missing = new Set<string>();
@@ -241,10 +241,18 @@ export function renderTemplate(html: string | null | undefined, ctx: Placeholder
       else if (DEFAULTS[key] !== undefined) v = DEFAULTS[key];
       else { v = ''; if (!(key in values)) missing.add(rawKey); }
     }
-    return esc(v);
+    return escape ? esc(v) : String(v);
   });
   if (missing.size) console.warn(`[placeholderResolver] keys with no value/default → blank: ${[...missing].join(', ')}`);
   return out;
+}
+
+/**
+ * renderTemplate for a subject line. A subject is plain text, not HTML, so values go in as
+ * they are: HTML-escaping them put "&#39;" / "&amp;" into inbox subjects (D'Souza → D&#39;Souza).
+ */
+export function renderSubject(subject: string | null | undefined, ctx: PlaceholderContext = {}): string {
+  return renderTemplate(subject, ctx, { escape: false });
 }
 
 /**

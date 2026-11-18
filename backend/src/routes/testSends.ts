@@ -142,8 +142,8 @@ export async function resolveTemplateHtml(templateId: number | string, ctx: Plac
     body = h?.html_body; subject = subject || h?.subject_line;
   }
   if (!body) return null;
-  const { renderTemplate } = await import('../utils/placeholderResolver.js');
-  return { html: renderTemplate(body, ctx), subject: renderTemplate(subject || '', ctx), dynamic: false };
+  const { renderTemplate, renderSubject } = await import('../utils/placeholderResolver.js');
+  return { html: renderTemplate(body, ctx), subject: renderSubject(subject || '', ctx), dynamic: false };
 }
 
 // Cache ranking results per day — 1800s (30 min) covers full 7-day sequence (7×2min=14min + buffer)
@@ -442,7 +442,7 @@ router.post('/send-template', async (req: U4TestSendRequest, res) => {
     // Render placeholders so the test send matches a real send. Liquid templates ({% … %}) —
     // e.g. the giveaway templates — render via LiquidRenderer with sample data (incl. giveaway
     // vars) so {% if %} branches and {{ vars }} resolve instead of shipping raw Liquid.
-    const { renderTemplate, buildLiquidVars } = await import('../utils/placeholderResolver.js');
+    const { renderTemplate, renderSubject, buildLiquidVars } = await import('../utils/placeholderResolver.js');
     const sampleCtx = { contact: { id: 0, name: 'Vaibhav Sharma', email: 'guest@raynatours.com', city: 'Dubai', country: 'UAE' }, event: {}, payload: {}, affinity: SAMPLE_AFFINITY_VARS };
     const giveawaySample = {
       name: 'Vaibhav', giveaway: 'Win a luxury Cruise', mechanic: 'leaderboard',
@@ -458,7 +458,7 @@ router.post('/send-template', async (req: U4TestSendRequest, res) => {
       subject  = await LiquidRenderer.render(subject || '', vars);
     } else {
       bodyHtml = renderTemplate(bodyHtml, sampleCtx);
-      subject  = renderTemplate(subject || '', sampleCtx);
+      subject  = renderSubject(subject || '', sampleCtx);
     }
 
     const EmailChannel = await loadEmailChannel();
