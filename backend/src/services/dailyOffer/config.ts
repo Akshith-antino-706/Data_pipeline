@@ -5,18 +5,15 @@
  * OFF unless DAILY_OFFER_ENABLED=true, so deploying this code changes nothing.
  */
 
+import type { DailyOfferLabel, OfferAudience, OfferLinks } from './types.js';
+
 const int = (v: string | undefined, d: number): number => {
   const n = parseInt(v ?? '', 10);
   return Number.isFinite(n) ? n : d;
 };
 
-export type DailyOfferAudience = 'b2c' | 'b2b';
-
-/** B2B only: every product card and the button point at the B2B portal. */
-export interface DailyOfferLinks { productUrl: string; ctaUrl: string; ctaLabel: string }
-
 export interface DailyOfferConfig {
-  audience: DailyOfferAudience;
+  audience: OfferAudience;
   enabled: boolean;
   segmentId: number;
   feedUrl: string;
@@ -29,8 +26,8 @@ export interface DailyOfferConfig {
   sendAt: string;
   sendCheckAt: string;
   maxFxAgeHours: number;
-  /** null = product pages from the feed, "Explore …" button per theme (B2C). */
-  links: DailyOfferLinks | null;
+  /** B2B only: portal links for every card and the button. null = the feed's product pages. */
+  links: OfferLinks | null;
 }
 
 /**
@@ -39,7 +36,7 @@ export interface DailyOfferConfig {
  * copy) with every link pointing at the B2B portal, sent earlier to the B2B segment. It
  * reads DAILY_OFFER_B2B_* and is OFF unless DAILY_OFFER_B2B_ENABLED=true.
  */
-export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audience: DailyOfferAudience = 'b2c'): DailyOfferConfig {
+export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audience: OfferAudience = 'b2c'): DailyOfferConfig {
   const shared = {
     feedUrl:        env.DAILY_OFFER_FEED_URL || 'https://data-projects-flax.vercel.app/api/enriched-feed?format=json',
     feedTimeoutMs:  int(env.DAILY_OFFER_FEED_TIMEOUT_MS, 5 * 60 * 1000),
@@ -87,7 +84,7 @@ export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audien
 }
 
 /** Audience of a saved daily-offer label — rows written before the B2B job have none. */
-export function audienceOf(label: { audience?: DailyOfferAudience } | null | undefined): DailyOfferAudience {
+export function audienceOf(label: Pick<DailyOfferLabel, 'audience'> | null | undefined): OfferAudience {
   return label?.audience === 'b2b' ? 'b2b' : 'b2c';
 }
 

@@ -87,6 +87,40 @@ export interface SendLogPage {
   capped?: boolean;
 }
 
+// ── Not sent (journey_events action_blocked + journey_skip_log) ───────────────
+
+/** One person a journey could not send to, with the recorded reason. */
+export interface NotSentRow {
+  id: string;
+  source: 'event' | 'skip';
+  unified_id: number | null;
+  email: string | null;
+  contact_name: string | null;
+  journey_id: number | null;
+  node_id: string | null;
+  channel: string | null;
+  reason: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/** GET /api/v3/test-sends/send-log/not-sent → data */
+export interface NotSentPage {
+  rows: NotSentRow[];
+  total: number;
+  page: number;
+  limit: number;
+  /** true when the count stopped at the cap; show as "10,000+" */
+  capped: boolean;
+}
+
+/** GET /api/v3/journeys/:id/not-sent → data */
+export interface JourneyNotSent {
+  total: number;
+  byReason: Record<string, number>;
+  byNode: Record<string, { total: number; byReason: Record<string, number> }>;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export interface AuthUser {

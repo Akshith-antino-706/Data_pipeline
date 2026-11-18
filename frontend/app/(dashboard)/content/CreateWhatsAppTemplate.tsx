@@ -28,16 +28,19 @@ interface TemplateForm {
 }
 interface TemplateData { template_id?: string | number; meta_id?: string; meta_status?: string }
 interface WaApiResponse { success?: boolean; data?: TemplateData; msg?: string; error?: string }
+/** Button kind shared by every carousel card (Meta requires the same layout on all cards). */
+interface CardButtonLayout { type: 'quick_reply' | 'call_to_action' | 'url_dynamic'; sub_type: string }
+/** What the user typed for one card button (fields depend on the layout's type). */
+interface CardButtonValues { value?: string; text?: string; example?: string }
+/** One carousel card in the form. */
+interface CarouselCardForm { media_file: string; body: string; examples: Record<string, string>; buttons: CardButtonValues[] }
+/** One carousel card / card button as sent to the API. */
+interface CarouselCardButtonPayload { type: string; sub_type: string; value: string; text?: string; example?: string }
+interface CarouselCardPayload { header_format: string; media_file: string; body?: string; body_examples?: Record<string, string>; buttons?: CarouselCardButtonPayload[] }
 interface SubmitResult {
   ok?: boolean; data?: TemplateData; msg?: string; error?: string;
   statusData?: TemplateData; statusError?: string;
 }
-/** A carousel button slot, shared by every card. */
-interface CardBtnLayout { type: string; sub_type: string }
-/** One card's values for a button slot. */
-interface CardBtnValue { value?: string; text?: string; example?: string }
-interface CarouselCard { media_file: string; body: string; examples: Record<string, string>; buttons: CardBtnValue[] }
-interface CarouselCardPayload { header_format: string; media_file: string; body?: string; body_examples?: Record<string, string>; buttons?: Record<string, string>[] }
 
 const CATEGORIES = [
   { value: 'utility',        label: 'Utility',        hint: 'Order / booking updates' },
@@ -53,7 +56,7 @@ const FORMATS = [
 ];
 const BLANK_BTN = { type: 'quick_reply', sub_type: 'text', value: '', text: '', example: '' };
 const CARD_MIN = 2, CARD_MAX = 10, CARD_BODY_MAX = 160, CARD_BTN_MAX = 2;
-const blankCard = (): CarouselCard => ({ media_file: '', body: '', examples: {}, buttons: [] });
+const blankCard = (): CarouselCardForm => ({ media_file: '', body: '', examples: {}, buttons: [] });
 
 /** Unique {{named}} placeholders in a text, in order of first use. */
 const findPlaceholders = (text: string): string[] =>
@@ -77,9 +80,9 @@ export default function CreateWhatsAppTemplate() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
   // Carousel: one header format + one button layout shared by every card (Meta requires both to match).
-  const [cardFormat, setCardFormat] = useState('image');
-  const [cardBtnLayout, setCardBtnLayout] = useState<CardBtnLayout[]>([]);
-  const [cards, setCards] = useState<CarouselCard[]>([blankCard(), blankCard()]);
+  const [cardFormat, setCardFormat] = useState<'image' | 'video'>('image');
+  const [cardBtnLayout, setCardBtnLayout] = useState<CardButtonLayout[]>([]);
+  const [cards, setCards] = useState<CarouselCardForm[]>([blankCard(), blankCard()]);
   const set = (k: keyof TemplateForm, v: TemplateForm[keyof TemplateForm]) => setF(p => ({ ...p, [k]: v }));
 
   useEffect(() => { getWhatsAppChannels().then(r => setChannels((r as { data?: WaChannel[] }).data || [])).catch((e: Error) => setErr(e.message)); }, []);
@@ -99,8 +102,8 @@ export default function CreateWhatsAppTemplate() {
   const updateButton = (i: number, patch: Partial<TemplateButton>) => setButtons(b => b.map((x, j) => j === i ? { ...x, ...patch } : x));
   const removeButton = (i: number) => setButtons(b => b.filter((_, j) => j !== i));
 
-  const updateCard = (i: number, patch: Partial<CarouselCard>) => setCards(cs => cs.map((c, j) => j === i ? { ...c, ...patch } : c));
-  const updateCardButton = (i: number, k: number, patch: CardBtnValue) => setCards(cs => cs.map((c, j) => {
+  const updateCard = (i: number, patch: Partial<CarouselCardForm>) => setCards(cs => cs.map((c, j) => j === i ? { ...c, ...patch } : c));
+  const updateCardButton = (i: number, k: number, patch: CardButtonValues) => setCards(cs => cs.map((c, j) => {
     if (j !== i) return c;
     const btns = [...c.buttons];
     btns[k] = { ...(btns[k] || {}), ...patch };
@@ -111,7 +114,7 @@ export default function CreateWhatsAppTemplate() {
   const addCardBtn = () => setCardBtnLayout(l => l.length < CARD_BTN_MAX ? [...l, { type: 'call_to_action', sub_type: 'url' }] : l);
   const setCardBtnType = (k: number, value: string) => {
     // value is quick_reply | url | phone | url_dynamic — stored as the API's type + sub_type
-    const L: CardBtnLayout = value === 'quick_reply' ? { type: 'quick_reply', sub_type: 'text' }
+    const L: CardButtonLayout = value === 'quick_reply' ? { type: 'quick_reply', sub_type: 'text' }
       : value === 'url_dynamic' ? { type: 'url_dynamic', sub_type: 'url' }
       : { type: 'call_to_action', sub_type: value };
     setCardBtnLayout(l => l.map((x, j) => j === k ? L : x));
@@ -122,15 +125,15 @@ export default function CreateWhatsAppTemplate() {
     setCards(cs => cs.map(c => ({ ...c, buttons: c.buttons.filter((_, j) => j !== k) })));
   };
 
-  const cardButtonPayload = (L: CardBtnLayout, v: CardBtnValue = {}): Record<string, string> => {
+  const cardButtonPayload = (L: CardButtonLayout, v: CardButtonValues = {}): CarouselCardButtonPayload => {
     if (L.type === 'quick_reply') return { type: 'quick_reply', sub_type: 'text', value: v.value || '' };
     if (L.type === 'url_dynamic') return { type: 'url_dynamic', sub_type: 'url', value: v.value || '', text: v.text || '', example: v.example || '' };
     return { type: 'call_to_action', sub_type: L.sub_type, value: v.value || '', text: v.text || '' };
   };
-  const cardButtonFilled = (L: CardBtnLayout, v: CardBtnValue = {}): boolean => {
+  const cardButtonFilled = (L: CardButtonLayout, v: CardButtonValues = {}): boolean => {
     if (L.type === 'quick_reply') return !!v.value?.trim();
     if (!v.text?.trim() || !v.value?.trim()) return false;
-    return L.type !== 'url_dynamic' || (/\{\{\s*1\s*\}\}/.test(v.value) && !!v.example?.trim());
+    return L.type !== 'url_dynamic' || (/\{\{\s*1\s*\}\}/.test(v.value ?? '') && !!v.example?.trim());
   };
   const cardsValid = cards.length >= CARD_MIN && cards.length <= CARD_MAX && cards.every(c =>
     c.media_file.trim() && c.body.length <= CARD_BODY_MAX && cardBtnLayout.every((L, k) => cardButtonFilled(L, c.buttons[k])));
@@ -288,7 +291,7 @@ export default function CreateWhatsAppTemplate() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 12 }}>
                 <label style={labelStyle}>
                   Card header (same on every card)
-                  <select value={cardFormat} onChange={e => setCardFormat(e.target.value)} style={{ ...ctrl, marginTop: 4 }}>
+                  <select value={cardFormat} onChange={e => setCardFormat(e.target.value === 'video' ? 'video' : 'image')} style={{ ...ctrl, marginTop: 4 }}>
                     <option value="image">Image</option>
                     <option value="video">Video</option>
                   </select>
@@ -361,7 +364,7 @@ export default function CreateWhatsAppTemplate() {
                         </div>
                       ))}
                       {cardBtnLayout.map((L, k) => {
-                        const v: CardBtnValue = c.buttons[k] || {};
+                        const v = c.buttons[k] || {};
                         return (
                           <div key={k} style={{ display: 'grid', gridTemplateColumns: L.type === 'quick_reply' ? '1fr' : 'repeat(auto-fit, minmax(160px,1fr))', gap: 8, marginTop: 8 }}>
                             {L.type === 'quick_reply' ? (

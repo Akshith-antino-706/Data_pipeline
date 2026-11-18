@@ -13,7 +13,7 @@
 import { sendJourneyEmail } from '../channels/JourneyEmailSender.js';
 import { ordinalDate } from './DailyOfferService.js';
 import { EMAIL_HEAD } from './emailShell.js';
-import type { DailyOfferAudience } from './config.js';
+import type { OfferAudience } from './types.js';
 import type { CreateResult, FinalCheckResult, SendCheckResult } from './DailyOfferService.js';
 
 type Logger = Pick<Console, 'log' | 'warn' | 'error'>;
@@ -61,7 +61,7 @@ export function alertFor(stage: string, result: JobResult | null | undefined, { 
  * Alert body in the daily email's own format — same head (logo, fonts, dark mode) and black
  * footer band, without the promo blocks, review badges or unsubscribe link of a customer email.
  */
-export interface AlertEmail extends AlertInfo { date: string; stage: string; segmentId: number; audience?: DailyOfferAudience }
+export interface AlertEmail extends AlertInfo { date: string; stage: string; segmentId: number; audience?: OfferAudience }
 
 export function alertHtml({ date, stage, reason, message, journeyId = null, segmentId, audience = 'b2c' }: AlertEmail): string {
   const row = (k: string, v: string, last = false): string => `<tr><td class="ff-b dm-label dm-rule" style="padding:10px 14px 10px 0;${last ? '' : 'border-bottom:1px solid #ECECEC;'}font-size:12px;line-height:18px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;white-space:nowrap;vertical-align:top;">${k}</td><td class="ff-b dm-strong dm-rule" style="padding:10px 0;${last ? '' : 'border-bottom:1px solid #ECECEC;'}font-size:14px;line-height:20px;color:#000;">${v}</td></tr>`;

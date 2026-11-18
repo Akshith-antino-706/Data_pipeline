@@ -49,6 +49,6 @@ describe('DailyBillingSync — travel_end_date, customer_type, booking_source', 
     expect(mapRow({ ...apiRecord, Guest_Email: 'guest@gmail.com\n' }).guest_email).toBe('guest@gmail.com');
     expect(mapRow({ ...apiRecord, Guest_Email: ' \tguest@gmail.com \r\n' }).guest_email).toBe('guest@gmail.com');
     expect(mapRow({ ...apiRecord, Guest_Email: null }).guest_email).toBe('');
-    expect(mapRow({ BillSerial: 3, ServiceId: 12, SellingPrice: '0' } as BillingApiRecord).guest_email).toBe('');
+    expect(mapRow({ BillSerial: 3, ServiceId: 12, SellingPrice: '0' }).guest_email).toBe('');
   });
 });

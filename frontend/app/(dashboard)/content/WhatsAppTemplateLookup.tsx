@@ -14,20 +14,21 @@ import { getWhatsAppChannels, getWhatsAppTemplatesAll, previewWhatsAppTemplate, 
 import { sanitizePreviewHtml, hasVisibleContent } from './WhatsAppTestSend';
 
 interface WaChannel { id: string | number; name?: string }
+/** An approved template from ChatHead's templates/list. */
 interface WaTemplate { id: string | number; name?: string; template_code?: string }
-interface OtherTemplate { id: string; meta_status: string; meta_category: string | null; label?: string }
-interface TemplateStatus {
-  meta_status?: string; meta_category?: string; created?: number | string; updated?: number | string;
+/** A recent template that isn't approved yet (channel unknown). */
+interface WaOtherTemplate { id: string; meta_status: string; meta_category: string | null; label?: string }
+interface WaTemplateStatus {
+  meta_status?: string; meta_category?: string;
   quality_score?: { score?: string; date?: number | string };
-  [key: string]: unknown;
 }
-interface ApiResult<T> { success?: boolean; data?: T; error?: string }
+interface WaApiResult<T> { success?: boolean; data?: T; error?: string }
 interface PreviewState { id: string; loading: boolean; html: string; error: string | null }
-interface StatusState { id: string; loading: boolean; data: TemplateStatus | null; error: string | null; checkedAt?: Date }
-interface Tone { fg: string; bg: string; label: string; hint: string }
+interface StatusState { id: string; loading: boolean; data: WaTemplateStatus | null; error: string | null; checkedAt?: Date }
+interface StatusTone { fg: string; bg: string; label: string; hint: string }
 
 // Meta template states → chip colours. Anything unlisted shows neutral.
-const STATUS_TONE: Record<string, Tone> = {
+const STATUS_TONE: Record<string, StatusTone> = {
   APPROVED: { fg: '#15803d', bg: 'rgba(22,163,74,0.12)', label: 'Approved', hint: 'Ready to send.' },
   PENDING:  { fg: '#b45309', bg: 'rgba(245,158,11,0.14)', label: 'Pending review', hint: 'Meta is still reviewing it. Sends will fail until it is approved.' },
   IN_APPEAL:{ fg: '#b45309', bg: 'rgba(245,158,11,0.14)', label: 'In appeal', hint: 'An appeal is under review. Sends will fail until it is approved.' },
@@ -42,7 +43,7 @@ const labelStyle: CSSProperties = { fontSize: 11.5, color: 'var(--text-tertiary)
 const panel: CSSProperties = { border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-secondary)', padding: 14, minWidth: 0 };
 const panelTitle: CSSProperties = { fontSize: 11.5, color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 };
 
-const fmtDate = (secs: unknown): string | null => {
+const fmtDate = (secs: number | string | undefined): string | null => {
   const n = Number(secs);
   if (!Number.isFinite(n) || n <= 0) return null;
   return new Date(n * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -51,8 +52,8 @@ const fmtDate = (secs: unknown): string | null => {
 export default function WhatsAppTemplateLookup() {
   const [channels, setChannels]     = useState<WaChannel[]>([]);
   const [channelId, setChannelId]   = useState('');
-  const [templates, setTemplates]   = useState<WaTemplate[]>([]);    // approved, this channel
-  const [others, setOthers]         = useState<OtherTemplate[]>([]); // not approved yet, channel unknown
+  const [templates, setTemplates]   = useState<WaTemplate[]>([]);        // approved, this channel
+  const [others, setOthers]         = useState<WaOtherTemplate[]>([]);   // not approved yet, channel unknown
   const [templateId, setTemplateId] = useState('');
   const [loadingCh, setLoadingCh]   = useState(true);
   const [loadingTpl, setLoadingTpl] = useState(false);
@@ -61,8 +62,8 @@ export default function WhatsAppTemplateLookup() {
   const [status, setStatus]         = useState<StatusState | null>(null);
 
   useEffect(() => {
-    getWhatsAppChannels()
-      .then(r => setChannels((r as ApiResult<WaChannel[]>).data || []))
+    (getWhatsAppChannels() as Promise<WaApiResult<WaChannel[]>>)
+      .then(r => setChannels(r.data || []))
       .catch((e: Error) => setErr(e.message))
       .finally(() => setLoadingCh(false));
   }, []);
@@ -70,11 +71,8 @@ export default function WhatsAppTemplateLookup() {
   const loadTemplates = (value: string, refresh = false) => {
     if (!value) return;
     setLoadingTpl(true);
-    getWhatsAppTemplatesAll(value, { refresh })
-      .then(res => {
-        const r = res as ApiResult<{ approved?: WaTemplate[]; other?: OtherTemplate[] }>;
-        setTemplates(r.data?.approved || []); setOthers(r.data?.other || []);
-      })
+    (getWhatsAppTemplatesAll(value, { refresh }) as Promise<WaApiResult<{ approved?: WaTemplate[]; other?: WaOtherTemplate[] }>>)
+      .then(r => { setTemplates(r.data?.approved || []); setOthers(r.data?.other || []); })
       .catch(() => { setTemplates([]); setOthers([]); })
       .finally(() => setLoadingTpl(false));
   };
@@ -94,7 +92,7 @@ export default function WhatsAppTemplateLookup() {
     if (!validId) return;
     setPreview({ id, loading: true, html: '', error: null });
     try {
-      const r = await previewWhatsAppTemplate(id) as ApiResult<{ content?: string }>;
+      const r = await previewWhatsAppTemplate(id) as WaApiResult<{ content?: string }>;
       const html = sanitizePreviewHtml(r?.data?.content ?? '');
       setPreview({
         id, loading: false, html,
@@ -111,7 +109,7 @@ export default function WhatsAppTemplateLookup() {
     if (!validId) return;
     setStatus({ id, loading: true, data: null, error: null });
     try {
-      const r = await getWhatsAppTemplateStatus(id) as ApiResult<TemplateStatus>;
+      const r = await getWhatsAppTemplateStatus(id) as WaApiResult<WaTemplateStatus>;
       setStatus({ id, loading: false, data: r?.data || null, error: r?.success === false ? (r.error || 'Status unavailable.') : null, checkedAt: new Date() });
     } catch (e) {
       setStatus({ id, loading: false, data: null, error: (e as Error).message || 'Status unavailable. Check the template ID.', checkedAt: new Date() });
@@ -121,9 +119,8 @@ export default function WhatsAppTemplateLookup() {
   const checkBoth = () => { loadPreview(); loadStatus(); };
 
   const st = status?.data;
-  // Only rendered when `st` is set; a neutral chip covers states Meta adds later.
-  const tone: Tone = STATUS_TONE[String(st?.meta_status || '').toUpperCase()] || { fg: 'var(--text-secondary)', bg: 'var(--bg-primary, transparent)', label: st?.meta_status || 'Unknown', hint: '' };
-  const quality = st?.quality_score?.score ?? '';
+  const tone = st ? (STATUS_TONE[String(st.meta_status || '').toUpperCase()] || { fg: 'var(--text-secondary)', bg: 'var(--bg-primary, transparent)', label: st.meta_status || 'Unknown', hint: '' }) : null;
+  const quality = st?.quality_score?.score;
   const busy = preview?.loading || status?.loading;
   const btn = (enabled: boolean): CSSProperties => ({ gap: 6, padding: '8px 14px', border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: enabled ? 'var(--text-primary)' : 'var(--text-tertiary)', cursor: enabled ? 'pointer' : 'not-allowed' });
 
@@ -204,7 +201,7 @@ export default function WhatsAppTemplateLookup() {
                 </span>
               ) : status.error ? (
                 <div style={{ fontSize: 12.5, color: '#ef4444' }}>{status.error}</div>
-              ) : st ? (
+              ) : st && tone ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div>
                     <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 700, padding: '4px 12px', borderRadius: 999, color: tone.fg, background: tone.bg }}>{tone.label}</span>
@@ -214,7 +211,7 @@ export default function WhatsAppTemplateLookup() {
                     <dt style={{ color: 'var(--text-tertiary)' }}>Meta status</dt><dd style={{ margin: 0, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{st.meta_status || '—'}</dd>
                     <dt style={{ color: 'var(--text-tertiary)' }}>Category</dt><dd style={{ margin: 0, color: 'var(--text-primary)' }}>{st.meta_category || '—'}</dd>
                     <dt style={{ color: 'var(--text-tertiary)' }}>Quality</dt>
-                    <dd style={{ margin: 0, color: QUALITY_TONE[quality] || 'var(--text-primary)', fontWeight: QUALITY_TONE[quality] ? 600 : 400 }}>
+                    <dd style={{ margin: 0, color: QUALITY_TONE[quality ?? ''] || 'var(--text-primary)', fontWeight: QUALITY_TONE[quality ?? ''] ? 600 : 400 }}>
                       {quality || '—'}{quality === 'UNKNOWN' && <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}> (not enough sends yet)</span>}
                     </dd>
                     {fmtDate(st.quality_score?.date) && <><dt style={{ color: 'var(--text-tertiary)' }}>Quality as of</dt><dd style={{ margin: 0, color: 'var(--text-primary)' }}>{fmtDate(st.quality_score?.date)}</dd></>}

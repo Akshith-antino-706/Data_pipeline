@@ -15,6 +15,8 @@ import type {
   JourneyDetail, JourneyNode, QueueCounts, TimelineItem, JourneyEntry, ContentTemplate,
 } from '@/types/f1Journeys';
 import { CONDITION_LABELS, GOAL_LABELS } from './nodeNames';
+import { reasonLabel, reasonSummary } from '@/lib/notSentReasons';
+import type { JourneyNotSent } from '@/types/api';
 import styles from './JourneyDetail.module.css';
 import type { StepDatum } from './JourneyCharts';
 
@@ -292,6 +294,10 @@ export interface JourneyDetailOverviewProps {
   clickedByNode: Record<string, number>;
   /** True once the delivery report (sent / opened / clicked per step) has loaded. */
   deliveryLoaded: boolean;
+  /** True while the delivery report is being fetched. */
+  deliveryLoading?: boolean;
+  /** People the journey could not send to, by reason and step — undefined while loading, null when it failed. */
+  notSent?: JourneyNotSent | null;
   queueStats: Record<string, QueueCounts> | null;
   timeline: TimelineItem[] | null;
   entries: JourneyEntry[];
@@ -544,8 +550,22 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
         <p className={styles.minor}>
           <span title="Asked to stop getting messages.">{'Unsubscribed '}<b>{fmtCount(unsubCount)}</b>{unsubPct !== null && ` (${unsubPct}%)`}</span>
           <span aria-hidden="true" className={styles.sep}>·</span>
-          <span title="Messages that could not be delivered." className={failedBad ? styles.bad : undefined}>{'Messages that failed '}<b>{fmtCount(p.failedTotal)}</b></span>
+          <span title="Messages that could not be delivered." className={failedBad ? styles.bad : undefined}>{'Messages that failed '}<b>{!p.deliveryLoaded && p.deliveryLoading ? 'Loading…' : fmtCount(p.failedTotal)}</b></span>
+          <span aria-hidden="true" className={styles.sep}>·</span>
+          <span title={p.notSent && p.notSent.total > 0 ? reasonSummary(p.notSent.byReason) : 'People the journey could not send to (daily email limit, no email address, no products, …).'}>
+            {'Not sent '}<b>{p.notSent === undefined ? 'Loading…' : fmtCount(p.notSent ? p.notSent.total : null)}</b>
+            {p.notSent && p.notSent.total > 0 && (
+              <> <a href={`/log?channel=email&status=not_sent&journey=${p.journeyId}`} className={styles.minorLink}>see who</a></>
+            )}
+          </span>
         </p>
+        {p.notSent && p.notSent.total > 0 && (
+          <p className={styles.minor} aria-label="Why people were not sent to">
+            {Object.entries(p.notSent.byReason).sort((a, b) => b[1] - a[1]).map(([reason, n]) => (
+              <span key={reason}>{reasonLabel(reason)} <b>{fmtCount(n)}</b></span>
+            ))}
+          </p>
+        )}
         <div className={styles.funnelBlock}>
           <h2 className={styles.blockTitle}>Where people drop off</h2>
           {funnelHasData ? (
@@ -841,6 +861,7 @@ export function JourneyDetailOverview(p: JourneyDetailOverviewProps) {
             done={nodeStats(selected.id)?.completed ?? null}
             sent={p.sentByNode[selected.id]}
             opened={p.openedByNode[selected.id]}
+            notSent={p.notSent?.byNode[selected.id] ?? null}
             previewLoading={p.previewLoading}
             onPreview={() => p.onPreviewNode(selected)}
             onRetry={() => p.onRetryBlocked(selected.id)}
@@ -911,12 +932,14 @@ interface StepPanelProps {
   done: number | null;
   sent?: number;
   opened?: number;
+  /** People this step could not send to, by reason (null until loaded / none). */
+  notSent?: JourneyNotSent['byNode'][string] | null;
   previewLoading: boolean;
   onPreview: () => void;
   onRetry: () => void;
 }
 
-function StepPanel({ node, sentence, tl, status, ranking, tpl, blocked, here, done, sent, opened, previewLoading, onPreview, onRetry }: StepPanelProps) {
+function StepPanel({ node, sentence, tl, status, ranking, tpl, blocked, here, done, sent, opened, notSent, previewLoading, onPreview, onRetry }: StepPanelProps) {
   const rows: [string, string][] = [];
   rows.push(['What it does', sentence]);
   if (node.data?.channel) rows.push(['Sent by', channelLabel(node.data.channel)]);
@@ -933,6 +956,7 @@ function StepPanel({ node, sentence, tl, status, ranking, tpl, blocked, here, do
   if (node.type === 'action' && sent !== undefined) rows.push(['Messages sent', fmtNum(sent)]);
   const openPct = node.type === 'action' && sent !== undefined && sent > 0 && opened !== undefined ? pctOf(opened, sent) : null;
   if (openPct !== null) rows.push(['Opened', `${fmtNum(opened)} (${openPct}%)`]);
+  if (node.type === 'action' && notSent && notSent.total > 0) rows.push(['Not sent', `${fmtNum(notSent.total)} — ${reasonSummary(notSent.byReason)}`]);
   const fired = humanDateTime(tl?.triggeredAt);
   const next = humanDateTime(tl?.nextFireAt || tl?.predictedAt);
   rows.push(['Last ran', fired || 'Not yet']);

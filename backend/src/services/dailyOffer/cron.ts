@@ -17,7 +17,6 @@ import { alertFor, alertRecipients, sendFailureAlert } from './alert.js';
 import type { AlertInfo, AlertStage, JobResult } from './alert.js';
 
 type Logger = Pick<Console, 'log' | 'warn' | 'error'>;
-type CronLike = Pick<typeof cronLib, 'schedule'>;
 
 /** The three runs the jobs call — a fake with this shape is injected in tests. */
 export type OfferJobs = Pick<DailyOfferService, 'runCreate' | 'runFinalCheck' | 'runSendCheck'>;
@@ -29,15 +28,16 @@ export interface CronDeps {
   now?: () => Date;
 }
 
+type CronLib = Pick<typeof cronLib, 'schedule'>;
 type AudienceDeps = { env: NodeJS.ProcessEnv; log: Logger } & Required<CronDeps>;
 
 /**
  * One set of jobs is registered per enabled audience: 'b2c' (DAILY_OFFER_ENABLED) and
- * 'b2b' (DAILY_OFFER_B2B_ENABLED), each with its own times, segment, no-overlap guard and
- * one-alert-per-day memory.
+ * 'b2b' (DAILY_OFFER_B2B_ENABLED), each with its own times, segment, no-overlap guard
+ * and one-alert-per-day memory.
  */
 export function registerDailyOfferCrons(
-  cron: CronLike,
+  cron: CronLib,
   {
     env = process.env, log = console,
     makeService = (config) => new DailyOfferService({ config }),
@@ -54,7 +54,7 @@ export function registerDailyOfferCrons(
   return true;
 }
 
-function registerAudience(cron: CronLike, config: DailyOfferConfig, { env, log, makeService, sendAlert, now }: AudienceDeps): void {
+function registerAudience(cron: CronLib, config: DailyOfferConfig, { env, log, makeService, sendAlert, now }: AudienceDeps): void {
   const tag = config.audience === 'b2b' ? 'Cron:DailyOffer:B2B' : 'Cron:DailyOffer';
   let running = false;
   const alerted = new Set<string>();      // Dubai dates already reported — at most one alert per day

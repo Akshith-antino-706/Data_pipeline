@@ -24,12 +24,10 @@
 
 import { getForUser, computeForUser } from './RecommendationRankingService.js';
 import { findFor } from './BookingLookupService.js';
-import type { UserRecommendation } from '../types/productsReco.js';
+import type { ResolvedRecProducts, UserRecommendation } from '../types/productsReco.js';
 
 type TripType = 'future_trip' | 'on_trip';
-
-/** What the send path gets: the products to show, which type they came from and why. */
-export interface ResolvedRecProducts { productIds: number[]; recommendationType: string; source: string }
+type Booking = Awaited<ReturnType<typeof findFor>>;
 
 /** Products to keep per user — same as the nightly compute (dailyRecommendationCompute). */
 const TOP_N = 15;
@@ -42,10 +40,13 @@ const isTripType = (t: string | undefined): t is TripType => t === 'future_trip'
  * when the user has no booking of this type, built for no booking (the generic
  * Dubai picks). A row built for an older trip is never reused.
  */
-function _fresh(cached: UserRecommendation | null, booking: { bookingId?: string | number | null } | null): cached is UserRecommendation {
+function _fresh(cached: UserRecommendation | null, booking: Booking): cached is UserRecommendation {
   if (!cached || (cached.productIds || []).length < MIN_USABLE) return false;
   return String(cached.basedOnBookingId ?? '') === String(booking?.bookingId ?? '');
 }
+
+const _saved = (cached: UserRecommendation, type: string): ResolvedRecProducts =>
+  ({ productIds: cached.productIds, recommendationType: type, source: cached.source || 'cached' });
 
 async function _build(unifiedId: string | number, recommendationType: string, why: string): Promise<ResolvedRecProducts | null> {
   const built = await computeForUser({ unifiedId, recommendationType, topN: TOP_N });
@@ -62,23 +63,23 @@ async function _forType(unifiedId: string | number, type: TripType): Promise<Res
   const booking = await findFor(unifiedId, type);
   if (!booking) return null;
   const cached = await getForUser({ unifiedId, recommendationType: type });
-  if (_fresh(cached, booking)) return { productIds: cached.productIds, recommendationType: type, source: cached.source || 'cached' };
+  if (_fresh(cached, booking)) return _saved(cached, type);
   return _build(unifiedId, type, cached ? 'saved picks are for another booking' : 'no saved picks');
 }
 
-export async function resolveRecProductsForUser({ unifiedId, recommendationType }: { unifiedId?: string | number | null; recommendationType: string }): Promise<ResolvedRecProducts> {
+export async function resolveRecProductsForUser({ unifiedId, recommendationType }: { unifiedId: string | number; recommendationType: string }): Promise<ResolvedRecProducts> {
   if (!unifiedId || !isTripType(recommendationType)) {
     // past_trip / unknown types keep their saved row as-is.
     const cached = unifiedId ? await getForUser({ unifiedId, recommendationType }) : null;
     return { productIds: cached?.productIds || [], recommendationType, source: cached?.source || 'no_cached_row' };
   }
-  const steps: Array<() => Promise<ResolvedRecProducts | null>> = [
+  const steps: (() => Promise<ResolvedRecProducts | null>)[] = [
     () => _forType(unifiedId, recommendationType),
     () => _forType(unifiedId, OTHER_TYPE[recommendationType]),
     async () => {
       // No booking of either type: reuse the generic picks if they're saved, else build them.
       const cached = await getForUser({ unifiedId, recommendationType });
-      if (_fresh(cached, null)) return { productIds: cached.productIds, recommendationType, source: cached.source || 'cached' };
+      if (_fresh(cached, null)) return _saved(cached, recommendationType);
       return _build(unifiedId, recommendationType, 'no current booking — Dubai picks');
     },
   ];

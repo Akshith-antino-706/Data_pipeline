@@ -11,7 +11,6 @@ import db from '../../config/database.js';
 import { getRates } from '../../utils/currency.js';
 import { resolveMarketByMobileCountry } from '../../utils/marketPlan.js';
 import { applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
-import { audienceOf } from './config.js';
 import type { DailyOfferLabel, OfferMarket } from './types.js';
 
 interface CachedRender { at: number; html: string; subject: string }
@@ -26,9 +25,10 @@ function asLabel(v: unknown): DailyOfferLabel | null {
   const products = (v as { products?: unknown }).products;
   return Array.isArray(products) && products.length ? v as DailyOfferLabel : null;
 }
+import { audienceOf } from './config.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const _cache = new Map<string, CachedRender>();   // `${journeyId}|${nodeId}|${plan}|${currency}|${checkedAt}` → { at, html, subject }
+const _cache = new Map<string, CachedRender>();   // `${audience}|${date}|${loopDay}|${plan}|${currency}|${checkedAt}` → { at, html, subject }
 
 export function isDailyOfferHtml(html: unknown): html is string {
   return typeof html === 'string' && html.startsWith(DAILY_OFFER_MARKER);

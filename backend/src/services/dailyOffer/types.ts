@@ -84,16 +84,16 @@ export interface DailyOfferLabel {
   groups: SnapshotGroup[];
   products: SnapshotProduct[];
   feedGeneratedAt?: string;
-  /** Which subject opening was used: the AI one, the rule-based fallback and why, or (B2B) the B2C one copied. */
+  /** Which subject opening was used: the AI one, or the rule-based fallback and why. */
   subject?: { source: 'ai' | 'fallback' | 'mirror'; reason: string | null; lead: string; standardLead: string };
   createdAt: string;
+  /** Set on B2B days only (rows written before the B2B job have no audience = b2c). */
+  audience?: OfferAudience;
+  /** B2B: the B2C journey this day copies. */
+  mirrorOf?: number;
   checkedAt?: string;
   dropped?: string[];
   skipReason?: string;
-  /** 'b2b' for the B2B copy; rows written before the B2B job have none (= b2c). */
-  audience?: 'b2c' | 'b2b';
-  /** B2B: the B2C journey this email was copied from. */
-  mirrorOf?: number;
 }
 
 /** A market to price for: feed plan + display currency. */
@@ -107,3 +107,9 @@ export interface OfferPrice { sale: number; strike: number | null; savePct: numb
 export interface RenderedOffer { html: string; subject: string; missing: string[]; currency: string; from: string }
 
 export interface PreviewMarketDef extends OfferMarket { label: string }
+
+/** Who an automated daily email is for. 'b2c' is the original job; 'b2b' copies it with portal links. */
+export type OfferAudience = 'b2c' | 'b2b';
+
+/** B2B link override: every product card and the button open these instead of the feed pages. */
+export interface OfferLinks { productUrl: string; ctaUrl: string; ctaLabel: string }

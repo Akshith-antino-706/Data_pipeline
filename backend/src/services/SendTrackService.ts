@@ -1,5 +1,5 @@
 import db from '../config/database.js';
-import type { BufferedLogRow, Id, LogId, LogSendArgs, MarkFailedArgs, MarkSentArgs, SendLogFilters, TrackingMeta, UtmLogFilters, UtmSummaryFilters, UtmVisitArgs } from '../types/servicesSendTrack.js';
+import type { BufferedLogRow, Id, LogId, LogSendArgs, MarkFailedArgs, MarkSentArgs, NotSentLogFilters, NotSentPage, NotSentRow, SendLogFilters, TrackingMeta, UtmLogFilters, UtmSummaryFilters, UtmVisitArgs } from '../types/servicesSendTrack.js';
 
 /** Visit counts stop here; the UI shows "10,000+". */
 const UTM_COUNT_CAP = 10_000;
@@ -170,6 +170,77 @@ export class SendTrackService {
    * @param {string}  [opts.dateFrom]    - ISO date
    * @param {string}  [opts.dateTo]      - ISO date
    */
+  /**
+   * People a journey could not send to, newest first. Two sources, one row shape:
+   *   - journey_events (fixed journeys): event_type 'action_blocked', details.reason =
+   *     frequency_capped | no_email | rec_no_products | … (via journey_entries → contact)
+   *   - journey_skip_log (continuous journeys, whose entries can't be written to
+   *     journey_events): missing_keys = FREQUENCY_CAPPED | RECOMMENDED_PRODUCTS | ITEM_… ;
+   *     item_name carries the recipient email when the skip was about the person.
+   *
+   * journey_events has 100M+ rows, so every path is index-driven: by journey
+   * (idx_jev_journey_node_type), by person (email prefix → contacts → entries →
+   * idx_jev_entry_type), or — with no filter — the most recent events only.
+   * Counts stop at 10,000 (shown as "10,000+").
+   */
+  static async getNotSentLog({ page = 1, limit = 50, email, journeyId, nodeId, reason }: NotSentLogFilters = {}): Promise<NotSentPage> {
+    const CAP = 10000;
+    const RECENT_EVENTS = 3_000_000;   // ~ the last few days of journey activity
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 50));
+    const safePage = Math.max(1, Number(page) || 1);
+    const offset = (safePage - 1) * safeLimit;
+    const params: unknown[] = [];
+    const ev: string[] = ["jev.event_type = 'action_blocked'"];
+    const sk: string[] = ['1=1'];
+    const term = email ? String(email).trim().toLowerCase() : '';
+
+    if (term) {
+      // Person first (prefix match uses idx_uc_email_lpat), then their entries, then events.
+      const { rows: people } = await db.query<{ id: number }>(
+        `SELECT id FROM unified_contacts WHERE LOWER(TRIM(email)) LIKE $1 LIMIT 50`, [`${term.replace(/[%_]/g, '')}%`]);
+      const ids = people.map(r => r.id);
+      if (!ids.length) return { rows: [], total: 0, page: safePage, limit: safeLimit, capped: false };
+      params.push(ids);
+      const entrySql = journeyId
+        ? `SELECT entry_id FROM journey_entries WHERE customer_id = ANY($${params.length}::bigint[]) AND journey_id = $${params.length + 1}`
+        : `SELECT entry_id FROM journey_entries WHERE customer_id = ANY($${params.length}::bigint[])`;
+      if (journeyId) params.push(Number(journeyId));
+      ev.push(`jev.entry_id IN (${entrySql})`);
+      params.push(`${term}%`);
+      sk.push(`LOWER(sl.item_name) LIKE $${params.length}`);
+      if (journeyId) { params.push(Number(journeyId)); sk.push(`sl.journey_id = $${params.length}`); }
+    } else if (journeyId) {
+      params.push(Number(journeyId));
+      ev.push(`jev.journey_id = $${params.length}`);
+      sk.push(`sl.journey_id = $${params.length}`);
+    } else {
+      const { rows: [mx] } = await db.query<{ mx: string | number | null }>('SELECT MAX(event_id) AS mx FROM journey_events');
+      params.push(Math.max(0, Number(mx?.mx || 0) - RECENT_EVENTS));
+      ev.push(`jev.event_id > $${params.length}`);
+    }
+    if (nodeId) { params.push(nodeId); ev.push(`jev.node_id = $${params.length}`); sk.push('false'); }
+    if (reason) { params.push(reason); ev.push(`jev.details->>'reason' = $${params.length}`); sk.push(`LOWER(sl.missing_keys) = LOWER($${params.length})`); }
+
+    const union = `
+      SELECT 'event:' || jev.event_id::text AS id, 'event' AS source, je.customer_id AS unified_id, uc.email, uc.name AS contact_name,
+             jev.journey_id, jev.node_id, jev.channel, COALESCE(jev.details->>'reason', 'blocked') AS reason, jev.details, jev.created_at
+      FROM journey_events jev
+      JOIN journey_entries je ON je.entry_id = jev.entry_id
+      LEFT JOIN unified_contacts uc ON uc.id = je.customer_id
+      WHERE ${ev.join(' AND ')}
+      UNION ALL
+      SELECT 'skip:' || sl.id::text, 'skip', NULL, sl.item_name, NULL,
+             sl.journey_id, NULL, sl.channel, LOWER(COALESCE(sl.missing_keys, 'skipped')), jsonb_build_object('event', sl.event_name, 'item', sl.item_id, 'page', sl.page_url), sl.skipped_at
+      FROM journey_skip_log sl
+      WHERE ${sk.join(' AND ')}`;
+    const [list, count] = await Promise.all([
+      db.query<NotSentRow>(`SELECT * FROM (${union}) ns ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, safeLimit, offset]),
+      db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM (SELECT 1 FROM (${union}) ns LIMIT ${CAP + 1}) c`, params),
+    ]);
+    const n = count.rows[0]?.n ?? 0;
+    return { rows: list.rows, total: Math.min(n, CAP), page: safePage, limit: safeLimit, capped: n > CAP };
+  }
+
   static async getLog({ page = 1, limit = 50, status, email, dayNumber, source, dateFrom, dateTo, subscriptionStatus, journeyId, nodeId, channel }: SendLogFilters = {}) {
     // WhatsApp sends live in whatsapp_send_log, not email_send_log. When the
     // Send Log page's WhatsApp tab is active it passes channel='whatsapp' — read

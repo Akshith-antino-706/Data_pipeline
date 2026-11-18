@@ -19,15 +19,17 @@ import { sendJourneyEmail } from './channels/JourneyEmailSender.js';
 import type { GtmJourneyJobData, JourneyEdge } from '../types/queueJobs.js';
 import type { PlaceholderContext, PlaceholderEvent } from '../types/utilsPlaceholder.js';
 import type { HydratedProduct } from '../types/productsReco.js';
-import type { MarketResolution } from '../types/utilsMarket.js';
-import type { GiveawayEventRow, GtmContactRow, GtmFlowNode, GtmJourneyFlowRow, GtmNextStep, GtmOnEventArgs, GtmStartRow, InjectedRecMeta } from '../types/servicesGtmJourney.js';
+import type { GiveawayEventRow, GtmContactRow, GtmFlowNode, GtmJourneyFlowRow, GtmNextStep, GtmOnEventArgs, GtmStartRow } from '../types/servicesGtmJourney.js';
+
+/** Identifies one entry's send attempts at one node (email_send_log). */
+interface SendFailureArgs { unifiedId: string | number; journeyId: string | number | undefined; nodeId: string | null | undefined; entryId: string | number | null | undefined }
+/** journey_flows columns that decide the recommendation-email path. */
+interface RecJourneyFlags { recommendation_type: string | null; trigger_event: string | null; trigger_source: string | null }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Failed send attempts at one node before the entry is exited instead of retried again. */
 const MAX_SEND_FAILURES = 3;
-
-interface SendFailureArgs { unifiedId: string | number; journeyId?: number | string | null; nodeId?: string | null; entryId?: number | string | null }
 const DEFAULT_TEMPLATE_PATH = path.join(__dirname, '../templates/email/gtm-welcome.html');
 
 /**
@@ -553,10 +555,10 @@ class GtmJourneyService {
     // filling the cards after it produced empty cards.
     let recProducts: HydratedProduct[] | null = null;   // set only when the template has a product block
     {
-      const { rows: [jf] } = await db.query<{ recommendation_type: string | null; trigger_event: string | null; trigger_source: string | null }>(
+      const { rows: [jf] } = await db.query<RecJourneyFlags>(
         `SELECT recommendation_type, trigger_event, trigger_source FROM journey_flows WHERE journey_id = $1`,
         [journeyId]
-      ).catch(() => ({ rows: [] }));
+      ).catch(() => ({ rows: [] as RecJourneyFlags[] }));
       if (jf?.recommendation_type) {
         const { expandProductsBlockForUser, isRecipientAllowedForRec } = await import('./RecommendationRenderer.js');
         if (!isRecipientAllowedForRec(c.email)) {
@@ -574,7 +576,7 @@ class GtmJourneyService {
           // event values placeholderResolver renders — so the email never mixes currencies.
           const eventTriggered = !!(jf.trigger_event && String(jf.trigger_event).trim())
                               || jf.trigger_source === 'giveaway' || jf.trigger_source === 'affiliate';
-          const marketOverride: MarketResolution | null = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
+          const marketOverride = eventTriggered ? { plan: 'default', currency: 'AED' } : null;
           recProducts = [];
           try {
             const filled = await expandProductsBlockForUser({
@@ -663,6 +665,9 @@ class GtmJourneyService {
     const _cap = await reserveSend({ unifiedId: c.id, email: recipientEmail });
     if (!_cap.allowed) {
       console.log(`[GtmJourney ${journeyId}] FREQUENCY CAPPED uid=${c.id} count=${_cap.count} — skip + advance`);
+      // Recorded in journey_skip_log (continuous entries can't go in journey_events), so the
+      // journey page and the Send Log's "Not sent" view can count and list it.
+      SkipLogService.record({ journeyId, channel: 'email', eventRow, itemId, itemName: recipientEmail, missing: ['FREQUENCY_CAPPED'], contact: c });
       if (entryId) {
         const { default: ContinuousJourneyService } = await import('./ContinuousJourneyService.js');
         await ContinuousJourneyService.advance(entryId, journeyId!, nodeId!).catch(() => {});
@@ -715,7 +720,7 @@ class GtmJourneyService {
       // processDue re-claims an entry that hasn't advanced within 10 min, so a send that can
       // never succeed (e.g. an address the relay rejects) retried forever — 3 BullMQ attempts
       // every 10 min. After MAX_SEND_FAILURES failed attempts at this node, exit the entry.
-      if (await this._exitAfterRepeatedFailures({ unifiedId: c.id, journeyId, nodeId, entryId, error: res?.error ?? null })) return;
+      if (await this._exitAfterRepeatedFailures({ unifiedId: c.id, journeyId, nodeId, entryId, error: res?.error })) return;
       throw new Error(res?.error || 'gtm journey send failed'); // let BullMQ retry
     }
   }
@@ -747,7 +752,7 @@ class GtmJourneyService {
         WHERE unified_id = $1 AND journey_id = $2 AND node_id = $3 AND status = 'failed'
           AND created_at >= (SELECT entered_at FROM gtm_journey_entries WHERE id = $4)`,
       [unifiedId, journeyId, nodeId, entryId]
-    ).catch(() => ({ rows: [] }));
+    ).catch(() => ({ rows: [] as { n: number }[] }));
     return r?.n || 0;
   }
 }

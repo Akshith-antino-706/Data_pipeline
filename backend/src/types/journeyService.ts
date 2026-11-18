@@ -264,3 +264,10 @@ export interface JourneyRunningGroup {
   status: string;
   nodes: JourneyRunningNode[];
 }
+
+/** GET /journeys/:id/not-sent — people the journey could not send to, by reason / node. */
+export interface JourneyNotSent {
+  total: number;
+  byReason: Record<string, number>;
+  byNode: Record<string, { total: number; byReason: Record<string, number> }>;
+}

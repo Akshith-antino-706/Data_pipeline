@@ -30,7 +30,7 @@ import { fetchFeed as fetchFeedDefault, FeedError, isUsable } from './feed.js';
 import { pickForLoopDay, loopDayForDate, LOOP } from './picker.js';
 import { buildTemplate, buildSubject, applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
 import type {
-  DailyOfferLabel, FetchFeedFn, OfferMarket, OfferPick, OfferProduct, PreviewMarketDef, PreviousPick,
+  DailyOfferLabel, FeedResult, FetchFeedFn, OfferGroup, OfferMarket, OfferPick, OfferProduct, PreviewMarketDef, PreviousPick,
   SnapshotGroup, SnapshotProduct,
 } from './types.js';
 import { suggestSubjectLead } from './aiSubject.js';
@@ -291,14 +291,14 @@ export default class DailyOfferService {
    * and its subject lead. Throws SkipError while B2C has no journey for the day yet (the
    * create job retries), or when B2C's day was already marked as not sent.
    */
-  mirrorPick(recent: OfferJourneyRow[], today: string, feed: { products: OfferProduct[] }): { pick: OfferPick; source: OfferJourneyRow } {
+  mirrorPick(recent: OfferJourneyRow[], today: string, feed: FeedResult): { pick: OfferPick; source: OfferJourneyRow } {
     const src = this.b2cJourneyFor(recent, today);
     const found = offerLabelOf(src);
     if (!src || !found) throw new SkipError('waiting_for_b2c', 'The B2C email for today has not been created yet');
     const { label } = found;
     if (label.status === 'skipped') throw new SkipError('b2c_skipped', `The B2C email for today was not sent (${label.skipReason || 'skipped'}), so there is nothing to copy`);
     const fresh = new Map(feed.products.filter(isUsable).map(p => [p.key, p]));
-    const groups = (label.groups || [])
+    const groups: OfferGroup[] = (label.groups || [])
       .map(g => ({ title: g.title, subtitle: g.subtitle, products: g.keys.map(k => fresh.get(k)).filter((p): p is OfferProduct => Boolean(p)) }))
       .filter(g => g.products.length);
     const flat = groups.flatMap(g => g.products);
@@ -329,10 +329,8 @@ export default class DailyOfferService {
       const feed = await this.fetchFeed({
         url: this.config.feedUrl, timeoutMs: this.config.feedTimeoutMs, minRows: this.config.minFeedRows, now,
       });
-      let pick: OfferPick;
+      let pick: OfferPick, standardLead: string, mirrorOf: number | null = null;
       let aiSubject: { lead: string; source: 'ai' | 'fallback' | 'mirror'; reason: string | null };
-      let standardLead: string;
-      let mirrorOf: number | null = null;
       if (b2b) {
         // Same products and subject as the B2C email of the day; only the links differ.
         const m = this.mirrorPick(recent, today, feed);
@@ -373,7 +371,7 @@ export default class DailyOfferService {
         feedGeneratedAt: feed.generatedAt,
         subject: { source: aiSubject.source, reason: aiSubject.reason, lead: aiSubject.lead, standardLead },
         createdAt: now.toISOString(),
-        ...(b2b ? { audience: 'b2b' as const, mirrorOf: mirrorOf ?? undefined } : {}),
+        ...(b2b && mirrorOf != null ? { audience: 'b2b' as const, mirrorOf } : {}),
       };
       let journey: { journey_id: number };
       try {

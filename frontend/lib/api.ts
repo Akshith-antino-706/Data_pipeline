@@ -1,6 +1,6 @@
 import type {
   Id, QueryParams, JsonBody, ApiEnvelope, AuthData,
-  UnifiedStats, SourcesBreakdown, SendLogPage, GiveawayLog,
+  UnifiedStats, SourcesBreakdown, SendLogPage, GiveawayLog, NotSentPage, JourneyNotSent,
 } from '@/types/api';
 import { loginUrlForCurrentPage } from './loginNext';
 import type { SearchContactRow, SearchJourneyRow, SearchListResponse, SearchSegmentRow, SearchTemplateRow } from '@/types/globalSearch';
@@ -241,6 +241,8 @@ export const getJourneyGtmNodeStats    = (id: Id) => request(`/api/v3/journeys/$
 export const getJourneyNodeConversions = (id: Id) => request(`/api/v3/journeys/${id}/node-conversions`);
 export const previewJourneyNodeEmail   = (id: Id, nodeId: string) => request(`/api/v3/journeys/${id}/nodes/${nodeId}/preview-dynamic`);
 export const getJourneyNodeBreakdown   = (id: Id, date?: string) => request(`/api/v3/journeys/${id}/node-breakdown${date ? `?date=${date}` : ''}`);
+/** People the journey could not send to (daily cap, no email, no products, …), by reason and node. */
+export const getJourneyNotSent = (id: Id) => request<{ data: JourneyNotSent }>(`/api/v3/journeys/${id}/not-sent`);
 export const getJourneysActiveOnDate   = (date?: string) => request(`/api/v3/journeys/active-on-date${date ? `?date=${date}` : ''}`);
 export const checkJourneyConversions = (id: Id) => request(`/api/v3/journeys/${id}/check-conversions`, { method: 'POST' });
 export const getJourneyEnrollments = (id: Id) => request(`/api/v3/journeys/${id}/enrollments`);
@@ -667,6 +669,12 @@ export const getCustomSegmentCustomers = (id: Id, params: QueryParams = {}) => {
 export const getSendLog = (params: QueryParams = {}) => {
   const qs = toQuery(Object.entries(params).filter(([, v]) => v != null && v !== ''));
   return request<{ data: SendLogPage }>(`/api/v3/test-sends/send-log${qs ? '?' + qs : ''}`);
+};
+
+/** People journeys could not send to, with the reason (`email`, `journeyId`, `nodeId`, `reason`, `page`, `limit`). */
+export const getNotSentLog = (params: QueryParams = {}) => {
+  const qs = toQuery(Object.entries(params).filter(([, v]) => v != null && v !== ''));
+  return request<{ data: NotSentPage }>(`/api/v3/test-sends/send-log/not-sent${qs ? '?' + qs : ''}`);
 };
 
 // ── Email UTM Visit Tracking ──────────────────────────────────────────────────

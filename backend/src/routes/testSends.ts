@@ -1066,6 +1066,23 @@ router.get('/send-log', async (req, res, next) => {
 });
 
 /**
+ * GET /api/v3/test-sends/send-log/not-sent
+ *
+ * People a journey could not send to (daily cap, no email address, no products, …),
+ * with the reason. Filters: email, journeyId, nodeId, reason, page, limit.
+ */
+router.get('/send-log/not-sent', async (req, res, next) => {
+  try {
+    const { email, journeyId, nodeId, reason } = req.query as QueryParams;
+    const result = await SendTrackService.getNotSentLog({
+      page: clampInt(req.query.page, 1, MAX_PAGE), limit: clampInt(req.query.limit, 50, 200),
+      email: email || undefined, journeyId: journeyId || undefined, nodeId: nodeId || undefined, reason: reason || undefined,
+    });
+    res.json({ data: result });
+  } catch (err) { next(err); }
+});
+
+/**
  * GET /api/v3/test-sends/send-log/summary
  *
  * Aggregate stats: counts by status + open-rate breakdown per day template.

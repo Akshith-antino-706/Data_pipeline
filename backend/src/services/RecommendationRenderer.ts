@@ -28,7 +28,8 @@ import db from '../config/database.js';
 import { getRates } from '../utils/currency.js';
 import type { MarketResolution, MarketContact } from '../types/utilsMarket.js';
 import type {
-  HydrateProductRow, HydratedProduct, InjectPerUserArgs, RecoTemplateVars, RenderRecommendationArgs,
+  ExpandedProductsBlock, ExpandProductsArgs, HydrateProductRow, HydratedProduct, InjectPerUserArgs,
+  RecoTemplateVars, RenderedProductCard, RenderRecommendationArgs,
 } from '../types/productsReco.js';
 
 /**
@@ -317,7 +318,7 @@ export const MIN_REC_PRODUCTS = 3;
  * else built now; city → country → Dubai). Returns { html, productsUsed, source,
  * fromCache }. Other placeholders are untouched.
  */
-export async function expandProductsBlockForUser({ templateHtml, unifiedId, recommendationType, market: marketOverride = null }: Omit<InjectPerUserArgs, 'vars'> = {}): Promise<{ html: string; productsUsed: HydratedProduct[]; source: string; fromCache: boolean }> {
+export async function expandProductsBlockForUser({ templateHtml, unifiedId, recommendationType, market: marketOverride = null }: ExpandProductsArgs = {}): Promise<ExpandedProductsBlock> {
   if (!templateHtml) throw new Error('templateHtml is required');
   const { resolveRecProductsForUser } = await import('./RecommendationResolver.js');
   const picked = unifiedId && recommendationType ? await resolveRecProductsForUser({ unifiedId, recommendationType }) : null;
@@ -327,7 +328,7 @@ export async function expandProductsBlockForUser({ templateHtml, unifiedId, reco
     const { resolveMarket } = await import('../utils/marketPlan.js');
     const { rows: [contact] } = await db.query<MarketContact>(
       'SELECT country, mobile_country, is_indian, market_plan, currency_code FROM unified_contacts WHERE id = $1', [unifiedId]
-    ).catch(() => ({ rows: [] }));
+    ).catch(() => ({ rows: [] as MarketContact[] }));
     market = resolveMarket(contact || {});
   }
 
@@ -345,8 +346,8 @@ export async function expandProductsBlockForUser({ templateHtml, unifiedId, reco
  * name and an image, and that image is in the HTML. A card whose fields were
  * blanked (or a block that was dropped) doesn't count.
  */
-export function countRenderedProducts(html: string | null | undefined, products: Array<Pick<HydratedProduct, 'product_name' | 'product_image'>> | null | undefined): number {
-  if (!html || !Array.isArray(products)) return 0;
+export function countRenderedProducts(html: string | null | undefined, products: readonly RenderedProductCard[] | null | undefined): number {
+  if (!html || !products) return 0;
   return products.filter(p => p?.product_name && p?.product_image && html.includes(p.product_image)).length;
 }
 

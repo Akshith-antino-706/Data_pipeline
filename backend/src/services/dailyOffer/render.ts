@@ -12,9 +12,8 @@
  * email node, so send time never depends on the products table.
  */
 import { EMAIL_HEAD, EMAIL_FOOT } from './emailShell.js';
-import type { DailyOfferLinks } from './config.js';
 import type {
-  EffectiveMarket, OfferMarket, OfferPick, OfferPrice, OfferProduct, OfferTheme, PlanPrices, RenderedOffer, SnapshotProduct,
+  EffectiveMarket, OfferLinks, OfferMarket, OfferPick, OfferPrice, OfferProduct, OfferTheme, PlanPrices, RenderedOffer, SnapshotProduct,
 } from './types.js';
 
 export const DAILY_OFFER_MARKER = '<!--DAILY_OFFER-->';
@@ -93,7 +92,7 @@ function cardImage(url: string): string {
   return `https://res.cloudinary.com/dzsl8v8yw/image/fetch/c_fill,w_600,h_400,g_auto,q_60,f_jpg,fl_progressive/${url}`;
 }
 
-function card(p: OfferProduct, links: DailyOfferLinks | null = null): string {
+function card(p: OfferProduct, links: OfferLinks | null = null): string {
   const href = esc(links?.productUrl || p.url);
   return `<div class="col" style="display:inline-block;width:100%;max-width:250px;vertical-align:top;">
 <div style="padding:0 6px 12px 6px;">
@@ -113,7 +112,7 @@ ${p.subtitle ? `<p class="ff-b dm-sub" style="margin:0 0 10px;font-size:11.5px;l
 </div>`;
 }
 
-function cardGrid(products: OfferProduct[], links: DailyOfferLinks | null = null): string {
+function cardGrid(products: OfferProduct[], links: OfferLinks | null = null): string {
   const rows: OfferProduct[][] = [];
   for (let i = 0; i < products.length; i += 2) rows.push(products.slice(i, i + 2));
   const body = rows.map(pair => pair.map((p, j) =>
@@ -144,7 +143,7 @@ function hero(pick: OfferPick): string {
 </td></tr>`;
 }
 
-function ctaRow(theme: OfferTheme, links: DailyOfferLinks | null = null): string {
+function ctaRow(theme: OfferTheme, links: OfferLinks | null = null): string {
   const c = links ? { url: links.ctaUrl, label: links.ctaLabel } : (CTA[theme] || CTA.holiday_multi);
   return `<tr><td class="px dm-cardbg" style="padding:30px 38px 34px 38px;background-color:#FFFFFF;">
 <!--[if mso]>
@@ -166,7 +165,7 @@ export function buildSubject(pick: Pick<OfferPick, 'subjectLead'>): string {
  * Full template HTML (prices as tokens). `links` (B2B) replaces every product link and the
  * button with the portal link: { productUrl, ctaUrl, ctaLabel }. null = the feed's product pages.
  */
-export function buildTemplate(pick: OfferPick, links: DailyOfferLinks | null = null): string {
+export function buildTemplate(pick: OfferPick, links: OfferLinks | null = null): string {
   const sections = pick.groups.map(g => sectionHeader(g.title, g.subtitle) + '\n' + cardGrid(g.products, links)).join('\n');
   const head = EMAIL_HEAD
     .replace('%%DO_TITLE%%', esc(`${pick.subjectLead} – from `) + '%%DO_FROM%%')

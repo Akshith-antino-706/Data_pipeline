@@ -6,13 +6,18 @@
 //   • no top-level header_text / footer_text / media_file / buttons — those live on the cards
 //   • every card uses the same header_format, and the same button kinds in the same order
 //   • card buttons: quick_reply, call_to_action (url|phone) or url_dynamic — no OTP / copy code
-import type { ChatheadTemplateBody, ChatheadTemplateButton, ChatheadCarouselCard } from '../types/routesChathead.js';
+
+import type {
+  ChatheadCarouselCardPayload, ChatheadTemplateBody, ChatheadTemplateButton,
+} from '../types/routesChathead.js';
 
 export const CARD_HEADER_FORMATS: (string | undefined)[] = ['image', 'video'];
 export const CARD_BTN_TYPES: (string | undefined)[]      = ['quick_reply', 'call_to_action', 'url_dynamic'];
 export const CARD_BODY_MAX       = 160;
 
-const clean = <T,>(s: T): T => (typeof s === 'string' ? s.trim() as T : s);
+export type CarouselResult = { error: string } | { error?: undefined; cards: ChatheadCarouselCardPayload[] };
+
+const clean = (s: string | undefined): string | undefined => (typeof s === 'string' ? s.trim() : s);
 
 /** Kind used for the "same buttons on every card" rule — static and dynamic URLs are both URL. */
 function buttonKind(btn: ChatheadTemplateButton): string {
@@ -24,7 +29,7 @@ function buttonKind(btn: ChatheadTemplateButton): string {
 function buttonError(btn: ChatheadTemplateButton, n: number): string | null {
   if (!CARD_BTN_TYPES.includes(btn.type)) return `Card ${n} only supports quick reply, URL and phone buttons!`;
   if (btn.type === 'quick_reply') return btn.value ? null : `Card ${n} quick_reply button needs a value (label)`;
-  if (!['url', 'phone'].includes(btn.sub_type as string)) return `Card ${n} button.sub_type must be url or phone (got ${btn.sub_type})`;
+  if (!['url', 'phone'].includes(btn.sub_type ?? '')) return `Card ${n} button.sub_type must be url or phone (got ${btn.sub_type})`;
   if (!btn.value || !btn.text) return `Card ${n} ${btn.type} button needs value + text`;
   if (btn.type === 'url_dynamic') {
     if (btn.sub_type !== 'url') return `Card ${n} url_dynamic button must be a url`;
@@ -34,13 +39,12 @@ function buttonError(btn: ChatheadTemplateButton, n: number): string | null {
   return null;
 }
 
-export type CarouselBuildResult = { error: string; cards?: undefined } | { error?: undefined; cards: ChatheadCarouselCard[] };
-
 /**
  * Validate a carousel request body and build its `cards` array.
- * `tidy` is the text cleaner applied to card body + button text (emoji strip).
+ * @param b    request body (formate === 'carousel')
+ * @param tidy text cleaner applied to card body + button text (emoji strip)
  */
-export function buildCarouselCards(b: ChatheadTemplateBody, tidy: (s: string) => string = (s) => s): CarouselBuildResult {
+export function buildCarouselCards(b: ChatheadTemplateBody, tidy: (s: string) => string = (s) => s): CarouselResult {
   if (b.category !== 'marketing') return { error: 'Carousel templates must use the marketing category!' };
   for (const k of ['header_text', 'footer_text', 'media_file'] as const) {
     if (b[k]) return { error: `'${k}' is not allowed on carousel templates, use cards instead!` };
@@ -50,16 +54,16 @@ export function buildCarouselCards(b: ChatheadTemplateBody, tidy: (s: string) =>
   const cards = Array.isArray(b.cards) ? b.cards : [];
   if (cards.length < 2 || cards.length > 10) return { error: 'Carousel templates need between 2 and 10 cards!' };
 
-  const out: ChatheadCarouselCard[] = [];
+  const out: ChatheadCarouselCardPayload[] = [];
   let firstFormat: string | null = null, firstKinds: string | null = null;
   for (let i = 0; i < cards.length; i++) {
     const c = cards[i] || {}, n = i + 1;
     if (!CARD_HEADER_FORMATS.includes(c.header_format)) return { error: `Card ${n} header_format must be image or video!` };
-    const format = c.header_format as string;
-    if (firstFormat == null) firstFormat = format;
-    else if (format !== firstFormat) return { error: 'All cards must use the same header_format!' };
-    const media = clean(c.media_file);
-    if (!media) return { error: `Card ${n} media_file is missing!` };
+    const headerFormat = c.header_format as string;
+    if (firstFormat == null) firstFormat = headerFormat;
+    else if (headerFormat !== firstFormat) return { error: 'All cards must use the same header_format!' };
+    const mediaFile = clean(c.media_file);
+    if (!mediaFile) return { error: `Card ${n} media_file is missing!` };
 
     const body = c.body ? tidy(String(c.body)) : '';
     if (body.length > CARD_BODY_MAX) return { error: `Card ${n} body must be ${CARD_BODY_MAX} characters or less!` };
@@ -76,7 +80,7 @@ export function buildCarouselCards(b: ChatheadTemplateBody, tidy: (s: string) =>
     if (firstKinds == null) firstKinds = kinds;
     else if (kinds !== firstKinds) return { error: 'All cards must have the same button types in the same order!' };
 
-    const card: ChatheadCarouselCard = { header_format: format, media_file: media };
+    const card: ChatheadCarouselCardPayload = { header_format: headerFormat, media_file: mediaFile };
     if (body) card.body = body;
     if (c.body_examples && typeof c.body_examples === 'object') card.body_examples = c.body_examples;
     if (buttons.length) card.buttons = buttons.map(bt => ({ ...bt, ...(bt.text ? { text: tidy(bt.text) } : {}) }));

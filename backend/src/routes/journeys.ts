@@ -332,6 +332,15 @@ router.get('/skip-log.csv', async (req, res, next) => {
 });
 
 // Per-node breakdown for the dashboard accordion (optional ?date=YYYY-MM-DD)
+// People this journey could not send to (daily cap, no email, no products, …), by reason and node.
+router.get('/:id/not-sent', async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(400).json({ success: false, error: 'Invalid journey id' });
+    res.json({ success: true, data: await JourneyService.getJourneyNotSent(id) });
+  } catch (err) { next(err); }
+});
+
 router.get('/:id/node-breakdown', async (req, res, next) => {
   try {
     const data = await JourneyService.getJourneyNodeBreakdown(parseInt(req.params.id), req.query.date as string | undefined);

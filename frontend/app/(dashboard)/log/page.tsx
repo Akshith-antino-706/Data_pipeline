@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, type FormEvent, type KeyboardEvent } from 'react';
 import { Mail, MessageCircle, Smartphone, RefreshCw, ChevronLeft, ChevronRight, Eye, MousePointerClick, Search, X, Copy, Check } from 'lucide-react';
-import { getSendLog, getJourneys, getOverviewMessages } from '@/lib/api';
+import { getSendLog, getJourneys, getOverviewMessages, getNotSentLog } from '@/lib/api';
 import type { OverviewMessage, OverviewMessagesParams } from '@/lib/api';
-import type { SendLogRow } from '@/types/api';
+import type { SendLogRow, NotSentRow } from '@/types/api';
+import { reasonLabel } from '@/lib/notSentReasons';
 import { Button, Chip, EmptyState, ErrorState, PageHeader, Skeleton, Table, Tabs } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import styles from './log.module.css';
@@ -42,7 +43,10 @@ const STATUS_FILTERS = [
   { key: 'clicked', label: 'Clicked' },
   { key: 'failed', label: 'Failed' },
   { key: 'queued', label: 'Queued' },
+  { key: 'not_sent', label: 'Not sent' },
 ];
+/** The "Not sent" view lists people a journey skipped (daily email limit, no email, …) — email channel only. */
+const NOT_SENT = 'not_sent';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -227,6 +231,7 @@ export default function LogPage() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [data, setData] = useState<{ rows: SendLogRow[]; total: number; estimated: boolean; capped: boolean }>({ rows: [], total: 0, estimated: false, capped: false });
+  const [notSent, setNotSent] = useState<{ rows: NotSentRow[]; total: number; capped: boolean }>({ rows: [], total: 0, capped: false });
   const [unified, setUnified] = useState<UnifiedState>({ state: 'ok', rows: [], total: 0, days: null, capped: false });
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Selected | null>(null);
@@ -273,6 +278,7 @@ export default function LogPage() {
   const [journeyNodes, setJourneyNodes] = useState<LogNode[]>([]);
 
   const isEmail = channel === 'email';
+  const isNotSent = isEmail && statusFilter === NOT_SENT;
 
   useEffect(() => {
     (getJourneys({ limit: 200 }) as Promise<{ data?: { data?: LogJourney[] } & LogJourney[] }>)
@@ -311,6 +317,17 @@ export default function LogPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      if (channel === 'email' && statusFilter === NOT_SENT) {
+        // People journeys could not send to — a different table (journey_events + skip log).
+        try {
+          const res = await getNotSentLog({ page, limit, ...(search ? { email: search } : {}), ...(journeyId ? { journeyId } : {}), ...(nodeId ? { nodeId } : {}) });
+          const d = res?.data;
+          setNotSent({ rows: d?.rows ?? [], total: typeof d?.total === 'number' ? d.total : 0, capped: d?.capped === true });
+        } catch {
+          setNotSent({ rows: [], total: 0, capped: false });
+        }
+        return;
+      }
       if (channel === 'email') {
         // Email keeps the original send-log API with all its filters.
         const params = {
@@ -365,9 +382,9 @@ export default function LogPage() {
 
   // Totals: email always numeric; unified may be null (unknown).
   // A capped total ("10,000+") isn't the real size, so paging becomes open-ended (Next until a short page).
-  const capped = isEmail ? data.capped : unified.state === 'ok' && unified.capped;
-  const total: number | null = capped ? null : isEmail ? data.total : unified.state === 'ok' ? unified.total : null;
-  const rowCount = isEmail ? data.rows.length : unified.state === 'ok' ? unified.rows.length : 0;
+  const capped = isNotSent ? notSent.capped : isEmail ? data.capped : unified.state === 'ok' && unified.capped;
+  const total: number | null = capped ? null : isNotSent ? notSent.total : isEmail ? data.total : unified.state === 'ok' ? unified.total : null;
+  const rowCount = isNotSent ? notSent.rows.length : isEmail ? data.rows.length : unified.state === 'ok' ? unified.rows.length : 0;
   const totalPages = total != null ? Math.max(1, Math.ceil(total / limit)) : null;
   const lastPage = totalPages != null ? page >= totalPages : rowCount < limit;
 
@@ -489,6 +506,36 @@ export default function LogPage() {
         <div className={styles.skeletons} aria-hidden="true">
           {Array.from({ length: Math.min(limit, 10) }).map((_, i) => <Skeleton key={i} height={36} />)}
         </div>
+      ) : isNotSent ? (
+        notSent.rows.length === 0 ? (
+          <EmptyState title="Nobody was skipped" description="No journey has refused a send for these filters (daily email limit, missing email address, no products, …)." />
+        ) : (
+          <Table label="People not sent to">
+            <thead>
+              <tr>
+                <th>Contact</th><th>Email</th><th>Reason</th><th>Journey / Node</th><th>Channel</th><th>When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {notSent.rows.map(row => (
+                <tr key={row.id}>
+                  <td><Copyable text={row.contact_name} className={styles.strong}>{row.contact_name || '—'}</Copyable></td>
+                  <td className={styles.ellipsis}><Copyable text={row.email}>{row.email || '—'}</Copyable></td>
+                  <td>
+                    <Chip tone={row.reason === 'frequency_capped' ? 'warn' : 'bad'} dot>{reasonLabel(row.reason)}</Chip>
+                    {typeof row.details?.count === 'number' && <div className={styles.muted}>Already received {row.details.count - 1} in 24 h</div>}
+                  </td>
+                  <td>
+                    {row.journey_id ? <a href={`/journeys/${row.journey_id}`} className={styles.link}>#{row.journey_id}</a> : '—'}
+                    {row.node_id && <div className={styles.mono}>{nodeLabel(row.node_id)}</div>}
+                  </td>
+                  <td><span className={styles.tabLabel}><ChannelIcon channel={row.channel || 'email'} />{CHANNEL_LABEL[row.channel || 'email'] ?? row.channel}</span></td>
+                  <td className={styles.nowrap}>{fmtDate(row.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )
       ) : isEmail ? (
         data.rows.length === 0 ? (
           <EmptyState title="No send logs found" />

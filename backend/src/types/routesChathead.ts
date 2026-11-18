@@ -9,24 +9,6 @@ export interface ChatheadTemplateButton {
   [extra: string]: unknown;
 }
 
-/** One carousel card as sent by the frontend (formate=carousel). */
-export interface ChatheadCarouselCardInput {
-  header_format?: string;
-  media_file?: string;
-  body?: string;
-  body_examples?: unknown;
-  buttons?: ChatheadTemplateButton[];
-}
-
-/** One carousel card as forwarded to ChatHead. */
-export interface ChatheadCarouselCard {
-  header_format: string;
-  media_file: string;
-  body?: string;
-  body_examples?: unknown;
-  buttons?: ChatheadTemplateButton[];
-}
-
 /** Body of POST /templates/create as sent by the frontend. */
 export interface ChatheadTemplateBody {
   channel?: string | number;
@@ -35,13 +17,33 @@ export interface ChatheadTemplateBody {
   formate?: string;
   body?: string;
   body_examples?: unknown;
-  header_text?: string;
   footer_text?: string;
   media_file?: string;
   buttons?: ChatheadTemplateButton[];
-  cards?: ChatheadCarouselCardInput[];
   add_security_recommendation?: boolean;
   code_expiration_minutes?: string | number | null;
+  /** Carousel only (formate === 'carousel'): not allowed at the top level. */
+  header_text?: string;
+  /** Carousel only: 2–10 cards (utils/waCarousel.ts). */
+  cards?: ChatheadCarouselCard[];
+}
+
+/** One carousel card as sent by the frontend. */
+export interface ChatheadCarouselCard {
+  header_format?: string;
+  media_file?: string;
+  body?: string;
+  body_examples?: unknown;
+  buttons?: ChatheadTemplateButton[];
+}
+
+/** One carousel card as forwarded to ChatHead. */
+export interface ChatheadCarouselCardPayload {
+  header_format: string;
+  media_file: string;
+  body?: string;
+  body_examples?: unknown;
+  buttons?: ChatheadTemplateButton[];
 }
 
 /** Payload forwarded to ChatHead account/templates/add. */
@@ -59,7 +61,7 @@ export interface ChatheadTemplatePayload {
   body_examples?: unknown;
   footer_text?: string;
   media_file?: string;
-  cards?: ChatheadCarouselCard[];
+  cards?: ChatheadCarouselCardPayload[];
 }
 
 /** Loosely-typed JSON reply from ChatHead's PHP endpoints. */

@@ -56,20 +56,25 @@ router.get('/templates', async (req: QueryRequest, res: Response) => {
 // channel-less group. Read-only; the scan is cached for 5 minutes.
 const SCAN_WINDOW = parseInt(process.env.WA_TPL_SCAN_WINDOW || '200', 10);
 const SCAN_TTL_MS = 5 * 60 * 1000;
-interface OtherTemplate { id: string; meta_status: string; meta_category: string | null; label?: string }
-interface ChListJson extends ChatheadJson { data?: { id: string | number }[] }
-interface ChStatusJson extends ChatheadJson { data?: { meta_status?: string; meta_category?: string } }
-let _otherTplCache: { at: number; data: OtherTemplate[] } | null = null;
 
-const chJson = async <T extends ChatheadJson = ChatheadJson>(url: string, init?: RequestInit): Promise<T> => {
+/** A template ChatHead's templates/list returns (approved only). */
+interface ChTemplateRow { id: string | number; [key: string]: unknown }
+/** A recent template that isn't approved yet, found by ID with templates/status. */
+interface ChUnapprovedTemplate { id: string; meta_status: string; meta_category: string | null; label?: string }
+interface ChListJson extends ChatheadJson { data?: ChTemplateRow[] }
+interface ChStatusJson extends ChatheadJson { data?: { meta_status?: string; meta_category?: string | null } }
+
+let _otherTplCache: { at: number; data: ChUnapprovedTemplate[] } | null = null;
+
+const chJson = async <T extends ChatheadJson>(url: string, init?: RequestInit): Promise<T> => {
   const r = await fetch(url, init);
   return parseChatHeadJson((await r.text()).replace(/^\uFEFF/, '')) as T;
 };
-const tplStatus = (id: number | string) => chJson<ChStatusJson>(`${CH_BASE}/account/templates/status/index.php?c=${CLIENT}`, {
+const tplStatus = (id: number) => chJson<ChStatusJson>(`${CH_BASE}/account/templates/status/index.php?c=${CLIENT}`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ c: CLIENT, app_key: APP_KEY, template_id: id }),
 }).catch(() => null);
-const tplLabel = async (id: number | string): Promise<string> => {
+const tplLabel = async (id: string) => {
   try {
     const r = await fetch(`${CH_ACCOUNT_BASE}/template_content/show`, {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -80,15 +85,15 @@ const tplLabel = async (id: number | string): Promise<string> => {
   } catch { return ''; }
 };
 
-async function scanUnapprovedTemplates(): Promise<OtherTemplate[]> {
+async function scanUnapprovedTemplates(): Promise<ChUnapprovedTemplate[]> {
   if (_otherTplCache && Date.now() - _otherTplCache.at < SCAN_TTL_MS) return _otherTplCache.data;
   const { data: channels = [] } = await chJson<ChListJson>(`${CH_BASE}/account/channels/list/?c=${CLIENT}`);
   const lists = await Promise.all(channels.map(ch =>
-    chJson<ChListJson>(`${CH_BASE}/account/templates/list/?c=${CLIENT}&channel=${encodeURIComponent(ch.id)}`).then(j => j.data || []).catch(() => [])));
+    chJson<ChListJson>(`${CH_BASE}/account/templates/list/?c=${CLIENT}&channel=${encodeURIComponent(String(ch.id))}`).then(j => j.data || []).catch((): ChTemplateRow[] => [])));
   const approved = new Set(lists.flat().map(t => Number(t.id)));
   const maxId = Math.max(0, ...approved);
 
-  const found: OtherTemplate[] = [];
+  const found: ChUnapprovedTemplate[] = [];
   const check = async (id: number): Promise<boolean> => {
     const s = await tplStatus(id);
     if (s?.status !== 'success' || !s.data) return false;              // deleted / never existed
@@ -484,7 +489,7 @@ router.post('/templates/create', async (req: QueryRequest<ChatheadTemplateBody |
       if (b.body_examples && typeof b.body_examples === 'object') payload.body_examples = b.body_examples;
       if (isCarousel) {
         const built = buildCarouselCards(b, stripEmoji);
-        if (built.error) return res.status(400).json({ success: false, error: built.error });
+        if (built.error !== undefined) return res.status(400).json({ success: false, error: built.error });
         payload.cards = built.cards;
       } else {
         if (b.footer_text) payload.footer_text = stripEmoji(b.footer_text);
