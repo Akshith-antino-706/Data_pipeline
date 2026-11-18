@@ -45,6 +45,8 @@ export interface ArchiveConfig {
   maxPerRun: number;
   maxMinutes: number;
   includeTest: boolean;
+  maxEmails: number;
+  retryHours: number;
 }
 
 /** Per-run overrides (admin route): undefined values fall back to the env config. */
@@ -72,6 +74,8 @@ export interface ArchiveRunSummary {
   archived: Array<{ journey_id: number | string; month: string; seconds: number }>;
   failed: Array<{ journey_id: number | string; error: string }>;
   tooRecent: Array<{ journey_id: number | string; last_sent_at: Date | string | undefined }>;
+  tooBig: Array<{ journey_id: number | string; emails: number }>;
+  backedOff: Array<{ journey_id: number | string; failed_at: string }>;
   wouldArchive: Array<{ journey_id: number | string; name: string; last_sent_at: Date | string | undefined; month: string; emails: number }>;
   templatesBackfilled: Array<{ journey_id: number; dryRun?: boolean; templates?: number; nodes?: number }>;
 }
@@ -81,6 +85,11 @@ const MANIFEST_RE = /^journeys\/completed_month=\d{4}-\d{2}\/journey_id=(\d+)\/m
 const TEMPLATES_FILE = 'email_templates.json.gz';
 const COPY_TIMEOUT = '600s';          // per chunk; a cold 750k-row email node took ~160s
 const DUBAI_MS = 4 * 3600 * 1000;
+const LAST_SENT_TIMEOUT = '30s';
+
+// journey_id → time of its last failure. In memory: a restart (deploy) clears it, which only
+// means one more attempt. Keeps a journey that keeps failing from using up every night's run.
+const _failedAt = new Map<number, number>();
 
 let _s3: S3Client | undefined;
 const s3 = (): S3Client => (_s3 ||= new S3Client({ region: process.env.ARCHIVE_S3_REGION || 'eu-north-1' }));
@@ -93,6 +102,11 @@ export function archiveConfig(env: NodeJS.ProcessEnv = process.env): ArchiveConf
     maxPerRun:   Math.max(1, parseInt(env.JOURNEY_ARCHIVE_MAX_PER_RUN || '5', 10)),
     maxMinutes:  Math.max(5, parseInt(env.JOURNEY_ARCHIVE_MAX_MINUTES || '90', 10)),
     includeTest: env.JOURNEY_ARCHIVE_INCLUDE_TEST === 'true',
+    // Journeys with more emails than this are skipped (logged as too big) — copying one that size
+    // would hold the DB for hours. Raise it to archive a specific big journey on purpose.
+    maxEmails:   Math.max(1, parseInt(env.JOURNEY_ARCHIVE_MAX_EMAILS || '3000000', 10)),
+    // A journey that failed is not tried again for this long, so it can't use up every night's run.
+    retryHours:  Math.max(1, parseInt(env.JOURNEY_ARCHIVE_RETRY_HOURS || '72', 10)),
   };
 }
 
@@ -169,14 +183,31 @@ const nodeCounts = (table: string, jid: number | string): Promise<NodeCount[]> =
     .rows.map(r => ({ node_id: r.node_id, n: Number(r.n) })), '300s');
 
 // Last email of the journey = max(sent_at) on the last node (in flow order) that sent emails.
-async function lastSentAt(j: ArchiveJourney, emailCounts: NodeCount[]): Promise<Date | string | undefined> {
+//
+// A plain MAX(sent_at) lets Postgres walk the sent_at index backwards from TODAY until it meets this
+// journey — tens of millions of rows for an old journey, so it hit the 5-min timeout every night
+// (#242, #245, #268, #307). `sent_at + interval '0'` stops that shortcut and enable_seqscan = off
+// keeps it off a full-table scan, so it reads only this node's rows via idx_esl_journey_node.
+// Still bounded to LAST_SENT_TIMEOUT: past it, the journey's completion time is used instead — safe,
+// because a fixed journey sends nothing after it completes, and candidates are already completed
+// at least minAgeDays ago. Only the archive month can differ (completion vs. last send).
+async function lastSentAt(j: ArchiveJourney, emailCounts: NodeCount[], log: (m: string) => void = () => {}): Promise<Date | string | undefined> {
   const withRows = new Set(emailCounts.filter(r => r.node_id && r.n > 0).map(r => r.node_id));
   const lastNode = flowOrder(j.nodes, j.edges).filter(id => withRows.has(id)).pop();
   if (!lastNode) return j.updated_at;                      // no emails (WA/SMS-only) → completion time
-  const { rows: [r] } = await readOnly(c => c.query<{ last: Date | null }>(
-    'SELECT MAX(sent_at) AS last FROM email_send_log WHERE journey_id = $1 AND node_id = $2', [j.journey_id, lastNode]
-  ), '300s');
-  return r?.last || j.updated_at;
+  try {
+    const { rows: [r] } = await readOnly(async c => {
+      await c.query('SET LOCAL enable_seqscan = off');
+      return c.query<{ last: Date | null }>(
+        `SELECT MAX(sent_at + interval '0') AS last FROM email_send_log WHERE journey_id = $1 AND node_id = $2`,
+        [j.journey_id, lastNode]);
+    }, LAST_SENT_TIMEOUT);
+    return r?.last || j.updated_at;
+  } catch (err) {
+    if ((err as { code?: string }).code !== '57014') throw err;   // 57014 = statement timeout
+    log(`  #${j.journey_id}: last-send lookup over ${LAST_SENT_TIMEOUT} on ${lastNode} — using completion time ${new Date(j.updated_at ?? Date.now()).toISOString()}`);
+    return j.updated_at;
+  }
 }
 
 const dubaiMonth = (ts: Date | string | undefined): string => new Date(new Date(ts ?? Date.now()).getTime() + DUBAI_MS).toISOString().slice(0, 7);
@@ -371,11 +402,11 @@ export const isArchiveRunning = () => _running;
  * Returns a summary; never throws for a single journey's failure (it is retried next run).
  */
 export async function runJourneyArchive(opts: ArchiveRunOptions = {}, log: (m: string) => void = (m) => console.log(`[JourneyArchive] ${m}`)): Promise<ArchiveRunSummary> {
-  if (_running) return { skipped: 'already running', archived: [], failed: [], tooRecent: [], wouldArchive: [], templatesBackfilled: [] };
+  if (_running) return { skipped: 'already running', archived: [], failed: [], tooRecent: [], tooBig: [], backedOff: [], wouldArchive: [], templatesBackfilled: [] };
   _running = true;
   const cfg: ArchiveConfig & ArchiveRunOptions = { ...archiveConfig(), ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
   const started = Date.now();
-  const summary: ArchiveRunSummary = { dryRun: cfg.dryRun, minAgeDays: cfg.minAgeDays, archived: [], failed: [], tooRecent: [], wouldArchive: [], templatesBackfilled: [] };
+  const summary: ArchiveRunSummary = { dryRun: cfg.dryRun, minAgeDays: cfg.minAgeDays, archived: [], failed: [], tooRecent: [], tooBig: [], backedOff: [], wouldArchive: [], templatesBackfilled: [] };
   try {
     const done = await archivedJourneys();
     let list = (await candidateJourneys(cfg)).filter(j => !done.has(Number(j.journey_id)));
@@ -387,10 +418,21 @@ export async function runJourneyArchive(opts: ArchiveRunOptions = {}, log: (m: s
     for (const j of list) {
       if (summary.archived.length + summary.wouldArchive.length >= cfg.maxPerRun) break;
       if (Date.now() - started > cfg.maxMinutes * 60000) { log(`time budget of ${cfg.maxMinutes} min reached — stopping`); break; }
+      const failedAt = _failedAt.get(Number(j.journey_id));
+      if (failedAt && !cfg.journeyId && Date.now() - failedAt < cfg.retryHours * 3600000) {
+        summary.backedOff.push({ journey_id: j.journey_id, failed_at: new Date(failedAt).toISOString() });
+        continue;
+      }
       const t0 = Date.now();
       try {
         const emailCounts = await nodeCounts('email_send_log', j.journey_id);
-        const last = await lastSentAt(j, emailCounts);
+        const total = emailCounts.reduce((s, r) => s + r.n, 0);
+        if (total > cfg.maxEmails) {
+          summary.tooBig.push({ journey_id: j.journey_id, emails: total });
+          log(`skip #${j.journey_id} "${j.name}" — ${total} emails is over JOURNEY_ARCHIVE_MAX_EMAILS (${cfg.maxEmails})`);
+          continue;
+        }
+        const last = await lastSentAt(j, emailCounts, log);
         const ageDays = (Date.now() - new Date(last ?? Date.now()).getTime()) / 86400000;
         if (ageDays < cfg.minAgeDays) {
           summary.tooRecent.push({ journey_id: j.journey_id, last_sent_at: last });
@@ -405,11 +447,13 @@ export async function runJourneyArchive(opts: ArchiveRunOptions = {}, log: (m: s
         log(`archiving #${j.journey_id} "${j.name}" (last send ${new Date(last ?? Date.now()).toISOString()}, ${emails} emails)`);
         const m = await exportJourney(j, last, emailCounts, log);
         summary.archived.push({ journey_id: j.journey_id, month: m.completed_month, seconds: Math.round((Date.now() - t0) / 1000) });
+        _failedAt.delete(Number(j.journey_id));
         log(`✓ #${j.journey_id} archived to ${m.completed_month} in ${Math.round((Date.now() - t0) / 1000)}s`);
       } catch (err) {
         const message = (err as Error).message;
         summary.failed.push({ journey_id: j.journey_id, error: message });
-        console.error(`[JourneyArchive] ✗ #${j.journey_id} failed: ${message} (no manifest written — retried next run)`);
+        _failedAt.set(Number(j.journey_id), Date.now());
+        console.error(`[JourneyArchive] ✗ #${j.journey_id} failed: ${message} (no manifest written — retried after ${cfg.retryHours}h)`);
       }
     }
 
@@ -434,7 +478,7 @@ export async function runJourneyArchive(opts: ArchiveRunOptions = {}, log: (m: s
     _running = false;
     summary.seconds = Math.round((Date.now() - started) / 1000);
   }
-  log(`done in ${summary.seconds}s — archived ${summary.archived.length}, would archive ${summary.wouldArchive.length}, templates added ${summary.templatesBackfilled.length}, failed ${summary.failed.length}, too recent ${summary.tooRecent.length}`);
+  log(`done in ${summary.seconds}s — archived ${summary.archived.length}, would archive ${summary.wouldArchive.length}, templates added ${summary.templatesBackfilled.length}, failed ${summary.failed.length}, too recent ${summary.tooRecent.length}, too big ${summary.tooBig.length}, backed off ${summary.backedOff.length}`);
   return summary;
 }
 
