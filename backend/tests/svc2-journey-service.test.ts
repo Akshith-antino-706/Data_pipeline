@@ -76,6 +76,11 @@ describe('JourneyService.create / update / node CRUD', () => {
     expect(b[20]).toBe('default');
     expect(b[21]).toBe('gtm');
   });
+  it('create: keeps the named sender mailboxes (tia / samaira / rania); unknown sender falls back to default', async () => {
+    route([['INSERT INTO journey_flows', () => rows([{ journey_id: 4 }])]]);
+    for (const emailCredential of ['tia', 'samaira', 'rania', 'bogus']) await JourneyService.create({ name: emailCredential, emailCredential });
+    expect(calls('INSERT INTO journey_flows').map(c => (c[1] ?? [])[20])).toEqual(['tia', 'samaira', 'rania', 'default']);
+  });
   it('create: fixed journey ignores trigger + from-date; empty nodes/edges stored as []', async () => {
     route([['INSERT INTO journey_flows', () => rows([{ journey_id: 1 }])]]);
     await JourneyService.create({ name: 'F', journeyType: 'fixed', triggerEvent: 'view_item', triggerFromDate: '2026-01-01', exitOnConversion: false });

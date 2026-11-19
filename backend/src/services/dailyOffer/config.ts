@@ -59,11 +59,14 @@ export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audien
       checkAt:        env.DAILY_OFFER_B2B_CHECK_AT || '11:45',
       sendAt:         env.DAILY_OFFER_B2B_SEND_AT || '12:00',
       sendCheckAt:    env.DAILY_OFFER_B2B_SEND_CHECK_AT || '13:30',
-      // Every product card and the button open the B2B portal (no per-product B2B page exists).
+      // Product cards open their raynatours.com page (as in the B2C email) unless
+      // DAILY_OFFER_B2B_PRODUCT_LINK sends them all to one URL; the button opens the B2B portal.
+      // Giveaway / affiliate blocks stay in unless DAILY_OFFER_B2B_PROMOS=false.
       links: {
-        productUrl: env.DAILY_OFFER_B2B_LINK || 'https://www.raynab2b.com',
+        productUrl: env.DAILY_OFFER_B2B_PRODUCT_LINK || null,
         ctaUrl:     env.DAILY_OFFER_B2B_LINK || 'https://www.raynab2b.com',
         ctaLabel:   env.DAILY_OFFER_B2B_CTA_LABEL || 'Click Here For B2B Rates',
+        promos:     env.DAILY_OFFER_B2B_PROMOS !== 'false',
       },
     };
   }

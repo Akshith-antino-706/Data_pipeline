@@ -31,7 +31,7 @@ import db from '../../config/database.js';
 import EmailRenderer from '../EmailRenderer.js';
 import GupshupService from '../GupshupService.js';
 import ChatHeadV1Service from '../ChatHeadV1Service.js';
-import { buildWaVars, RCS_DATA_KEYS } from '../../utils/placeholderResolver.js';
+import { buildWaVars, withWaUtm, RCS_DATA_KEYS } from '../../utils/placeholderResolver.js';
 import { getAffinityVars, usesAffinity, fillAffinityVars } from '../affinityVars.js';
 import { ChatheadEmailChannel } from '../channels/ChatheadEmailChannel.js';
 import { sendJourneyEmail } from '../channels/JourneyEmailSender.js';
@@ -673,7 +673,8 @@ async function processWA(job: Job<JourneySendJobData>): Promise<void> {
       const affinity = bareData ? null : await getAffinityVars(d.customerId) as PlaceholderAffinity;
       const r = await ChatHeadV1Service.sendBroadcast({
         contacts:     [{ phone: d.phone, name: d.name || '',
-                         vars: bareData ? {} : buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity }) }],
+                         vars: bareData ? {} : withWaUtm(buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity }),
+                                                         { journeyId: d.journeyId, nodeId: d.nodeId, unifiedId: d.customerId }) }],
         channelId:    parseInt(d.waChannelId),
         channelName:  d.waChannelName || null,
         templateId:   parseInt(d.waTemplateId),

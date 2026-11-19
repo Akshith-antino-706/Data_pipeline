@@ -8,7 +8,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, renderSubject, buildLiquidVars, buildWaVars, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import { renderTemplate, renderSubject, buildLiquidVars, buildWaVars, withWaUtm, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 import SkipLogService from './SkipLogService.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
@@ -340,7 +340,7 @@ class GtmJourneyService {
       let result;
       try {
         result = await ChatHeadV1Service.sendBroadcast({
-          contacts:     [{ phone, name: c.name || '', vars: waVars }],
+          contacts:     [{ phone, name: c.name || '', vars: withWaUtm(waVars, { journeyId, nodeId, unifiedId: c.id }) }],
           channelId:    parseInt(waChannelId),
           channelName:  actionNode.data?.waChannelName || null,
           templateId:   parseInt(waTemplateId),

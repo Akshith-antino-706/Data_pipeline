@@ -111,5 +111,8 @@ export interface PreviewMarketDef extends OfferMarket { label: string }
 /** Who an automated daily email is for. 'b2c' is the original job; 'b2b' copies it with portal links. */
 export type OfferAudience = 'b2c' | 'b2b';
 
-/** B2B link override: every product card and the button open these instead of the feed pages. */
-export interface OfferLinks { productUrl: string; ctaUrl: string; ctaLabel: string }
+/**
+ * B2B link override. productUrl null = each card opens its own feed page; the button always
+ * opens ctaUrl. promos = keep the giveaway / affiliate blocks above the trust badges.
+ */
+export interface OfferLinks { productUrl: string | null; ctaUrl: string; ctaLabel: string; promos: boolean }

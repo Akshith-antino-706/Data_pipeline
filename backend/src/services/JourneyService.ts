@@ -7,9 +7,10 @@ import { enqueueBatch, queueCounts } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
-import { buildWaVars, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
+import { buildWaVars, withWaUtm, RCS_DATA_KEYS } from '../utils/placeholderResolver.js';
 import { del as cacheDel } from '../config/cache.js';
 import { getAffinityVarsMany } from './affinityVars.js';
+import { isSmtpCredential } from './channels/JourneyEmailSender.js';
 import type {
   JourneyId, JourneyFlowNode, JourneyFlowEdge, JourneyFlowNodeMap, JourneyFlowRow,
   JourneyNodeStatsRow, JourneyNodeDistribution, JourneyNodeUserStats, JourneyNodeAnalyticsRow,
@@ -1267,9 +1268,10 @@ class JourneyService {
     const recType = (recommendationType && ['on_trip','future_trip','past_trip'].includes(recommendationType))
       ? recommendationType : null;
 
-    // Email-only sender selection ('default' AWS API | 'giveaway' SMTP | 'affiliate' SMTP).
-    // Does not affect wa/sms/rcs. Anything unrecognised falls back to 'default'.
-    const emailCred = emailCredential === 'giveaway' || emailCredential === 'affiliate' ? emailCredential : 'default';
+    // Email-only sender selection ('default' AWS API, or any SMTP mailbox JourneyEmailSender
+    // knows: giveaway / affiliate / tia / samaira / rania). Does not affect wa/sms/rcs.
+    // Anything unrecognised falls back to 'default'.
+    const emailCred = isSmtpCredential(emailCredential) ? emailCredential : 'default';
     // Continuous-journey trigger source ('gtm' GTM events | 'giveaway' giveaway events).
     // Continuous-journey trigger feed: 'gtm' (GTM events) | 'giveaway' | 'affiliate'
     // (both RabbitMQ feeds). Anything unrecognised falls back to 'gtm'.
@@ -2598,7 +2600,8 @@ class JourneyService {
           // journeys have no per-entry event, so item_* keys resolve blank (omitted);
           // any node-level templateVariables still flow through the resolver.
           .map(d => ({ phone: d.phone, name: d.name || '',
-                       vars: bareData ? {} : buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity: affMap.get(String(d.customerId)) }) }));
+                       vars: bareData ? {} : withWaUtm(buildWaVars({ contact: { id: d.customerId, name: d.name, email: d.email, mobile: d.phone }, payload: d.templateVariables || {}, affinity: affMap.get(String(d.customerId)) }),
+                                                       { journeyId, nodeId, unifiedId: d.customerId }) }));
 
         let result;
         try {

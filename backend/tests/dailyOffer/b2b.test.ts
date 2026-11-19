@@ -98,7 +98,10 @@ test('config: B2B profile is off by default and reads its own DAILY_OFFER_B2B_* 
   expect(on.audience).toBe('b2b');
   expect(on.segmentId).toBe(87);
   expect([on.createAt, on.retryUntil, on.checkAt, on.sendAt, on.sendCheckAt]).toEqual(['09:15', '11:15', '11:45', '12:00', '13:30']);
-  expect(on.links).toEqual({ productUrl: PORTAL, ctaUrl: PORTAL, ctaLabel: 'Click Here For B2B Rates' });
+  expect(on.links).toEqual({ productUrl: null, ctaUrl: PORTAL, ctaLabel: 'Click Here For B2B Rates', promos: true });
+  // Old layout on demand: every card to one URL, no giveaway / affiliate blocks.
+  const old = getDailyOfferConfig({ ...ON_BOTH, DAILY_OFFER_B2B_PRODUCT_LINK: PORTAL, DAILY_OFFER_B2B_PROMOS: 'false' }, 'b2b');
+  expect(old.links).toEqual({ productUrl: PORTAL, ctaUrl: PORTAL, ctaLabel: 'Click Here For B2B Rates', promos: false });
   // B2C is untouched by the B2B variables.
   const b2c = getDailyOfferConfig(ON_BOTH, 'b2c');
   expect(b2c.audience).toBe('b2c');
@@ -111,7 +114,7 @@ test('config: B2B profile is off by default and reads its own DAILY_OFFER_B2B_* 
 
 // ── Render ──
 
-test('render: with links every card and the button open the B2B portal and the consumer promos are dropped', () => {
+test('render: B2B cards open their product pages, only the button opens the portal, promos kept', () => {
   const feed = feedOf(NINE_AM);
   const products = feed.products.slice(0, 4);
   const pick: OfferPick = { loopDay: 4, theme: 'visa', themeName: 'Visa Offers', subjectLead: 'Visas', count: 4,
@@ -120,19 +123,33 @@ test('render: with links every card and the button open the B2B portal and the c
   const b2c = buildTemplate(pick);
   for (const p of products) {
     expect(b2c).toContain(`href="${p.url}"`);
-    expect(b2b).not.toContain(p.url);
+    expect(hrefs(b2b).filter(h => h === p.url)).toHaveLength(2);   // image + title
     expect(b2b).toContain(`%%DO_PRICE:${p.key}%%`);
-    expect(b2b).toContain(p.name);
   }
-  expect(hrefs(b2b).filter(h => h === PORTAL)).toHaveLength(products.length * 2 + 2);   // image + title per card, button (Outlook VML + link)
+  expect(hrefs(b2b).filter(h => h === PORTAL)).toHaveLength(2);    // button only (Outlook VML + link)
   expect(b2b).toContain('Click Here For B2B Rates');
+  expect(b2b).not.toContain('Explore All Visas');
   expect(b2c).toContain('Explore All Visas');
   for (const promo of ['raynatours.com/giveaways', 'affiliates.raynatours.com', 'Enter Now']) {
     expect(b2c).toContain(promo);
-    expect(b2b).not.toContain(promo);
+    expect(b2b).toContain(promo);
   }
+  // Promos sit between the B2B button and the trust badges.
+  expect(b2b.indexOf('Click Here For B2B Rates')).toBeLessThan(b2b.indexOf('Win Free Experiences'));
+  expect(b2b.indexOf('Earn With Rayna')).toBeLessThan(b2b.indexOf('Verified by the platforms'));
   expect(b2b).toContain('Privacy Policy');
-  expect(b2b).toContain('Verified by the platforms');
+});
+
+test('render: B2B with DAILY_OFFER_B2B_PRODUCT_LINK + DAILY_OFFER_B2B_PROMOS=false keeps the old portal-only layout', () => {
+  const feed = feedOf(NINE_AM);
+  const products = feed.products.slice(0, 4);
+  const pick: OfferPick = { loopDay: 4, theme: 'visa', themeName: 'Visa Offers', subjectLead: 'Visas', count: 4,
+    groups: [{ title: 'Visas', subtitle: '', products }], productKeys: products.map(p => p.key) };
+  const old = buildTemplate(pick, getDailyOfferConfig({ ...ON_BOTH, DAILY_OFFER_B2B_PRODUCT_LINK: PORTAL, DAILY_OFFER_B2B_PROMOS: 'false' }, 'b2b').links);
+  for (const p of products) expect(old).not.toContain(p.url);
+  expect(hrefs(old).filter(h => h === PORTAL)).toHaveLength(products.length * 2 + 2);
+  for (const promo of ['raynatours.com/giveaways', 'affiliates.raynatours.com', 'Enter Now']) expect(old).not.toContain(promo);
+  expect(old).toContain('Verified by the platforms');
 });
 
 // ── Create ──
@@ -163,8 +180,9 @@ test('create (B2B): copies the B2C day — same products, theme and subject; B2B
   expect(templateOf(w, b2b).subject).toBe(templateOf(w, b2c).subject);
   expect(lb.subject?.source).toBe('mirror');
   const html = String(templateOf(w, b2b).body);
-  expect(html).not.toContain('raynatours.com/visas');
+  expect(html).not.toContain('href="https://www.raynatours.com/visas"');   // the B2C "Explore All Visas" button
   expect(html).toContain(`href="${PORTAL}"`);
+  expect(html).toContain('Win Free Experiences');
   expect(String(templateOf(w, b2c).body)).toContain('https://www.raynatours.com/');
 });
 

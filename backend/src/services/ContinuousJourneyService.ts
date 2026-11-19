@@ -2,7 +2,7 @@ import db from '../config/database.js';
 import { enqueueGtmJourney } from './queue/index.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
-import { buildWaVars, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import { buildWaVars, withWaUtm, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 import { getAffinityVarsMany } from './affinityVars.js';
 import SkipLogService from './SkipLogService.js';
 import { reserveWaSend, releaseWaSend } from '../utils/emailFrequencyCap.js';
@@ -282,7 +282,9 @@ class ContinuousJourneyService {
       result = await ChatHeadV1Service.sendBroadcast({
         contacts:     sendable.map(v => {
           const ev = evMap[v.e.last_event_id!] || { raw_payload: {} };
-          return { phone: v.phone, name: v.c.name || '', vars: buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload, affinity: affMap.get(String(v.e.unified_id)) }) };
+          return { phone: v.phone, name: v.c.name || '',
+                   vars: withWaUtm(buildWaVars({ contact: v.c, event: ev, payload: ev.raw_payload, affinity: affMap.get(String(v.e.unified_id)) }),
+                                   { journeyId, nodeId, unifiedId: v.e.unified_id }) };
         }),
         channelId:    parseInt(waCh as string),
         channelName:  node.data?.waChannelName || null,

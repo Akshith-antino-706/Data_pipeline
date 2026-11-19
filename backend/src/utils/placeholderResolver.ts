@@ -382,4 +382,55 @@ export function buildWaVars(ctx: PlaceholderContext = {}, keys: string | readonl
   return out;
 }
 
-export default { renderTemplate, buildLiquidVars, buildWaVars, WA_DATA_KEYS, RCS_DATA_KEYS };
+// Off unless WA_UTM_ENABLED=true — a journey WhatsApp send then carries the same attribution
+// the email click-tracker adds (emailTracking.injectClickTracking), with source=whatsapp.
+const WA_UTM_ENABLED = process.env.WA_UTM_ENABLED === 'true';
+const SITE_HOST = new URL(SITE).host;
+
+/**
+ * Tag every site link in a journey WhatsApp `.data` record with UTM + rid/journeyId/nodeId.
+ *
+ * Covers the relative button suffixes (0_url / o_url — the template prepends the site base,
+ * so the query string rides on the path) and every absolute `*_url` on our own host. Image
+ * URLs, the unsubscribe link and other hosts are left alone. Returns a copy; a no-op (same
+ * object) when the flag is off or the record is empty (the 'without_values' data mode).
+ */
+export function withWaUtm(
+  vars: PlaceholderValues,
+  { journeyId, nodeId, unifiedId }: { journeyId?: string | number | null; nodeId?: string | null; unifiedId?: string | number | null },
+): PlaceholderValues {
+  if (!WA_UTM_ENABLED || !vars || !Object.keys(vars).length || journeyId == null || journeyId === '') return vars;
+
+  const node = (nodeId || '').replace(/[^a-zA-Z0-9]+/g, '_');
+  const tag = (u: URL) => {
+    u.searchParams.set('utm_source', 'whatsapp');
+    u.searchParams.set('utm_medium', 'journey');
+    u.searchParams.set('utm_campaign', `j${journeyId}_${node}`);
+    u.searchParams.set('utm_content', `journey_${journeyId}`);
+    if (unifiedId != null && unifiedId !== '') u.searchParams.set('rid', String(unifiedId));
+    u.searchParams.set('journeyId', String(journeyId));
+    if (nodeId) u.searchParams.set('nodeId', nodeId);
+  };
+
+  const out: PlaceholderValues = { ...vars };
+  for (const [k, v] of Object.entries(vars)) {
+    if (v == null || !/_url$/.test(k) || /image|unsubscribe/.test(k)) continue;
+    const s = String(v).trim();
+    try {
+      if (k === '0_url' || k === 'o_url') {
+        // Relative path the button appends to the site base — tag it, then strip the base back off.
+        const u = new URL(s.replace(/^\/+/, ''), `${SITE}/`);
+        tag(u);
+        out[k] = `${u.pathname.replace(/^\/+/, '')}${u.search}${u.hash}`;
+      } else if (/^https?:\/\//i.test(s)) {
+        const u = new URL(s);
+        if (u.host !== SITE_HOST) continue;
+        tag(u);
+        out[k] = u.toString();
+      }
+    } catch { /* malformed URL — leave as-is */ }
+  }
+  return out;
+}
+
+export default { renderTemplate, buildLiquidVars, buildWaVars, withWaUtm, WA_DATA_KEYS, RCS_DATA_KEYS };

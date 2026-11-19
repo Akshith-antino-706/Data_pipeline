@@ -78,7 +78,7 @@ type SmtpCredential = keyof typeof SMTP_CREDENTIALS;
 type SmtpPrefix = (typeof SMTP_CREDENTIALS)[SmtpCredential];
 type SmtpTransporter = Transporter<SMTPTransport.SentMessageInfo>;
 
-function isSmtpCredential(c: string | null | undefined): c is SmtpCredential {
+export function isSmtpCredential(c: string | null | undefined): c is SmtpCredential {
   return c != null && Object.prototype.hasOwnProperty.call(SMTP_CREDENTIALS, c);
 }
 

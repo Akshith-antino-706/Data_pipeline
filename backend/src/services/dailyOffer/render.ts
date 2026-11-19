@@ -162,21 +162,18 @@ export function buildSubject(pick: Pick<OfferPick, 'subjectLead'>): string {
 }
 
 /**
- * Full template HTML (prices as tokens). `links` (B2B) replaces every product link and the
- * button with the portal link: { productUrl, ctaUrl, ctaLabel }. null = the feed's product pages.
+ * Full template HTML (prices as tokens). `links` (B2B) swaps the button for the portal one,
+ * and the product links too when productUrl is set. null = the B2C email.
  */
 export function buildTemplate(pick: OfferPick, links: OfferLinks | null = null): string {
   const sections = pick.groups.map(g => sectionHeader(g.title, g.subtitle) + '\n' + cardGrid(g.products, links)).join('\n');
   const head = EMAIL_HEAD
     .replace('%%DO_TITLE%%', esc(`${pick.subjectLead} – from `) + '%%DO_FROM%%')
     .replace('%%DO_PREHEADER%%', esc(`${pick.themeName}: ${pick.count} offers, prices from `) + '%%DO_FROM%%');
-  return `${DAILY_OFFER_MARKER}\n${head}\n${hero(pick)}\n${sections}\n${ctaRow(pick.theme, links)}\n${links ? footerWithoutPromos() : EMAIL_FOOT}`;
+  return `${DAILY_OFFER_MARKER}\n${head}\n${hero(pick)}\n${sections}\n${ctaRow(pick.theme, links)}\n${links && !links.promos ? footerWithoutPromos() : EMAIL_FOOT}`;
 }
 
-/**
- * The footer without the consumer promo blocks (weekly giveaways, affiliate programme):
- * the B2B emails sent by hand never carried them, only the trust badges and the footer.
- */
+/** The footer without the consumer promo blocks (weekly giveaways, affiliate programme). */
 function footerWithoutPromos(): string {
   const start = EMAIL_FOOT.indexOf('<!--PROMO_SECTIONS_START-->');
   const end = EMAIL_FOOT.indexOf('<!--PROMO_SECTIONS_END-->');
