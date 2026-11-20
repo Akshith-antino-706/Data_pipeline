@@ -56,6 +56,10 @@ export interface OfferPick {
   theme: OfferTheme;
   themeName: string;
   subjectLead: string;
+  /** Email copy that differs from the subject (AI-written, see aiSubject.ts). Unset = the old layout: H1 = subjectLead. */
+  headline?: string;
+  intro?: string;
+  preheader?: string;
   groups: OfferGroup[];
   productKeys: string[];
   count: number;
@@ -85,7 +89,7 @@ export interface DailyOfferLabel {
   products: SnapshotProduct[];
   feedGeneratedAt?: string;
   /** Which subject opening was used: the AI one, or the rule-based fallback and why. */
-  subject?: { source: 'ai' | 'fallback' | 'mirror'; reason: string | null; lead: string; standardLead: string };
+  subject?: { source: 'ai' | 'fallback' | 'mirror'; reason: string | null; lead: string; standardLead: string; headline?: string; intro?: string; preheader?: string };
   createdAt: string;
   /** Set on B2B days only (rows written before the B2B job have no audience = b2c). */
   audience?: OfferAudience;

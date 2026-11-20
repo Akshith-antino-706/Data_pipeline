@@ -482,4 +482,77 @@ export async function runJourneyArchive(opts: ArchiveRunOptions = {}, log: (m: s
   return summary;
 }
 
-export default { runJourneyArchive, archiveConfig, isArchiveRunning };
+// ── Nightly report email ──
+// One email per cron run to JOURNEY_ARCHIVE_REPORT_EMAILS (comma-separated; unset = no email),
+// so a night that archived nothing, or failed, is seen the next morning instead of days later.
+
+type ReportSendFn = (m: { to: string; subject: string; html: string }) => Promise<{ success: boolean; error?: string; reason?: string } | null | undefined>;
+
+export function archiveReportRecipients(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [...new Set((env.JOURNEY_ARCHIVE_REPORT_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];
+}
+
+const escHtml = (s: unknown): string => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c);
+const isoDay = (ts: Date | string | undefined): string => (ts ? new Date(ts).toISOString().slice(0, 10) : '—');
+
+/** Subject + HTML for one run's summary. ok = something was archived and nothing failed. */
+export function archiveReport(s: ArchiveRunSummary, now: Date = new Date()): { subject: string; html: string; ok: boolean } {
+  const day = new Date(now.getTime() + DUBAI_MS).toISOString().slice(0, 10);
+  const pending = Math.max(0, (s.candidates ?? 0) - s.archived.length);
+  const ok = !s.skipped && s.failed.length === 0 && (s.archived.length > 0 || (s.candidates ?? 0) === 0 || !!s.dryRun);
+  const status = s.skipped ? `not run (${s.skipped})`
+    : s.dryRun ? `dry run: nothing copied, ${s.wouldArchive.length} would be archived`
+      : `${s.archived.length} archived, ${s.failed.length} failed`;
+  const subject = `${ok ? '✅' : '⚠️'} Journey archive ${day}: ${status}, ${pending} still waiting`;
+
+  const section = (title: string, rows: string[]): string => rows.length
+    ? `<h3 style="margin:18px 0 6px;font:600 14px Arial,sans-serif;">${escHtml(title)} (${rows.length})</h3><ul style="margin:0;padding-left:18px;font:13px/20px Arial,sans-serif;">${rows.map(r => `<li>${r}</li>`).join('')}</ul>`
+    : '';
+  const html = `<!DOCTYPE html><html><body style="margin:0;padding:24px;background:#fff;color:#000;">
+<h2 style="margin:0 0 8px;font:600 18px Arial,sans-serif;">Journey archive: ${escHtml(day)}</h2>
+<p style="margin:0 0 4px;font:14px/22px Arial,sans-serif;"><b>${escHtml(status)}</b>. Run took ${s.seconds ?? 0}s.</p>
+<p style="margin:0;font:13px/20px Arial,sans-serif;color:#555;">Already in S3: ${s.alreadyArchived ?? 0} · waiting: ${pending} · min age ${s.minAgeDays ?? '—'} days</p>
+${section('Archived', s.archived.map(a => `#${escHtml(a.journey_id)} → ${escHtml(a.month)} in ${a.seconds}s`))}
+${section('Failed (tried again after the back-off)', s.failed.map(f => `#${escHtml(f.journey_id)}: ${escHtml(f.error)}`))}
+${section('Skipped: over JOURNEY_ARCHIVE_MAX_EMAILS', s.tooBig.map(t => `#${escHtml(t.journey_id)}: ${t.emails.toLocaleString('en-US')} emails`))}
+${section('Waiting after an earlier failure', s.backedOff.map(b => `#${escHtml(b.journey_id)} (failed ${escHtml(b.failed_at)})`))}
+${section('Would archive (dry run)', s.wouldArchive.map(w => `#${escHtml(w.journey_id)} ${escHtml(w.name)}: ${w.emails.toLocaleString('en-US')} emails, last send ${isoDay(w.last_sent_at)}`))}
+${section('Email templates added', s.templatesBackfilled.map(t => `#${escHtml(t.journey_id)}`))}
+<p style="margin:22px 0 0;font:11px Arial,sans-serif;color:#888;">Rayna data pipeline · internal report</p>
+</body></html>`;
+  return { subject, html, ok };
+}
+
+/** Email the run summary. Never throws; returns how many were sent. */
+export async function sendArchiveReport(s: ArchiveRunSummary, { send, env = process.env, log = console }: { send?: ReportSendFn; env?: NodeJS.ProcessEnv; log?: Pick<Console, 'log' | 'warn'> } = {}): Promise<number> {
+  const to = archiveReportRecipients(env);
+  if (!to.length) return 0;
+  const sender = send || (await import('./channels/JourneyEmailSender.js')).sendJourneyEmail;
+  const { subject, html } = archiveReport(s);
+  let sent = 0;
+  for (const email of to) {
+    try {
+      const r = await sender({ to: email, subject, html });
+      if (r?.success) sent += 1;
+      else log.warn(`[JourneyArchive] report to ${email} failed: ${r?.error || r?.reason || 'unknown'}`);
+    } catch (e) {
+      log.warn(`[JourneyArchive] report to ${email} failed: ${(e as Error).message}`);
+    }
+  }
+  log.log(`[JourneyArchive] report sent to ${sent}/${to.length}`);
+  return sent;
+}
+
+/** The nightly cron: one run, then the report — also when the run itself crashed (S3, DB). */
+export async function runJourneyArchiveWithReport(): Promise<void> {
+  let summary: ArchiveRunSummary;
+  try {
+    summary = await runJourneyArchive();
+  } catch (err) {
+    console.error('[Cron:JourneyArchive] Error:', (err as Error).message);
+    summary = { skipped: `crashed: ${(err as Error).message}`, archived: [], failed: [], tooRecent: [], tooBig: [], backedOff: [], wouldArchive: [], templatesBackfilled: [] };
+  }
+  await sendArchiveReport(summary);
+}
+
+export default { runJourneyArchive, runJourneyArchiveWithReport, archiveConfig, isArchiveRunning, sendArchiveReport };

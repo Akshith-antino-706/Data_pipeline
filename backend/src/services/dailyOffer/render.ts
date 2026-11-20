@@ -135,11 +135,33 @@ ${subtitle ? `<p class="ff-b dm-sub" style="margin:12px auto 0;max-width:380px;f
 </td></tr>`;
 }
 
+// The email's headline when there is no AI-written one, so it never repeats the subject.
+const THEME_HEADLINE: Record<OfferTheme, string> = {
+  visa: 'Your visa, sorted before you fly',
+  holiday_multi: 'Holidays worth packing for',
+  holiday_single: 'Holidays worth packing for',
+  activities: 'Things to do, ready to book',
+  cruise: 'Life looks better from the deck',
+};
+const B2B_THEME_HEADLINE: Record<OfferTheme, string> = {
+  visa: 'Visas your clients keep asking for',
+  holiday_multi: 'Packages your clients will want',
+  holiday_single: 'Packages your clients will want',
+  activities: 'Experiences to add to every booking',
+  cruise: 'Cruises ready to sell',
+};
+
+/** Fixed headline for a theme (B2B wording for the portal email). */
+export function themeHeadline(theme: OfferTheme, b2b = false): string {
+  return (b2b ? B2B_THEME_HEADLINE : THEME_HEADLINE)[theme] || THEME_HEADLINE.holiday_multi;
+}
+
 function hero(pick: OfferPick): string {
+  const intro = pick.intro ? `${esc(pick.intro)} ` : '';
   return `<tr><td class="px dm-cardbg" style="padding:20px 38px 6px 38px;background-color:#FFFFFF;text-align:center;">
 <p class="ff-b dm-label" style="margin:0 0 12px 0;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:#9A9A9A;">${esc(pick.themeName)}</p>
-<h1 class="ff-d dm-h h1" style="margin:0 0 15px 0;font-size:29px;line-height:37px;font-weight:600;color:#000;">${esc(pick.subjectLead)}</h1>
-<p class="ff-b dm-sub" style="margin:0 auto;max-width:440px;font-size:14px;line-height:23px;font-weight:300;color:#6B6B6B;">Prices from %%DO_FROM%%.</p>
+<h1 class="ff-d dm-h h1" style="margin:0 0 15px 0;font-size:29px;line-height:37px;font-weight:600;color:#000;">${esc(pick.headline || pick.subjectLead)}</h1>
+<p class="ff-b dm-sub" style="margin:0 auto;max-width:440px;font-size:14px;line-height:23px;font-weight:300;color:#6B6B6B;">${intro}Prices from %%DO_FROM%%.</p>
 </td></tr>`;
 }
 
@@ -169,7 +191,7 @@ export function buildTemplate(pick: OfferPick, links: OfferLinks | null = null):
   const sections = pick.groups.map(g => sectionHeader(g.title, g.subtitle) + '\n' + cardGrid(g.products, links)).join('\n');
   const head = EMAIL_HEAD
     .replace('%%DO_TITLE%%', esc(`${pick.subjectLead} – from `) + '%%DO_FROM%%')
-    .replace('%%DO_PREHEADER%%', esc(`${pick.themeName}: ${pick.count} offers, prices from `) + '%%DO_FROM%%');
+    .replace('%%DO_PREHEADER%%', pick.preheader ? esc(pick.preheader) : esc(`${pick.themeName}: ${pick.count} offers, prices from `) + '%%DO_FROM%%');
   return `${DAILY_OFFER_MARKER}\n${head}\n${hero(pick)}\n${sections}\n${ctaRow(pick.theme, links)}\n${links && !links.promos ? footerWithoutPromos() : EMAIL_FOOT}`;
 }
 

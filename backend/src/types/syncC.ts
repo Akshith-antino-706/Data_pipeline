@@ -79,6 +79,8 @@ export interface ChatSourceRow extends RowDataPacket {
 export interface ChatsSyncResult {
   watermark: string | null;
   inserted: number;
+  /** Source rows not copied because their wa_id is empty or too long. */
+  skipped: number;
   unifiedMatched: number;
   promoted: number;
   elapsedMs: number;

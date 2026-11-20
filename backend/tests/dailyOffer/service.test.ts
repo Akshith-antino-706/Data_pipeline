@@ -296,7 +296,43 @@ test('subject: the AI lead is used, the price suffix stays, and the source is re
   const ai: SuggestSubjectFn = async () => ({ lead: 'Visas for your next trip, sorted ✈️', source: 'ai', reason: null });
   await svc(w, { suggestSubject: ai }).runCreate({ now: NINE_AM });
   expect(w.state.templates[0].subject).toBe('Visas for your next trip, sorted ✈️ – from %%DO_FROM%%');
-  expect(labelOf(w.state.journeys[0]).subject).toEqual({ source: 'ai', reason: null, lead: 'Visas for your next trip, sorted ✈️', standardLead: 'Visas for UAE, USA, Schengen & more' });
+  expect(labelOf(w.state.journeys[0]).subject).toEqual({ source: 'ai', reason: null, lead: 'Visas for your next trip, sorted ✈️', standardLead: 'Visas for UAE, USA, Schengen & more', headline: 'Your visa, sorted before you fly' });
+});
+
+const h1 = (html: string): string => (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/) || [])[1] ?? '';
+const preheaderOf = (html: string): string => (html.match(/display:none[^>]*>([\s\S]*?)<\/div>/) || [])[1] ?? '';
+
+test('copy: the AI headline, intro and preview text are used — the headline never repeats the subject', async () => {
+  const w = world();
+  const ai: SuggestSubjectFn = async () => ({ lead: 'Visas for your next trip, sorted ✈️', source: 'ai', reason: null,
+    headline: 'Paperwork off your plate', intro: 'Dubai, US, Schengen and UK visas handled by our team.', preheader: 'Apply online in minutes, we track it to approval' });
+  await svc(w, { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  const html = String(w.state.templates[0].body);
+  expect(h1(html)).toBe('Paperwork off your plate');
+  expect(html).toContain('Dubai, US, Schengen and UK visas handled by our team. Prices from %%DO_FROM%%.');
+  expect(preheaderOf(html)).toContain('Apply online in minutes, we track it to approval');
+  expect(labelOf(w.state.journeys[0]).subject).toMatchObject({ headline: 'Paperwork off your plate', preheader: 'Apply online in minutes, we track it to approval' });
+
+  // The 3:45 final check rebuilds the template and keeps the same copy.
+  await svc(w).runFinalCheck({ now: CHECK });
+  expect(h1(String(w.state.templates[0].body))).toBe('Paperwork off your plate');
+});
+
+test('copy: AI unavailable → the theme headline, not the subject, and the standard preview text', async () => {
+  const w = world();
+  await svc(w).runCreate({ now: NINE_AM });
+  const html = String(w.state.templates[0].body);
+  expect(h1(html)).toBe('Your visa, sorted before you fly');
+  expect(w.state.templates[0].subject).toBe('Visas for UAE, USA, Schengen & more – from %%DO_FROM%%');
+  expect(preheaderOf(html)).toMatch(/Visa Offers: \d+ offers, prices from %%DO_FROM%%/);
+});
+
+test('copy: DAILY_OFFER_AI_COPY=false → the old email (headline = subject opening)', async () => {
+  const w = world();
+  const ai: SuggestSubjectFn = async () => ({ lead: 'Visas for your next trip, sorted', source: 'ai', reason: null, headline: 'Paperwork off your plate' });
+  await svc(w, { suggestSubject: ai, env: { DAILY_OFFER_AI_COPY: 'false' } }).runCreate({ now: NINE_AM });
+  expect(h1(String(w.state.templates[0].body))).toBe('Visas for your next trip, sorted');
+  expect(labelOf(w.state.journeys[0]).subject?.headline).toBeUndefined();
 });
 
 test('subject: the AI lead survives the 3:45 final check', async () => {

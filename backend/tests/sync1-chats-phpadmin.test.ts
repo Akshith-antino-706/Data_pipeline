@@ -79,6 +79,24 @@ describe('ChatsSyncService.sync', () => {
     expect(params![22]).toBeNull();                      // unified_id
   });
 
+  it('values over the RDS column limits: bad wa_id row skipped, other identifiers → null, free text shortened', async () => {
+    routeWm(null);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    m.mysqlQuery.mockResolvedValueOnce([
+      chat(1, { wa_id: '91872088445200919009822262' }),
+      chat(2, { wa_name: 'x'.repeat(30), email: `${'a'.repeat(95)}@x.com` }),
+      chat(3, { wa_id: null }),
+    ]).mockResolvedValueOnce([]);
+    const r = await ChatsSyncService.sync();
+    const params = find(/INSERT INTO chats/)![1]!;
+    expect(params).toHaveLength(23);              // only chat 2 inserted
+    expect(params[0]).toBe('97152');
+    expect(params[1]).toBe('x'.repeat(25));       // wa_name shortened to 25
+    expect(params[2]).toBeNull();                 // email over 100
+    expect(r).toMatchObject({ inserted: 1, skipped: 2 });
+    expect(m.mysqlQuery.mock.calls[1]![1]).toEqual([3, 2000]);   // keyset still moves past skipped rows
+  });
+
   it('invalid Date objects become null', async () => {
     routeWm(null);
     m.mysqlQuery.mockResolvedValueOnce([chat(1)]).mockResolvedValueOnce([]);

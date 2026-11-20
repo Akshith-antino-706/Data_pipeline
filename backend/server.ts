@@ -1154,13 +1154,16 @@ console.log('[Cron] Journey analytics rollup scheduled: every 30 min (Asia/Dubai
 //    the :00/:30 analytics rollup. OFF unless JOURNEY_ARCHIVE_EXPORT_ENABLED=true;
 //    JOURNEY_ARCHIVE_DRY_RUN (default true) only logs what it would copy. ──
 {
-  const { archiveConfig, runJourneyArchive } = await import('./src/services/JourneyArchiveService.js');
+  const { archiveConfig, runJourneyArchiveWithReport, archiveReportRecipients } = await import('./src/services/JourneyArchiveService.js');
   const cfg = archiveConfig();
   if (cfg.enabled) {
     const schedule = process.env.JOURNEY_ARCHIVE_CRON || '15 22 * * *';
-    cron.schedule(schedule, () => runJourneyArchive().catch((err: Error) => console.error('[Cron:JourneyArchive] Error:', err.message)),
+    // After each run, JOURNEY_ARCHIVE_REPORT_EMAILS (if set) get the summary.
+    cron.schedule(schedule, () => runJourneyArchiveWithReport()
+      .catch((err: Error) => console.error('[Cron:JourneyArchive] Error:', err.message)),
       { timezone: 'Asia/Dubai' });
-    console.log(`[Cron] Journey archive export scheduled: "${schedule}" Asia/Dubai — ${cfg.dryRun ? 'DRY RUN' : 'LIVE copy'}, min age ${cfg.minAgeDays}d, max ${cfg.maxPerRun}/run`);
+    const reportTo = archiveReportRecipients().length;
+    console.log(`[Cron] Journey archive export scheduled: "${schedule}" Asia/Dubai — ${cfg.dryRun ? 'DRY RUN' : 'LIVE copy'}, min age ${cfg.minAgeDays}d, max ${cfg.maxPerRun}/run, max ${cfg.maxEmails} emails/journey, report → ${reportTo ? `${reportTo} inbox(es)` : 'off'}`);
   } else {
     console.log('[Cron] Journey archive export: OFF (set JOURNEY_ARCHIVE_EXPORT_ENABLED=true to enable)');
   }

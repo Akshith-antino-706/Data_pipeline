@@ -26,6 +26,8 @@ export interface DailyOfferConfig {
   sendAt: string;
   sendCheckAt: string;
   maxFxAgeHours: number;
+  /** AI writes a headline, intro and preview text that differ from the subject; B2B gets its own wording. false = H1 repeats the subject and B2B copies B2C (the old emails). */
+  aiCopy: boolean;
   /** B2B only: portal links for every card and the button. null = the feed's product pages. */
   links: OfferLinks | null;
 }
@@ -43,6 +45,7 @@ export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audien
     minFeedRows:    int(env.DAILY_OFFER_MIN_FEED_ROWS, 1500),
     minProducts:    int(env.DAILY_OFFER_MIN_PRODUCTS, 8),
     maxFxAgeHours:  int(env.DAILY_OFFER_MAX_FX_AGE_HOURS, 48),
+    aiCopy:         env.DAILY_OFFER_AI_COPY !== 'false',
   };
   if (audience === 'b2b') {
     return {

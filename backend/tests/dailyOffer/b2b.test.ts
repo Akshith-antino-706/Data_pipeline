@@ -186,6 +186,41 @@ test('create (B2B): copies the B2C day — same products, theme and subject; B2B
   expect(String(templateOf(w, b2c).body)).toContain('https://www.raynatours.com/');
 });
 
+test('create (B2B): own wording for travel agents — same products, different subject and headline from B2C', async () => {
+  const w = world();
+  const calls: string[] = [];
+  const ai: SuggestSubjectFn = async (_pick, opts) => {
+    calls.push(opts?.audience ?? '?');
+    return opts?.audience === 'b2b'
+      ? { lead: 'Visas your clients keep asking about', source: 'ai', reason: null, headline: 'Ready to book at B2B rates', intro: 'Dubai, US, Schengen and UK visas, processed for your clients by our team.', preheader: 'Fast turnaround and tracking on every client application' }
+      : { lead: 'Visas for your next trip, sorted ✈️', source: 'ai', reason: null, headline: 'Paperwork off your plate' };
+  };
+  await svc(w, 'b2c', { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  await svc(w, 'b2b', { suggestSubject: ai }).runCreate({ now: NINE_15 });
+  expect(calls).toEqual(['b2c', 'b2b']);
+  const b2c = b2cJourney(w), b2b = b2bJourney(w);
+  expect(templateOf(w, b2b).subject).toBe('Visas your clients keep asking about – from %%DO_FROM%%');
+  expect(templateOf(w, b2c).subject).toBe('Visas for your next trip, sorted ✈️ – from %%DO_FROM%%');
+  const html = String(templateOf(w, b2b).body);
+  expect(html).toContain('>Ready to book at B2B rates</h1>');
+  expect(html).not.toContain('Paperwork off your plate');
+  expect(labelOf(b2b).productKeys).toEqual(labelOf(b2c).productKeys);
+  expect(labelOf(b2b).subject).toMatchObject({ source: 'ai', lead: 'Visas your clients keep asking about', standardLead: 'Visas for your next trip, sorted ✈️' });
+});
+
+test('create (B2B): AI fails for B2B → copies the B2C subject and headline (as before)', async () => {
+  const w = world();
+  const ai: SuggestSubjectFn = async (pick, opts) => opts?.audience === 'b2b'
+    ? { lead: pick.subjectLead, source: 'fallback', reason: 'timeout' }
+    : { lead: 'Visas for your next trip, sorted ✈️', source: 'ai', reason: null, headline: 'Paperwork off your plate' };
+  await svc(w, 'b2c', { suggestSubject: ai }).runCreate({ now: NINE_AM });
+  await svc(w, 'b2b', { suggestSubject: ai }).runCreate({ now: NINE_15 });
+  const b2c = b2cJourney(w), b2b = b2bJourney(w);
+  expect(templateOf(w, b2b).subject).toBe(templateOf(w, b2c).subject);
+  expect(String(templateOf(w, b2b).body)).toContain('>Paperwork off your plate</h1>');
+  expect(labelOf(b2b).subject).toMatchObject({ source: 'mirror', reason: 'b2b_ai_timeout' });
+});
+
 test('create (B2B): runs again the same day → exists; a B2C re-run still sees only its own journey', async () => {
   const w = world();
   await svc(w, 'b2c').runCreate({ now: NINE_AM });

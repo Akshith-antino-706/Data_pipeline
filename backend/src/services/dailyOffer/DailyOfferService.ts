@@ -28,13 +28,13 @@ import type { CreateJourneyInput, JourneyFlowNode } from '../../types/journeySer
 import { getDailyOfferConfig, audienceOf, dubaiDate, dubaiInstant, dubaiMinutes, hhmmToMinutes, type DailyOfferConfig } from './config.js';
 import { fetchFeed as fetchFeedDefault, FeedError, isUsable } from './feed.js';
 import { pickForLoopDay, loopDayForDate, LOOP } from './picker.js';
-import { buildTemplate, buildSubject, applyMarket, renderProblems, DAILY_OFFER_MARKER } from './render.js';
+import { buildTemplate, buildSubject, applyMarket, renderProblems, themeHeadline, DAILY_OFFER_MARKER } from './render.js';
 import type {
-  DailyOfferLabel, FeedResult, FetchFeedFn, OfferGroup, OfferMarket, OfferPick, OfferProduct, PreviewMarketDef, PreviousPick,
+  DailyOfferLabel, FeedResult, FetchFeedFn, OfferGroup, OfferMarket, OfferPick, OfferProduct, OfferTheme, PreviewMarketDef, PreviousPick,
   SnapshotGroup, SnapshotProduct,
 } from './types.js';
 import { suggestSubjectLead } from './aiSubject.js';
-import type { SuggestSubjectFn } from './aiSubject.js';
+import type { SubjectSuggestion, SuggestSubjectFn } from './aiSubject.js';
 
 /** The slice of the pg pool the service uses (injectable for tests). */
 export interface Queryable {
@@ -115,6 +115,19 @@ export const PREVIEW_MARKETS: Record<string, PreviewMarketDef> = {
   other: { label: 'Other country (USD)', plan: 'default', currency: 'USD' },
   none:  { label: 'No mobile country (AED)', plan: 'default', currency: 'AED' },
 };
+
+type EmailCopy = Pick<OfferPick, 'headline' | 'intro' | 'preheader'>;
+
+/** Headline / intro / preheader saved on a label (or a pick), without the unset ones. */
+function copyOf(src: { subject?: EmailCopy | null }): EmailCopy {
+  const s = src.subject || {};
+  return Object.fromEntries((['headline', 'intro', 'preheader'] as const).filter(k => s[k]).map(k => [k, s[k]]));
+}
+
+/** AI copy for a pick; a missing or rejected headline falls back to the theme's, so the H1 never repeats the subject. */
+function fillCopy(s: SubjectSuggestion, theme: OfferTheme, b2b: boolean): EmailCopy {
+  return { headline: s.headline || themeHeadline(theme, b2b), intro: s.intro || undefined, preheader: s.preheader || undefined };
+}
 
 class SkipError extends Error {
   reason: string;
@@ -306,6 +319,7 @@ export default class DailyOfferService {
       pick: {
         loopDay: label.loopDay, theme: label.theme, themeName: label.themeName,
         subjectLead: label.subject?.lead || label.themeName,
+        ...copyOf(label),
         groups, productKeys: flat.map(p => p.key), count: flat.length, activityCursor: label.activityCursor ?? null,
       },
       source: src,
@@ -332,21 +346,35 @@ export default class DailyOfferService {
       let pick: OfferPick, standardLead: string, mirrorOf: number | null = null;
       let aiSubject: { lead: string; source: 'ai' | 'fallback' | 'mirror'; reason: string | null };
       if (b2b) {
-        // Same products and subject as the B2C email of the day; only the links differ.
+        // Same products as the B2C email of the day; only the links differ — and, with aiCopy,
+        // the wording: written for travel agents. If that AI call fails, the B2C wording is copied.
         const m = this.mirrorPick(recent, today, feed);
         pick = m.pick;
         mirrorOf = m.source.journey_id;
         this.checkCount(pick);
         standardLead = pick.subjectLead;
         aiSubject = { lead: pick.subjectLead, source: 'mirror', reason: null };
+        if (this.config.aiCopy) {
+          const own = await this.suggestSubject(pick, { log: this.log, audience: 'b2b' });
+          if (own.source === 'ai') {
+            aiSubject = own;
+            Object.assign(pick, { subjectLead: own.lead, ...fillCopy(own, pick.theme, true) });
+          } else {
+            aiSubject = { ...aiSubject, reason: `b2b_ai_${own.reason}` };
+          }
+        } else {
+          Object.assign(pick, { headline: undefined, intro: undefined, preheader: undefined });
+        }
       } else {
         const { loopDay, previous } = this.planToday(recent, today);
         pick = pickForLoopDay(feed.products, loopDay, previous);
         this.checkCount(pick);
         // AI-written subject opening; the rule-based one when the AI call fails or breaks the rules.
         standardLead = pick.subjectLead;
-        aiSubject = await this.suggestSubject(pick, { log: this.log });
-        pick.subjectLead = aiSubject.lead;
+        const suggested = await this.suggestSubject(pick, { log: this.log, audience: 'b2c' });
+        aiSubject = suggested;
+        pick.subjectLead = suggested.lead;
+        if (this.config.aiCopy) Object.assign(pick, fillCopy(suggested, pick.theme, false));
       }
       const loopDay = pick.loopDay;
       const built = this.build(pick);
@@ -369,7 +397,7 @@ export default class DailyOfferService {
         groups: built.groups,
         products: built.products,
         feedGeneratedAt: feed.generatedAt,
-        subject: { source: aiSubject.source, reason: aiSubject.reason, lead: aiSubject.lead, standardLead },
+        subject: { source: aiSubject.source, reason: aiSubject.reason, lead: pick.subjectLead, standardLead, ...copyOf({ subject: pick }) },
         createdAt: now.toISOString(),
         ...(b2b && mirrorOf != null ? { audience: 'b2b' as const, mirrorOf } : {}),
       };
@@ -448,7 +476,7 @@ export default class DailyOfferService {
       const flat = groups.flatMap(g => g.products);
       const pick: OfferPick = {
         loopDay: label.loopDay, theme: label.theme, themeName: label.themeName,
-        subjectLead: '', groups, productKeys: flat.map(p => p.key), count: flat.length,
+        subjectLead: '', ...copyOf(label), groups, productKeys: flat.map(p => p.key), count: flat.length,
       };
       // Keep the 9 AM subject lead (it names the countries chosen then).
       const { rows: [tpl] } = await this.db.query<{ id: number; subject: string | null }>(

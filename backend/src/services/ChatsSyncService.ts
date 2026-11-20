@@ -24,25 +24,47 @@ function buildPlaceholders(rowCount: number, colCount: number) {
   return parts.join(',');
 }
 
+// RDS chats varchar limits. One source row over a limit fails its whole batch, and the
+// watermark never moves past it, so every later sync fails too (source chat 593415 had a
+// 26-digit wa_id). An identifier that doesn't fit is dropped (a cut phone/email would link
+// the chat to the wrong contact); free text is shortened. Each one is logged.
+// wa_id is NOT NULL as well, so a row whose wa_id doesn't fit is skipped in sync() instead.
+const ID_LIMITS = { wa_id: 20, email: 100, receiver: 20 } as const;
+const TEXT_LIMITS = { wa_name: 25, country: 50, tags: 510, last_short: 60, last_packed: 15 } as const;
+
+function fitId(r: ChatSourceRow, col: keyof typeof ID_LIMITS) {
+  const v = r[col];
+  if (typeof v !== 'string' || v.length <= ID_LIMITS[col]) return v;
+  console.warn(`[ChatsSync] source chat ${r.id}: ${col} is ${v.length} chars (limit ${ID_LIMITS[col]}) — stored as NULL`);
+  return null;
+}
+
+function fitText(r: ChatSourceRow, col: keyof typeof TEXT_LIMITS) {
+  const v = r[col];
+  if (typeof v !== 'string' || v.length <= TEXT_LIMITS[col]) return v;
+  console.warn(`[ChatsSync] source chat ${r.id}: ${col} is ${v.length} chars (limit ${TEXT_LIMITS[col]}) — shortened`);
+  return v.slice(0, TEXT_LIMITS[col]);
+}
+
 function rowToParams(r: ChatSourceRow) {
   return [
-    r.wa_id,
-    r.wa_name,
-    r.email,
-    r.country,
-    r.receiver,
+    fitId(r, 'wa_id'),
+    fitText(r, 'wa_name'),
+    fitId(r, 'email'),
+    fitText(r, 'country'),
+    fitId(r, 'receiver'),
     r.boat,
     r.status,
     r.priority,
-    r.tags,
+    fitText(r, 'tags'),
     r.fv,
     toDate(r.last_in),
     toDate(r.last_out),
     toDate(r.last_msg),
-    r.last_short,
+    fitText(r, 'last_short'),
     r.seen,
     r.spam,
-    r.last_packed,
+    fitText(r, 'last_packed'),
     toDate(r.created_at),
     toDate(r.updated_at),
     null,                   // user_id
@@ -60,7 +82,7 @@ export default class ChatsSyncService {
    */
   static async sync() {
     const t0 = Date.now();
-    const result: ChatsSyncResult = { watermark: null, inserted: 0, unifiedMatched: 0, promoted: 0, elapsedMs: 0 };
+    const result: ChatsSyncResult = { watermark: null, inserted: 0, skipped: 0, unifiedMatched: 0, promoted: 0, elapsedMs: 0 };
     let syncStatus = 'success';
     let errorMessage: string | null = null;
 
@@ -95,12 +117,22 @@ export default class ChatsSyncService {
           );
       if (rows.length === 0) break;
 
-      const sql = `INSERT INTO chats (${colList}) VALUES ${buildPlaceholders(rows.length, colCount)}`;
-      const params: unknown[] = [];
-      for (const r of rows) params.push(...rowToParams(r));
-      await pgQuery(sql, params);
+      // chats.wa_id is NOT NULL, so a row without a usable one is skipped (logged) rather than
+      // failing the batch — and with it every sync after.
+      const keep: ChatSourceRow[] = [];
+      for (const r of rows) {
+        if (r.wa_id && r.wa_id.length <= ID_LIMITS.wa_id) { keep.push(r); continue; }
+        console.warn(`[ChatsSync] source chat ${r.id} skipped: wa_id ${r.wa_id ? `is ${r.wa_id.length} chars (limit ${ID_LIMITS.wa_id})` : 'is empty'}`);
+      }
+      if (keep.length) {
+        const sql = `INSERT INTO chats (${colList}) VALUES ${buildPlaceholders(keep.length, colCount)}`;
+        const params: unknown[] = [];
+        for (const r of keep) params.push(...rowToParams(r));
+        await pgQuery(sql, params);
+      }
 
-      inserted += rows.length;
+      inserted += keep.length;
+      result.skipped += rows.length - keep.length;
       lastId = rows[rows.length - 1].id;
     }
     result.inserted = inserted;
