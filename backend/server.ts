@@ -853,7 +853,10 @@ cron.schedule('0 2 * * *', async () => {
 console.log('[Cron] Unsubscribe sync scheduled at 2:00 AM Dubai time');
 
 // ── WhatsApp Unsubscribe Sync — MYSQL2 → RDS daily at 2:15 AM Dubai ──
-cron.schedule('15 2 * * *', async () => {
+// WA_UNSUB_SYNC_CRON overrides the schedule (e.g. '15 * * * *' = hourly) so a same-day
+// opt-out stops sends sooner; unset keeps the nightly run.
+const WA_UNSUB_SYNC_CRON = process.env.WA_UNSUB_SYNC_CRON || '15 2 * * *';
+cron.schedule(WA_UNSUB_SYNC_CRON, async () => {
   try {
     const { default: WhatsAppUnsubscribeSyncService } = await import('./src/services/WhatsAppUnsubscribeSyncService.js');
     const result = await WhatsAppUnsubscribeSyncService.sync({ triggeredBy: 'cron' });
@@ -862,7 +865,7 @@ cron.schedule('15 2 * * *', async () => {
     console.error('[Cron:WAUnsubSync] Error:', (err as Error).message);
   }
 }, { timezone: 'Asia/Dubai', noOverlap: true });
-console.log('[Cron] WhatsApp unsubscribe sync scheduled at 2:15 AM Dubai time');
+console.log(`[Cron] WhatsApp unsubscribe sync scheduled: '${WA_UNSUB_SYNC_CRON}' (Asia/Dubai)`);
 
 // ── Contact Enrichment — validate emails + format mobiles daily at 1:30 AM Dubai ──
 cron.schedule('30 1 * * *', async () => {
@@ -876,7 +879,11 @@ cron.schedule('30 1 * * *', async () => {
 console.log('[Cron] Contact enrichment scheduled at 1:30 AM Dubai time (new contacts only)');
 
 // ── Chats Sync — MySQL → RDS insert-only at 3:30 AM Dubai, plus unified_id backfill ──
-cron.schedule('30 3 * * *', async () => {
+// The MYSQL2 chats copy is reloaded at irregular times, often after 03:30, so a single
+// nightly run can find nothing new for days. CHATS_SYNC_CRON (e.g. '30 */2 * * *') runs it
+// more often; the run is watermark-based and insert-only, so repeats are safe.
+const CHATS_SYNC_CRON = process.env.CHATS_SYNC_CRON || '30 3 * * *';
+cron.schedule(CHATS_SYNC_CRON, async () => {
   try {
     const result = await ChatsSyncService.sync();
     console.log(`[Cron:ChatsSync] Done — inserted: ${result.inserted}, unified_id matched: ${result.unifiedMatched}, elapsed: ${(result.elapsedMs / 1000).toFixed(1)}s`);
@@ -884,7 +891,7 @@ cron.schedule('30 3 * * *', async () => {
     console.error('[Cron:ChatsSync] Error:', (err as Error).message);
   }
 }, { timezone: 'Asia/Dubai', noOverlap: true });
-console.log('[Cron] Chats sync scheduled at 3:30 AM Dubai time');
+console.log(`[Cron] Chats sync scheduled: '${CHATS_SYNC_CRON}' (Asia/Dubai)`);
 
 // ── Daily journey re-snapshot — 2:30 AM Dubai ──
 // Fixed journeys with recommendation_type IN ('on_trip','future_trip') target

@@ -23,6 +23,11 @@ import type { SyncMetadataWrite, WaUnsubRow, WaUnsubSummary } from '../types/syn
 
 const SYNC_KEY = 'wa_unsubscribe_sync';
 const BATCH = 5000;
+// The MYSQL2 `unsubscribed` copy is loaded in batches, so a row can arrive days after its
+// created_at — already behind the watermark, and skipped for good. WA_UNSUB_LOOKBACK_DAYS
+// re-scans that many days behind the watermark each run; the UPDATE only touches contacts
+// not already 'Yes', so re-reading is harmless. 0 (default) keeps the watermark-only scan.
+const LOOKBACK_DAYS = Math.max(0, parseInt(process.env.WA_UNSUB_LOOKBACK_DAYS || '0', 10) || 0);
 
 async function readWatermark() {
   const { rows } = await db.query<{ last_synced_at: Date | string }>(
@@ -77,13 +82,14 @@ export default class WhatsAppUnsubscribeSyncService {
     try {
       const watermark = await readWatermark();
       summary.watermarkFrom = watermark.toISOString();
-      console.log(`[WAUnsubSync] Starting — watermark=${summary.watermarkFrom} triggeredBy=${triggeredBy}`);
+      const scanFrom = new Date(watermark.getTime() - LOOKBACK_DAYS * 86_400_000);
+      console.log(`[WAUnsubSync] Starting — watermark=${summary.watermarkFrom} lookbackDays=${LOOKBACK_DAYS} triggeredBy=${triggeredBy}`);
 
       const rows = await mysqlQuery<WaUnsubRow[]>(
         `SELECT destination, created_at FROM unsubscribed
          WHERE type = 'message' AND created_at > ?
          ORDER BY created_at ASC`,
-        [watermark],
+        [scanFrom],
         'chats'
       );
       summary.mysqlRowsFetched = rows.length;
