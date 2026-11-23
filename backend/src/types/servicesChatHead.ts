@@ -16,6 +16,8 @@ export interface ChatHeadDataFile {
   content: string;
   /** Rows whose header image (`img`) was filled from the template/global default. */
   mediaFilled?: number;
+  /** Carousel card images (`c{N}_media`) filled from the template's submitted cards. */
+  cardMediaFilled?: number;
 }
 
 /** Options for buildAndSaveDataFile (a bare string is still accepted as the filename). */
@@ -23,6 +25,8 @@ export interface BuildDataFileOptions {
   filename?: string | null;
   /** Header image used for rows that carry no `img`, e.g. the template's own artwork. */
   defaultMedia?: string | null;
+  /** Carousel card images in card order; set → rows get c1_media … cN_media, no `img`. */
+  cardMedia?: string[] | null;
 }
 
 /** JSON body returned by ChatHead's upload / broadcast endpoints. */
@@ -63,6 +67,8 @@ export interface SendBroadcastArgs extends Omit<CreateBroadcastArgs, 'dataFileId
   filename?: string | null;
   /** Explicit header image; when absent the template's own header image is looked up. */
   defaultMedia?: string | null;
+  /** Carousel card images in card order; set → rows get c1_media … cN_media, no `img`. */
+  cardMedia?: string[] | null;
 }
 
 export interface SendBroadcastResult {

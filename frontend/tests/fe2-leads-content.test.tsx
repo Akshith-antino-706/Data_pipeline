@@ -22,7 +22,7 @@ vi.mock('react-hot-toast', () => ({
 }));
 // Sub-panels have their own data flows; stub them so this file tests the template page itself.
 vi.mock('@/app/(dashboard)/content/WhatsAppTestSend', () => ({ default: () => null }));
-vi.mock('@/app/(dashboard)/content/CreateWhatsAppTemplate', () => ({ default: () => null }));
+vi.mock('@/app/(dashboard)/content/CreateWhatsAppTemplate', () => ({ default: () => <div data-testid="wa-builder" /> }));
 vi.mock('@/app/(dashboard)/content/SmsTestSend', () => ({ default: () => null }));
 vi.mock('@/app/(dashboard)/content/RcsTestSend', () => ({ default: () => null }));
 vi.mock('next/navigation', () => ({
@@ -342,13 +342,75 @@ describe('Templates page — editor and routes', () => {
     expect(screen.getByText(/Email content \(HTML\)/)).toBeTruthy();
     expect(screen.getByText('0 / 60 characters')).toBeTruthy();
     for (const d of document.querySelectorAll('details')) expect(d.open).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'SMS' }));
-    expect(screen.queryByText(/\/ 60 characters/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Mobile' }));
     expect(screen.getByRole('button', { name: 'Mobile' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText('Nothing to show yet')).toBeTruthy();
     const iframe = screen.getByTitle('template-preview');
     expect(iframe.getAttribute('sandbox')).toBe(SANDBOX);
+    fireEvent.click(screen.getByRole('button', { name: 'SMS' }));
+    expect(screen.queryByText(/\/ 60 characters/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Day 1 Welcome')).toBeTruthy();
+    expect(where()).toBe('/content');
+    noBadText();
+  });
+
+  it('editor: SMS is a plain-text message with a chat preview, no HTML upload', async () => {
+    mockTemplates();
+    vi.mocked(api.createTemplate).mockResolvedValue({ data: { id: 999, name: 'SMS hello', channel: 'sms', status: 'draft' } } as never);
+    render(<Content />);
+    await screen.findByText('Day 1 Welcome');
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'SMS' }));
+    expect(screen.queryByText(/Upload \.html/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mobile' })).toBeNull();
+    expect(screen.queryByTitle('template-preview')).toBeNull();
+    expect(screen.getByText('0 / 160 characters')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    expect(h.toastError).toHaveBeenCalledWith('Template name is required');
+    fireEvent.change(screen.getByPlaceholderText('e.g. Summer Sale Announcement'), { target: { value: 'SMS hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    expect(h.toastError).toHaveBeenCalledWith('Please write the message text');
+    fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Hi {{ITEM_NAME}}, deal inside' } });
+    expect(screen.getByTestId('text-preview').textContent).not.toContain('{{ITEM_NAME}}');
+    fireEvent.click(screen.getByRole('button', { name: 'Save template' }));
+    await waitFor(() => expect(api.createTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'SMS hello', channel: 'sms', body: 'Hi {{ITEM_NAME}}, deal inside', bodyPlain: 'Hi {{ITEM_NAME}}, deal inside',
+    })));
+    noBadText();
+  });
+
+  it('editor: a new WhatsApp template opens the ChatHead / Meta builder instead of a local draft', async () => {
+    mockTemplates();
+    render(<Content />);
+    await screen.findByText('Day 1 Welcome');
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    expect(screen.queryByTestId('wa-builder')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'WhatsApp' }));
+    expect(screen.getByTestId('wa-builder')).toBeTruthy();
+    expect(screen.getByText(/only use templates approved by Meta/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save template' })).toBeNull();
+    expect(screen.queryByPlaceholderText('e.g. Summer Sale Announcement')).toBeNull();
+    expect(screen.queryByTitle('template-preview')).toBeNull();
+    // Switching channel brings the normal editor back.
+    fireEvent.click(screen.getByRole('button', { name: 'Email' }));
+    expect(screen.queryByTestId('wa-builder')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save template' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'WhatsApp' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Day 1 Welcome')).toBeTruthy();
+    expect(where()).toBe('/content');
+    expect(api.createTemplate).not.toHaveBeenCalled();
+    noBadText();
+  });
+
+  it('editor: Cancel from a text channel returns to /content', async () => {
+    mockTemplates();
+    render(<Content />);
+    await screen.findByText('Day 1 Welcome');
+    fireEvent.click(screen.getByRole('button', { name: /New template/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'SMS' }));
+    expect(screen.getByText('0 / 160 characters')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByText('Day 1 Welcome')).toBeTruthy();
     expect(where()).toBe('/content');
