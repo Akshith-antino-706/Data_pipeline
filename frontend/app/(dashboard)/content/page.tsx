@@ -160,6 +160,13 @@ const fillPreviewHtml = (html: string) => String(html || '').replace(/\{\{\s*([A
   if (key in PREVIEW_SAMPLE) return PREVIEW_SAMPLE[key];
   return `<span style="background:#fde68a;color:#92400e;padding:0 3px;border-radius:3px;font-size:11px">{{${raw}}}</span>`;
 });
+// Same sample fill for plain-text channels (WhatsApp / SMS / Push); unknown keys stay as {{KEY}}.
+const fillPreviewText = (text: string) => String(text || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (m: string, raw: string) => {
+  const key = PREVIEW_ALIASES[raw] || PREVIEW_ALIASES[raw.toLowerCase()] || raw.toUpperCase();
+  return key in PREVIEW_SAMPLE ? PREVIEW_SAMPLE[key] : m;
+});
+// Body length limits shown under the text editor (Meta template body / one SMS segment).
+const TEXT_LIMIT: Record<string, number | undefined> = { whatsapp: 1024, sms: 160 };
 
 const stripHtml = (html: string | null | undefined) => {
   if (!html) return '';
@@ -456,7 +463,8 @@ export default function Content() {
   const [livePreviewHtml, setLivePreviewHtml] = useState('');
   const [livePreviewLoading, setLivePreviewLoading] = useState(false);
   useEffect(() => {
-    if (!form.body) { setLivePreviewHtml(''); return; }
+    // Only email bodies are HTML; text channels preview client-side as a message bubble.
+    if (!form.body || form.channel !== 'email') { setLivePreviewHtml(''); return; }
     const t = setTimeout(async () => {
       setLivePreviewLoading(true);
       try {
@@ -469,7 +477,7 @@ export default function Content() {
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [form.body]);
+  }, [form.body, form.channel]);
 
   // ── Global recipients (shared by all Test send actions) ──
   const [recipients, setRecipients] = useState<TestSendRecipient[]>([]);
@@ -908,7 +916,10 @@ export default function Content() {
 
   async function handleSave() {
     if (!form.name.trim()) { hotToast.error('Template name is required'); return; }
-    if (!form.body.trim()) { hotToast.error('Please upload an HTML file'); return; }
+    const isEmail = form.channel === 'email';
+    if (!form.body.trim()) { hotToast.error(isEmail ? 'Please upload an HTML file' : 'Please write the message text'); return; }
+    const limit = TEXT_LIMIT[form.channel];
+    if (limit && form.body.length > limit) { hotToast.error(`${channelLabel(form.channel)} messages can be at most ${limit} characters`); return; }
     if (modal === null) return;
 
     setSaving(true);
@@ -918,7 +929,7 @@ export default function Content() {
         channel: form.channel,
         subject: form.subject.trim() || null,
         body: form.body,
-        bodyPlain: stripHtml(form.body),
+        bodyPlain: isEmail ? stripHtml(form.body) : form.body.trim(),
         variables: dynVars.map(v => v.key),
       };
 
@@ -1249,8 +1260,29 @@ export default function Content() {
     const st = isCreate ? null : statusMeta(modal.status);
     const customVars = dynVars.filter(v => !SYSTEM_VARS.has(v.key));
     const subjectLen = form.subject.length;
+    const isEmailForm = form.channel === 'email';
+    const textLimit = TEXT_LIMIT[form.channel];
+    // A new WhatsApp template is created in ChatHead and reviewed by Meta — journeys send
+    // only approved ChatHead templates (waTemplateId), so a local draft could never be sent.
+    const isWaCreate = isCreate && form.channel === 'whatsapp';
     const updatedRel = isCreate ? '' : relativeTime(modal.updated_at);
     const leave = () => { if (!saving) leaveEditor(); };
+    const channelPicker = (
+      <div className="ui-field">
+        <span className="ui-label" id="tpl-channel-label">Channel</span>
+        <div className={styles.chanPick} role="group" aria-labelledby="tpl-channel-label">
+          {CHANNELS.map(ch => {
+            const Icon = ch.icon;
+            return (
+              <button key={ch.key} type="button" className={styles.chanBtn} aria-pressed={form.channel === ch.key}
+                onClick={() => setForm(f => ({ ...f, channel: ch.key }))}>
+                <Icon size={13} aria-hidden="true" /> {ch.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
     return (
       <div className={styles.editorPage}>
         <header className={styles.header}>
@@ -1273,26 +1305,25 @@ export default function Content() {
           )}
         </header>
 
+        {isWaCreate ? (
+        <div className={styles.waGrid}>
+          <Card aria-label="Message settings" className={styles.panel}>
+            {channelPicker}
+            <span className={styles.help}>
+              WhatsApp messages can only use templates approved by Meta. Fill in the form to submit one through ChatHead;
+              Meta usually reviews it within minutes to a day. Once approved, pick it in a journey’s WhatsApp step.
+            </span>
+          </Card>
+          <CreateWhatsAppTemplate />
+        </div>
+        ) : (
         <div className={styles.editorGrid}>
           <Card aria-label="Message settings" className={styles.panel}>
             <Field label="Template name" required>
               {p => <Input {...p} placeholder="e.g. Summer Sale Announcement" value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
             </Field>
-            <div className="ui-field">
-              <span className="ui-label" id="tpl-channel-label">Channel</span>
-              <div className={styles.chanPick} role="group" aria-labelledby="tpl-channel-label">
-                {CHANNELS.map(ch => {
-                  const Icon = ch.icon;
-                  return (
-                    <button key={ch.key} type="button" className={styles.chanBtn} aria-pressed={form.channel === ch.key}
-                      onClick={() => setForm(f => ({ ...f, channel: ch.key }))}>
-                      <Icon size={13} aria-hidden="true" /> {ch.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            {channelPicker}
             {form.channel === 'email' && (
               <Field label="Subject line" help={`${subjectLen} / 60 characters`}>
                 {p => <Input {...p} placeholder="e.g. Your Exclusive Offer Awaits" value={form.subject}
@@ -1316,12 +1347,36 @@ export default function Content() {
 
           <Card aria-label="Content editor" className={styles.panel}>
             <div className={styles.panelHead}>
-              <span className={styles.label}>{form.channel === 'email' ? 'Email content (HTML)' : 'Message content'} <span aria-hidden="true">*</span></span>
-              <label className={styles.upload}>
-                <Upload size={14} aria-hidden="true" /> Upload .html
-                <input type="file" accept=".html,.htm,text/html" onChange={handleFileChange} aria-label="Upload HTML file" />
-              </label>
+              <span className={styles.label}>{isEmailForm ? 'Email content (HTML)' : 'Message text'} <span aria-hidden="true">*</span></span>
+              {isEmailForm && (
+                <label className={styles.upload}>
+                  <Upload size={14} aria-hidden="true" /> Upload .html
+                  <input type="file" accept=".html,.htm,text/html" onChange={handleFileChange} aria-label="Upload HTML file" />
+                </label>
+              )}
             </div>
+            {!isEmailForm ? (
+              <>
+                <textarea
+                  className={[styles.code, styles.codeText].join(' ')}
+                  aria-label="Message text"
+                  value={form.body}
+                  onChange={e => {
+                    const text = e.target.value;
+                    setForm(f => ({ ...f, body: text, fileName: '' }));
+                    setDynVars(extractVars(text));
+                  }}
+                  placeholder={form.channel === 'whatsapp'
+                    ? 'Hi {{USER_NAME}}, your trip to {{ITEM_NAME}} is waiting!\n\n*bold*  _italic_  ~strike~'
+                    : 'Hi {{USER_NAME}}, your trip to {{ITEM_NAME}} is waiting!'}
+                />
+                {textLimit && (
+                  <span className={[styles.help, form.body.length > textLimit ? styles.danger : ''].join(' ')}>
+                    {form.body.length} / {textLimit} characters
+                  </span>
+                )}
+              </>
+            ) : (
             <textarea
               className={styles.code}
               aria-label="Email content (HTML)"
@@ -1334,17 +1389,36 @@ export default function Content() {
               spellCheck={false}
               placeholder="<html>…</html> — edit directly. Use {{KEY}} placeholders (e.g. {{USER_NAME}}, {{ITEM_NAME}})."
             />
+            )}
             <details className={styles.optional}>
               <summary>How personalisation works</summary>
               <div className={styles.optionalBody}>
                 <span className={styles.help}>
-                  {form.fileName ? `Source: ${form.fileName}. ` : ''}Write {'{{FIELD}}'} where a customer detail should go. If / case blocks are worked out by the server for the preview, exactly as they will be sent.
+                  {isEmailForm
+                    ? <>{form.fileName ? `Source: ${form.fileName}. ` : ''}Write {'{{FIELD}}'} where a customer detail should go. If / case blocks are worked out by the server for the preview, exactly as they will be sent.</>
+                    : <>Write {'{{FIELD}}'} where a customer detail should go. Plain text only — no HTML.{form.channel === 'whatsapp' ? ' WhatsApp formatting: *bold*, _italic_, ~strike~. The template must still be approved by Meta before it can be sent.' : ''}</>}
                 </span>
               </div>
             </details>
           </Card>
 
           <Card aria-label="Preview" className={styles.panel}>
+            {!isEmailForm ? (
+              <>
+                <div className={styles.panelHead}>
+                  <span className={styles.label}>{channelLabel(form.channel)} preview</span>
+                  <span className={styles.help}>Sample customer details</span>
+                </div>
+                <div className={[styles.liveWrap, styles.chatWrap].join(' ')}>
+                  {form.body
+                    ? <div className={styles.chatBubble} data-testid="text-preview">{fillPreviewText(form.body)}</div>
+                    : <span className={styles.help}>Preview appears here as you type…</span>}
+                </div>
+                <div className={styles.row}>
+                  {!form.body ? <Chip>Nothing to show yet</Chip> : <Chip tone="warn">Quick preview</Chip>}
+                </div>
+              </>
+            ) : (<>
             <div className={styles.panelHead}>
               <div className={styles.seg} role="group" aria-label="Preview device">
                 <button type="button" className={styles.segBtn} aria-pressed={liveDevice === 'desktop'} onClick={() => setLiveDevice('desktop')}>
@@ -1373,16 +1447,28 @@ export default function Content() {
                   : livePreviewHtml ? <Chip tone="ok">Exactly as it will be sent</Chip>
                     : <Chip tone="warn">Quick preview</Chip>}
             </div>
+            </>)}
           </Card>
         </div>
+        )}
 
         <div className={styles.footer}>
-          <span className={styles.help}>{isCreate ? 'New templates start as drafts.' : 'Changes are saved to this template.'}</span>
-          <span className={styles.spacer} />
-          <Button onClick={leave} disabled={saving}>Cancel</Button>
-          <Button variant="primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : isCreate ? 'Save template' : 'Save changes'}
-          </Button>
+          {isWaCreate ? (
+            <>
+              <span className={styles.help}>WhatsApp templates are submitted to ChatHead for Meta review, not saved as drafts here.</span>
+              <span className={styles.spacer} />
+              <Button onClick={leave}>Cancel</Button>
+            </>
+          ) : (
+            <>
+              <span className={styles.help}>{isCreate ? 'New templates start as drafts.' : 'Changes are saved to this template.'}</span>
+              <span className={styles.spacer} />
+              <Button onClick={leave} disabled={saving}>Cancel</Button>
+              <Button variant="primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : isCreate ? 'Save template' : 'Save changes'}
+              </Button>
+            </>
+          )}
         </div>
 
         {modals}

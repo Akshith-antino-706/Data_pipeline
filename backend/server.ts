@@ -57,6 +57,7 @@ import customSegmentsRouter from './src/routes/customSegments.js';
 import overviewRouter from './src/routes/overview.js';
 import journeyArchiveRouter from './src/routes/journeyArchive.js';
 import sesWebhookRouter from './src/routes/sesWebhook.js';
+import chatheadWebhookRouter from './src/routes/chatheadWebhook.js';
 import { flushAll as flushCache } from './src/config/cache.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -96,6 +97,12 @@ app.use((req, res, next) => {
 
 // ── SES Webhook (before rate limiter — SNS sends many events) ──
 app.use('/api/webhooks', express.text({ type: 'text/plain' }), sesWebhookRouter);
+// ── ChatHead one-to-one WhatsApp status webhook (also before the rate limiter: statuses
+// arrive in bursts). Off until CHATHEAD_WEBHOOK_TOKEN is set. ──
+app.use('/api/webhooks/chathead',
+  express.json({ limit: '1mb' }),
+  express.text({ type: ['application/x-ndjson', 'application/jsonl'], limit: '1mb' }),
+  chatheadWebhookRouter);
 
 // ── Public unsubscribe page — under /api so the prod reverse-proxy routes it to the
 // backend (the frontend owns all non-/api paths). No auth, no rate limiter. ──

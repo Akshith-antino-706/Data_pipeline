@@ -45,6 +45,34 @@ describe('ChatHeadV1Service header image', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('carousel: rows are exactly id, d, name, c1_media … cN_media — own card image kept, no img, no other vars', async () => {
+    const r = await ChatHeadV1Service.buildAndSaveDataFile(
+      [{ phone: '918412014471', name: 'Malik M Rupani', vars: { c2_media: 'https://own/c2.jpg', customer_name: 'Malik', item_name: 'Safari' } }, { phone: '971505671947' }],
+      { filename: 'c.data', defaultMedia: 'https://tpl/header.jpg', cardMedia: ['https://cdn/c1.jpg', 'https://cdn/c2.jpg', 'https://cdn/c3.jpg'] },
+    );
+    const rows = savedRows();
+    expect(rows[0]).toEqual({ id: '1', d: '918412014471', name: 'Malik M Rupani',
+      c1_media: 'https://cdn/c1.jpg', c2_media: 'https://own/c2.jpg', c3_media: 'https://cdn/c3.jpg' });
+    expect(rows[1]).toMatchObject({ c1_media: 'https://cdn/c1.jpg', c2_media: 'https://cdn/c2.jpg', c3_media: 'https://cdn/c3.jpg' });
+    expect(Object.keys(rows[0])).toEqual(['id', 'd', 'name', 'c1_media', 'c2_media', 'c3_media']);
+    expect(rows.every(row => !('img' in row))).toBe(true);
+    expect(r).toMatchObject({ mediaFilled: 0, cardMediaFilled: 5 });
+  });
+
+  it('carousel: sendBroadcast with cardMedia skips the header-image lookup', async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response('{"status":"error"}')));
+    vi.stubGlobal('fetch', fetchSpy);
+    await ChatHeadV1Service.sendBroadcast({
+      contacts: [{ phone: '971505671946' }], channelId: 191, templateId: 1491, name: 't', sendTime: '2026-11-23 10:00:00',
+      cardMedia: ['https://cdn/c1.jpg', 'https://cdn/c2.jpg'],
+    });
+    const urls = fetchSpy.mock.calls.map(c => String((c as unknown[])[0]));
+    expect(urls.some(u => u.includes('template_content/show'))).toBe(false);
+    const insert = mockQuery.mock.calls.find(c => String(c[0]).includes('INSERT INTO data_files'));
+    const rows = JSON.parse(String((insert?.[1] as unknown[])[2])) as Row[];
+    expect(rows[0]).toMatchObject({ c1_media: 'https://cdn/c1.jpg', c2_media: 'https://cdn/c2.jpg' });
+  });
+
   it('a failed lookup never throws', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('down'))));
     expect(await ChatHeadV1Service.fetchTemplateMedia(903)).toBeNull();

@@ -12,6 +12,8 @@
  * .data file format (NDJSON, CRLF line endings):
  *   {"id":"1","d":"919019533772","name":"Akshith"}\r\n
  *   {"id":"2","d":"918412014471","name":"Malik"}\r\n
+ * A carousel template carries one image per card instead of the header `img`:
+ *   {"id":"1","d":"918412014471","name":"Malik","c1_media":"https://…","c2_media":"https://…"}\r\n
  */
 import db from '../config/database.js';
 import type { BuildDataFileOptions, ChatHeadContact, ChatHeadDataFile, ChatHeadUploadResult, ChatHeadV1Response, CreateBroadcastArgs, CreateBroadcastResult, SendBroadcastArgs, SendBroadcastResult } from '../types/servicesChatHead.js';
@@ -26,6 +28,8 @@ const APP_KEY = process.env.CHATHEAD_APP_KEY || '732f0e1d575de309e168c0d945db9bc
 // a row without it renders the template's own header (when the template has one baked in) or
 // fails outright (when the template's header is an empty variable slot).
 const MEDIA_KEY = 'img';
+// Carousel card images: card N binds its header from `c{N}_media` (N starts at 1).
+const cardMediaKey = (n: number): string => `c${n}_media`;
 
 // Last-resort header image, used only when the row has none AND the template has none.
 // WhatsApp rejects a template whose header media is empty or unreachable.
@@ -98,18 +102,22 @@ export class ChatHeadV1Service {
    *        `defaultMedia` fills `img` on any row that doesn't carry one — pass the
    *        template's own header image so a row missing it still renders the
    *        artwork the template was approved with, rather than nothing.
+   *        `cardMedia` marks a carousel: card N's image fills `c{N}_media` on any row
+   *        that doesn't carry one, and the single-header `img` is not added.
    */
   static async buildAndSaveDataFile(contacts: ChatHeadContact[], opts: string | BuildDataFileOptions | null = null): Promise<ChatHeadDataFile> {
     if (!Array.isArray(contacts) || !contacts.length) {
       throw new Error('buildAndSaveDataFile: contacts must be a non-empty array');
     }
-    const { filename = null, defaultMedia = null }: BuildDataFileOptions =
+    const { filename = null, defaultMedia = null, cardMedia = null }: BuildDataFileOptions =
       (typeof opts === 'string' || opts == null) ? { filename: opts } : opts;
 
     // Row image → template's own header image → global fallback. Only the last is
     // generic; the middle one keeps each template looking like itself.
     const fallbackMedia = !blank(defaultMedia) ? String(defaultMedia).trim() : WA_DEFAULT_IMG;
+    const cards = Array.isArray(cardMedia) && cardMedia.length ? cardMedia : null;
     let mediaFilled = 0;
+    let cardMediaFilled = 0;
 
     const cleaned = contacts.map((c, i) => {
       // Extra per-recipient template variables (item_name, item_image, cta_url, img, …)
@@ -126,6 +134,18 @@ export class ChatHeadV1Service {
         d:    String(c.phone || '').replace(/[\s\-().]/g, '').replace(/^\+/, ''),
         name: (c.name && String(c.name).trim()) ? c.name : (vars.name || ''),
       };
+      if (cards) {
+        // Carousel rows use exactly the agreed shape — id, d, name, c1_media … cN_media —
+        // and nothing else (no img, no template variables). Every card's header is
+        // compulsory: a row that doesn't set a card's image gets the card's default.
+        const carouselRow: Record<string, unknown> & { id: string; d: string } = { id: row.id, d: row.d, name: row.name };
+        cards.forEach((url, k) => {
+          const key = cardMediaKey(k + 1);
+          if (!blank(vars[key])) { carouselRow[key] = String(vars[key]).trim(); return; }
+          if (!blank(url)) { carouselRow[key] = url; cardMediaFilled++; }
+        });
+        return carouselRow;
+      }
       // Header media is compulsory: WhatsApp rejects a media template whose header
       // resolves to empty. A row that omits it inherits the template's own image.
       if (blank(row[MEDIA_KEY])) {
@@ -153,7 +173,10 @@ export class ChatHeadV1Service {
     if (mediaFilled) {
       console.log(`[chathead] data file ${row.filename}: filled ${MEDIA_KEY} on ${mediaFilled}/${cleaned.length} row(s) → ${fallbackMedia}`);
     }
-    return { id: row.id, filename: row.filename, content, mediaFilled };
+    if (cardMediaFilled) {
+      console.log(`[chathead] data file ${row.filename}: carousel — filled ${cardMediaFilled} card image(s) across ${cleaned.length} row(s), ${cards?.length} card(s)`);
+    }
+    return { id: row.id, filename: row.filename, content, mediaFilled, cardMediaFilled };
   }
 
   // ── Step 2: upload to ChatHead ─────────────────────────────────────────
@@ -282,17 +305,23 @@ export class ChatHeadV1Service {
 
   static async sendBroadcast({
     contacts, filename, channelId, channelName, templateId, templateName,
-    name, sendTime, defaultMedia,
+    name, sendTime, defaultMedia, cardMedia,
   }: SendBroadcastArgs): Promise<SendBroadcastResult> {
+    // Carousel card images, when the caller has them: every row then gets c1_media … cN_media
+    // instead of a header image. Without them the template is sent exactly as before.
+    // (ChatHead's template preview carries no card images, so there is nothing to look up
+    // here the way fetchTemplateMedia does for the header image.)
+    const cards = Array.isArray(cardMedia) && cardMedia.length ? cardMedia : null;
+
     // Resolve the template's own header image once per send, so any contact whose
     // row has no `img` still goes out with the artwork the template was approved
     // with. An explicit `defaultMedia` from the caller wins over the lookup.
-    const templateMedia = !blank(defaultMedia)
+    const templateMedia = cards ? null : !blank(defaultMedia)
       ? defaultMedia
       : await this.fetchTemplateMedia(templateId);
 
     const dataFile = await this.buildAndSaveDataFile(contacts, {
-      filename, defaultMedia: templateMedia,
+      filename, defaultMedia: templateMedia, cardMedia: cards,
     });
     const upload   = await this.uploadDataFile(dataFile);
     if (!upload.ok || !upload.chatheadFilename) {
