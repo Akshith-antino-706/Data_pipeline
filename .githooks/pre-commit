@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# pre-commit — refuse the commit unless lint, typecheck and build all pass.
+#
+# Scope is driven by what you staged:
+#   • lint      runs on the STAGED FILES ONLY, so the repo's pre-existing
+#               errors never block you, but nothing new slips in.
+#   • typecheck runs per workspace (tsc needs the whole project).
+#   • build     runs for the frontend only (the backend has no build step —
+#               it runs through tsx — so its typecheck IS its build).
+#
+# A workspace with nothing staged is skipped entirely, so a backend-only
+# commit never pays for a frontend build.
+#
+# Bypass:  git commit --no-verify     (or SKIP_CHECKS=1 git commit ...)
+#
+# NB: no `set -u` and no `mapfile` — macOS ships bash 3.2, where an empty array
+# under `set -u` is an "unbound variable" and `mapfile` does not exist.
+set -o pipefail
+
+[ "${SKIP_CHECKS:-}" = "1" ] && { echo "pre-commit: SKIP_CHECKS=1 — skipping"; exit 0; }
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+
+BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; DIM=$'\033[2m'; OFF=$'\033[0m'
+FAILED=()
+
+# ── staged files (added / copied / modified / renamed — never deleted) ──
+STAGED=()
+while IFS= read -r -d '' f; do STAGED+=("$f"); done \
+  < <(git diff --cached --name-only --diff-filter=ACMR -z)
+[ ${#STAGED[@]} -eq 0 ] && { echo "pre-commit: nothing staged"; exit 0; }
+
+# Per-workspace: does it have ANY staged file, and which of them are lintable?
+be_touched=0; fe_touched=0
+be_lint=(); fe_lint=()
+for f in "${STAGED[@]}"; do
+  case "$f" in
+    backend/*)  be_touched=1 ;;
+    frontend/*) fe_touched=1 ;;
+    *) continue ;;
+  esac
+  # Lint only files that are lintable AND still on disk: a path can be staged
+  # as added/modified and then deleted or renamed before the commit, and eslint
+  # aborts the whole run on one missing path.
+  [ -f "$ROOT/$f" ] || continue
+  case "$f" in
+    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs) ;;
+    *) continue ;;
+  esac
+  case "$f" in
+    backend/*)  be_lint+=("${f#backend/}") ;;
+    frontend/*) fe_lint+=("${f#frontend/}") ;;
+  esac
+done
+
+run() {                       # run <label> <workspace> <cmd...>
+  local label="$1" ws="$2"; shift 2
+  printf '%s▸ %s%s %s(%s)%s\n' "$BOLD" "$label" "$OFF" "$DIM" "$ws" "$OFF"
+  local start out code
+  start=$(date +%s)
+  out=$(cd "$ROOT/$ws" && "$@" 2>&1); code=$?
+  local secs=$(( $(date +%s) - start ))
+  if [ $code -eq 0 ]; then
+    printf '  %s✓%s %s passed %s(%ss)%s\n' "$GREEN" "$OFF" "$label" "$DIM" "$secs" "$OFF"
+  else
+    printf '  %s✗ %s FAILED%s %s(%ss)%s\n' "$RED" "$label" "$OFF" "$DIM" "$secs" "$OFF"
+    printf '%s\n' "$out" | tail -40 | sed 's/^/    /'
+    FAILED+=("$ws: $label")
+  fi
+  return $code
+}
+
+guard_deps() {                # guard_deps <workspace>
+  if [ ! -d "$ROOT/$1/node_modules" ]; then
+    printf '  %s✗ %s/node_modules missing — run: (cd %s && npm install)%s\n' "$RED" "$1" "$1" "$OFF"
+    FAILED+=("$1: dependencies not installed")
+    return 1
+  fi
+}
+
+echo
+printf '%spre-commit checks%s %s— %d staged file(s)%s\n' "$BOLD" "$OFF" "$DIM" "${#STAGED[@]}" "$OFF"
+echo
+
+# ── backend ────────────────────────────────────────────────────────────
+if [ $be_touched -eq 1 ]; then
+  if guard_deps backend; then
+    [ ${#be_lint[@]} -gt 0 ] && run "lint (${#be_lint[@]} staged file(s))" backend \
+      npx eslint --no-warn-ignored "${be_lint[@]}"
+    run "typecheck" backend npx tsc --noEmit -p .
+  fi
+else
+  printf '%s· backend untouched — skipped%s\n' "$DIM" "$OFF"
+fi
+
+# ── frontend ───────────────────────────────────────────────────────────
+if [ $fe_touched -eq 1 ]; then
+  if guard_deps frontend; then
+    [ ${#fe_lint[@]} -gt 0 ] && run "lint (${#fe_lint[@]} staged file(s))" frontend \
+      npx eslint --no-warn-ignored "${fe_lint[@]}"
+    run "typecheck" frontend npx tsc --noEmit -p .
+    run "build" frontend npx next build
+  fi
+else
+  printf '%s· frontend untouched — skipped%s\n' "$DIM" "$OFF"
+fi
+
+# ── verdict ────────────────────────────────────────────────────────────
+echo
+if [ ${#FAILED[@]} -gt 0 ]; then
+  printf '%s%s✗ commit blocked — %d check(s) failed:%s\n' "$BOLD" "$RED" "${#FAILED[@]}" "$OFF"
+  for f in "${FAILED[@]}"; do printf '    • %s\n' "$f"; done
+  printf '\n%sFix the above, or bypass with:%s git commit --no-verify\n\n' "$DIM" "$OFF"
+  exit 1
+fi
+printf '%s%s✓ all checks passed — committing%s\n\n' "$BOLD" "$GREEN" "$OFF"
+exit 0

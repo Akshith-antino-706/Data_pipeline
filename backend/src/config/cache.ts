@@ -1,0 +1,116 @@
+import IORedis from 'ioredis';
+import type { Redis } from 'ioredis';
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+const PREFIX = 'dp:';          // data-pipeline namespace
+const DEFAULT_TTL = 3600;      // 1 hour
+
+let _redis: Redis | undefined;
+function getRedis(): Redis {
+  if (!_redis) {
+    _redis = new (IORedis as unknown as typeof Redis)(REDIS_URL, {
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
+      lazyConnect: true,
+      // While Redis is unreachable, commands fail at once (callers fall back to
+      // computing) instead of queueing forever and hanging the request.
+      enableOfflineQueue: false,
+    });
+    _redis.on('error', () => {});  // reconnects on its own; errors are handled per call
+    _redis.connect().catch(() => {
+      console.warn('[Cache] Redis unavailable — running without cache until it connects');
+    });
+  }
+  return _redis;
+}
+
+/**
+ * Get cached value or compute & store it.
+ * Falls back to computing without cache if Redis is down.
+ */
+export async function cached<T>(key: string, computeFn: () => T | Promise<T>, ttl: number | ((result: T) => number) = DEFAULT_TTL): Promise<T> {
+  const redis = getRedis();
+  if (!redis) return computeFn();
+
+  const fullKey = PREFIX + key;
+  try {
+    const hit = await redis.get(fullKey);
+    if (hit) return JSON.parse(hit) as T;
+  } catch { /* miss or parse error — compute fresh */ }
+
+  const result = await computeFn();
+
+  // ttl may be a number OR a function(result) → number, so callers can pick the
+  // window based on how expensive the result was to compute (e.g. short TTL when a
+  // fast precomputed path was used, long TTL when it fell back to a slow live scan).
+  const effTtl = typeof ttl === 'function' ? ttl(result) : ttl;
+
+  try {
+    await redis.set(fullKey, JSON.stringify(result), 'EX', effTtl);
+  } catch { /* ignore write errors */ }
+
+  return result;
+}
+
+/**
+ * Delete exact cache keys (no KEYS scan — safe on a shared Redis).
+ */
+export async function del(...keys: string[]): Promise<void> {
+  const redis = getRedis();
+  if (!redis || keys.length === 0) return;
+  try {
+    await redis.del(...keys.map(k => PREFIX + k));
+  } catch (err) {
+    console.warn('[Cache] del error:', (err as Error).message);
+  }
+}
+
+/**
+ * Invalidate cached keys by pattern (e.g., 'dashboard:*')
+ */
+// Incremental SCAN + UNLINK. KEYS is O(N) over the whole keyspace and blocks Redis,
+// which BullMQ shares — long blocks expire worker locks and re-run jobs.
+async function scanDelete(redis: Redis, match: string): Promise<number> {
+  let cursor = '0';
+  let total = 0;
+  do {
+    const [next, keys] = await redis.scan(cursor, 'MATCH', match, 'COUNT', 500);
+    cursor = next;
+    if (keys.length) { await redis.unlink(...keys); total += keys.length; }
+  } while (cursor !== '0');
+  return total;
+}
+
+export async function invalidate(pattern: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+
+  try {
+    const n = await scanDelete(redis, PREFIX + pattern);
+    if (n > 0) console.log(`[Cache] Invalidated ${n} keys matching "${pattern}"`);
+  } catch (err) {
+    console.warn('[Cache] Invalidation error:', (err as Error).message);
+  }
+}
+
+/**
+ * Flush all cached keys under the dp: namespace.
+ * Called on server startup to ensure fresh data.
+ */
+export async function flushAll(): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+
+  try {
+    const n = await scanDelete(redis, PREFIX + '*');
+    if (n > 0) {
+      console.log(`[Cache] Startup flush — cleared ${n} cached keys`);
+    } else {
+      console.log('[Cache] Startup flush — no cached keys to clear');
+    }
+  } catch (err) {
+    console.warn('[Cache] Startup flush error:', (err as Error).message);
+  }
+}
+
+export default { cached, del, invalidate, flushAll };

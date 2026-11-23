@@ -1,0 +1,341 @@
+/**
+ * ChatHeadV1Service
+ *
+ * Wraps the 3-step ChatHead v1 broadcast send:
+ *   1. buildAndSaveDataFile(contacts)  → row in data_files, returns { id, filename, content }
+ *   2. uploadDataFile(dataFileRow)      → POST /broadcast/data/add/   (Filedata + client=rayna)
+ *   3. createBroadcast({...})           → GET  /broadcast/add/        (returns broadcast row)
+ *
+ * Both writes (data_files row + chathead_broadcasts row) are recorded so we can
+ * audit and replay even though ChatHead's API returns minimal feedback.
+ *
+ * .data file format (NDJSON, CRLF line endings):
+ *   {"id":"1","d":"919019533772","name":"Akshith"}\r\n
+ *   {"id":"2","d":"918412014471","name":"Malik"}\r\n
+ */
+import db from '../config/database.js';
+import type { BuildDataFileOptions, ChatHeadContact, ChatHeadDataFile, ChatHeadUploadResult, ChatHeadV1Response, CreateBroadcastArgs, CreateBroadcastResult, SendBroadcastArgs, SendBroadcastResult } from '../types/servicesChatHead.js';
+
+const BASE = 'https://ser1.chathead.io/apis/v1/services';
+const ACCOUNT_BASE = 'https://ser1.chathead.io/apis/v1/account';
+const CLIENT = 'rayna';
+// Required (with c=rayna) by the account/* endpoints that return the rendered template.
+const APP_KEY = process.env.CHATHEAD_APP_KEY || '732f0e1d575de309e168c0d945db9bc8';
+
+// Header-media key in a .data record. ChatHead binds the template's header image from `img`;
+// a row without it renders the template's own header (when the template has one baked in) or
+// fails outright (when the template's header is an empty variable slot).
+const MEDIA_KEY = 'img';
+
+// Last-resort header image, used only when the row has none AND the template has none.
+// WhatsApp rejects a template whose header media is empty or unreachable.
+const WA_DEFAULT_IMG = process.env.WA_DEFAULT_IMG
+  || `${(process.env.PUBLIC_SITE_URL || 'https://www.raynatours.com').replace(/\/+$/, '')}/rayna-og.jpg`;
+
+const blank = (v: unknown): boolean => v == null || String(v).trim() === '';
+
+// templateId → { url, at }. Template media changes only when the template is re-approved,
+// so a short TTL keeps a bulk send to one lookup without pinning a stale image forever.
+const _mediaCache = new Map<string, { url: string | null; at: number }>();
+const MEDIA_TTL_MS = 10 * 60 * 1000;
+
+// Upload contract (verified 2026-06-03 against the official Postman collection):
+//   • URL must end in /index.php — without it, the request 200s with empty body
+//     and the file is silently dropped (this caused our earlier `Valid data`
+//     loop and the misdiagnosis that only sample.data worked).
+//   • Form field is `c` (account identifier), NOT `client`.
+//   • Response: { status: "success", msg: "File uploaded!", data: { name } }
+//     where `name` is timestamp-prefixed (e.g. `1780487805ak_test.data`).
+//     That returned name is what must be passed to /broadcast/add/?data_file=…
+const UPLOAD_URL = `${BASE}/broadcast/data/add/index.php`;
+
+export class ChatHeadV1Service {
+
+  // ── Template default header image ──────────────────────────────────────
+
+  /**
+   * The template's own header image, as ChatHead renders it.
+   *
+   * Templates fall into two shapes: one with the artwork baked into the header
+   * (the rendered preview carries an <img>), and one whose header is an empty
+   * variable slot the .data file must fill. This returns the baked-in URL for
+   * the first and null for the second, so callers can tell "the template has a
+   * default" from "the template needs one".
+   *
+   * Never throws — a lookup failure degrades to null so a broadcast is not lost
+   * over a missing image.
+   *
+   */
+  static async fetchTemplateMedia(templateId: number | string | null | undefined): Promise<string | null> {
+    if (templateId == null || templateId === '') return null;
+    const key = String(templateId);
+    const hit = _mediaCache.get(key);
+    if (hit && Date.now() - hit.at < MEDIA_TTL_MS) return hit.url;
+
+    let url: string | null = null;
+    try {
+      const res = await fetch(`${ACCOUNT_BASE}/template_content/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ c: CLIENT, id: key, app_key: APP_KEY, formate: 'html' }).toString(),
+      });
+      const body = await res.text();
+      // An auth/lookup failure comes back as a JSON error object, not HTML.
+      if (!body.trim().startsWith('{')) {
+        const m = body.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
+        if (m && /^https?:\/\//i.test(m[1])) url = m[1];
+      }
+    } catch { /* leave null — caller falls back */ }
+
+    _mediaCache.set(key, { url, at: Date.now() });
+    return url;
+  }
+
+  // ── Step 1: build NDJSON + persist to data_files ────────────────────────
+
+  /**
+   * `opts`: a bare string stays supported as the filename (original signature).
+   *        `defaultMedia` fills `img` on any row that doesn't carry one — pass the
+   *        template's own header image so a row missing it still renders the
+   *        artwork the template was approved with, rather than nothing.
+   */
+  static async buildAndSaveDataFile(contacts: ChatHeadContact[], opts: string | BuildDataFileOptions | null = null): Promise<ChatHeadDataFile> {
+    if (!Array.isArray(contacts) || !contacts.length) {
+      throw new Error('buildAndSaveDataFile: contacts must be a non-empty array');
+    }
+    const { filename = null, defaultMedia = null }: BuildDataFileOptions =
+      (typeof opts === 'string' || opts == null) ? { filename: opts } : opts;
+
+    // Row image → template's own header image → global fallback. Only the last is
+    // generic; the middle one keeps each template looking like itself.
+    const fallbackMedia = !blank(defaultMedia) ? String(defaultMedia).trim() : WA_DEFAULT_IMG;
+    let mediaFilled = 0;
+
+    const cleaned = contacts.map((c, i) => {
+      // Extra per-recipient template variables (item_name, item_image, cta_url, img, …)
+      // resolved upstream via placeholderResolver so ChatHead can bind them to the
+      // template's {{key}} placeholders. id/d always win; name falls back to the resolved
+      // vars.name (USER_NAME || USER_FIRST_NAME) when no explicit contact name was passed.
+      const vars: Record<string, unknown> = (c.vars && typeof c.vars === 'object') ? c.vars : {};
+      const row: Record<string, unknown> & { id: string; d: string } = {
+        ...vars,
+        id:   String(i + 1),
+        // Strip human formatting BEFORE the leading +, not after: " +971505671946"
+        // (a stored number with a leading space) otherwise keeps its + and fails the
+        // digits-only check below — which throws and loses the whole chunk, not one row.
+        d:    String(c.phone || '').replace(/[\s\-().]/g, '').replace(/^\+/, ''),
+        name: (c.name && String(c.name).trim()) ? c.name : (vars.name || ''),
+      };
+      // Header media is compulsory: WhatsApp rejects a media template whose header
+      // resolves to empty. A row that omits it inherits the template's own image.
+      if (blank(row[MEDIA_KEY])) {
+        row[MEDIA_KEY] = fallbackMedia;
+        mediaFilled++;
+      }
+      return row;
+    });
+    if (cleaned.some(r => !/^\d{10,15}$/.test(r.d))) {
+      throw new Error('buildAndSaveDataFile: every contact needs a valid phone (10-15 digits, no +)');
+    }
+
+    const content = cleaned.map(r => JSON.stringify(r)).join('\r\n') + '\r\n';
+    const name    = filename || `auto-${Date.now()}.data`;
+    if (!name.endsWith('.data')) {
+      throw new Error('filename must end with .data — ChatHead rejects other extensions');
+    }
+
+    const { rows: [row] } = await db.query<{ id: number; filename: string }>(
+      `INSERT INTO data_files (filename, contact_count, contacts, file_bytes, upload_status)
+       VALUES ($1, $2, $3::jsonb, $4, 'pending')
+       RETURNING id, filename`,
+      [name, cleaned.length, JSON.stringify(cleaned), Buffer.byteLength(content, 'utf8')]
+    );
+    if (mediaFilled) {
+      console.log(`[chathead] data file ${row.filename}: filled ${MEDIA_KEY} on ${mediaFilled}/${cleaned.length} row(s) → ${fallbackMedia}`);
+    }
+    return { id: row.id, filename: row.filename, content, mediaFilled };
+  }
+
+  // ── Step 2: upload to ChatHead ─────────────────────────────────────────
+
+  static async uploadDataFile({ id, filename, content }: ChatHeadDataFile): Promise<ChatHeadUploadResult> {
+    const form = new FormData();
+    const blob = new Blob([content], { type: 'application/octet-stream' });
+    form.append('Filedata', blob, filename);
+    form.append('c', CLIENT);                       // ← field is `c`, not `client`
+
+    let resBody = '';
+    let parsed: ChatHeadV1Response | null = null;
+    let chatheadFilename: string | null = null;
+    let status = 'failed';
+
+    try {
+      const res = await fetch(UPLOAD_URL, { method: 'POST', body: form });
+      resBody = await res.text();
+      try { parsed = JSON.parse(resBody) as ChatHeadV1Response; } catch { /* keep as text */ }
+
+      if (parsed?.status === 'success' && parsed?.data?.name) {
+        status = 'uploaded';
+        chatheadFilename = parsed.data.name as string;
+      }
+    } catch (err) {
+      resBody = `fetch-error: ${(err as Error).message}`;
+    }
+
+    await db.query(
+      `UPDATE data_files
+         SET upload_status     = $2,
+             upload_response   = $3,
+             chathead_filename = $4,
+             uploaded_at       = NOW()
+       WHERE id = $1`,
+      [id, status, resBody, chatheadFilename]
+    );
+    return { ok: status === 'uploaded', response: resBody, parsed, chatheadFilename };
+  }
+
+  // ── Step 3: create broadcast ───────────────────────────────────────────
+
+  /**
+   * @param {object} opts
+   * @param {number} opts.dataFileId          row id from data_files
+   * @param {string} opts.dataFilename         the .data filename to reference
+   * @param {number} opts.channelId
+   * @param {string} [opts.channelName]
+   * @param {number} opts.templateId
+   * @param {string} [opts.templateName]
+   * @param {string} opts.name                 display name in ChatHead UI
+   * @param {Date|string} opts.sendTime        Date or 'YYYY-MM-DD HH:MM:SS'
+   *
+   * Note: ChatHead's v1 docs show `subject` as required but ChatHead support
+   * confirmed (2026-06-02) that we should NOT send it — they ignore it / it
+   * may cause issues. We drop it entirely from the query string.
+   */
+  static async createBroadcast(opts: CreateBroadcastArgs): Promise<CreateBroadcastResult> {
+    const {
+      dataFileId, dataFilename, channelId, channelName,
+      templateId, templateName, name, sendTime,
+    } = opts;
+
+    const sendTimeStr = sendTime instanceof Date
+      ? formatChatHeadDate(sendTime)
+      : String(sendTime);
+
+    const params = new URLSearchParams({
+      c:           CLIENT,
+      name:        name,
+      channel:     String(channelId),
+      // dataFilename here MUST be the value ChatHead returned in the upload
+      // response (`data.name`, e.g. `1780487805ak_test.data`) — NOT the
+      // user-friendly filename. Callers must pass the right one.
+      data_file:   dataFilename,
+      template_id: String(templateId),
+      send_time:   sendTimeStr,
+    });
+
+    const url = `${BASE}/broadcast/add/?${params.toString()}`;
+    let responseBody: string | ChatHeadV1Response | null = null;
+    let status = 'queued';
+    let chatheadBroadcastId: string | number | null = null;
+
+    try {
+      const res = await fetch(url);
+      responseBody = await res.text().catch(() => '');
+      try { responseBody = JSON.parse(responseBody) as ChatHeadV1Response; } catch { /* keep as text */ }
+
+      const msg = (responseBody && (responseBody as ChatHeadV1Response).msg) || '';
+      if (/Broadcast Added/i.test(msg)) {
+        status = 'succeeded';
+        chatheadBroadcastId = (responseBody as ChatHeadV1Response | null)?.data?.broadcast_id ?? null;
+      } else if (/Valid data/i.test(msg)) {
+        status = 'submitted';   // ambiguous response — params validated but not confirmed
+      } else if ((responseBody && (responseBody as ChatHeadV1Response).status) === 'success') {
+        status = 'submitted';
+      } else {
+        status = 'failed';
+      }
+    } catch (err) {
+      responseBody = { error: (err as Error).message };
+      status = 'failed';
+    }
+
+    const { rows: [row] } = await db.query<{ id: number; status: string; chathead_broadcast_id: string | number | null }>(
+      `INSERT INTO chathead_broadcasts (
+         data_file_id, api_version, name, channel_id, channel_name,
+         template_id, template_name, send_time,
+         request_payload, response_payload, chathead_broadcast_id, status
+       ) VALUES ($1, 'v1', $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11)
+       RETURNING id, status, chathead_broadcast_id`,
+      [
+        dataFileId, name, channelId, channelName || null,
+        templateId, templateName || null, sendTimeStr,
+        JSON.stringify({ url, params: Object.fromEntries(params) }),
+        JSON.stringify(responseBody),
+        chatheadBroadcastId,
+        status,
+      ]
+    );
+    return { id: row.id, status: row.status, chatheadBroadcastId: row.chathead_broadcast_id, raw: responseBody };
+  }
+
+  // ── One-shot convenience: build → upload → broadcast ───────────────────
+
+  static async sendBroadcast({
+    contacts, filename, channelId, channelName, templateId, templateName,
+    name, sendTime, defaultMedia,
+  }: SendBroadcastArgs): Promise<SendBroadcastResult> {
+    // Resolve the template's own header image once per send, so any contact whose
+    // row has no `img` still goes out with the artwork the template was approved
+    // with. An explicit `defaultMedia` from the caller wins over the lookup.
+    const templateMedia = !blank(defaultMedia)
+      ? defaultMedia
+      : await this.fetchTemplateMedia(templateId);
+
+    const dataFile = await this.buildAndSaveDataFile(contacts, {
+      filename, defaultMedia: templateMedia,
+    });
+    const upload   = await this.uploadDataFile(dataFile);
+    if (!upload.ok || !upload.chatheadFilename) {
+      return { success: false, stage: 'upload', error: upload.response, dataFileId: dataFile.id };
+    }
+    const broadcast = await this.createBroadcast({
+      dataFileId:   dataFile.id,
+      dataFilename: upload.chatheadFilename,        // ← timestamp-prefixed name from ChatHead
+      channelId, channelName, templateId, templateName,
+      name, sendTime,
+    });
+    return { success: broadcast.status !== 'failed', broadcast, dataFileId: dataFile.id };
+  }
+}
+
+/**
+ * `send_time` for broadcast/add — "YYYY-MM-DD HH:MM:SS", no timezone marker.
+ *
+ * This USED TO read the host clock (getFullYear/getHours/…), so the string meant whatever
+ * timezone the machine happened to be set to. Production runs UTC so it was right by accident;
+ * the same code on a TZ=Asia/Dubai host sends a time four hours ahead for a broadcast meant to
+ * go out now, and a local run produced exactly that (broadcast 2947: "17:30:19" for 13:30 UTC).
+ *
+ * Now pinned to CHATHEAD_SEND_TZ (default UTC), so the output no longer depends on the host.
+ * On the production server this emits the identical string it emitted before — the fix removes
+ * the host dependency without changing today's behaviour.
+ *
+ * ChatHead does not document the timezone of this field, and a broadcast carrying a timestamp
+ * four hours in the future still sent immediately — so they may not honour it as a schedule at
+ * all. If they confirm a timezone, set CHATHEAD_SEND_TZ to it rather than editing this.
+ */
+const CHATHEAD_SEND_TZ = process.env.CHATHEAD_SEND_TZ || 'UTC';
+
+function formatChatHeadDate(d: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CHATHEAD_SEND_TZ,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(d).reduce<Record<string, string>>((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  // en-CA gives ISO-ordered numeric parts; hour can come back as "24" at midnight.
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}`;
+}
+
+export default ChatHeadV1Service;

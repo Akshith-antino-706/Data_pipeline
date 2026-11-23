@@ -37,7 +37,7 @@ services:
       - REDIS_URL=redis://redis:6379
     # Run the STANDALONE consumer, not the API server. Keep exactly ONE replica:
     # CloudAMQP Little Lemur caps connections and a 2nd consumer would split the queue.
-    command: ["node", "src/giveaway-consumer.js"]
+    command: ["node_modules/.bin/tsx", "src/giveaway-consumer.ts"]
     mem_limit: 512m
     depends_on:
       - redis

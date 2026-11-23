@@ -1,0 +1,186 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import * as api from '@/lib/api';
+import { BusinessTypeProvider } from '@/context/BusinessTypeContext';
+import SegmentActivity from '@/app/(dashboard)/segment-activity/page';
+
+vi.mock('@/lib/api');
+
+const nav = vi.hoisted(() => ({ push: vi.fn<(href: string) => void>() }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: nav.push, replace: nav.push, back: () => {}, prefetch: () => {}, refresh: () => {} }),
+  useParams: () => ({}),
+  usePathname: () => '/segment-activity',
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock('next/link', () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>,
+}));
+
+type ActRes = Awaited<ReturnType<typeof api.getSegmentActivity>>;
+type ChRes = Awaited<ReturnType<typeof api.getSegmentChanges>>;
+
+const activity = {
+  liveToday: [
+    { segment_label: 'ON_TRIP', total_count: 1200, revenue: 50000 },
+    { segment_label: 'ODD_SEG', total_count: undefined, revenue: undefined },
+  ],
+  logs: [
+    { log_date: '2026-10-18T00:00:00Z', segment_label: 'ON_TRIP', total_count: 1200, entered: 30, exited: 5, converted: 2, emails_sent: 10, whatsapp_sent: 4, push_sent: 1, total_reached: 15, journey_active: 3, revenue: 999 },
+    { log_date: '2026-10-18T00:00:00Z', segment_label: 'PROSPECT', entered: 0, exited: 0, converted: 0 },
+    { log_date: '2026-10-17T00:00:00Z', segment_label: 'CANCELLED', entered: 1, exited: 2, converted: 0, total_reached: 5 },
+  ],
+};
+const changes = { before: { date: '2026-10-17' }, after: { date: '2026-10-18' }, changes: [
+  { segment: 'ON_TRIP', before: 100, after: 120, change: 20 },
+  { segment: 'PROSPECT', before: 50, after: 40, change: -10 },
+  { segment: 'NEW_ONE', before: 5, after: 5, change: 0 },
+] };
+
+beforeEach(() => {
+  for (const fn of Object.values(api)) {
+    if (vi.isMockFunction(fn)) fn.mockResolvedValue({});
+  }
+  localStorage.clear();
+  nav.push.mockReset();
+  vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no network'))));
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+const bodyText = (): string => document.body.textContent ?? '';
+const renderPage = () => render(<BusinessTypeProvider><SegmentActivity /></BusinessTypeProvider>);
+
+describe('Segment activity page', () => {
+  it('renders KPIs, live counts, changes and the daily log', async () => {
+    vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
+    vi.mocked(api.getSegmentChanges).mockResolvedValue(changes as unknown as ChRes);
+    renderPage();
+    await screen.findByText('Daily log');
+    expect(screen.getAllByText((1200).toLocaleString()).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('AED 50,000').length).toBeGreaterThan(0);
+    expect(screen.getByText('ODD_SEG')).toBeTruthy();
+    expect(screen.getByText('+30')).toBeTruthy();
+    expect(screen.getByText('-5')).toBeTruthy();
+    expect(screen.getByText('18 Oct 2026')).toBeTruthy();
+    expect(screen.getByText('17 Oct 2026')).toBeTruthy();
+    await screen.findByText('Segment changes');
+    expect(screen.getByText('2026-10-17 → 2026-10-18')).toBeTruthy();
+    expect(screen.getByText('+20')).toBeTruthy();
+    expect(screen.getByText('-10')).toBeTruthy();
+    expect(screen.getByText('NEW_ONE')).toBeTruthy();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+    expect(api.getSegmentActivity).toHaveBeenCalledWith({ days: 2, businessType: 'B2C' });
+  });
+
+  it('loading state hides KPI cards', () => {
+    vi.mocked(api.getSegmentActivity).mockReturnValue(new Promise(() => {}));
+    renderPage();
+    expect(screen.queryByText('Total Customers')).toBeNull();
+    expect(screen.queryByText('Daily log')).toBeNull();
+  });
+
+  it('empty data shows the empty log message and zero KPIs', async () => {
+    renderPage();
+    await screen.findByText(/No daily logs yet/);
+    expect(screen.getByText('AED 0')).toBeTruthy();
+    expect(screen.queryByText('Segment changes')).toBeNull();
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('API errors do not crash', async () => {
+    vi.mocked(api.getSegmentActivity).mockRejectedValue(new Error('HTTP 500'));
+    vi.mocked(api.getSegmentChanges).mockRejectedValue(new Error('HTTP 500'));
+    renderPage();
+    await screen.findByText(/No daily logs yet/);
+    expect(bodyText()).not.toMatch(/NaN|undefined/);
+  });
+
+  it('days and segment filters refetch with right params', async () => {
+    renderPage();
+    await screen.findByText('Daily log');
+    const [daysSel, segSel] = screen.getAllByRole('combobox');
+    fireEvent.change(daysSel, { target: { value: '30' } });
+    await waitFor(() => expect(api.getSegmentActivity).toHaveBeenLastCalledWith({ days: 30, businessType: 'B2C' }));
+    fireEvent.change(segSel, { target: { value: 'CANCELLED' } });
+    await waitFor(() => expect(api.getSegmentActivity).toHaveBeenLastCalledWith({ days: 30, businessType: 'B2C', segment: 'CANCELLED' }));
+  });
+
+  it('Download CSV calls downloadSegmentActivity with current filters (single button, no duplicate Export)', async () => {
+    renderPage();
+    await screen.findByText('Daily log');
+    fireEvent.click(screen.getByText('Download CSV'));
+    expect(api.downloadSegmentActivity).toHaveBeenCalledWith({ days: 2, segment: '', businessType: 'B2C' });
+    expect(screen.queryByText('Export')).toBeNull();
+  });
+
+  it('Snapshot Now snapshots, reloads and refetches changes', async () => {
+    renderPage();
+    await screen.findByText('Daily log');
+    fireEvent.click(screen.getByText('Snapshot now'));
+    await waitFor(() => expect(api.snapshotDailySegments).toHaveBeenCalled());
+    await waitFor(() => expect(api.getSegmentActivity).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.getSegmentChanges).toHaveBeenCalledTimes(2));
+  });
+
+  it('Snapshot failure does not crash', async () => {
+    vi.mocked(api.snapshotDailySegments).mockRejectedValue(new Error('x'));
+    renderPage();
+    await screen.findByText('Daily log');
+    fireEvent.click(screen.getByText('Snapshot now'));
+    await waitFor(() => expect(api.snapshotDailySegments).toHaveBeenCalled());
+    expect(api.getSegmentActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('log Refresh replaces only the logs', async () => {
+    vi.mocked(api.getSegmentActivity).mockResolvedValueOnce(activity as unknown as ActRes)
+      .mockResolvedValueOnce({ logs: [] } as unknown as ActRes);
+    renderPage();
+    await screen.findByText('+30');
+    fireEvent.click(screen.getByText('Refresh'));
+    await screen.findByText(/No daily logs yet/);
+    expect(screen.getByText('ODD_SEG')).toBeTruthy();
+    // Refresh must bypass the 30-minute server cache
+    expect(api.getSegmentActivity).toHaveBeenLastCalledWith(expect.objectContaining({ fresh: 1 }));
+  });
+
+  it('clicking a live segment opens its contacts page instead of firing a hidden query', async () => {
+    vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
+    renderPage();
+    fireEvent.click(await screen.findByText('ODD_SEG'));
+    expect(nav.push).toHaveBeenCalledWith('/segmentation/odd-seg');
+    expect(api.getSegmentCustomers).not.toHaveBeenCalled();
+    expect(api.getUnifiedContact).not.toHaveBeenCalled();
+  });
+
+  it('clicking a daily-log row opens that segment too', async () => {
+    vi.mocked(api.getSegmentActivity).mockResolvedValue(activity as unknown as ActRes);
+    renderPage();
+    await screen.findByText('+30');
+    fireEvent.click(screen.getByText('+30'));
+    expect(nav.push).toHaveBeenCalledWith('/segmentation/on-trip');
+  });
+
+  it('the segment filter lists every shared status, including the enquiry ones', async () => {
+    renderPage();
+    const sel = await screen.findByLabelText('Segment');
+    const labels = Array.from(sel.querySelectorAll('option')).map(o => o.textContent);
+    expect(labels).toContain('Active Enquiry');
+    expect(labels).toContain('Past Enquiry');
+  });
+
+  // BUG: segment-activity/page.tsx:111 fmtAED calls (n || 0).toLocaleString(...) directly;
+  // when the API returns revenue as a numeric string (Postgres numeric), String#toLocaleString
+  // ignores the options, so "AED 12345.6" is shown instead of "AED 12,346".
+  it('string revenue is formatted with grouping and no decimals', async () => {
+    vi.mocked(api.getSegmentActivity).mockResolvedValue({
+      liveToday: [], logs: [{ log_date: '2026-10-18', segment_label: 'ON_TRIP', entered: 0, exited: 0, converted: 0, revenue: '12345.6' }],
+    } as unknown as ActRes);
+    renderPage();
+    await screen.findByText('Daily log');
+    await screen.findByText('AED 12,346', {}, { timeout: 300 });
+  });
+
+});

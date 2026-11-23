@@ -1,0 +1,65 @@
+/* Page-local styles for Campaigns (/campaigns and /campaigns/[id]). Uses tokens from app/globals.css. */
+
+.page { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 1440px; }
+.row { cursor: pointer; }
+.row:hover td { background: var(--sunken); }
+.row:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.name { font-weight: 600; color: var(--ink); }
+.channel { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; text-transform: capitalize; color: var(--ink2); }
+.muted { color: var(--ink3); }
+.empty { text-align: center; padding: 28px 12px; color: var(--ink3); }
+.count { font-size: 13px; font-weight: 600; color: var(--ink3); font-variant-numeric: tabular-nums; }
+
+/* KPI cards */
+.kpiGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.kpiSm { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); }
+.kpiValue { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.2; color: var(--ink); }
+.kpiSm .kpiValue { font-size: 20px; }
+.kpiSub { font-size: 12px; color: var(--ink3); font-variant-numeric: tabular-nums; }
+.ok { color: var(--ok); }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+.info { color: var(--info); }
+
+/* Node list */
+.nodes { display: flex; flex-direction: column; gap: 10px; }
+.node { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.nodeClickable { cursor: pointer; }
+.nodeClickable:hover { border-color: var(--gold); }
+.nodeHead { display: flex; align-items: center; gap: 10px; padding: 12px 14px; flex-wrap: wrap; }
+.step { width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--sunken); color: var(--ink2); }
+.nodeIcon { color: var(--ink2); flex-shrink: 0; }
+.nodeMain { flex: 1 1 160px; min-width: 0; }
+.nodeTitle { font-weight: 600; font-size: 14px; color: var(--ink); }
+.nodeSub { font-size: 12px; color: var(--ink3); margin-top: 2px; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.nodeChips { display: flex; gap: 6px; flex-wrap: wrap; }
+.nodeId { font-family: var(--font-mono); font-size: 11px; color: var(--ink3); background: var(--sunken); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
+.chev { color: var(--ink3); flex-shrink: 0; }
+.metric { display: inline-flex; gap: 4px; align-items: baseline; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--sunken); color: var(--ink3); }
+.metric b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.nodeBody { padding: 0 14px 16px; border-top: 1px solid var(--line); }
+.tiles4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.tiles3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.funnel { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.funnelHead { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink3); }
+.funnelHead strong { color: var(--ink); }
+.track { height: 8px; background: var(--sunken); border-radius: 999px; overflow: hidden; }
+.bar { height: 100%; border-radius: 999px; background: var(--gold); transition: width .6s ease; }
+.barAlt { background: var(--info); }
+.gtm { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.gtmHead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.gtmGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 8px; }
+.gtmCard { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg); display: flex; flex-direction: column; gap: 4px; }
+.gtmIdle { opacity: .5; }
+.gtmName { font-family: var(--font-mono); font-size: 11px; color: var(--ink3); word-break: break-all; }
+.spin { animation: campaigns-spin 1s linear infinite; }
+@keyframes campaigns-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 640px) {
+  .kpiGrid, .tiles4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tiles3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpiValue { font-size: 22px; }
+  .nodeId { display: none; }
+}
