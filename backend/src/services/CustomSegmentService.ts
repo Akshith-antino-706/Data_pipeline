@@ -66,6 +66,7 @@ export default class CustomSegmentService {
         }
         if (cond.giveawayType) { params.push(cond.giveawayType); filters.push(`gv.type = $${idx++}`); }
         if (cond.giveawayName) { params.push(cond.giveawayName); filters.push(`gv.giveaway = $${idx++}`); }
+        if (cond.giveawayId) { params.push(cond.giveawayId); filters.push(`gv.giveaway_id = $${idx++}`); }
         const gvDays = parseInt(cond.windowDays as string);
         if (gvDays > 0) { params.push(gvDays); filters.push(`gv.created_at >= NOW() - ($${idx++} || ' days')::interval`); }
 
@@ -84,7 +85,7 @@ export default class CustomSegmentService {
           } else {
             params.push(parseInt(cv as string)); sub.push(`${countSql} >= $${idx++}`);
           }
-        } else if (cond.giveawayType || cond.giveawayName || gvDays > 0) {
+        } else if (cond.giveawayType || cond.giveawayName || cond.giveawayId || gvDays > 0) {
           sub.push(`EXISTS (SELECT 1 FROM giveaway_affiliate_events gv WHERE ${filters.join(' AND ')})`);
         }
       } else {

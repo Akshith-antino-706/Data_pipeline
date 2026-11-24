@@ -147,6 +147,15 @@ class GiveawayJourneyService {
           continue;
         }
 
+        // SAME-GIVEAWAY GUARD: a segment built from one giveaway's participants must only hear
+        // about THAT giveaway — otherwise extending giveaway B mails giveaway A's people. A segment
+        // with no giveaway picked keeps the old behaviour (any giveaway's edit reaches it).
+        const segGiveaways = await this._segmentGiveawayIds(j.custom_segment_id);
+        if (segGiveaways.length && !segGiveaways.includes(String(giveawayId ?? ''))) {
+          console.log(`[GiveawayLifecycle ${j.journey_id}] skipped — event is for giveaway ${giveawayId}, segment is for [${segGiveaways.join(',')}]`);
+          continue;
+        }
+
         const triggerNode = (j.nodes || []).find((n: JourneyNode) => n.type === 'trigger');
         const firstStep = triggerNode ? GtmJourneyService._nextStep(j.nodes || [], j.edges || [], triggerNode.id) : null;
         const firstNodeId = firstStep?.nodeId || (j.nodes || []).find((n: JourneyNode) => n.type === 'action')?.id || null;
@@ -165,6 +174,17 @@ class GiveawayJourneyService {
       }
     }
     return total;
+  }
+
+  /** Giveaway ids picked in the custom segment's included giveaway rules ([] = none picked). */
+  static async _segmentGiveawayIds(customSegmentId: number | string | null | undefined): Promise<string[]> {
+    if (!customSegmentId) return [];
+    const { rows: [seg] } = await db.query<{ conditions: { type?: string; giveawayId?: string; exclude?: boolean }[] | null }>(
+      'SELECT conditions FROM custom_segments WHERE id = $1', [customSegmentId]
+    );
+    return (Array.isArray(seg?.conditions) ? seg.conditions : [])
+      .filter(c => (c.type === 'giveaway' || c.type === 'giveaway_affiliate') && !c.exclude && c.giveawayId)
+      .map(c => String(c.giveawayId));
   }
 }
 

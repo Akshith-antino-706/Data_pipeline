@@ -13,6 +13,9 @@ export interface SegmentCondition {
   gtmEvent?: string;
   giveawayType?: string;
   giveawayName?: string;
+  // One giveaway by its producer id (giveaway_affiliate_events.giveaway_id) — picked from a list,
+  // so it survives title edits and duplicate titles that the exact-name match cannot.
+  giveawayId?: string;
   // Feed filter for giveaway/affiliate conditions: 'any' (or unset) counts both feeds.
   giveawaySource?: 'any' | 'GIVEAWAY' | 'AFFILIATE' | string;
   windowDays?: string | number;
