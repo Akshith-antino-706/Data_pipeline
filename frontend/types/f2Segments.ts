@@ -15,6 +15,10 @@ export interface SegmentCondition {
   gtmEvent: string;
   giveawayType: string;
   giveawayName: string;
+  /** One giveaway by id, picked from the giveaways list (matches giveaway_affiliate_events.giveaway_id). */
+  giveawayId?: string;
+  /** Display only — the picked giveaway's title, so the summary reads without a lookup. */
+  giveawayTitle?: string;
   /** Giveaway/affiliate rules only; unset on legacy rows means 'any'. */
   giveawaySource?: GiveawaySource;
   exclude: boolean;

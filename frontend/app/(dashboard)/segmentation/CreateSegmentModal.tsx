@@ -560,7 +560,7 @@ function isConditionValid(cond: SegmentCondition) {
   if (cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') {
     const cv = cond.countValue;
     const hasCount = Array.isArray(cv) ? cv.some(v => v !== '' && v != null) : (cv !== '' && cv != null);
-    return !!cond.giveawayType || !!cond.giveawayName || hasCount;  // valid with a type/name OR a count
+    return !!cond.giveawayType || !!cond.giveawayName || !!cond.giveawayId || hasCount;  // valid with a type/name/giveaway OR a count
   }
   if (cond.type === 'contact') return isFieldValid(cond);
   return false;
@@ -580,6 +580,15 @@ const SOURCE_OPTIONS: { k: GiveawaySource; l: string }[] = [
 const SOURCE_WORDS: Record<GiveawaySource, string> = { any: 'giveaway or affiliate', GIVEAWAY: 'giveaway', AFFILIATE: 'affiliate' };
 const typeWords = (t: string) => t.replace(/_/g, ' ');
 
+// Giveaway picker source. Public, CORS-open; status=active lists only running giveaways
+// (invite-only ones are not listed by it). Its `id` is the giveaway_id stored on every event.
+const GIVEAWAYS_API = process.env.NEXT_PUBLIC_GIVEAWAYS_API_URL || 'https://data-projects-flax.vercel.app/api/giveaways?status=active';
+interface GiveawayOption { id: string; title: string; status: string; endAt: string | null; participants: number | null }
+const giveawayLabel = (g: GiveawayOption) => {
+  const ends = g.endAt ? ` · ends ${new Date(g.endAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '';
+  return `${g.title} · ${g.status}${ends}${g.participants != null ? ` · ${g.participants} joined` : ''}`;
+};
+
 const emptyCondition = (): SegmentCondition => ({
   type: '',
   field: '',
@@ -588,6 +597,8 @@ const emptyCondition = (): SegmentCondition => ({
   gtmEvent: '',
   giveawayType: '',
   giveawayName: '',
+  giveawayId: '',
+  giveawayTitle: '',
   giveawaySource: 'any',
   exclude: false,
   joinOp: 'AND',
@@ -619,7 +630,8 @@ function describeCondition(cond: SegmentCondition): string {
   if (cond.type === 'giveaway' || cond.type === 'giveaway_affiliate') {
     const feed = SOURCE_WORDS[cond.giveawaySource || 'any'];
     const kind = cond.giveawayType ? `${/^[aeiou]/.test(feed) ? 'an' : 'a'} ${feed} "${typeWords(cond.giveawayType)}" event` : `any ${feed} activity`;
-    const nm = cond.giveawayName ? ` for "${cond.giveawayName}"` : '';
+    const nm = cond.giveawayId ? ` for "${cond.giveawayTitle || cond.giveawayId}"`
+      : cond.giveawayName ? ` for "${cond.giveawayName}"` : '';
     const cnt = countWords(cond);
     return `had ${kind}${nm}${cnt ? ` ${cnt}` : ''}${win}`;
   }
@@ -693,13 +705,15 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
       return segment!.conditions!.map(c => ({
         // Legacy segments stored type:'giveaway'; show them in the merged editor.
         type: (c.type === 'giveaway' ? 'giveaway_affiliate' : c.type)
-              || (c.giveawayType || c.giveawayName ? 'giveaway_affiliate' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
+              || (c.giveawayType || c.giveawayName || c.giveawayId ? 'giveaway_affiliate' : c.gtmEvent ? 'gtm' : c.field ? 'contact' : ''),
         field: c.field || '',
         operator: c.operator || '',
         value: c.value ?? null,
         gtmEvent: c.gtmEvent || '',
         giveawayType: c.giveawayType || '',
         giveawayName: c.giveawayName || '',
+        giveawayId: c.giveawayId || '',
+        giveawayTitle: c.giveawayTitle || '',
         giveawaySource: c.giveawaySource || 'any',
         countOp: c.countOp || 'gte',
         countValue: c.countValue ?? '',
@@ -722,6 +736,16 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
       const names = (res?.top_events || []).map(e => e.event_name).filter(Boolean);
       setGtmEventNames(names);
     }).catch(() => {});
+  }, []);
+
+  // Active giveaways for the picker, ending soonest first.
+  const [giveaways, setGiveaways] = useState<GiveawayOption[] | null>(null);
+  useEffect(() => {
+    fetch(GIVEAWAYS_API).then(r => r.json() as Promise<{ giveaways?: GiveawayOption[] }>).then(d => {
+      const list = (d.giveaways || []).filter(g => g?.id && g?.title);
+      list.sort((a, b) => String(a.endAt || '').localeCompare(String(b.endAt || '')));
+      setGiveaways(list);
+    }).catch(() => setGiveaways([]));
   }, []);
 
   useEffect(() => {
@@ -972,7 +996,7 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                           <div className={b.seg} role="group" aria-label="Feed">
                             {SOURCE_OPTIONS.map(o => (
                               <button key={o.k} type="button" className={b.segBtn} aria-pressed={(cond.giveawaySource || 'any') === o.k}
-                                onClick={() => setCond({ giveawaySource: o.k, giveawayType: '' })}>{o.l}</button>
+                                onClick={() => setCond({ giveawaySource: o.k, giveawayType: '', ...(o.k === 'AFFILIATE' ? { giveawayId: '', giveawayTitle: '' } : {}) })}>{o.l}</button>
                             ))}
                           </div>
                           {/* Event type — the list follows the selected feed */}
@@ -980,8 +1004,25 @@ export default function CreateSegmentModal({ onClose, onCreated, segment = null,
                             <option value="">— Any type (all {(cond.giveawaySource || 'any') === 'any' ? '' : `${SOURCE_WORDS[cond.giveawaySource || 'any']} `}activity) —</option>
                             {(TYPES_BY_SOURCE[cond.giveawaySource || 'any'] || TYPES_BY_SOURCE.any).map(t => <option key={t} value={t}>{typeWords(t)}</option>)}
                           </select>
-                          <input type="text" aria-label="Giveaway name" placeholder="Giveaway name (optional, exact match)"
-                            value={cond.giveawayName || ''} onChange={e => setCond({ giveawayName: e.target.value })} style={inputStyle} />
+                          {/* Giveaway picker — matches by id, so only that giveaway's people are in. */}
+                          {(cond.giveawaySource || 'any') !== 'AFFILIATE' && (
+                            <select aria-label="Giveaway" value={cond.giveawayId || ''} style={selectStyle}
+                              onChange={e => {
+                                const g = (giveaways || []).find(x => x.id === e.target.value);
+                                setCond({ giveawayId: e.target.value, giveawayTitle: g?.title || '' });
+                              }}>
+                              <option value="">{giveaways === null ? 'Loading giveaways…' : '— Any giveaway —'}</option>
+                              {cond.giveawayId && !(giveaways || []).some(g => g.id === cond.giveawayId) && (
+                                <option value={cond.giveawayId}>{cond.giveawayTitle || cond.giveawayId} (saved, not in list)</option>
+                              )}
+                              {(giveaways || []).map(g => <option key={g.id} value={g.id}>{giveawayLabel(g)}</option>)}
+                            </select>
+                          )}
+                          {/* Legacy exact-name rule: shown only on segments that already use it, so it is never lost silently. */}
+                          {cond.giveawayName && (
+                            <input type="text" aria-label="Giveaway name" placeholder="Giveaway name (exact match)"
+                              value={cond.giveawayName} onChange={e => setCond({ giveawayName: e.target.value })} style={inputStyle} />
+                          )}
                           {countControls(cond, setCond, 'e.g. 3')}
                         </>
                       )}
