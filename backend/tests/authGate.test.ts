@@ -42,6 +42,24 @@ describe('apiAuthGate (S-B1)', () => {
     }
   });
 
+  it('opens only the read-only Performance routes to the access-token view', () => {
+    for (const [method, path] of [
+      ['GET', '/v3/overview/insights'], ['GET', '/v3/journeys/analytics/table'], ['GET', '/v3/journeys/analytics/523/nodes'],
+      ['POST', '/v2/content/templates/362/preview'], ['GET', '/v3/chathead/templates/1499/preview'],
+    ]) {
+      expect(run(apiAuthGate, { method, path }).next, `${method} ${path}`).toHaveBeenCalled();
+    }
+    // Refresh, re-run checks (Claude), CSV, the stored-email render and everything else stay behind the login.
+    for (const [method, path] of [
+      ['POST', '/v3/journeys/analytics/523/refresh'], ['POST', '/v3/journeys/analytics/regenerate-qa'],
+      ['GET', '/v3/journeys/analytics/table.csv'], ['GET', '/v3/journeys/523/nodes/node_1/preview-dynamic'],
+      ['GET', '/v3/overview/status'], ['GET', '/v3/journeys/523'], ['PUT', '/v2/content/templates/362'],
+      ['GET', '/v3/test-sends/qa-report/362'],
+    ]) {
+      expect(run(apiAuthGate, { method, path }).res.statusCode, `${method} ${path}`).toBe(401);
+    }
+  });
+
   it('does not treat a public prefix as a wildcard', () => {
     const { res } = run(apiAuthGate, { method: 'POST', path: '/v3/gtm/events/delete-all' });
     expect(res.statusCode).toBe(401);

@@ -95,6 +95,31 @@ describe('middleware: leads access', () => {
   });
 });
 
+describe('middleware: Performance access (same token as Leads)', () => {
+  it('public /journeys/analytics without the cookie goes to the token page, with next preserved', async () => {
+    const url = new URL(location(await middleware(req('/journeys/analytics?type=fixed'))) ?? '');
+    expect(url.pathname).toBe('/leads-access');
+    expect(url.searchParams.get('next')).toBe('/journeys/analytics?type=fixed');
+  });
+
+  it('the leads access cookie opens it; a bad cookie does not', async () => {
+    const good = await createLeadsAccessCookie(DEFAULT_TOKEN, Date.now() + 60_000);
+    expect(isNext(await middleware(req('/journeys/analytics', { [LEADS_ACCESS_COOKIE]: good })))).toBe(true);
+    expect(new URL(location(await middleware(req('/journeys/analytics', { [LEADS_ACCESS_COOKIE]: 'garbage' }))) ?? '').pathname).toBe('/leads-access');
+  });
+
+  it('opens only the Performance page: other journeys pages still need a login, even with the cookie', async () => {
+    const good = await createLeadsAccessCookie(DEFAULT_TOKEN, Date.now() + 60_000);
+    for (const p of ['/journeys', '/journeys/523', '/journeys/analyticsx', '/journeys/dashboard']) {
+      expect(location(await middleware(req(p, { [LEADS_ACCESS_COOKIE]: good }))), p).toBe(`${ORIGIN}/login?next=${encodeURIComponent(p)}`);
+    }
+  });
+
+  it('a signed-in user on the token page is sent on to Performance when that was asked for', async () => {
+    expect(location(await middleware(req('/leads-access?next=/journeys/analytics', { 'rayna-auth': '1' })))).toBe(`${ORIGIN}/journeys/analytics`);
+  });
+});
+
 describe('middleware config', () => {
   it('matcher excludes static assets', () => {
     const re = new RegExp(`^${config.matcher[0]}$`);

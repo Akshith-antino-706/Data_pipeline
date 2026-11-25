@@ -8,7 +8,7 @@ import ChatHeadV1Service from './ChatHeadV1Service.js';
 import GupshupService from './GupshupService.js';
 import { SendTrackService } from './SendTrackService.js';
 import { injectClickTracking, injectOpenPixel } from '../utils/emailTracking.js';
-import { renderTemplate, renderSubject, buildLiquidVars, buildWaVars, withWaUtm, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
+import { renderTemplate, renderSubject, buildLiquidVars, canonicalKey, buildWaVars, withWaUtm, RCS_DATA_KEYS, missingItemFields, isItemBased } from '../utils/placeholderResolver.js';
 import SkipLogService from './SkipLogService.js';
 import LiquidRenderer from './LiquidRenderer.js';
 import { isEmailAllowed } from '../utils/emailAllowlist.js';
@@ -598,16 +598,26 @@ class GtmJourneyService {
     // Liquid templates (contain {% … %}) render via LiquidRenderer with the full items[]
     // array so {% for item in items %} shows every cart product; plain {{KEY}}-only
     // templates keep the regex resolver (items[0] scalars only).
-    const liquidVars = { ...buildLiquidVars(ctx), ...(gvVars || {}), ...(gvNested || {}) };
+    const baseVars = buildLiquidVars(ctx) as Record<string, unknown>;
+    const liquidVars = { ...baseVars, ...(gvVars || {}), ...(gvNested || {}) };
+    // renderTemplate blanks every key it cannot resolve, so a giveaway key like {{ giveaway }}
+    // was already '' by the time fillGv ran ("More time to win -  has been extended"). Fill the
+    // giveaway keys the generic resolver has no value for FIRST; keys it does resolve keep its
+    // value, exactly as before.
+    const preGv = (s: string) => gvVars ? String(s).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k: string) => {
+      if (!(k in gvVars)) return m;
+      const known = baseVars[canonicalKey(k)];
+      return known === undefined || known === null || known === '' ? String(gvVars[k as keyof typeof gvVars] ?? '') : m;
+    }) : s;
     let html = /\{%/.test(tplBody)
       ? await LiquidRenderer.render(tplBody, liquidVars)
-      : fillGv(renderTemplate(tplBody, ctx));
+      : fillGv(renderTemplate(preGv(tplBody), ctx));
     // A subject carrying a dotted path or a Liquid tag can only be resolved by Liquid; every
     // other subject keeps the regex path exactly as before.
     const _subjTpl = tplSubject || 'Welcome to Rayna Tours 🌴';
     let subject = /\{%/.test(_subjTpl) || /\{\{[^}]*\./.test(_subjTpl)
       ? await LiquidRenderer.render(_subjTpl, liquidVars)
-      : fillGv(renderSubject(_subjTpl, ctx));
+      : fillGv(renderSubject(preGv(_subjTpl), ctx));
 
     // Per-recipient review link (post-trip templates carry the %%REVIEW_URL%% sentinel).
     // placeholderResolver leaves it untouched, so swap it here for a feedback link

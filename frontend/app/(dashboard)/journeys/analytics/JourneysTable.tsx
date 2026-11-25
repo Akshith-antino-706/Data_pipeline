@@ -28,6 +28,8 @@ import type { JourneyAnalyticsSort, JourneyAnalyticsTableOptions } from '@/lib/a
 import { Button, Card, Chip, Skeleton } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import EmailQaReportModal from '../EmailQaReportModal';
+import StepEmailModal from './StepEmailModal';
+import type { StepPreview } from './StepEmailModal';
 import styles from './analytics.module.css';
 import { nodeLabel } from '@/lib/nodeLabel';
 
@@ -41,6 +43,8 @@ interface AnalyticsRow {
   node_label?: string;
   node_type?: string;
   template_id?: string | number | null;
+  wa_template_id?: string | number | null;
+  step_channel?: string | null;
   bot_window_sec?: number;
   entries?: number; sent: number; delivered: number; failed?: number;
   opened: number; human_opened?: number | null;
@@ -53,6 +57,12 @@ interface AnalyticsTableResponse {
 }
 interface ExpandedState { loading: boolean; nodes?: AnalyticsRow[]; error?: string }
 interface QaModalState { templateId: string | number | null | undefined; templateName: string | undefined }
+/** What the eye button previews for a step: its email, its WhatsApp template, or nothing. */
+function stepPreviewOf(journeyId: string | number, n: AnalyticsRow): StepPreview | null {
+  if (n.wa_template_id) return { kind: 'whatsapp', waTemplateId: n.wa_template_id, label: n.node_label };
+  if (n.template_id && n.node_id) return { kind: 'email', journeyId, nodeId: n.node_id, templateId: n.template_id, label: n.node_label };
+  return null;
+}
 const TYPE_FILTERS = ['all', 'fixed', 'continuous'] as const;
 type TypeFilter = typeof TYPE_FILTERS[number];
 const SORT_KEYS: readonly JourneyAnalyticsSort[] = ['entries', 'sent', 'delivered', 'opened', 'clicked', 'unsubscribed', 'booked', 'openRate', 'clickRate', 'name'];
@@ -233,7 +243,11 @@ function ToolsMenu({ regenLoading, onRegen, onReload }: { regenLoading: boolean;
 const STEP_COLS = 10;
 const MAIN_COLS = 7;
 
-export default function JourneysTable() {
+/**
+ * readOnly: the access-token view (not signed in) — numbers and message previews only; no refresh,
+ * re-run checks, CSV or links into the signed-in app (those APIs need a login).
+ */
+export default function JourneysTable({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [rows, setRows] = useState<AnalyticsRow[]>([]);
   const [total, setTotal] = useState(0);
   const [meta, setMeta] = useState<AnalyticsMeta | null>(null);
@@ -252,6 +266,7 @@ export default function JourneysTable() {
   const [expanded, setExpanded] = useState<Record<string, ExpandedState>>({});
   const [refreshingId, setRefreshingId] = useState<string | number | null>(null);
   const [qaModal, setQaModal] = useState<QaModalState | null>(null);
+  const [preview, setPreview] = useState<StepPreview | null>(null);
   const [regenLoading, setRegenLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -385,21 +400,23 @@ export default function JourneysTable() {
             <thead>
               <tr>
                 <th className={styles.left}>Step</th>
-                <th title="Automatic check of the email for spam risk and broken links">Email check</th>
+                <th title="See the email or WhatsApp message this step sends">Message</th>
                 <th>Sent</th><th>Delivered</th><th>Opened</th><th>Opened %</th><th>Clicked</th>
                 <th title="Of the people who opened, how many clicked">Clicked %</th>
                 <th title="Clicked and then did something on the website">Reached website</th><th>Unsubscribed</th>
               </tr>
             </thead>
             <tbody>
-              {exp.nodes.map(n => (
+              {exp.nodes.map(n => {
+                const pv = stepPreviewOf(r.journey_id, n);
+                const what = pv?.kind === 'whatsapp' ? 'WhatsApp message' : 'email';
+                return (
                 <tr key={n.node_id}>
                   <td className={styles.left} title={n.node_label}>{n.node_label || nodeLabel(n.node_id)}</td>
                   <td>
-                    {n.template_id ? (
-                      <button type="button" className={styles.iconBtn}
-                        onClick={() => setQaModal({ templateId: n.template_id, templateName: n.node_label })}
-                        title="See the email check for this step" aria-label={`See the email check for ${n.node_label || 'this step'}`}>
+                    {pv ? (
+                      <button type="button" className={styles.iconBtn} onClick={() => setPreview(pv)}
+                        title={`See the ${what} this step sends`} aria-label={`See the ${what} for ${n.node_label || 'this step'}`}>
                         <Eye size={14} />
                       </button>
                     ) : <span className={styles.muted}>—</span>}
@@ -413,12 +430,13 @@ export default function JourneysTable() {
                   <td>{fmt(n.landed)}</td>
                   <td>{fmt(n.unsubscribed)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
-      <Link href={`/journeys/${r.journey_id}`} className={styles.openLink}>Open journey <ExternalLink size={12} /></Link>
+      {!readOnly && <Link href={`/journeys/${r.journey_id}`} className={styles.openLink}>Open journey <ExternalLink size={12} /></Link>}
     </div>
   );
 
@@ -477,8 +495,10 @@ export default function JourneysTable() {
                     <td>{fmtRate(clickRate(r))}</td>
                     <td>{fmt(r.unsubscribed)}</td>
                     <td className={styles.menuCol}>
-                      <RowMenu row={r} expanded={!!exp} refreshing={refreshingId === r.journey_id}
-                        onToggle={() => toggle(r.journey_id)} onRefresh={() => refreshOne(r.journey_id)} />
+                      {!readOnly && (
+                        <RowMenu row={r} expanded={!!exp} refreshing={refreshingId === r.journey_id}
+                          onToggle={() => toggle(r.journey_id)} onRefresh={() => refreshOne(r.journey_id)} />
+                      )}
                     </td>
                   </tr>
                   {exp && (
@@ -504,12 +524,14 @@ export default function JourneysTable() {
             All time · numbers updated {timeAgo(meta?.last_run_at)}
           </span>
         </div>
-        <div className={styles.tableActions}>
-          <Button size="sm" onClick={exportCsv} disabled={exporting} title="Download every journey that matches your filters">
-            {exporting ? <Loader2 size={14} className={styles.spin} /> : <Download size={14} />} Download CSV
-          </Button>
-          <ToolsMenu regenLoading={regenLoading} onRegen={regenReports} onReload={load} />
-        </div>
+        {!readOnly && (
+          <div className={styles.tableActions}>
+            <Button size="sm" onClick={exportCsv} disabled={exporting} title="Download every journey that matches your filters">
+              {exporting ? <Loader2 size={14} className={styles.spin} /> : <Download size={14} />} Download CSV
+            </Button>
+            <ToolsMenu regenLoading={regenLoading} onRegen={regenReports} onReload={load} />
+          </div>
+        )}
       </div>
 
       <div className={styles.toolbar}>
@@ -574,6 +596,12 @@ export default function JourneysTable() {
         </div>
       </div>
 
+      {preview && (
+        <StepEmailModal step={preview} readOnly={readOnly} onClose={() => setPreview(null)}
+          onShowCheck={preview.kind === 'email'
+            ? () => { setQaModal({ templateId: preview.templateId, templateName: preview.label }); setPreview(null); }
+            : undefined} />
+      )}
       {qaModal && (
         <EmailQaReportModal templateId={qaModal.templateId} templateName={qaModal.templateName} onClose={() => setQaModal(null)} />
       )}

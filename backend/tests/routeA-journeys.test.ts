@@ -197,16 +197,25 @@ describe('GET /analytics/table', () => {
 });
 
 describe('GET /analytics/:id/nodes', () => {
-  it('attaches template ids from the flow to each node row', async () => {
+  it('attaches each node\'s email or WhatsApp template from the flow', async () => {
     m.query.mockImplementation((sql: string) => {
-      if (sql.includes('FROM journey_node_stats')) return Promise.resolve({ rows: [{ node_id: 'n1' }, { node_id: 'n2' }] });
+      if (sql.includes('FROM journey_node_stats')) return Promise.resolve({ rows: [{ node_id: 'n1' }, { node_id: 'n2' }, { node_id: 'n3' }] });
       if (sql.includes('SELECT nodes FROM journey_flows')) {
-        return Promise.resolve({ rows: [{ nodes: [{ id: 'n1', type: 'action', data: { emailTemplateId: '42' } }, { id: 'n2', type: 'wait', data: {} }] }] });
+        return Promise.resolve({ rows: [{ nodes: [
+          { id: 'n1', type: 'action', data: { channel: 'email', emailTemplateId: '42' } },
+          { id: 'n2', type: 'wait', data: {} },
+          // A WhatsApp step's stale templateId is not an email — only its ChatHead template counts.
+          { id: 'n3', type: 'action', data: { channel: 'WhatsApp', templateId: '9', waChannelId: '40', waTemplateId: '1499' } },
+        ] }] });
       }
       return Promise.resolve({ rows: [] });
     });
     const r = await get('/analytics/5/nodes');
-    expect(r.body.data).toEqual([{ node_id: 'n1', template_id: 42 }, { node_id: 'n2', template_id: null }]);
+    expect(r.body.data).toEqual([
+      { node_id: 'n1', template_id: 42, wa_template_id: null, step_channel: 'email' },
+      { node_id: 'n2', template_id: null, wa_template_id: null, step_channel: null },
+      { node_id: 'n3', template_id: null, wa_template_id: 1499, step_channel: 'whatsapp' },
+    ]);
   });
 });
 
