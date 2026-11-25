@@ -15,10 +15,14 @@ vi.mock('next/navigation', () => ({
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a>,
 }));
+// Signed in by default; the access-token (public) view sets signedIn = false.
+const auth = vi.hoisted(() => ({ signedIn: true }));
+vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ isAuthenticated: auth.signedIn }) }));
 
 const fetchStub = vi.fn<() => Promise<Response>>(() => Promise.reject(new Error('network disabled')));
 
 beforeEach(() => {
+  auth.signedIn = true;
   for (const fn of Object.values(api)) {
     if (vi.isMockFunction(fn)) fn.mockResolvedValue({});
   }
@@ -194,17 +198,100 @@ describe('Journey Analytics page', () => {
     expect(tableText()).not.toMatch(ISO_DATE);
   });
 
-  it('opens the email check for a step', async () => {
+  it('the eye opens the email the step sends, and its email check is one click away', async () => {
     mockTable(ROWS);
     vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
       { node_id: 'node_1', node_label: 'Day 1 email', template_id: 7, journey_id: 1, journey_status: 'active', sent: 1, delivered: 1, opened: 0, clicked: 0, landed: 0 },
     ] });
+    vi.mocked(api.previewJourneyNodeEmail).mockResolvedValue({ data: { html: '<p>Sent email</p>', subject: 'Hello there' } });
     vi.mocked(api.getStoredQaReport).mockReturnValue(new Promise(() => {}));
     render(<JourneyAnalyticsPage />);
     await screen.findByText('Welcome Series');
     fireEvent.click(screen.getByText('Welcome Series'));
-    fireEvent.click(await screen.findByRole('button', { name: 'See the email check for Day 1 email' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'See the email for Day 1 email' }));
+    const frame = await screen.findByTitle('Email for Day 1 email');
+    expect(frame.getAttribute('srcdoc')).toBe('<p>Sent email</p>');
+    expect(screen.getByText('Subject: Hello there')).toBeTruthy();
+    expect(api.previewJourneyNodeEmail).toHaveBeenCalledWith(1, 'node_1');
+    expect(api.previewTemplate).not.toHaveBeenCalled();
+    expect(api.getStoredQaReport).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Email check/ }));
     await waitFor(() => expect(api.getStoredQaReport).toHaveBeenCalledWith(7));
+    expect(screen.queryByTitle('Email for Day 1 email')).toBeNull();
+  });
+
+  it('a step without a stored email shows the template render (e.g. a daily offer email)', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'Dubai Packages', template_id: 362, journey_id: 1, journey_status: 'completed', sent: 1, delivered: 0, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    vi.mocked(api.previewJourneyNodeEmail).mockRejectedValue(new Error('Template 362 is not a dynamic Day template (1-7)'));
+    vi.mocked(api.previewTemplate).mockResolvedValue({ data: { html: '<p>Offer email</p>', subject: 'Dubai deals' } });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByText('Welcome Series'));
+    fireEvent.click(await screen.findByRole('button', { name: 'See the email for Dubai Packages' }));
+    const frame = await screen.findByTitle('Email for Dubai Packages');
+    expect(frame.getAttribute('srcdoc')).toBe('<p>Offer email</p>');
+    expect(api.previewTemplate).toHaveBeenCalledWith(362);
+  });
+
+  it('a WhatsApp step opens its WhatsApp template (no email calls, no email check)', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'WA offer', template_id: null, wa_template_id: 1499, step_channel: 'whatsapp', journey_id: 1, journey_status: 'completed', sent: 5, delivered: 4, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    vi.mocked(api.previewWhatsAppTemplate).mockResolvedValue({ success: true, data: { content: '<p>Hi {{name}}, our offer is live</p>' } });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByText('Welcome Series'));
+    fireEvent.click(await screen.findByRole('button', { name: 'See the WhatsApp message for WA offer' }));
+    expect((await screen.findByTestId('wa-preview')).textContent).toContain('our offer is live');
+    expect(screen.getByText('WhatsApp template #1499')).toBeTruthy();
+    expect(api.previewWhatsAppTemplate).toHaveBeenCalledWith(1499);
+    expect(api.previewJourneyNodeEmail).not.toHaveBeenCalled();
+    expect(api.previewTemplate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Email check/ })).toBeNull();
+  });
+
+  it('a WhatsApp template ChatHead cannot preview (e.g. a carousel) says so', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'WA carousel', wa_template_id: 1491, step_channel: 'whatsapp', journey_id: 1, journey_status: 'completed', sent: 1, delivered: 1, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    vi.mocked(api.previewWhatsAppTemplate).mockResolvedValue({ success: true, data: { content: '' } });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByText('Welcome Series'));
+    fireEvent.click(await screen.findByRole('button', { name: 'See the WhatsApp message for WA carousel' }));
+    expect(await screen.findByText(/no preview content \(it may be empty, or a carousel/)).toBeTruthy();
+  });
+
+  it('a step with no email or WhatsApp template has no eye button', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'Wait 1 day', journey_id: 1, journey_status: 'active', sent: 0, delivered: 0, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByText('Welcome Series'));
+    await screen.findByText('Wait 1 day');
+    expect(screen.queryByRole('button', { name: /^See the / })).toBeNull();
+  });
+
+  it('shows an error in the email preview when nothing can be rendered', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'Day 1 email', template_id: 7, journey_id: 1, journey_status: 'active', sent: 1, delivered: 1, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    vi.mocked(api.previewJourneyNodeEmail).mockRejectedValue(new Error('nope'));
+    vi.mocked(api.previewTemplate).mockRejectedValue(new Error('Template not found'));
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByText('Welcome Series'));
+    fireEvent.click(await screen.findByRole('button', { name: 'See the email for Day 1 email' }));
+    expect(await screen.findByText("Couldn't load this email. Template not found")).toBeTruthy();
   });
 
   it('shows step load errors inline', async () => {
@@ -372,5 +459,49 @@ describe('Performance overview', () => {
     fireEvent.click(screen.getByText('Try again'));
     await screen.findByText('1,200');
     expect(screen.queryByText("Couldn't load performance data")).toBeNull();
+  });
+});
+
+describe('Performance: access-token view (not signed in)', () => {
+  beforeEach(() => { auth.signedIn = false; });
+
+  it('shows the numbers but hides refresh, re-run checks, CSV and links into the app', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'Day 1 email', template_id: 7, journey_id: 1, journey_status: 'active', sent: 1, delivered: 1, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    expect(screen.getByAltText('Rayna Tours')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Download CSV/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'More table actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /More actions for/ })).toBeNull();
+    fireEvent.click(screen.getByText('Welcome Series'));
+    await screen.findByText('Day 1 email');
+    expect(screen.queryByRole('link', { name: /Open journey/ })).toBeNull();
+  });
+
+  it('the eye uses only the public template render, and has no email check', async () => {
+    mockTable(ROWS);
+    vi.mocked(api.getJourneyAnalyticsNodes).mockResolvedValue({ data: [
+      { node_id: 'node_1', node_label: 'Dubai Packages', template_id: 362, journey_id: 1, journey_status: 'completed', sent: 1, delivered: 0, opened: 0, clicked: 0, landed: 0 },
+    ] });
+    vi.mocked(api.previewTemplate).mockResolvedValue({ data: { html: '<p>Offer email</p>', subject: 'Dubai deals' } });
+    render(<JourneyAnalyticsPage />);
+    await screen.findByText('Welcome Series');
+    fireEvent.click(screen.getByText('Welcome Series'));
+    fireEvent.click(await screen.findByRole('button', { name: 'See the email for Dubai Packages' }));
+    expect((await screen.findByTitle('Email for Dubai Packages')).getAttribute('srcdoc')).toBe('<p>Offer email</p>');
+    expect(api.previewTemplate).toHaveBeenCalledWith(362);
+    expect(api.previewJourneyNodeEmail).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Email check/ })).toBeNull();
+  });
+
+  it('shows the secure-session countdown from the access cookie', async () => {
+    mockTable(ROWS);
+    fetchStub.mockResolvedValueOnce({ ok: true, json: async () => ({ expiresAt: Date.now() + 5 * 60_000 }) } as unknown as Response);
+    render(<JourneyAnalyticsPage />);
+    expect(await screen.findByText(/Secure session · 0[45]:\d\d/)).toBeTruthy();
+    expect(fetchStub).toHaveBeenCalledWith('/leads-access/verify');
   });
 });

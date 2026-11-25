@@ -1,13 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui';
+import { tokenAccessDestination } from '@/lib/leadsAccess';
 import s from '../auth.module.css';
+
+// Wording per token-protected page; the same token opens all of them.
+const COPY = {
+  leads: { pitch: 'Leads and registration data.', title: 'Protected Leads', note: 'Enter the access token to view leads and registration data.' },
+  performance: { pitch: 'Journey and message performance.', title: 'Protected Performance', note: 'Enter the access token to view how journeys and messages are doing.' },
+};
 
 export default function LeadsAccessPage() {
   const router = useRouter();
+  // Where to go after the token check: the protected page the visitor was sent here from.
+  const destination = tokenAccessDestination(useSearchParams().get('next'));
+  const copy = destination.startsWith('/journeys/analytics') ? COPY.performance : COPY.leads;
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -30,8 +40,6 @@ export default function LeadsAccessPage() {
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error || 'Access denied');
-      const requested = new URLSearchParams(window.location.search).get('next') || '/leads';
-      const destination = requested === '/leads' || requested.startsWith('/leads?') ? requested : '/leads';
       router.replace(destination);
       router.refresh();
     } catch (err) {
@@ -48,7 +56,7 @@ export default function LeadsAccessPage() {
           <img src="/rayna-logo.webp" alt="Rayna Tours" className={s.logo} />
         </span>
         <div className={s.pitch}>
-          <h2>Leads and registration data.</h2>
+          <h2>{copy.pitch}</h2>
           <p>This area is protected by a separate access token.</p>
         </div>
         <span className={s.foot}>Need a token? Ask your admin.</span>
@@ -57,8 +65,8 @@ export default function LeadsAccessPage() {
       <main className={s.main}>
         <div className={s.panel}>
           <div className={s.panelHead}>
-            <h1>Protected Leads</h1>
-            <p className={s.note}>Enter the access token to view leads and registration data.</p>
+            <h1>{copy.title}</h1>
+            <p className={s.note}>{copy.note}</p>
           </div>
 
           <form onSubmit={handleSubmit} className={s.form}>

@@ -43,6 +43,13 @@ const PUBLIC_API_ROUTES: Array<[string, RegExp]> = [
   ['POST', /^\/v3\/chat-leads\/groups$/],
   ['PUT', /^\/v3\/chat-leads\/groups\/[^/]+$/],
   ['DELETE', /^\/v3\/chat-leads\/groups\/[^/]+$/],
+  // Performance screen (/journeys/analytics, same access token as Leads) — read-only: numbers and
+  // message previews. Refresh, re-run email checks (Claude) and the CSV export still need a login.
+  ['GET', /^\/v3\/overview\/insights$/],
+  ['GET', /^\/v3\/journeys\/analytics\/table$/],
+  ['GET', /^\/v3\/journeys\/analytics\/\d+\/nodes$/],
+  ['POST', /^\/v2\/content\/templates\/\d+\/preview$/],
+  ['GET', /^\/v3\/chathead\/templates\/\d+\/preview$/],
 ];
 
 function isPublicApiRoute(req: Request): boolean {

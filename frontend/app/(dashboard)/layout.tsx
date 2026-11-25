@@ -15,6 +15,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useBusinessType } from '@/context/BusinessTypeContext';
 import { RequireAuth } from './require-auth';
 import { SCOPES } from '@/lib/contactTypes';
+import { isTokenAccessPage } from '@/lib/leadsAccess';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
 
 interface NavItem { href: string; icon: LucideIcon; label: string }
@@ -260,10 +261,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 }
 
-// Public paths render WITHOUT the sidebar/chrome when the visitor isn't logged in
-// (kept in sync with middleware.js + require-auth.jsx).
-const PUBLIC_PATHS = ['/leads'];
-
+// Token-protected pages (lib/leadsAccess) render WITHOUT the sidebar/chrome when the visitor
+// isn't logged in.
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -271,7 +270,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
 
   // Chromeless = public page viewed while logged out → no sidebar, full-width content.
-  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+  const isPublic = isTokenAccessPage(pathname);
   const chromeless = isPublic && !isAuthenticated;
 
   if (chromeless) {

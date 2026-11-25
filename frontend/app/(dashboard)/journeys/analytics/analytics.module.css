@@ -11,6 +11,10 @@
 .header { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0; }
 .title { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; color: var(--ink); }
 .subtitle { margin: 0; font-size: 13px; color: var(--ink3); }
+/* Public (access-token) view: logo instead of the sidebar, as on Leads. */
+.brand { display: flex; align-items: center; gap: 12px; }
+.brandLogo { height: 40px; width: 96px; object-fit: contain; display: block; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; box-sizing: content-box; }
+.sessionChip { margin-left: auto; align-self: center; }
 
 /* ── Table card ─────────────────────────────────────────────── */
 .tableCard { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }

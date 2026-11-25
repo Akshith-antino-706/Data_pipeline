@@ -241,13 +241,18 @@ router.get('/analytics/table', async (req, res, next) => {
 // 5 min) — only nodes that actually sent that day.
 // Map node_id → email template id from the journey's flow, so the analytics UI
 // can offer a QA-report (eye) button per action node. Reads journey_flows.nodes.
+/** Per action node: its email template, or its ChatHead WhatsApp template for WhatsApp steps. */
+interface NodeTemplateRef { template_id: number | null; wa_template_id: number | null; step_channel: string | null }
 async function nodeTemplateMap(jid: number) {
   const { rows: [jf] } = await db.query<JourneyNodesRow>('SELECT nodes FROM journey_flows WHERE journey_id = $1', [jid]);
-  const map: Record<string, number> = {};
+  const map: Record<string, NodeTemplateRef> = {};
   for (const n of (jf?.nodes || []) as JourneyNode[]) {
     if (n.type !== 'action') continue;
-    const tid = parseInt((n.data?.emailTemplateId || n.data?.templateId) as string);
-    if (tid) map[n.id] = tid;
+    const channel = String(n.data?.channel || '').toLowerCase() || null;
+    const isWa = channel === 'whatsapp';
+    const tid = isWa ? 0 : parseInt((n.data?.emailTemplateId || n.data?.templateId) as string);
+    const waTid = isWa ? parseInt(n.data?.waTemplateId as string) : 0;
+    if (tid || waTid) map[n.id] = { template_id: tid || null, wa_template_id: waTid || null, step_channel: channel };
   }
   return map;
 }
@@ -268,9 +273,14 @@ router.get('/analytics/:id/nodes', async (req, res, next) => {
       );
       data = rows;
     }
-    // Attach template_id per node so the UI can show the QA-report button.
+    // Attach each node's template so the UI's eye button can preview the email or WhatsApp message.
     const tmap = await nodeTemplateMap(jid);
-    data = (data || []).map(r => ({ ...r, template_id: tmap[r.node_id] || null }));
+    data = (data || []).map(r => ({
+      ...r,
+      template_id: tmap[r.node_id]?.template_id ?? null,
+      wa_template_id: tmap[r.node_id]?.wa_template_id ?? null,
+      step_channel: tmap[r.node_id]?.step_channel ?? null,
+    }));
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });

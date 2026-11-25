@@ -24,7 +24,8 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: h.replace, replace: h.replace, back: () => {}, prefetch: () => {}, refresh: h.refresh }),
   useParams: () => ({}),
   usePathname: () => '/',
-  useSearchParams: () => new URLSearchParams(),
+  // Reads the real test URL (each test resets it to '/'), like Next does from the address bar.
+  useSearchParams: () => new URLSearchParams(window.location.search),
   redirect: (href: string) => h.redirect(href),
 }));
 vi.mock('next/link', () => ({
@@ -178,6 +179,27 @@ describe('Leads access page', () => {
     h.replace.mockReset();
     window.history.replaceState(null, '', '/leads-access?next=https%3A%2F%2Fevil.com');
     render(<LeadsAccessPage />);
+    fireEvent.change(screen.getByLabelText('Access token'), { target: { value: 'tok' } });
+    submit();
+    await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/leads'));
+  });
+
+  it('the same token opens Performance: its own wording, then back to /journeys/analytics', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    window.history.replaceState(null, '', '/leads-access?next=%2Fjourneys%2Fanalytics%3Ftype%3Dfixed');
+    render(<LeadsAccessPage />);
+    expect(screen.getByText('Protected Performance')).toBeTruthy();
+    expect(screen.queryByText('Protected Leads')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Access token'), { target: { value: 'tok' } });
+    submit();
+    await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/journeys/analytics?type=fixed'));
+  });
+
+  it('does not send the token visitor to other journeys pages', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    window.history.replaceState(null, '', '/leads-access?next=%2Fjourneys%2F523');
+    render(<LeadsAccessPage />);
+    expect(screen.getByText('Protected Leads')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Access token'), { target: { value: 'tok' } });
     submit();
     await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/leads'));

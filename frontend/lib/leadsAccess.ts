@@ -1,5 +1,21 @@
 export const LEADS_ACCESS_COOKIE = 'rayna-leads-access';
 
+/**
+ * Pages a visitor can open with the access token instead of a login (read-only, no sidebar).
+ * One token and one cookie cover all of them. Keep in sync with the backend's PUBLIC_API_ROUTES.
+ */
+export const TOKEN_ACCESS_PAGES = ['/leads', '/journeys/analytics'];
+
+export function isTokenAccessPage(pathname: string): boolean {
+  return TOKEN_ACCESS_PAGES.some(p => pathname === p || pathname.startsWith(p + '/'));
+}
+
+/** Where to go after the token check: the page that was asked for if it is token-protected, else Leads. */
+export function tokenAccessDestination(requested: string | null | undefined): string {
+  const target = String(requested || '');
+  return isTokenAccessPage(target.split('?')[0]) ? target : '/leads';
+}
+
 async function signature(token: string, expiresAt: number): Promise<string> {
   const bytes = new TextEncoder().encode(`rayna-leads:${token}:${expiresAt}`);
   const digest = await crypto.subtle.digest('SHA-256', bytes);

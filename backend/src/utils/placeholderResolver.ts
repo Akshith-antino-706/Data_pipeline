@@ -222,6 +222,11 @@ function buildValues(ctx: PlaceholderContext = {}): PlaceholderValues {
   };
 }
 
+/** The values-map key a template's {{ rawKey }} resolves to (alias first, else UPPER_CASE). */
+export function canonicalKey(rawKey: string): string {
+  return ALIASES[rawKey] || ALIASES[rawKey.toLowerCase()] || rawKey.toUpperCase();
+}
+
 /**
  * Replace every {{KEY}} in `html` with its resolved, HTML-escaped value.
  * Unknown / empty keys → blank (never leak a literal {{KEY}}).
@@ -233,7 +238,7 @@ export function renderTemplate(html: string | null | undefined, ctx: Placeholder
   // Matches {{ KEY }} and the Liquid-style {{ KEY | default: 'fallback' }}.
   const RE = /\{\{\s*([A-Za-z0-9_]+)\s*(?:\|\s*default\s*:\s*(['"])([\s\S]*?)\2\s*)?\}\}/g;
   const out = String(html).replace(RE, (_m: string, rawKey: string, _q: string | undefined, inlineDefault: string | undefined) => {
-    const key = ALIASES[rawKey] || ALIASES[rawKey.toLowerCase()] || rawKey.toUpperCase();
+    const key = canonicalKey(rawKey);
     let v = values[key];
     if (v === undefined || v === null || v === '') {
       // priority: resolved value → inline {{|default:'…'}} → per-key DEFAULTS → blank
