@@ -223,6 +223,19 @@ export const getArchivedJourneys = (fresh?: boolean) => request(`/api/v3/journey
 export const getArchivedJourney = (id: Id) => request(`/api/v3/journey-archive/${id}`);
 export const getArchivedNodeEmail = (id: Id, nodeId: string) => request(`/api/v3/journey-archive/${id}/nodes/${encodeURIComponent(nodeId)}/email`);
 export const getArchivedTableDownload = (id: Id, table: string) => request(`/api/v3/journey-archive/${id}/download/${encodeURIComponent(table)}`);
+/** The archive table — same filters/sorts as the Performance table, plus month and "completed". */
+export type ArchiveTableSort = JourneyAnalyticsSort | 'completed';
+export interface ArchiveTableOptions {
+  page?: number; limit?: number; search?: string; sort?: ArchiveTableSort; dir?: 'asc' | 'desc'; type?: 'fixed' | 'continuous'; month?: string; fresh?: boolean;
+}
+export const getArchiveTable = ({ fresh, ...opts }: ArchiveTableOptions = {}) =>
+  request(`/api/v3/journey-archive/table${overviewQs({ ...opts, fresh: fresh ? 1 : undefined })}`);
+export async function downloadArchiveCsv({ fresh: _fresh, page: _page, limit: _limit, ...opts }: ArchiveTableOptions = {}): Promise<void> {
+  const res = await authFetch(`${BASE}/api/v3/journey-archive/table.csv${overviewQs(opts)}`);
+  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+  saveBlob(await res.blob(), `journey-archive-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+export const getArchiveNodes = (id: Id, date?: string) => request(`/api/v3/journey-archive/${id}/nodes${date ? `?date=${date}` : ''}`);
 export const getJourney = (id: Id) => request(`/api/v3/journeys/${id}`);
 export const createJourney = (data: JsonBody) => request('/api/v3/journeys', { method: 'POST', body: JSON.stringify(data) });
 // Progress of the background audience build kicked off by createJourney — 'building' | 'done' | 'failed'.
