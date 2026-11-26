@@ -3,8 +3,13 @@ import type { Request, Response } from 'express';
 import zlib from 'zlib';
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import type { Readable } from 'stream';
 import { requireRole } from '../middleware/auth.js';
 import type { ArchiveRunOptions } from '../services/JourneyArchiveService.js';
+import {
+  archiveTableRow, archiveTablePage, archiveNodeRows, archiveDayStats, archiveTableCsv, csvRecords, filterArchiveRows, sortArchiveRows,
+} from '../services/JourneyArchiveTableService.js';
+import type { ArchiveTableQuery, ArchiveTableRow, DayStats } from '../services/JourneyArchiveTableService.js';
 const router = Router();
 
 type CsvRow = Record<string, string | null>;
@@ -155,6 +160,44 @@ async function loadJourney({ key, month, journeyId }: ManifestRef): Promise<Arch
 
 const getJourney = (ref: ManifestRef): Promise<ArchivedJourneyView> => memo(`journey:${ref.journeyId}:${ref.month}`, () => loadJourney(ref));
 
+/** Every archived journey, loaded with bounded parallel S3 reads (each one memoised). */
+async function allJourneys(): Promise<ArchivedJourneyView[]> {
+  const refs = await memo('manifests', listManifests);
+  const journeys: ArchivedJourneyView[] = [];
+  for (let i = 0; i < refs.length; i += 8) {
+    journeys.push(...await Promise.all(refs.slice(i, i + 8).map(getJourney)));
+  }
+  return journeys;
+}
+const tableRows = (): Promise<ArchiveTableRow[]> => memo('table-rows', async () => (await allJourneys()).map(archiveTableRow));
+
+/** An archived gzipped CSV as a stream of records (never fully in memory). */
+async function streamCsv(key: string) {
+  const out = await s3().send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  if (!out.Body) throw new Error(`${key}: empty S3 object`);
+  return csvRecords((out.Body as Readable).pipe(zlib.createGunzip()));
+}
+
+// Per-day step numbers, worked out once per journey from its archived send log (archives never
+// change, so kept until the process restarts; capped so a long session can't grow it without end).
+const DAY_STATS_MAX = 20;
+const dayStatsCache = new Map<string, Promise<DayStats>>();
+function getDayStats(j: ArchivedJourneyView): Promise<DayStats> {
+  const key = `${j.journey_id}:${j.completed_month}`;
+  const hit = dayStatsCache.get(key);
+  if (hit) return hit;
+  const tables = j.manifest.tables || {};
+  const p = (async () => {
+    const email = await streamCsv(`${j.dir}email_send_log.csv.gz`);
+    const unsub = Object.hasOwn(tables, 'unsubscribe_log') ? await streamCsv(`${j.dir}unsubscribe_log.csv.gz`) : null;
+    return archiveDayStats(email, unsub, parseInt(process.env.BOT_ENGAGEMENT_WINDOW_SEC || '15', 10));
+  })();
+  p.catch(() => dayStatsCache.delete(key));                    // a failed read is retried next time
+  dayStatsCache.set(key, p);
+  if (dayStatsCache.size > DAY_STATS_MAX) dayStatsCache.delete(dayStatsCache.keys().next().value as string);
+  return p;
+}
+
 async function findRef(journeyId: number): Promise<ManifestRef | null> {
   const refs = await memo('manifests', listManifests);
   // Latest archive wins if a journey were ever archived twice.
@@ -189,17 +232,50 @@ router.use((_req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     if (req.query.fresh) cache.clear();
-    const refs = await memo('manifests', listManifests);
-    const journeys: ArchivedJourneyView[] = [];
-    for (let i = 0; i < refs.length; i += 8) {            // bounded parallel S3 reads
-      journeys.push(...await Promise.all(refs.slice(i, i + 8).map(getJourney)));
-    }
+    const journeys = await allJourneys();
     res.json({
       success: true,
       data: journeys
         .map(({ flow, nodes: _n, dir: _d, ...j }) => ({ ...j, name: flow.name, status: flow.status, journey_type: flow.journey_type }))
         .sort((a, b) => b.completed_month.localeCompare(a.completed_month) || b.journey_id - a.journey_id),
     });
+  } catch (err) { next(err); }
+});
+
+// Performance-style table: ?search, ?type (fixed|continuous), ?month (YYYY-MM), ?sort, ?dir, ?page,
+// ?limit → one page, the total, totals over every match (the "At a glance" tiles) and all months.
+router.get('/table', async (req, res, next) => {
+  try {
+    if (req.query.fresh) cache.clear();
+    const rows = await tableRows();
+    const refs = await memo('manifests', listManifests);
+    const lastArchived = rows.reduce<string | null>((m, r) => (r.archived_at && (!m || r.archived_at > m) ? r.archived_at : m), null);
+    res.json({ success: true, data: { ...archiveTablePage(rows, req.query as ArchiveTableQuery), meta: { archived: refs.length, last_archived_at: lastArchived } } });
+  } catch (err) { next(err); }
+});
+
+// Every archived journey matching the same filters and sort, as one CSV.
+router.get('/table.csv', async (req, res, next) => {
+  try {
+    const q = req.query as ArchiveTableQuery;
+    const { rows } = sortArchiveRows(filterArchiveRows(await tableRows(), q), q);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="journey-archive-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(archiveTableCsv(rows));
+  } catch (err) { next(err); }
+});
+
+// One journey's step rows, like /journeys/analytics/:id/nodes: all-time (its archived
+// journey_node_stats) or, with ?date=YYYY-MM-DD, only the steps that sent that Dubai day — worked
+// out from the archived send log (the first request for a journey reads it from S3).
+router.get('/:id/nodes', async (req, res, next) => {
+  try {
+    const ref = await findRef(parseInt(req.params.id));
+    if (!ref) return res.status(404).json({ success: false, error: 'Journey not found in archive' });
+    const j = await getJourney(ref);
+    const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : null;
+    const stats = date ? ((await getDayStats(j)).get(date) || []) : j.nodes;
+    res.json({ success: true, data: archiveNodeRows(j.flow.nodes, j.flow.edges, stats) });
   } catch (err) { next(err); }
 });
 

@@ -118,6 +118,9 @@
 .subNum { font-size: 11px; color: var(--ink3); white-space: nowrap; }
 .openLink { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--info); text-decoration: none; }
 .openLink:hover, .openLink:focus-visible { text-decoration: underline; }
+/* Journey Archive: the archived data downloads under a journey's steps */
+.archiveFiles { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.archiveFilesLabel { font-size: 12px; font-weight: 700; color: var(--ink3); margin-right: 4px; }
 
 /* ── Pager ──────────────────────────────────────────────────── */
 .pager { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }

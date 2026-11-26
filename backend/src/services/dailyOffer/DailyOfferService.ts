@@ -414,6 +414,7 @@ export default class DailyOfferService {
           exitOnConversion: true,
           scheduledStartAt: null,
           createdBy: CREATED_BY,
+          emailCredential: this.config.emailCredential,
           nodes: [
             { id: 'node_0', type: 'trigger', position: { x: 300, y: 50 },
               data: { label: 'Entry Point', segmentId: `custom:${this.config.segmentId}`, triggerType: 'segment_entry' } },

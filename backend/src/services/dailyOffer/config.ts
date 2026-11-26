@@ -30,6 +30,8 @@ export interface DailyOfferConfig {
   aiCopy: boolean;
   /** B2B only: portal links for every card and the button. null = the feed's product pages. */
   links: OfferLinks | null;
+  /** journey_flows.email_credential for the created journey: 'default' (AWS, explore@promotions) or an SMTP mailbox such as 'tia'. */
+  emailCredential: string;
 }
 
 /**
@@ -71,6 +73,8 @@ export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audien
         ctaLabel:   env.DAILY_OFFER_B2B_CTA_LABEL || 'Click Here For B2B Rates',
         promos:     env.DAILY_OFFER_B2B_PROMOS !== 'false',
       },
+      // Sender mailbox — follows the B2C one unless DAILY_OFFER_B2B_EMAIL_CREDENTIAL sets its own.
+      emailCredential: env.DAILY_OFFER_B2B_EMAIL_CREDENTIAL || env.DAILY_OFFER_EMAIL_CREDENTIAL || 'default',
     };
   }
   return {
@@ -86,6 +90,8 @@ export function getDailyOfferConfig(env: NodeJS.ProcessEnv = process.env, audien
     sendAt:         env.DAILY_OFFER_SEND_AT || '16:00',
     sendCheckAt:    env.DAILY_OFFER_SEND_CHECK_AT || '17:30',   // were any emails sent? else alert the team
     links:          null,   // product pages from the feed, "Explore …" button per theme
+    // Sender mailbox — 'default' = AWS (explore@promotions); 'tia' = "Tia from Rayna Tours".
+    emailCredential: env.DAILY_OFFER_EMAIL_CREDENTIAL || 'default',
   };
 }
 

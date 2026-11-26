@@ -13,7 +13,7 @@
  *   - a day picked  → only the steps that sent on that Dubai day, scoped to that day.
  */
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useUrlState } from '@/lib/useUrlState';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
@@ -26,31 +26,17 @@ import {
 } from '@/lib/api';
 import type { JourneyAnalyticsSort, JourneyAnalyticsTableOptions } from '@/lib/api';
 import { Button, Card, Chip, Skeleton } from '@/components/ui';
-import type { ChipTone } from '@/components/ui';
 import EmailQaReportModal from '../EmailQaReportModal';
 import StepEmailModal from './StepEmailModal';
 import type { StepPreview } from './StepEmailModal';
 import styles from './analytics.module.css';
 import { nodeLabel } from '@/lib/nodeLabel';
+import {
+  num, fmt, fmtRate, openRate, clickRate, timeAgo, dubaiDateTime, humanDay, dubaiToday, statusOf, isAlwaysOn,
+  Engaged, RateBar, SortHead, useCloseOnOutside,
+} from './tableParts';
+import type { AnalyticsRow } from './tableParts';
 
-interface AnalyticsRow {
-  [key: string]: string | number | null | undefined;
-  journey_id: string | number;
-  journey_name?: string;
-  journey_status: string;
-  journey_type?: string;
-  node_id?: string;
-  node_label?: string;
-  node_type?: string;
-  template_id?: string | number | null;
-  wa_template_id?: string | number | null;
-  step_channel?: string | null;
-  bot_window_sec?: number;
-  entries?: number; sent: number; delivered: number; failed?: number;
-  opened: number; human_opened?: number | null;
-  clicked: number; human_clicked?: number | null;
-  landed: number; bounced?: number; unsubscribed?: number; gtm_events?: number; booked?: number;
-}
 interface AnalyticsMeta { last_run_at?: string | null; journeys_run?: number }
 interface AnalyticsTableResponse {
   data?: { journeys?: AnalyticsRow[]; meta?: AnalyticsMeta | null; total?: number; page?: number; limit?: number };
@@ -69,120 +55,6 @@ const SORT_KEYS: readonly JourneyAnalyticsSort[] = ['entries', 'sent', 'delivere
 const SORT_DIRS = ['asc', 'desc'] as const;
 
 export const PAGE_SIZES = [20, 50] as const;
-const TZ = 'Asia/Dubai';
-
-// ── Formatting (plain words, thousands separators, never NaN) ─────────────
-const num = (v: unknown): number => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-};
-const has = (v: unknown): boolean => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
-const fmt = (v: unknown): string => (has(v) ? num(v).toLocaleString('en-US') : '—');
-/** Percentage with one decimal, or null when there is nothing to divide by. */
-const rateOf = (part: unknown, whole: unknown): number | null => {
-  const w = num(whole);
-  return w > 0 ? Math.round((num(part) / w) * 1000) / 10 : null;
-};
-const fmtRate = (r: number | null): string => (r === null ? '—' : `${r.toLocaleString('en-US')}%`);
-const openRate = (r: AnalyticsRow) => rateOf(r.opened, num(r.delivered) || num(r.sent));
-const clickRate = (r: AnalyticsRow) => rateOf(r.clicked, r.opened);
-
-function timeAgo(ts: string | null | undefined): string {
-  if (!ts) return 'not yet';
-  const t = new Date(ts).getTime();
-  if (Number.isNaN(t)) return 'not yet';
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`;
-  if (s < 60) return 'just now';
-  if (s < 3600) return plural(Math.floor(s / 60), 'minute');
-  if (s < 86400) return plural(Math.floor(s / 3600), 'hour');
-  return plural(Math.floor(s / 86400), 'day');
-}
-/** "Tue, 20 Oct 2026, 3:05 PM" in Dubai time, for tooltips. */
-function dubaiDateTime(ts: string | null | undefined): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-GB', {
-    timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
-  }).replace(/\u202f/g, ' ');
-}
-/** A YYYY-MM-DD calendar day as "Thu, 1 Oct" (year added when it isn't this year). */
-function humanDay(day: string): string {
-  const t = Date.parse(`${day}T00:00:00Z`);
-  if (Number.isNaN(t)) return 'that day';
-  const d = new Date(t);
-  const thisYear = new Date().toLocaleDateString('en-GB', { timeZone: TZ, year: 'numeric' });
-  const wd = d.toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short' });
-  const label = `${wd}, ${d.toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' })}`;
-  const year = d.toLocaleDateString('en-GB', { timeZone: 'UTC', year: 'numeric' });
-  return year === thisYear ? label : `${label} ${year}`;
-}
-function dubaiToday(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: TZ });
-}
-
-const STATUS_LABEL: Record<string, { label: string; tone: ChipTone }> = {
-  active: { label: 'Active', tone: 'ok' },
-  paused: { label: 'Paused', tone: 'warn' },
-  completed: { label: 'Finished', tone: 'info' },
-  draft: { label: 'Draft', tone: 'mute' },
-};
-function statusOf(s: string | null | undefined): { label: string; tone: ChipTone } {
-  const key = String(s ?? '').toLowerCase();
-  if (STATUS_LABEL[key]) return STATUS_LABEL[key];
-  return { label: key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Unknown', tone: 'mute' };
-}
-const isAlwaysOn = (r: AnalyticsRow) => r.journey_type === 'gtm';
-
-/** Raw count plus a muted "real people" line when the rollup has it. */
-function Engaged({ raw, human }: { raw: unknown; human: number | null | undefined }) {
-  return (
-    <span className={styles.engaged}>
-      <span>{fmt(raw)}</span>
-      {has(human) && num(raw) > 0 && <span className={styles.subNum} title="Opened or clicked by real people (not email security scanners)">{fmt(human)} real people</span>}
-    </span>
-  );
-}
-
-/** Small bar under a rate so the eye can compare rows quickly. */
-function RateBar({ rate }: { rate: number | null }) {
-  return (
-    <span className={styles.rateCell}>
-      <span>{fmtRate(rate)}</span>
-      {rate !== null && (
-        <span className={styles.rateTrack} aria-hidden="true">
-          <span className={styles.rateFill} style={{ width: `${Math.min(100, Math.max(0, rate))}%` }} />
-        </span>
-      )}
-    </span>
-  );
-}
-
-interface SortHeadProps { label: string; field: JourneyAnalyticsSort; sort: JourneyAnalyticsSort; dir: 'asc' | 'desc'; onSort: (f: JourneyAnalyticsSort) => void; left?: boolean; tip?: string }
-function SortHead({ label, field, sort, dir, onSort, left, tip }: SortHeadProps) {
-  const on = sort === field;
-  return (
-    <th className={left ? styles.left : undefined} aria-sort={on ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'} title={tip}>
-      <button type="button" className={styles.sortBtn} onClick={() => onSort(field)}>
-        {label}{on ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
-      </button>
-    </th>
-  );
-}
-
-function useCloseOnOutside(open: boolean, close: () => void) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close(); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open, close]);
-  return ref;
-}
 
 interface RowMenuProps { row: AnalyticsRow; expanded: boolean; refreshing: boolean; onToggle: () => void; onRefresh: () => void }
 function RowMenu({ row, expanded, refreshing, onToggle, onRefresh }: RowMenuProps) {

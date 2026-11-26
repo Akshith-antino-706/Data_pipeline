@@ -161,6 +161,18 @@ test('create (B2B): waits while the B2C journey of the day does not exist yet �
   expect(w.state.journeys.length + w.state.templates.length).toBe(0);
 });
 
+test('create: sender mailbox comes from DAILY_OFFER_EMAIL_CREDENTIAL (B2B follows it unless overridden)', async () => {
+  const run = async (env: NodeJS.ProcessEnv) => {
+    const w = world();
+    await svc(w, 'b2c', { env }).runCreate({ now: NINE_AM });
+    await svc(w, 'b2b', { env }).runCreate({ now: NINE_15 });
+    return [b2cJourney(w).emailCredential, b2bJourney(w).emailCredential];
+  };
+  expect(await run({})).toEqual(['default', 'default']);   // unset → AWS sender, as before
+  expect(await run({ DAILY_OFFER_EMAIL_CREDENTIAL: 'tia' })).toEqual(['tia', 'tia']);
+  expect(await run({ DAILY_OFFER_EMAIL_CREDENTIAL: 'tia', DAILY_OFFER_B2B_EMAIL_CREDENTIAL: 'default' })).toEqual(['tia', 'default']);
+});
+
 test('create (B2B): copies the B2C day — same products, theme and subject; B2B segment, name and portal links', async () => {
   const w = world();
   await svc(w, 'b2c', { suggestSubject: aiLead }).runCreate({ now: NINE_AM });
