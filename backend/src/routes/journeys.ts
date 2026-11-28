@@ -3,7 +3,7 @@ import db from '../config/database.js';
 import JourneyService from '../services/JourneyService.js';
 import ConversionDetector from '../services/ConversionDetector.js';
 import SkipLogService from '../services/SkipLogService.js';
-import { queueCounts } from '../services/queue/index.js';
+import { queueCounts, removeJourneyJobs } from '../services/queue/index.js';
 import { cached, del as cacheDel } from '../config/cache.js';
 import type { QueryParams, JourneyNode, DiagnoseReport, GtmEventStat } from '../types/routesJourneys.js';
 import type { CreateJourneyInput, JourneyFlowNode } from '../types/journeyService.js';
@@ -675,6 +675,19 @@ router.post('/:id/pause', async (req, res, next) => {
   try {
     const data = await JourneyService.pauseJourney(parseInt(req.params.id));
     res.json({ data });
+  } catch (err) { next(err); }
+});
+
+// Remove this journey's jobs still waiting in the send queues (incident response: a stopped
+// or reset journey whose old jobs hold up every other journey). Jobs being sent right now
+// are left alone. Returns the number removed per channel.
+router.post('/:id/purge-queue', async (req, res, next) => {
+  try {
+    const journeyId = parseInt(req.params.id);
+    if (!Number.isFinite(journeyId)) return res.status(400).json({ error: 'invalid journey id' });
+    const removed = await removeJourneyJobs(journeyId);
+    console.log(`[Journey ${journeyId}] purge-queue removed ${JSON.stringify(removed)}`);
+    res.json({ data: { journeyId, removed } });
   } catch (err) { next(err); }
 });
 

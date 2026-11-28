@@ -11,6 +11,7 @@ const m = vi.hoisted(() => ({
   cached: vi.fn(),
   cacheDel: vi.fn(),
   queueCounts: vi.fn(),
+  removeJourneyJobs: vi.fn(),
   toCsv: vi.fn(),
   runAll: vi.fn(),
   js: {
@@ -26,7 +27,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock('../src/config/database.js', () => ({ default: { query: m.query, connect: vi.fn() }, query: m.query }));
 vi.mock('../src/config/cache.js', () => ({ cached: m.cached, del: m.cacheDel, default: { cached: m.cached, del: m.cacheDel } }));
-vi.mock('../src/services/queue/index.js', () => ({ queueCounts: m.queueCounts }));
+vi.mock('../src/services/queue/index.js', () => ({ queueCounts: m.queueCounts, removeJourneyJobs: m.removeJourneyJobs }));
 vi.mock('../src/services/SkipLogService.js', () => ({ default: { toCsv: m.toCsv } }));
 vi.mock('../src/services/ConversionDetector.js', () => ({ default: { runAll: m.runAll } }));
 vi.mock('../src/services/JourneyService.js', () => ({
@@ -450,5 +451,20 @@ describe('simple pass-through reads', () => {
     m.query.mockResolvedValue({ rows: [{ journey_id: 1 }, { journey_id: 2 }] });
     const r = await send('POST', '/process-all');
     expect(r.body.results).toEqual([{ journey_id: 1, processed: 0, enqueued: 0 }, { journey_id: 2, processed: 0, enqueued: 0 }]);
+  });
+});
+
+describe('POST /:id/purge-queue', () => {
+  it('removes the journey\'s queued jobs and reports the count per channel', async () => {
+    m.removeJourneyJobs.mockResolvedValue({ email: 12, whatsapp: 0, sms: 0, rcs: 0 });
+    const r = await send('POST', '/629/purge-queue');
+    expect(r.status).toBe(200);
+    expect(r.body.data).toEqual({ journeyId: 629, removed: { email: 12, whatsapp: 0, sms: 0, rcs: 0 } });
+    expect(m.removeJourneyJobs).toHaveBeenCalledWith(629);
+  });
+  it('rejects a non-numeric id without touching the queue', async () => {
+    const r = await send('POST', '/abc/purge-queue');
+    expect(r.status).toBe(400);
+    expect(m.removeJourneyJobs).not.toHaveBeenCalled();
   });
 });

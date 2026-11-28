@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import PopularityService from './PopularityService.js';
-import { enqueueBatch, queueCounts } from './queue/index.js';
+import { enqueueBatch, queueCounts, removeJourneyJobs } from './queue/index.js';
 import CustomSegmentService from './CustomSegmentService.js';
 import GtmJourneyService from './GtmJourneyService.js';
 import ChatHeadV1Service from './ChatHeadV1Service.js';
@@ -2090,7 +2090,14 @@ class JourneyService {
         // nodeId is included so each node an entry passes gets a unique job id
         // (runId is constant per journey/day, so without nodeId BullMQ would dedupe
         // a node's send against the previous node's cached job).
-        enqueueByChannel[channel].push({ data: jobData, opts: { jobId: `${journeyId}_${entry.entry_id}_${currentNode.id}_${runId}` } });
+        // JOURNEY_JOB_DEDUPE=true: one job per entry × node × Dubai day. With the runId in
+        // the id, every engine pass (every 5 min) re-queued an entry whose job had waited
+        // more than 2 minutes (recentlyEnqueued above), so a backed-up queue grew by the
+        // whole cohort on every pass. BullMQ ignores an add whose jobId already exists.
+        const jobId = process.env.JOURNEY_JOB_DEDUPE === 'true'
+          ? `${journeyId}_${entry.entry_id}_${currentNode.id}_${enqueuedDubaiDate}`
+          : `${journeyId}_${entry.entry_id}_${currentNode.id}_${runId}`;
+        enqueueByChannel[channel].push({ data: jobData, opts: { jobId } });
 
         // Collect for bulk stamp below (avoids 800K individual UPDATEs)
         toStampIds.push(entry.entry_id);
@@ -3317,6 +3324,17 @@ class JourneyService {
     if (!journey) throw userError('Journey not found', 404);
 
     const newStatus = journey.status === 'paused' ? 'active' : 'paused';
+
+    // JOURNEY_PAUSE_PURGES_QUEUE=true: pausing also removes the journey's jobs still waiting
+    // in the send queues — otherwise they keep sending (the worker only checks the entry, not
+    // the journey) and every other journey waits behind them. Resume re-queues the entries
+    // still at an action node, so nothing is lost. Runs in the background: the scan can take
+    // a while on a big queue and the pause itself must answer at once.
+    if (newStatus === 'paused' && process.env.JOURNEY_PAUSE_PURGES_QUEUE === 'true') {
+      removeJourneyJobs(journeyId)
+        .then(r => console.log(`[Journey ${journeyId}] paused — removed queued jobs ${JSON.stringify(r)}`))
+        .catch(err => console.error(`[Journey ${journeyId}] queue purge on pause failed: ${(err as Error).message}`));
+    }
 
     // On resume: recalculate next_fire_at per node so the cron picks them up.
     // Group entries by current_node_id and bulk-update per node to avoid N+1 queries.

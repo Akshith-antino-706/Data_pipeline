@@ -97,3 +97,27 @@ describe('processRCS unsubscribe check', () => {
     expect(call?.[1]).toEqual(['1; DROP TABLE x']);
   });
 });
+
+describe('emailSendGate — rate applied only to real sends', () => {
+  it('spaces sends at EMAIL_RATE_WINDOW / EMAIL_RATE_MAX (50/s → 20 ms apart) and lets an idle gap pass without waiting', async () => {
+    vi.useFakeTimers();
+    try {
+      const { emailSendGate } = await import('../src/services/queue/workers.js');
+      let t = 1_000_000;
+      const now = () => t;
+      const done: number[] = [];
+      const fire = (i: number) => emailSendGate(now).then(() => { done.push(i); });
+      const all = [fire(0), fire(1), fire(2)];
+      await vi.advanceTimersByTimeAsync(0);
+      expect(done).toEqual([0]);                 // first slot is free
+      await vi.advanceTimersByTimeAsync(20);
+      expect(done).toEqual([0, 1]);              // next one 20 ms later
+      await vi.advanceTimersByTimeAsync(20);
+      expect(done).toEqual([0, 1, 2]);
+      await Promise.all(all);
+      t += 5_000;                                // long idle gap → no catch-up burst, no wait
+      await emailSendGate(now);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});

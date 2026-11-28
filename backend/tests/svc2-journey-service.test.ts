@@ -7,12 +7,13 @@ const m = vi.hoisted(() => ({
   query: vi.fn<(sql: string, params?: unknown[]) => Promise<Result>>(),
   enqueueBatch: vi.fn<(channel: string, jobs: Array<{ data: Record<string, unknown>; opts: { jobId: string } }>) => Promise<void>>(),
   cacheDel: vi.fn<(k: string) => Promise<void>>(),
+  removeJourneyJobs: vi.fn<(id: unknown) => Promise<Record<string, number>>>(),
   segGetById: vi.fn<(id: unknown) => Promise<{ conditions: unknown[] } | null>>(),
   buildSegmentSQL: vi.fn<(c: unknown, o: unknown) => { sql: string; params: unknown[] }>(),
 }));
 
 vi.mock('../src/config/database.js', () => ({ default: { query: m.query }, query: m.query, transaction: vi.fn() }));
-vi.mock('../src/services/queue/index.js', () => ({ enqueueBatch: m.enqueueBatch, queueCounts: vi.fn(), enqueueGtmJourney: vi.fn(), getConnection: vi.fn() }));
+vi.mock('../src/services/queue/index.js', () => ({ enqueueBatch: m.enqueueBatch, removeJourneyJobs: m.removeJourneyJobs, queueCounts: vi.fn(), enqueueGtmJourney: vi.fn(), getConnection: vi.fn() }));
 vi.mock('../src/config/cache.js', () => ({ del: m.cacheDel, cached: vi.fn(), invalidate: vi.fn() }));
 vi.mock('../src/services/PopularityService.js', () => ({ default: { runIdForBucket: (j: unknown) => `run_${String(j)}_d` } }));
 vi.mock('../src/services/CustomSegmentService.js', () => ({ default: { getById: m.segGetById, buildSegmentSQL: m.buildSegmentSQL } }));
@@ -35,7 +36,8 @@ const calls = (frag: string) => m.query.mock.calls.filter(([s]) => s.includes(fr
 const rows = (r: unknown[], rowCount?: number): Result => ({ rows: r, rowCount: rowCount ?? r.length });
 
 beforeEach(() => {
-  m.query.mockReset(); m.enqueueBatch.mockReset(); m.cacheDel.mockReset(); m.segGetById.mockReset(); m.buildSegmentSQL.mockReset();
+  m.query.mockReset(); m.enqueueBatch.mockReset(); m.cacheDel.mockReset(); m.segGetById.mockReset(); m.buildSegmentSQL.mockReset(); m.removeJourneyJobs.mockReset();
+  m.removeJourneyJobs.mockResolvedValue({ email: 0 });
   m.cacheDel.mockResolvedValue(undefined);
   m.enqueueBatch.mockResolvedValue(undefined);
   route([]);
@@ -304,6 +306,36 @@ describe('JourneyService.startJourney', () => {
   });
 });
 
+describe('JourneyService.pauseJourney — queue purge', () => {
+  const j = (status: string) => route([['SELECT * FROM journey_flows', () => rows([{ journey_id: 7, status, nodes: [] }])]]);
+  it('flag off: pausing leaves the queue alone (old behaviour)', async () => {
+    j('active');
+    expect(await JourneyService.pauseJourney(7)).toEqual({ status: 'paused' });
+    expect(m.removeJourneyJobs).not.toHaveBeenCalled();
+  });
+  it('JOURNEY_PAUSE_PURGES_QUEUE=true: pausing removes the journey\'s queued jobs; resuming does not', async () => {
+    vi.stubEnv('JOURNEY_PAUSE_PURGES_QUEUE', 'true');
+    try {
+      j('active');
+      expect(await JourneyService.pauseJourney(7)).toEqual({ status: 'paused' });
+      expect(m.removeJourneyJobs).toHaveBeenCalledWith(7);
+      m.removeJourneyJobs.mockClear();
+      j('paused');
+      expect(await JourneyService.pauseJourney(7)).toEqual({ status: 'active' });
+      expect(m.removeJourneyJobs).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it('a purge failure never fails the pause', async () => {
+    vi.stubEnv('JOURNEY_PAUSE_PURGES_QUEUE', 'true');
+    try {
+      m.removeJourneyJobs.mockRejectedValue(new Error('redis down'));
+      j('active');
+      expect(await JourneyService.pauseJourney(7)).toEqual({ status: 'paused' });
+      expect(calls('UPDATE journey_flows SET status = $1')[0][1]).toEqual(['paused', 7]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+});
+
 describe('JourneyService.processJourney', () => {
   const nodes: JourneyFlowNode[] = [
     { id: 'trig', type: 'trigger' },
@@ -389,6 +421,16 @@ describe('JourneyService.processJourney', () => {
     expect(String(blocked[3])).toContain('missing_channel_or_template');
     expect(calls('SET current_node_id = $1')[0][1]?.[0]).toBe('cond');
     expect(calls('SET last_run_id = $1, last_enqueued_at = NOW()')[0][1]).toEqual(['run_1_d', [1]]);
+  });
+  it('JOURNEY_JOB_DEDUPE=true: jobId is entry × node × Dubai day, so a later pass cannot re-queue the same send', async () => {
+    vi.stubEnv('JOURNEY_JOB_DEDUPE', 'true');
+    try {
+      setup({}, [{ entry_id: 1, customer_id: 100, current_node_id: 'email', email: 'a@x.com' }]);
+      await JourneyService.processJourney(1);
+      const [, jobs] = m.enqueueBatch.mock.calls[0];
+      expect(jobs[0].opts.jobId).toMatch(/^1_1_email_\d{4}-\d{2}-\d{2}$/);
+      expect(jobs[0].opts.jobId).toBe(`1_1_email_${jobs[0].data.enqueuedDubaiDate}`);
+    } finally { vi.unstubAllEnvs(); }
   });
   it('enqueue failure un-stamps entries so they retry next tick', async () => {
     setup({}, [{ entry_id: 9, customer_id: 1, current_node_id: 'email', email: 'a@x' }]);

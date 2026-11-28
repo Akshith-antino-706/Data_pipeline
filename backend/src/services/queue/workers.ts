@@ -98,6 +98,22 @@ const EMAIL_CONCURRENCY = parseInt(process.env.JOURNEY_EMAIL_CONCURRENCY || '20'
 const EMAIL_RATE_MAX    = parseInt(process.env.JOURNEY_EMAIL_RATE_MAX    || '50');
 const EMAIL_RATE_WINDOW = parseInt(process.env.JOURNEY_EMAIL_RATE_WINDOW || '1000');  // ms
 
+// JOURNEY_EMAIL_RATE_AT_SEND=true: the EMAIL_RATE_MAX / EMAIL_RATE_WINDOW limit applies only
+// to jobs that really send, right before the send, instead of to every job the worker picks
+// up. With the BullMQ limiter a job skipped in a few ms (entry exited / paused / day crossed)
+// used a slot as if it had sent, so a queue of dead jobs drained at the send rate and held
+// every journey behind it for hours.
+const EMAIL_RATE_AT_SEND = process.env.JOURNEY_EMAIL_RATE_AT_SEND === 'true';
+let _nextEmailSlot = 0;
+/** Wait for the next send slot: at most EMAIL_RATE_MAX sends per EMAIL_RATE_WINDOW in this process. */
+export async function emailSendGate(now: () => number = Date.now): Promise<void> {
+  const gap = EMAIL_RATE_WINDOW / Math.max(1, EMAIL_RATE_MAX);
+  const t = now();
+  const slot = Math.max(t, _nextEmailSlot);
+  _nextEmailSlot = slot + gap;
+  if (slot > t) await new Promise(r => setTimeout(r, slot - t));
+}
+
 const WA_CONCURRENCY    = parseInt(process.env.JOURNEY_WA_CONCURRENCY    || '10');
 const WA_RATE_MAX       = parseInt(process.env.JOURNEY_WA_RATE_MAX       || '20');
 const WA_RATE_WINDOW    = parseInt(process.env.JOURNEY_WA_RATE_WINDOW    || '1000');
@@ -138,7 +154,8 @@ export function startWorkers(): JourneyWorkers {
   const email = new Worker<JourneySendJobData>('journey-email', processEmail, {
     connection,
     concurrency: EMAIL_CONCURRENCY,
-    limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW },
+    // With EMAIL_RATE_AT_SEND the limit is applied by emailSendGate() before each real send.
+    ...(EMAIL_RATE_AT_SEND ? {} : { limiter: { max: EMAIL_RATE_MAX, duration: EMAIL_RATE_WINDOW } }),
   });
 
   const wa = new Worker<JourneySendJobData>('journey-wa', processWA, {
@@ -564,6 +581,7 @@ async function processEmail(job: Job<JourneySendJobData>): Promise<void> {
   trackedHtml = injectOpenPixel(trackedHtml, logId, baseUrl);
 
   // Send via the journey's chosen transport: 'default' → AWS Email API, 'giveaway' → giveaway SMTP.
+  if (EMAIL_RATE_AT_SEND) await emailSendGate();
   const sendResult = await sendJourneyEmail({
     emailCredential: d.emailCredential || 'default',
     to: recipientEmail,

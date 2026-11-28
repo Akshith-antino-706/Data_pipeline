@@ -95,6 +95,45 @@ export async function enqueueBatch(channel: string, jobs: BatchJobInput[] | null
   );
 }
 
+/**
+ * Remove every job of one journey that is still waiting in a channel queue (waiting /
+ * delayed / prioritized). A job a worker is running right now is locked and stays.
+ *
+ * Journey job ids always start with `<journeyId>_` (see processJourney), so the jobs are
+ * found with a Redis SCAN on the job keys instead of reading the whole queue. Pausing or
+ * resetting a journey only changes the database; without this its queued jobs stay in the
+ * shared queue and every other journey's sends wait behind them.
+ */
+export async function removeJourneyJobs(
+  journeyId: string | number,
+  channels: string[] = ['email', 'whatsapp', 'sms', 'rcs'],
+): Promise<Record<string, number>> {
+  const conn = getConnection();
+  const out: Record<string, number> = {};
+  for (const channel of channels) {
+    const queue = getQueue(channel);
+    const base = `${queue.opts.prefix || 'bull'}:${queue.name}:`;
+    let removed = 0;
+    let cursor = '0';
+    do {
+      const [next, keys] = await conn.scan(cursor, 'MATCH', `${base}${journeyId}_*`, 'COUNT', 1000);
+      cursor = next;
+      // Job hash keys only — skip `<id>:logs`, `<id>:lock` and the like.
+      const ids = keys.map(k => k.slice(base.length)).filter(id => !id.includes(':'));
+      const results = await Promise.all(ids.map(async id => {
+        const job = await queue.getJob(id);
+        if (!job) return 0;
+        const state = await job.getState();
+        if (state !== 'waiting' && state !== 'delayed' && state !== 'prioritized' && state !== 'waiting-children') return 0;
+        return queue.remove(id).catch(() => 0);
+      }));
+      removed += results.reduce<number>((a, n) => a + (n ? 1 : 0), 0);
+    } while (cursor !== '0');
+    out[channel] = removed;
+  }
+  return out;
+}
+
 /** Pause / resume / drain helpers — wired up to a route or CLI for incident response. */
 export async function pauseQueue(channel: string): Promise<void>  { return getQueue(channel).pause(); }
 export async function resumeQueue(channel: string): Promise<void> { return getQueue(channel).resume(); }

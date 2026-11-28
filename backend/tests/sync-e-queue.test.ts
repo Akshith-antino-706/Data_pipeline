@@ -5,6 +5,9 @@ const m = vi.hoisted(() => {
   const events: { name: string; opts: unknown }[] = [];
   const redisCtor = vi.fn();
   const quit = vi.fn(async () => 'OK');
+  // removeJourneyJobs fixtures: job id → state, per queue name; redis keys returned by SCAN.
+  const jobStates: Record<string, Record<string, string>> = {};
+  const scanKeys: string[] = [];
   class FakeQueue {
     name: string; opts: { connection: unknown; defaultJobOptions?: unknown };
     add = vi.fn(async (name: string, data: unknown, opts: unknown) => ({ id: 'j1', name, data, opts }));
@@ -14,11 +17,20 @@ const m = vi.hoisted(() => {
     drain = vi.fn(async () => undefined);
     close = vi.fn(async () => undefined);
     getJobCounts = vi.fn(async () => ({ waiting: 1 }));
+    getJob = vi.fn(async (id: string) => { const st = jobStates[this.name]?.[id]; return st ? { getState: async () => st } : undefined; });
+    remove = vi.fn(async (id: string) => { delete jobStates[this.name]?.[id]; return 1; });
     constructor(name: string, opts: { connection: unknown; defaultJobOptions?: unknown }) { this.name = name; this.opts = opts; queues.push(this); }
   }
   class FakeQueueEvents { constructor(name: string, opts: unknown) { events.push({ name, opts }); } }
-  class FakeRedis { quit = quit; constructor(url: string, opts: unknown) { redisCtor(url, opts); } }
-  return { queues, events, redisCtor, quit, FakeQueue, FakeQueueEvents, FakeRedis };
+  class FakeRedis {
+    quit = quit;
+    constructor(url: string, opts: unknown) { redisCtor(url, opts); }
+    async scan(_c: string, _m: string, pattern: string) {
+      const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+      return ['0', scanKeys.filter(k => re.test(k))];
+    }
+  }
+  return { queues, events, redisCtor, quit, jobStates, scanKeys, FakeQueue, FakeQueueEvents, FakeRedis };
 });
 
 vi.mock('bullmq', () => ({ Queue: m.FakeQueue, QueueEvents: m.FakeQueueEvents, Worker: vi.fn() }));
@@ -134,5 +146,24 @@ describe('queue/index — admin helpers', () => {
     Q.getQueueEvents('email'); Q.getQueueEvents('whatsapp'); Q.getQueueEvents('sms'); Q.getQueueEvents('rcs');
     expect(m.events.map(e => e.name)).toEqual(['journey-email', 'journey-wa', 'journey-sms', 'journey-rcs']);
     expect(() => Q.getQueueEvents('welcome')).toThrow('Unknown channel for queue events: welcome');
+  });
+});
+
+describe('queue/index — removeJourneyJobs', () => {
+  it('removes only that journey\'s waiting / delayed / prioritized jobs, never a running one or another journey\'s', async () => {
+    m.jobStates['journey-email'] = {
+      '629_1_node_1_2026-11-28': 'waiting',
+      '629_2_node_1_2026-11-28': 'delayed',
+      '629_3_node_1_2026-11-28': 'prioritized',
+      '629_4_node_1_2026-11-28': 'active',
+      '6290_1_node_1_2026-11-28': 'waiting',
+      '279_1_node_1_2026-11-28': 'waiting',
+    };
+    m.scanKeys.length = 0;
+    m.scanKeys.push(...Object.keys(m.jobStates['journey-email']).map(id => `bull:journey-email:${id}`),
+      'bull:journey-email:629_1_node_1_2026-11-28:logs');
+    const r = await Q.removeJourneyJobs(629, ['email']);
+    expect(r).toEqual({ email: 3 });
+    expect(Object.keys(m.jobStates['journey-email']).sort()).toEqual(['279_1_node_1_2026-11-28', '6290_1_node_1_2026-11-28', '629_4_node_1_2026-11-28']);
   });
 });
